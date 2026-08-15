@@ -10,6 +10,7 @@
 
 class QVulkanInstance;
 class QVulkanWindow;
+class QImage;
 
 class SbViewportRegion;
 class SoCamera;
@@ -65,8 +66,33 @@ public:
     void setSampleCount(int samples);
     int getSampleCount() const;
 
+    /*!
+      \brief Request a preferred swapchain color format.
+
+      Must be called before the window is first shown.  This matters for
+      grab(): QVulkanWindow::grab() only performs an 8-bit conversion (and
+      BGR<->RGB swap) when the swapchain format is VK_FORMAT_B8G8R8A8_UNORM.
+      Other formats are read back as raw bits and produce garbled QImage
+      contents.  Tests that verify pixels should request
+      VK_FORMAT_B8G8R8A8_UNORM explicitly.
+    */
+    void setPreferredColorFormat(int vkFormat);
+
     //! Schedule a redraw on the Vulkan window (safe from any thread).
     void redraw();
+
+    /*!
+      \brief Whether the underlying QVulkanWindow supports grabbing a
+      resolved frame back to the CPU.
+    */
+    bool supportsGrab() const;
+
+    /*!
+      \brief Grab the last presented frame as a QImage (empty if unsupported).
+
+      Useful for smoke tests and offscreen verification of the MSAA resolve.
+    */
+    QImage grab() const;
 
     SoVulkanRenderManager * getRenderManager() const;
 

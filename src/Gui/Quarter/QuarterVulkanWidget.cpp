@@ -202,8 +202,11 @@ public:
 
         // If no viewport region has been configured yet, fall back to the
         // full swapchain extent so the frame renders correctly on first show.
+        // SbViewportRegion's default constructor is 100x100 (not 0x0), so the
+        // sentinel must be tested against the default-constructed value rather
+        // than a zero size.
         SbViewportRegion vp = m_viewport;
-        if (vp.getViewportSizePixels() == SbVec2s(0, 0)) {
+        if (m_viewport == SbViewportRegion()) {
             vp.setWindowSize(static_cast<short>(size.width()),
                              static_cast<short>(size.height()));
             vp.setViewportPixels(0, 0,
@@ -435,9 +438,26 @@ int QuarterVulkanWidget::getSampleCount() const
     return static_cast<int>(d->window->sampleCountFlagBits());
 }
 
+void QuarterVulkanWidget::setPreferredColorFormat(int vkFormat)
+{
+    vkLog("setPreferredColorFormat: requesting VkFormat %d", vkFormat);
+    d->window->setPreferredColorFormats(
+        QList<VkFormat>() << static_cast<VkFormat>(vkFormat));
+}
+
 void QuarterVulkanWidget::redraw()
 {
     d->window->requestUpdate();
+}
+
+bool QuarterVulkanWidget::supportsGrab() const
+{
+    return d->window->supportsGrab();
+}
+
+QImage QuarterVulkanWidget::grab() const
+{
+    return d->window->grab();
 }
 
 SoVulkanRenderManager * QuarterVulkanWidget::getRenderManager() const
