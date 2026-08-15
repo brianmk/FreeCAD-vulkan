@@ -60,7 +60,7 @@
 #include "Navigation/NavigationStyle.h"
 #include "Navigation/SiemensNXNavigationStyle.h"
 #include "SelectionObject.h"
-#include "SoDevicePixelRatioElement.h"
+#include <Inventor/elements/SoDevicePixelRatioElement.h>
 #include "SoFCColorBar.h"
 #include "SoFCInteractiveElement.h"
 #include "SoFCSelection.h"
@@ -105,7 +105,6 @@ SbBool Gui::SoFCDB::isInitialized()
 void Gui::SoFCDB::init()
 {
     SoInteraction ::init();
-    SoDevicePixelRatioElement ::initClass();
     SoGLRenderActionElement ::initClass();
     SoFCInteractiveElement ::initClass();
     SoGLWidgetElement ::initClass();
