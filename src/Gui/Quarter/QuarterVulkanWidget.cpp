@@ -22,6 +22,12 @@
 #include <QVersionNumber>
 #include <QVBoxLayout>
 
+#include <QApplication>
+#include <QEvent>
+#include <QKeyEvent>
+#include <QMouseEvent>
+#include <QWheelEvent>
+
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -310,6 +316,7 @@ public:
     SbColor4f background = SbColor4f(0.0f, 0.0f, 0.0f, 1.0f);
     bool clearWindow = true;
     bool clearDepth = true;
+    QWidget * forwardTarget = nullptr;
 };
 
 QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent)
@@ -363,9 +370,16 @@ QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent)
           samplesStr.isEmpty() ? "(none)" : samplesStr.constData());
 
     d->container = QWidget::createWindowContainer(d->window, this);
+    d->container->setFocusPolicy(Qt::StrongFocus);
     auto * layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(d->container);
+
+    // Forward input events arriving on the Vulkan surface to the hidden
+    // OpenGL viewer (configured via setEventForwardTarget()) so navigation,
+    // picking and other viewport interaction keep working.
+    d->container->installEventFilter(this);
+    d->window->installEventFilter(this);
 }
 
 QuarterVulkanWidget::~QuarterVulkanWidget()
@@ -413,6 +427,47 @@ void QuarterVulkanWidget::setBackgroundColor(const SbColor4f & color)
 {
     d->background = color;
     d->renderer->setBackgroundColor(color);
+}
+
+void QuarterVulkanWidget::setEventForwardTarget(QWidget * target)
+{
+    d->forwardTarget = target;
+}
+
+bool QuarterVulkanWidget::eventFilter(QObject * watched, QEvent * event)
+{
+    Q_UNUSED(watched);
+    if (!d->forwardTarget) {
+        return QWidget::eventFilter(watched, event);
+    }
+
+    // Only forward input events.  The coordinates are left untouched: the
+    // Vulkan container and the forward target occupy the same stacked-widget
+    // area, so positions map 1:1.
+    switch (event->type()) {
+    case QEvent::MouseButtonPress:
+    case QEvent::MouseButtonRelease:
+    case QEvent::MouseButtonDblClick:
+    case QEvent::MouseMove:
+    case QEvent::Wheel:
+    case QEvent::KeyPress:
+    case QEvent::KeyRelease:
+    case QEvent::TabletPress:
+    case QEvent::TabletRelease:
+    case QEvent::TabletMove:
+    case QEvent::TouchBegin:
+    case QEvent::TouchUpdate:
+    case QEvent::TouchEnd:
+    case QEvent::ContextMenu:
+        if (QCoreApplication::sendEvent(d->forwardTarget, event)) {
+            return true;
+        }
+        break;
+    default:
+        break;
+    }
+
+    return QWidget::eventFilter(watched, event);
 }
 
 const SbColor4f & QuarterVulkanWidget::getBackgroundColor() const

@@ -163,6 +163,9 @@ View3DInventor::View3DInventor(
         stack->addWidget(_vulkanViewer);
         syncVulkanViewer();
         stack->setCurrentWidget(_vulkanViewer);
+        // The Vulkan widget is display-only; relay its viewport input events
+        // to the (hidden) OpenGL viewer so navigation and picking still work.
+        _vulkanViewer->setEventForwardTarget(_viewer->getWidget());
     }
 #endif
 

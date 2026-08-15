@@ -55,6 +55,17 @@ public:
     void setBackgroundColor(const SbColor4f & color);
     const SbColor4f & getBackgroundColor() const;
 
+    /*!
+      \brief Forward viewport input events to another widget.
+
+      The Vulkan widget is display-only: it has no navigation, picking or
+      scene-graph event handling of its own.  Setting a forward target makes
+      it relay mouse, wheel, keyboard, tablet and touch events to that widget
+      (normally the hidden OpenGL viewer) so navigation and picking keep
+      working while the Vulkan surface is on top.
+    */
+    void setEventForwardTarget(QWidget * target);
+
     void setClearEnabled(bool clearwindow, bool clearzbuffer);
 
     /*!
@@ -100,6 +111,9 @@ public:
 
 public Q_SLOTS:
     void viewAll();
+
+protected:
+    bool eventFilter(QObject * watched, QEvent * event) override;
 
 private:
     QuarterVulkanWidgetPrivate * d;
