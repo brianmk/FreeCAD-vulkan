@@ -125,6 +125,18 @@ if(BUILD_TRACY_FRAME_PROFILER)
     list(APPEND FreeCADGui_LIBS TracyClient)
 endif()
 
+if(FREECAD_USE_VULKAN)
+    if(FREECAD_USE_EXTERNAL_COIN_PIVY)
+        message(FATAL_ERROR "FREECAD_USE_VULKAN requires the bundled Coin/Pivy")
+    endif()
+    find_package(Vulkan REQUIRED)
+    list(APPEND FreeCADGui_LIBS Vulkan::Vulkan)
+    target_compile_definitions(FreeCADGui PRIVATE FREECAD_USE_VULKAN=1)
+    target_include_directories(FreeCADGui SYSTEM PRIVATE
+        ${QtGui_INCLUDE_DIRS}
+    )
+endif()
+
 if (TARGET Coin::Coin)
     list(APPEND FreeCADGui_LIBS Coin::Coin)
 else()
@@ -982,6 +994,7 @@ SET(Quarter_MOC_HDR
     Quarter/eventhandlers/DragDropHandler.h
     Quarter/eventhandlers/EventFilter.h
     Quarter/QuarterWidget.h
+    Quarter/QuarterVulkanWidget.h
 )
 
 qt_wrap_cpp(Quarter_MOC_SRCS ${Quarter_MOC_HDR})

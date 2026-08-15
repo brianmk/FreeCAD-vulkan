@@ -115,6 +115,10 @@ macro(SetupBundledCoinPivy)
     set(FREETYPE_RUNTIME_LINKING OFF CACHE BOOL "Disable FreeType runtime linking for bundled Coin" FORCE)
     set(COIN_BUILD_TESTS OFF CACHE BOOL "Build bundled Coin tests" FORCE)
     set(COIN_INSTALL OFF CACHE BOOL "Disable standalone install rules for bundled Coin" FORCE)
+    # Enable the Vulkan render backend when FreeCAD requests the experimental
+    # Vulkan viewport.  The OpenGL backend remains built and the default.
+    set(COIN_BUILD_VULKAN_RENDERER ${FREECAD_USE_VULKAN} CACHE BOOL
+        "Build the bundled Coin Vulkan render backend" FORCE)
     add_subdirectory("${CMAKE_SOURCE_DIR}/src/3rdParty/coin" "${CMAKE_BINARY_DIR}/src/3rdParty/coin")
     if (NOT DEFINED COIN_VERSION OR COIN_VERSION STREQUAL "")
         message(FATAL_ERROR "Bundled Coin did not define COIN_VERSION")

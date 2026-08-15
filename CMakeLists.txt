@@ -42,6 +42,10 @@ set(CMAKE_REQUIRED_QUIET TRUE)
 
 option(FREECAD_USE_CCACHE "Auto detect and use ccache during compilation" ON)
 
+# Experimental Vulkan viewport (Track B).  OFF by default: the OpenGL path
+# remains the default and fully supported fallback.
+option(FREECAD_USE_VULKAN "Enable the experimental Vulkan viewport" OFF)
+
 # FreeCAD does not use C++20 modules. Keep CMake 3.28+ from enabling module
 # dependency scanning on C++20 targets, especially with toolchains that do not
 # provide a scanner such as clang-scan-deps.
