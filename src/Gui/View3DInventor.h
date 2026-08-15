@@ -36,6 +36,8 @@ class QPrinter;
 class QOpenGLWidget;
 class QStackedWidget;
 
+namespace SIM::Coin3D::Quarter { class QuarterVulkanWidget; }
+
 namespace Gui
 {
 
@@ -147,6 +149,7 @@ protected Q_SLOTS:
 
 private:
     void applySettings();
+    void syncVulkanViewer();
 
 protected:
     void windowStateChanged(QWidget* view) override;
@@ -163,6 +166,7 @@ private:
     PyObject* _viewerPy;
     QTimer* stopSpinTimer;
     QStackedWidget* stack;
+    SIM::Coin3D::Quarter::QuarterVulkanWidget* _vulkanViewer = nullptr;
     std::unique_ptr<View3DSettings> viewSettings;
     std::unique_ptr<NaviCubeSettings> naviSettings;
 

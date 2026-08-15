@@ -72,6 +72,10 @@
 #include "SoFCSelectionAction.h"
 #include "SoFCVectorizeSVGAction.h"
 #include "View3DInventorViewer.h"
+#ifdef FREECAD_USE_VULKAN
+#include "Quarter/QuarterVulkanWidget.h"
+#include <vulkan/vulkan.h>
+#endif
 #include "View3DPy.h"
 #include "ViewParams.h"
 #include "ViewProvider.h"
@@ -146,6 +150,21 @@ View3DInventor::View3DInventor(
 
     // apply the user settings
     applySettings();
+
+#ifdef FREECAD_USE_VULKAN
+    if (_viewer && App::GetApplication()
+                           .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
+                           ->GetBool("UseVulkanRenderer", false)) {
+        _vulkanViewer = new SIM::Coin3D::Quarter::QuarterVulkanWidget(stack);
+        _vulkanViewer->setSampleCount(View3DInventorViewer::getNumSamples());
+        // QVulkanWindow::grab() only converts 8-bit swapchain formats;
+        // request B8G8R8A8_UNORM so screenshot tests read exact pixels.
+        _vulkanViewer->setPreferredColorFormat(VK_FORMAT_B8G8R8A8_UNORM);
+        stack->addWidget(_vulkanViewer);
+        syncVulkanViewer();
+        stack->setCurrentWidget(_vulkanViewer);
+    }
+#endif
 
     stopSpinTimer = new QTimer(this);
     connect(stopSpinTimer, &QTimer::timeout, this, &View3DInventor::stopAnimating);
@@ -242,6 +261,24 @@ void View3DInventor::applySettings()
     naviSettings->applySettings();
 }
 
+void View3DInventor::syncVulkanViewer()
+{
+#ifdef FREECAD_USE_VULKAN
+    if (!_vulkanViewer) {
+        return;
+    }
+    SoRenderManager* rm = _viewer->getSoRenderManager();
+    if (!rm) {
+        return;
+    }
+    _vulkanViewer->setSceneGraph(rm->getSceneGraph());
+    _vulkanViewer->setCamera(rm->getCamera());
+    _vulkanViewer->setViewportRegion(rm->getViewportRegion());
+    _vulkanViewer->setBackgroundColor(rm->getBackgroundColor());
+    _vulkanViewer->redraw();
+#endif
+}
+
 void View3DInventor::onRename(Gui::Document* pDoc)
 {
     SoSFString name;
@@ -257,6 +294,7 @@ void View3DInventor::onUpdate()
 #endif
     update();
     _viewer->redraw();
+    syncVulkanViewer();
 }
 
 void View3DInventor::viewAll()
