@@ -23,7 +23,7 @@
 
 #include <string>
 
-#include "VulkanBreadcrumbs.h"
+#include <Base/VulkanBreadcrumbs.h>
 #include <QApplication>
 #include <QKeyEvent>
 #include <QEvent>
@@ -145,7 +145,6 @@ View3DInventor::View3DInventor(
     }
 
     // create the inventor widget and set the defaults
-    _viewer->setParentView(this);
     _viewer->setDocument(this->_pcDocument);
     stack->addWidget(_viewer->getWidget());
     // https://forum.freecad.org/viewtopic.php?f=3&t=6055&sid=150ed90cbefba50f1e2ad4b4e6684eba
@@ -160,12 +159,10 @@ View3DInventor::View3DInventor(
     applySettings();
 
 #ifdef FREECAD_USE_VULKAN
-    if (getenv("FC_VULKAN_BREADCRUMBS")) {
-        vulkanBreadcrumb( "[VK-TRACE] View3DInventor: UseVulkanRenderer=%d\n",
-                App::GetApplication()
-                        .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
-                        ->GetBool("UseVulkanRenderer", false) ? 1 : 0);
-    }
+    VK_BREADCRUMB("[VK-TRACE] View3DInventor: UseVulkanRenderer=%d\n",
+                  App::GetApplication()
+                          .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
+                          ->GetBool("UseVulkanRenderer", false) ? 1 : 0);
     if (_viewer && App::GetApplication()
                            .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
                            ->GetBool("UseVulkanRenderer", false)) {
@@ -174,19 +171,15 @@ View3DInventor::View3DInventor(
             App::GetApplication()
                     .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
                     ->GetBool("UseVulkanRayTracing", false);
-        if (getenv("FC_VULKAN_BREADCRUMBS")) {
-            vulkanBreadcrumb( "[VK-TRACE] View3DInventor: UseVulkanRayTracing=%d\n",
-                    useRayTracing ? 1 : 0);
-        }
+        VK_BREADCRUMB("[VK-TRACE] View3DInventor: UseVulkanRayTracing=%d\n",
+                      useRayTracing ? 1 : 0);
         _vulkanViewer = new SIM::Coin3D::Quarter::QuarterVulkanWidget(stack, useRayTracing);
         _vulkanViewer->setSampleCount(View3DInventorViewer::getNumSamples());
         // QVulkanWindow::grab() only converts 8-bit swapchain formats;
         // request B8G8R8A8_UNORM so screenshot tests read exact pixels.
         _vulkanViewer->setPreferredColorFormat(VK_FORMAT_B8G8R8A8_UNORM);
         stack->addWidget(_vulkanViewer);
-        if (getenv("FC_VULKAN_BREADCRUMBS")) {
-            vulkanBreadcrumb( "[VK-TRACE] View3DInventor: QuarterVulkanWidget created\n");
-        }
+        VK_BREADCRUMB("[VK-TRACE] View3DInventor: QuarterVulkanWidget created\n");
         syncVulkanViewer();
         // The viewer replaces its camera node whenever the projection type
         // changes (menu toggle, Python setCameraType, camera restore on
@@ -197,6 +190,10 @@ View3DInventor::View3DInventor(
         // planes stay at their defaults and cull everything beyond 10 units.
         connect(_viewer, &View3DInventorViewer::cameraChanged,
                 this, &View3DInventor::syncVulkanViewer);
+        // The viewer owns the Vulkan display options; re-apply them to the
+        // Vulkan widget whenever preferences change.
+        connect(_viewer, &View3DInventorViewer::vulkanSettingsChanged,
+                this, &View3DInventor::onVulkanSettingsChanged);
         stack->setCurrentWidget(_vulkanViewer);
         // The Vulkan widget is display-only; relay its viewport input events
         // to the (hidden) OpenGL viewer so navigation and picking still work.
@@ -237,7 +234,7 @@ View3DInventor::View3DInventor(
             const int ph = qMax(1, static_cast<int>(logical.height() * dpr));
             if (getenv("FC_VULKAN_BREADCRUMBS")) {
                 const SbVec2s glSize = _viewer->getSoRenderManager()->getViewportRegion().getViewportSizePixels();
-                vulkanBreadcrumb( "[VK-TRACE] surfaceSizeChanged surface=%dx%d container=%dx%d logical=%dx%d glViewport(before)=%dx%d glWidgetSize=%dx%d dpr=%.3f\n",
+                Base::vulkanBreadcrumb( "[VK-TRACE] surfaceSizeChanged surface=%dx%d container=%dx%d logical=%dx%d glViewport(before)=%dx%d glWidgetSize=%dx%d dpr=%.3f\n",
                         surfaceSize.width(), surfaceSize.height(),
                         container->width(), container->height(),
                         logical.width(), logical.height(),
@@ -391,9 +388,7 @@ void View3DInventor::syncVulkanViewer()
     if (!_vulkanViewer) {
         return;
     }
-    if (getenv("FC_VULKAN_BREADCRUMBS")) {
-        vulkanBreadcrumb( "[VK-TRACE] View3DInventor::syncVulkanViewer enter\n");
-    }
+    VK_BREADCRUMB("[VK-TRACE] View3DInventor::syncVulkanViewer enter\n");
     SoRenderManager* rm = _viewer->getSoRenderManager();
     if (!rm) {
         return;
@@ -403,20 +398,18 @@ void View3DInventor::syncVulkanViewer()
     _vulkanViewer->setCamera(rm->getCamera());
     if (getenv("FC_VULKAN_BREADCRUMBS")) {
         SoCamera* cam = rm->getCamera();
-        vulkanBreadcrumb( "[VK-TRACE] syncVulkanViewer camptr=%p %s\n",
+        Base::vulkanBreadcrumb( "[VK-TRACE] syncVulkanViewer camptr=%p %s\n",
                 static_cast<void*>(cam),
                 cam ? cam->getTypeId().getName().getString() : "null");
         const SbVec2s glSize = rm->getViewportRegion().getViewportSizePixels();
-        vulkanBreadcrumb( "[VK-TRACE] syncVulkanViewer glViewport=%dx%d glWidget=%dx%d\n",
+        Base::vulkanBreadcrumb( "[VK-TRACE] syncVulkanViewer glViewport=%dx%d glWidget=%dx%d\n",
                 glSize[0], glSize[1],
                 _viewer->getWidget() ? _viewer->getWidget()->width() : -1,
                 _viewer->getWidget() ? _viewer->getWidget()->height() : -1);
     }
     _vulkanViewer->setBackgroundColor(rm->getBackgroundColor());
     const View3DInventorViewer::Background gradient = _viewer->getGradientBackground();
-    if (getenv("FC_VULKAN_BREADCRUMBS")) {
-        vulkanBreadcrumb( "[VK-TRACE] syncVulkanViewer gradient enum=%d\n", static_cast<int>(gradient));
-    }
+    VK_BREADCRUMB("[VK-TRACE] syncVulkanViewer gradient enum=%d\n", static_cast<int>(gradient));
     if (gradient != View3DInventorViewer::Background::NoGradient) {
         SbColor from;
         SbColor to;
@@ -426,45 +419,34 @@ void View3DInventor::syncVulkanViewer()
     else {
         _vulkanViewer->setBackgroundGradient(false, SbColor4f(0.0f, 0.0f, 0.0f, 1.0f), SbColor4f(0.0f, 0.0f, 0.0f, 1.0f));
     }
-    applyVulkanSettings();
+    pushVulkanSettings();
     _vulkanViewer->redraw();
 #endif
 }
 
-void View3DInventor::applyVulkanSettings()
+void View3DInventor::pushVulkanSettings()
 {
 #ifdef FREECAD_USE_VULKAN
-    if (!_vulkanViewer) {
+    if (!_vulkanViewer || !_viewer) {
         return;
     }
-    auto hGrp = App::GetApplication().GetParameterGroupByPath(
-        "User parameter:BaseApp/Preferences/View");
-    if (!hGrp) {
-        return;
-    }
-    if (getenv("FC_VULKAN_BREADCRUMBS")) {
-        vulkanBreadcrumb( "[VK-TRACE] applyVulkanSettings edges=%d points=%d\n",
-                hGrp->GetBool("VulkanShowEdges", false) ? 1 : 0,
-                hGrp->GetBool("VulkanShowPoints", false) ? 1 : 0);
-    }
-    _vulkanViewer->setWireframeOverlay(hGrp->GetBool("VulkanShowEdges", false));
-    _vulkanViewer->setPointsOverlay(hGrp->GetBool("VulkanShowPoints", false));
-    unsigned long color = hGrp->GetUnsigned("VulkanEdgeColor", 0x050505FFUL);
-    SbColor4f edgeColor(
-        ((color >> 24) & 0xff) / 255.0f,
-        ((color >> 16) & 0xff) / 255.0f,
-        ((color >> 8) & 0xff) / 255.0f,
-        1.0f);
-    _vulkanViewer->setEdgeColor(edgeColor);
+    const VulkanViewSettings& settings = _viewer->getVulkanViewSettings();
+    _vulkanViewer->setWireframeOverlay(settings.showEdges);
+    _vulkanViewer->setPointsOverlay(settings.showPoints);
+    _vulkanViewer->setEdgeColor(settings.edgeColor);
 
     // Path tracing toggle (start flag: enabling kicks off a progressive
     // render; camera moves reset to the live preview until restarted).
-    const bool pathTracing = hGrp->GetBool("VulkanPathTracing", false);
-    _vulkanViewer->setPathTracingEnabled(pathTracing);
-    if (pathTracing) {
+    _vulkanViewer->setPathTracingEnabled(settings.pathTracing);
+    if (settings.pathTracing) {
         _vulkanViewer->setPathTracingStart(true);
     }
 #endif
+}
+
+void View3DInventor::onVulkanSettingsChanged()
+{
+    pushVulkanSettings();
 }
 
 void View3DInventor::setPathTracingEnabled(bool enabled)

@@ -23,7 +23,7 @@
 
 #include <FCConfig.h>
 
-#include "VulkanBreadcrumbs.h"
+#include <Base/VulkanBreadcrumbs.h>
 
 #include <algorithm>
 #include <cmath>
@@ -2012,6 +2012,33 @@ void View3DInventorViewer::getGradientBackgroundColor(SbColor& fromColor, SbColo
     toColor = pcBackGround->toColor.getValue();
 }
 
+void View3DInventorViewer::applyVulkanSettings()
+{
+    auto hGrp = App::GetApplication().GetParameterGroupByPath(
+        "User parameter:BaseApp/Preferences/View");
+    if (!hGrp) {
+        return;
+    }
+
+    VK_BREADCRUMB("[VK-TRACE] View3DInventorViewer::applyVulkanSettings edges=%d points=%d\n",
+                  hGrp->GetBool("VulkanShowEdges", false) ? 1 : 0,
+                  hGrp->GetBool("VulkanShowPoints", false) ? 1 : 0);
+
+    vulkanSettings_.showEdges = hGrp->GetBool("VulkanShowEdges", false);
+    vulkanSettings_.showPoints = hGrp->GetBool("VulkanShowPoints", false);
+
+    const unsigned long color = hGrp->GetUnsigned("VulkanEdgeColor", 0x050505FFUL);
+    vulkanSettings_.edgeColor = SbColor4f(
+        ((color >> 24) & 0xff) / 255.0f,
+        ((color >> 16) & 0xff) / 255.0f,
+        ((color >> 8) & 0xff) / 255.0f,
+        1.0f);
+
+    vulkanSettings_.pathTracing = hGrp->GetBool("VulkanPathTracing", false);
+
+    Q_EMIT vulkanSettingsChanged();
+}
+
 void View3DInventorViewer::setGradientBackgroundColor(const SbColor& fromColor, const SbColor& toColor)
 {
     pcBackGround->setColorGradient(fromColor, toColor);
@@ -3396,6 +3423,8 @@ void View3DInventorViewer::renderScene()
     SbVec2s size = vp.getViewportSizePixels();
     glViewport(origin[0], origin[1], size[0], size[1]);
 
+    // Locals are computed inside the guard so the per-frame overhead stays
+    // zero when tracing is off.
     if (getenv("FC_VULKAN_BREADCRUMBS")) {
         static bool logged = false;
         if (!logged) {
@@ -3405,7 +3434,7 @@ void View3DInventorViewer::renderScene()
             if (cam) {
                 vv = cam->getViewVolume();
             }
-            vulkanBreadcrumb(
+            Base::vulkanBreadcrumb(
                     "[VK-TRACE] renderScene glViewport=%dx%d glGLWidget=%dx%d aspect=%f "
                     "near=%f far=%f depth=%f width=%f height=%f\n",
                     size[0], size[1],

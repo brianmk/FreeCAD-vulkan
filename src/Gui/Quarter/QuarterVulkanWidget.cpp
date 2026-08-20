@@ -3,7 +3,7 @@
 // SPDX-FileNotice: Part of the FreeCAD project.
 
 #include "QuarterVulkanWidget.h"
-#include "VulkanBreadcrumbs.h"
+#include <Base/VulkanBreadcrumbs.h>
 
 #ifdef FREECAD_USE_VULKAN
 
@@ -77,6 +77,220 @@ static QByteArray vkVersionStr(uint32_t v)
            QByteArray::number(VK_API_VERSION_PATCH(v));
 }
 
+//! Env-gated frame-dump helper (FC_VULKAN_DUMP_FRAME).
+//!
+//! When disabled every method is a no-op and no Vulkan resources are
+//! allocated.  When enabled it keeps a host-visible staging buffer sized to
+//! the swapchain, records a copy of the presented color image into it inside
+//! the frame's command buffer, and writes the mapped pixels to
+//! /tmp/vk_frame_<n>.png after submission.  This captures the exact pixels
+//! the backend rasterized (QVulkanWindow::grab() renders its own frame).
+//! The dump window is controlled with FC_VULKAN_DUMP_START /
+//! FC_VULKAN_DUMP_END (defaults 240-245).
+class VulkanFrameDumper
+{
+public:
+    VulkanFrameDumper(QVulkanInstance * instance, QVulkanWindow * window)
+        : m_instance(instance)
+        , m_window(window)
+        , m_enabled(qEnvironmentVariableIsSet("FC_VULKAN_DUMP_FRAME"))
+    {
+        if (m_enabled) {
+            m_dumpStart = qEnvironmentVariableIntValue("FC_VULKAN_DUMP_START");
+            m_dumpEnd = qEnvironmentVariableIntValue("FC_VULKAN_DUMP_END");
+            if (m_dumpStart < 0) {
+                m_dumpStart = 240;
+            }
+            if (m_dumpEnd <= 0) {
+                m_dumpEnd = 246;
+            }
+        }
+    }
+
+    void initSwapChainResources()
+    {
+        if (!m_enabled || m_buffer != VK_NULL_HANDLE) {
+            return;
+        }
+        const QSize imgSize = m_window->swapChainImageSize();
+        if (imgSize.width() <= 0 || imgSize.height() <= 0) {
+            return;
+        }
+
+        QVulkanDeviceFunctions * vkdf =
+            m_instance->deviceFunctions(m_window->device());
+        VkBufferCreateInfo bci {};
+        bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bci.size = static_cast<VkDeviceSize>(imgSize.width())
+            * static_cast<VkDeviceSize>(imgSize.height()) * 4;
+        bci.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        VkBuffer buf = VK_NULL_HANDLE;
+        VkDeviceMemory mem = VK_NULL_HANDLE;
+        if (vkdf->vkCreateBuffer(m_window->device(), &bci, nullptr, &buf)
+            != VK_SUCCESS) {
+            vkErr("frame dump staging buffer creation failed");
+            return;
+        }
+
+        VkMemoryRequirements memReq {};
+        vkdf->vkGetBufferMemoryRequirements(m_window->device(), buf, &memReq);
+        VkMemoryAllocateInfo mai {};
+        mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        mai.allocationSize = memReq.size;
+        mai.memoryTypeIndex = findMemoryType(
+            memReq,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+                | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        if (vkdf->vkAllocateMemory(m_window->device(), &mai, nullptr, &mem)
+                != VK_SUCCESS
+            || vkdf->vkBindBufferMemory(m_window->device(), buf, mem, 0)
+                != VK_SUCCESS) {
+            vkErr("frame dump staging buffer alloc failed");
+            if (mem != VK_NULL_HANDLE) {
+                vkdf->vkFreeMemory(m_window->device(), mem, nullptr);
+            }
+            vkdf->vkDestroyBuffer(m_window->device(), buf, nullptr);
+            return;
+        }
+
+        m_buffer = buf;
+        m_memory = mem;
+        m_size = imgSize;
+        vkLog("frame dump staging buffer: %dx%d (%llu bytes)",
+              imgSize.width(), imgSize.height(),
+              static_cast<unsigned long long>(bci.size));
+    }
+
+    void releaseSwapChainResources()
+    {
+        if (m_buffer == VK_NULL_HANDLE) {
+            return;
+        }
+        QVulkanDeviceFunctions * vkdf =
+            m_instance->deviceFunctions(m_window->device());
+        vkdf->vkDestroyBuffer(m_window->device(), m_buffer, nullptr);
+        if (m_memory != VK_NULL_HANDLE) {
+            vkdf->vkFreeMemory(m_window->device(), m_memory, nullptr);
+        }
+        m_buffer = VK_NULL_HANDLE;
+        m_memory = VK_NULL_HANDLE;
+    }
+
+    //! Record the copy of the presented color image into the staging buffer
+    //! inside \a cb (no-op when disabled, outside the dump window, or
+    //! without a staging buffer).
+    void recordFrameCopy(VkCommandBuffer cb, int swapchainIndex, const QSize & size)
+    {
+        if (!m_enabled || m_buffer == VK_NULL_HANDLE) {
+            return;
+        }
+        m_frameCount++;
+        if (m_frameCount < m_dumpStart || m_frameCount >= m_dumpEnd) {
+            return;
+        }
+        m_dumpCount++;
+
+        QVulkanDeviceFunctions * vkdf =
+            m_instance->deviceFunctions(m_window->device());
+        VkImage srcImage = m_window->swapChainImage(swapchainIndex);
+        VkImageMemoryBarrier barrier {};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = srcImage;
+        barrier.subresourceRange = {
+            VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkdf->vkCmdPipelineBarrier(
+            cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
+            1, &barrier);
+
+        VkBufferImageCopy region {};
+        region.imageSubresource = {
+            VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.imageExtent = {static_cast<uint32_t>(size.width()),
+                              static_cast<uint32_t>(size.height()), 1};
+        vkdf->vkCmdCopyImageToBuffer(cb, srcImage,
+                                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                     m_buffer, 1, &region);
+
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        vkdf->vkCmdPipelineBarrier(
+            cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0,
+            nullptr, 1, &barrier);
+    }
+
+    //! Write the staging buffer to a PNG after frame submission (no-op when
+    //! disabled, without a buffer, or after the dump window).
+    void saveFrame()
+    {
+        if (!m_enabled || m_buffer == VK_NULL_HANDLE || m_dumpCount <= 0
+            || m_dumpCount > 6) {
+            return;
+        }
+        QVulkanDeviceFunctions * vkdf =
+            m_instance->deviceFunctions(m_window->device());
+        vkdf->vkQueueWaitIdle(m_window->graphicsQueue());
+        void * data = nullptr;
+        if (vkdf->vkMapMemory(m_window->device(), m_memory, 0,
+                              VK_WHOLE_SIZE, 0, &data) != VK_SUCCESS) {
+            return;
+        }
+        const QImage img(static_cast<const uchar *>(data),
+                         m_size.width(), m_size.height(),
+                         static_cast<qsizetype>(m_size.width()) * 4,
+                         QImage::Format_ARGB32);
+        const QString path =
+            QStringLiteral("/tmp/vk_frame_%1.png").arg(m_dumpCount);
+        if (!img.isNull() && img.save(path)) {
+            vkLog("frame dump %d: %dx%d -> %s", m_dumpCount, img.width(),
+                  img.height(), qPrintable(path));
+        }
+        else {
+            vkErr("frame dump %d: image save failed", m_dumpCount);
+        }
+        vkdf->vkUnmapMemory(m_window->device(), m_memory);
+    }
+
+private:
+    uint32_t findMemoryType(const VkMemoryRequirements & memReq,
+                            uint32_t props)
+    {
+        // Pick a memory type supporting the requested properties.  The
+        // physical device memory properties are fetched with the vulkan
+        // loader directly (QVulkanWindow does not expose them).
+        VkPhysicalDeviceMemoryProperties memProps {};
+        vkGetPhysicalDeviceMemoryProperties(m_window->physicalDevice(),
+                                            &memProps);
+        for (uint32_t i = 0; i < memProps.memoryTypeCount; ++i) {
+            if ((memReq.memoryTypeBits & (1u << i))
+                && (memProps.memoryTypes[i].propertyFlags & props) == props) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
+    QVulkanInstance * m_instance = nullptr;
+    QVulkanWindow * m_window = nullptr;
+    bool m_enabled = false;
+    int m_dumpStart = 240;
+    int m_dumpEnd = 246;
+    VkBuffer m_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory m_memory = VK_NULL_HANDLE;
+    QSize m_size;
+    int m_dumpCount = 0;
+    int m_frameCount = 0;
+};
+
 class QuarterVulkanRenderer;
 
 class QuarterVulkanRenderer final : public QVulkanWindowRenderer
@@ -94,6 +308,7 @@ public:
         , m_window(window)
         , m_owner(owner)
         , m_rayTracing(rayTracing)
+        , m_dumper(instance, window)
     {
     }
 
@@ -110,10 +325,10 @@ public:
                                const SbColor4f & top,
                                const SbColor4f & bottom)
     {
-        if (getenv("FC_VULKAN_BREADCRUMBS")) {
-            Gui::vulkanBreadcrumb( "[VK-TRACE] QuarterVulkanRenderer::setBackgroundGradient enabled=%d top=(%.3f,%.3f,%.3f) bottom=(%.3f,%.3f,%.3f)\n",
-                    enabled ? 1 : 0, top[0], top[1], top[2], bottom[0], bottom[1], bottom[2]);
-        }
+        VK_BREADCRUMB("[VK-TRACE] QuarterVulkanRenderer::setBackgroundGradient "
+                      "enabled=%d top=(%.3f,%.3f,%.3f) bottom=(%.3f,%.3f,%.3f)\n",
+                      enabled ? 1 : 0, top[0], top[1], top[2],
+                      bottom[0], bottom[1], bottom[2]);
         m_backgroundGradient = enabled;
         m_backgroundTop = top;
         m_backgroundBottom = bottom;
@@ -186,122 +401,14 @@ public:
         vkLog("  sample count: %d", static_cast<int>(samples));
         vkLog("  swapchain images: %d", m_window->swapChainImageCount());
 
-        // Frame-dump staging buffer (FC_VULKAN_DUMP_FRAME).
-        const QSize imgSize = m_window->swapChainImageSize();
-        if (m_dumpBuffer == VK_NULL_HANDLE && imgSize.width() > 0
-            && imgSize.height() > 0) {
-            QVulkanDeviceFunctions * vkdf =
-                m_instance->deviceFunctions(m_window->device());
-            VkBufferCreateInfo bci {};
-            bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-            bci.size = static_cast<VkDeviceSize>(imgSize.width())
-                * static_cast<VkDeviceSize>(imgSize.height()) * 4;
-            bci.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-            VkBuffer buf = VK_NULL_HANDLE;
-            VkDeviceMemory mem = VK_NULL_HANDLE;
-            if (vkdf->vkCreateBuffer(m_window->device(), &bci, nullptr, &buf)
-                == VK_SUCCESS) {
-                VkMemoryRequirements memReq {};
-                vkdf->vkGetBufferMemoryRequirements(m_window->device(), buf,
-                                                    &memReq);
-                VkMemoryAllocateInfo mai {};
-                mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-                mai.allocationSize = memReq.size;
-                mai.memoryTypeIndex = findMemoryType(
-                    m_window, memReq,
-                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
-                        | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-                if (vkdf->vkAllocateMemory(m_window->device(), &mai, nullptr,
-                                           &mem) == VK_SUCCESS
-                    && vkdf->vkBindBufferMemory(m_window->device(), buf, mem,
-                                                0) == VK_SUCCESS) {
-                    m_dumpBuffer = buf;
-                    m_dumpMemory = mem;
-                    m_dumpSize = imgSize;
-                    vkLog("frame dump staging buffer: %dx%d (%llu bytes)",
-                          imgSize.width(), imgSize.height(),
-                          static_cast<unsigned long long>(bci.size));
-                }
-                else {
-                    vkErr("frame dump staging buffer alloc failed");
-                    if (mem != VK_NULL_HANDLE) {
-                        vkdf->vkFreeMemory(m_window->device(), mem, nullptr);
-                    }
-                    vkdf->vkDestroyBuffer(m_window->device(), buf, nullptr);
-                }
-            }
-            else {
-                vkErr("frame dump staging buffer creation failed");
-            }
-        }
+        m_dumper.initSwapChainResources();
     }
 
     void releaseSwapChainResources() override
     {
         vkLog("releaseSwapChainResources");
         m_manager.setRenderTarget(nullptr);
-        destroyDumpBuffer();
-    }
-
-    void destroyDumpBuffer()
-    {
-        if (m_dumpBuffer != VK_NULL_HANDLE) {
-            QVulkanDeviceFunctions * vkdf =
-                m_instance->deviceFunctions(m_window->device());
-            vkdf->vkDestroyBuffer(m_window->device(), m_dumpBuffer, nullptr);
-            if (m_dumpMemory != VK_NULL_HANDLE) {
-                vkdf->vkFreeMemory(m_window->device(), m_dumpMemory, nullptr);
-            }
-            m_dumpBuffer = VK_NULL_HANDLE;
-            m_dumpMemory = VK_NULL_HANDLE;
-        }
-    }
-
-    static uint32_t findMemoryType(QVulkanWindow * window,
-                                   const VkMemoryRequirements & memReq,
-                                   uint32_t props)
-    {
-        // Pick a memory type supporting the requested properties.  The
-        // physical device memory properties are fetched with the vulkan
-        // loader directly (QVulkanWindow does not expose them).
-        VkPhysicalDeviceMemoryProperties memProps {};
-        vkGetPhysicalDeviceMemoryProperties(window->physicalDevice(),
-                                            &memProps);
-        for (uint32_t i = 0; i < memProps.memoryTypeCount; ++i) {
-            if ((memReq.memoryTypeBits & (1u << i))
-                && (memProps.memoryTypes[i].propertyFlags & props) == props) {
-                return i;
-            }
-        }
-        return 0;
-    }
-
-    void saveDumpImage()
-    {
-        if (m_dumpBuffer == VK_NULL_HANDLE || m_dumpMemory == VK_NULL_HANDLE) {
-            return;
-        }
-        QVulkanDeviceFunctions * vkdf =
-            m_instance->deviceFunctions(m_window->device());
-        vkdf->vkQueueWaitIdle(m_window->graphicsQueue());
-        void * data = nullptr;
-        if (vkdf->vkMapMemory(m_window->device(), m_dumpMemory, 0,
-                              VK_WHOLE_SIZE, 0, &data) == VK_SUCCESS) {
-            const QImage img(static_cast<const uchar *>(data),
-                             m_dumpSize.width(), m_dumpSize.height(),
-                             static_cast<qsizetype>(m_dumpSize.width()) * 4,
-                             QImage::Format_ARGB32);
-            const QString path = QStringLiteral("/tmp/vk_frame_%1.png")
-                                     .arg(dumpCount);
-            if (!img.isNull() && img.save(path)) {
-                vkLog("frame dump %d: %dx%d -> %s", dumpCount, img.width(),
-                      img.height(), qPrintable(path));
-            }
-            else {
-                vkErr("frame dump %d: image save failed", dumpCount);
-            }
-            vkdf->vkUnmapMemory(m_window->device(), m_dumpMemory);
-        }
+        m_dumper.releaseSwapChainResources();
     }
 
     void releaseResources() override
@@ -371,16 +478,11 @@ public:
                              static_cast<short>(size.height()));
         m_manager.setViewportRegion(vp);
         m_manager.setBackgroundColor(m_background);
-        if (getenv("FC_VULKAN_BREADCRUMBS")) {
-            static bool logged = false;
-            if (!logged) {
-                logged = true;
-                Gui::vulkanBreadcrumb( "[VK-TRACE] startNextFrame: setBackgroundGradient enabled=%d top=(%.3f,%.3f,%.3f) bottom=(%.3f,%.3f,%.3f)\n",
-                        m_backgroundGradient ? 1 : 0,
-                        m_backgroundTop[0], m_backgroundTop[1], m_backgroundTop[2],
-                        m_backgroundBottom[0], m_backgroundBottom[1], m_backgroundBottom[2]);
-            }
-        }
+        VK_BREADCRUMB_ONCE("[VK-TRACE] startNextFrame: setBackgroundGradient "
+                           "enabled=%d top=(%.3f,%.3f,%.3f) bottom=(%.3f,%.3f,%.3f)\n",
+                           m_backgroundGradient ? 1 : 0,
+                           m_backgroundTop[0], m_backgroundTop[1], m_backgroundTop[2],
+                           m_backgroundBottom[0], m_backgroundBottom[1], m_backgroundBottom[2]);
         m_manager.setBackgroundGradient(m_backgroundGradient,
                                         m_backgroundTop,
                                         m_backgroundBottom);
@@ -467,69 +569,14 @@ public:
 
         vkdf->vkCmdEndRenderPass(cb);
 
-        // Env-gated frame dump: copy the swapchain color image into a
-        // staging buffer inside the same command buffer, then read it back
-        // after submission and write a PNG.  This captures the exact pixels
-        // the backend rasterized (grab() renders its own frame and returned
-        // null in this setup).  The dump window is controlled with
-        // FC_VULKAN_DUMP_START / FC_VULKAN_DUMP_END (defaults 240-245).
-        frameCount++;
-        static int dumpStart = qEnvironmentVariableIntValue("FC_VULKAN_DUMP_START");
-        static int dumpEnd = qEnvironmentVariableIntValue("FC_VULKAN_DUMP_END");
-        if (dumpStart < 0) {
-            dumpStart = 240;
-        }
-        if (dumpEnd <= 0) {
-            dumpEnd = 246;
-        }
-        const bool dumpThisFrame = qEnvironmentVariableIsSet("FC_VULKAN_DUMP_FRAME")
-            && frameCount >= dumpStart && frameCount < dumpEnd;
-        if (dumpThisFrame) {
-            dumpCount++;
-            if (m_dumpMemory != VK_NULL_HANDLE) {
-                VkImage srcImage = m_window->swapChainImage(index);
-                VkImageMemoryBarrier barrier {};
-                barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
-                barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-                barrier.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-                barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                barrier.image = srcImage;
-                barrier.subresourceRange = {
-                    VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-                vkdf->vkCmdPipelineBarrier(
-                    cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                    VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
-                    1, &barrier);
-
-                VkBufferImageCopy region {};
-                region.imageSubresource = {
-                    VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-                region.imageExtent = {static_cast<uint32_t>(size.width()),
-                                      static_cast<uint32_t>(size.height()), 1};
-                vkdf->vkCmdCopyImageToBuffer(cb, srcImage,
-                                             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                             m_dumpBuffer, 1, &region);
-
-                barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-                barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-                barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-                barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-                vkdf->vkCmdPipelineBarrier(
-                    cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0,
-                    nullptr, 1, &barrier);
-            }
-        }
+        // Env-gated frame dump (see VulkanFrameDumper): copy the swapchain
+        // color image into a staging buffer inside the same command buffer,
+        // then read it back after submission and write a PNG.
+        m_dumper.recordFrameCopy(cb, index, size);
 
         m_window->frameReady();
 
-        if (qEnvironmentVariableIsSet("FC_VULKAN_DUMP_FRAME") && dumpCount > 0
-            && dumpCount <= 6) {
-            saveDumpImage();
-        }
+        m_dumper.saveFrame();
         // Re-render every frame.  The Vulkan surface is display-only: camera
         // navigation, selection and scene-graph edits all happen on the
         // (hidden) OpenGL viewer that owns the same SoCamera and scene-graph
@@ -562,11 +609,7 @@ private:
     bool m_rayTracing = false;
     SoVulkanRenderManager m_manager;
     SoVulkanRenderTarget m_target;
-    VkBuffer m_dumpBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory m_dumpMemory = VK_NULL_HANDLE;
-    QSize m_dumpSize;
-    int dumpCount = 0;
-    int frameCount = 0;
+    VulkanFrameDumper m_dumper;
 };
 
 /*!
@@ -827,11 +870,10 @@ void QuarterVulkanWidget::setBackgroundGradient(bool enabled,
                                                 const SbColor4f & topColor,
                                                 const SbColor4f & bottomColor)
 {
-    if (getenv("FC_VULKAN_BREADCRUMBS")) {
-        Gui::vulkanBreadcrumb( "[VK-TRACE] QuarterVulkanWidget::setBackgroundGradient enabled=%d top=(%.3f,%.3f,%.3f) bottom=(%.3f,%.3f,%.3f)\n",
-                enabled ? 1 : 0, topColor[0], topColor[1], topColor[2],
-                bottomColor[0], bottomColor[1], bottomColor[2]);
-    }
+    VK_BREADCRUMB("[VK-TRACE] QuarterVulkanWidget::setBackgroundGradient "
+                  "enabled=%d top=(%.3f,%.3f,%.3f) bottom=(%.3f,%.3f,%.3f)\n",
+                  enabled ? 1 : 0, topColor[0], topColor[1], topColor[2],
+                  bottomColor[0], bottomColor[1], bottomColor[2]);
     d->backgroundGradient = enabled;
     d->backgroundTop = topColor;
     d->backgroundBottom = bottomColor;
@@ -876,7 +918,7 @@ bool QuarterVulkanWidget::eventFilter(QObject * watched, QEvent * event)
             const auto* me = static_cast<const QMouseEvent*>(event);
             const QWidget* gl = d->forwardTarget;
             const QWidget* container = d->container;
-            Gui::vulkanBreadcrumb(
+            Base::vulkanBreadcrumb(
                     "[VK-TRACE] eventFilter watched=%s type=%d pos=(%.1f,%.1f) "
                     "global=(%.1f,%.1f) | container rect=(%d,%d %dx%d) dpr=%.2f "
                     "| glWidget rect=(%d,%d %dx%d) dpr=%.2f\n",
@@ -985,10 +1027,8 @@ void QuarterVulkanWidget::setPathTracingEnabled(bool enabled)
     if (!d->renderer) {
         return;
     }
-    if (getenv("FC_VULKAN_BREADCRUMBS")) {
-        Gui::vulkanBreadcrumb("[VK-TRACE] QuarterVulkanWidget::setPathTracingEnabled enabled=%d\n",
-                              enabled ? 1 : 0);
-    }
+    VK_BREADCRUMB("[VK-TRACE] QuarterVulkanWidget::setPathTracingEnabled enabled=%d\n",
+                  enabled ? 1 : 0);
     d->renderer->getManager()->setPathTracingEnabled(enabled ? TRUE : FALSE);
     redraw();
 }
@@ -1016,14 +1056,6 @@ bool QuarterVulkanWidget::getPathTracingActive() const
         return false;
     }
     return d->renderer->getManager()->getPathTracingActive() ? true : false;
-}
-
-unsigned QuarterVulkanWidget::getPathTracingSampleCount() const
-{
-    if (!d->renderer) {
-        return 0;
-    }
-    return d->renderer->getManager()->getPathTracingSampleCount();
 }
 
 QWidget * QuarterVulkanWidget::getNativeWidget()

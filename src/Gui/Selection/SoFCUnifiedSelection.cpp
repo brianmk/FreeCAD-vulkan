@@ -22,7 +22,7 @@
  ***************************************************************************/
 
 #include <FCConfig.h>
-#include "VulkanBreadcrumbs.h"
+#include <Base/VulkanBreadcrumbs.h>
 
 #include <Inventor/SoFullPath.h>
 #include <Inventor/SoPickedPoint.h>
@@ -558,13 +558,10 @@ void SoFCUnifiedSelection::doAction(SoAction* action)
             }
 
             if (pathToHighlight) {
-                if (getenv("FC_VULKAN_BREADCRUMBS")) {
-                    static int logged = 0;
-                    if (logged++ < 20) {
-                        vulkanBreadcrumb( "[VK-TRACE] SoFCUnifiedSelection setPreselect apply highlight path len=%d\n",
-                                pathToHighlight->getLength());
-                    }
-                }
+                VK_BREADCRUMB_LIMITED(20,
+                                      "[VK-TRACE] SoFCUnifiedSelection setPreselect apply highlight "
+                                      "path len=%d\n",
+                                      pathToHighlight->getLength());
                 SoHighlightElementAction highlightAction;
                 highlightAction.setHighlighted(true);
                 highlightAction.setColor(this->colorHighlight.getValue());
@@ -654,13 +651,10 @@ void SoFCUnifiedSelection::doAction(SoAction* action)
                     SoSelectionElementAction selectionAction(type);
                     selectionAction.setColor(this->colorSelection.getValue());
                     selectionAction.setElement(detail);
-                    if (getenv("FC_VULKAN_BREADCRUMBS")) {
-                        static int logged = 0;
-                        if (logged++ < 20) {
-                            vulkanBreadcrumb( "[VK-TRACE] SoFCUnifiedSelection apply selection type=%d detailPathLen=%d\n",
-                                    (int)type, detailPath->getLength());
-                        }
-                    }
+                    VK_BREADCRUMB_LIMITED(20,
+                                          "[VK-TRACE] SoFCUnifiedSelection apply selection "
+                                          "type=%d detailPathLen=%d\n",
+                                          (int)type, detailPath->getLength());
                     if (detailPath->getLength()) {
                         selectionAction.apply(detailPath);
                     }
@@ -803,12 +797,10 @@ bool SoFCUnifiedSelection::setPreselect(
             currentHighlightPath = Gui::toFullPath(path->copy());
             currentHighlightPath->ref();
             highlighted = true;
-            if (getenv("FC_VULKAN_BREADCRUMBS")) {
-                Gui::vulkanBreadcrumb(
-                        "[VK-TRACE] setPreselect HIGHLIGHT-ON doc=%s obj=%s "
-                        "elem=%s world=(%.4f,%.4f,%.4f)\n",
-                        docname, objname, element ? element : "", x, y, z);
-            }
+            VK_BREADCRUMB(
+                    "[VK-TRACE] setPreselect HIGHLIGHT-ON doc=%s obj=%s "
+                    "elem=%s world=(%.4f,%.4f,%.4f)\n",
+                    docname, objname, element ? element : "", x, y, z);
         }
     }
 
@@ -1075,11 +1067,13 @@ void SoFCUnifiedSelection::handleEvent(SoHandleEventAction* action)
     //
     bool isMouseMotionEvent = event->isOfType(SoLocation2Event::getClassTypeId());
     if (isMouseMotionEvent) {
+        // Locals are computed inside the guard so the per-motion overhead
+        // stays zero when tracing is off.
         if (getenv("FC_VULKAN_BREADCRUMBS")) {
             const SbVec2s pos = event->getPosition();
             const SbViewportRegion vp = action->getViewportRegion();
             const SbVec2s vpsize = vp.getViewportSizePixels();
-            Gui::vulkanBreadcrumb(
+            Base::vulkanBreadcrumb(
                     "[VK-TRACE] SoFCUnifiedSelection::handleEvent motion "
                     "eventPos=%d,%d viewport=%dx%d normalized=(%.4f,%.4f)\n",
                     pos[0], pos[1], vpsize[0], vpsize[1],
@@ -1984,13 +1978,9 @@ void SoFCSelectionRoot::IRRender(SoIRRenderAction* action)
 
 void SoFCSelectionRoot::renderPrivateIR(SoIRRenderAction* action)
 {
-    if (getenv("FC_VULKAN_BREADCRUMBS")) {
-        static int logged = 0;
-        if (logged++ < 10) {
-            vulkanBreadcrumb( "[VK-TRACE] SoFCSelectionRoot::renderPrivateIR this=%p SelStack.size=%zu\n",
-                    this, SelStack.size());
-        }
-    }
+    VK_BREADCRUMB_LIMITED(10,
+                          "[VK-TRACE] SoFCSelectionRoot::renderPrivateIR this=%p SelStack.size=%zu\n",
+                          this, SelStack.size());
     if (ViewParams::instance()->getCoinCycleCheck() && !SelStack.nodeSet.insert(this).second) {
         std::time_t t = std::time(nullptr);
         if (_CyclicLastReported < t) {
@@ -2019,13 +2009,10 @@ bool SoFCSelectionRoot::_renderPrivateIR(SoIRRenderAction* action)
     auto state = action->getState();
     SelContextPtr ctx = getRenderContext<SelContext>(this);
     const int style = selectionStyle.getValue();
-    if (getenv("FC_VULKAN_BREADCRUMBS")) {
-        static int logged2 = 0;
-        if (logged2++ < 10) {
-            vulkanBreadcrumb( "[VK-TRACE] SoFCSelectionRoot::_renderPrivateIR this=%p ctx=%p selAll=%d hlAll=%d style=%d\n",
-                    this, ctx.get(), ctx ? ctx->selAll : -1, ctx ? ctx->hlAll : -1, style);
-        }
-    }
+    VK_BREADCRUMB_LIMITED(10,
+                          "[VK-TRACE] SoFCSelectionRoot::_renderPrivateIR this=%p ctx=%p "
+                          "selAll=%d hlAll=%d style=%d\n",
+                          this, ctx.get(), ctx ? ctx->selAll : -1, ctx ? ctx->hlAll : -1, style);
     if (ctx && ctx->hideAll) {
         return false;
     }

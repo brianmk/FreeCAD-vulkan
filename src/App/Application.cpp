@@ -80,6 +80,7 @@
 #include <Base/BoundBoxPy.h>
 #include <Base/ConsoleObserver.h>
 #include <Base/ServiceProvider.h>
+#include <Base/VulkanBreadcrumbs.h>
 #include <Base/CoordinateSystemPy.h>
 #include <Base/Exception.h>
 #include <Base/ExceptionFactory.h>
@@ -2696,9 +2697,7 @@ void processProgramOptions(const boost::program_options::variables_map& vm, std:
     }
 
     if (vm.contains("enable-vulkan")) {
-        if (getenv("FC_VULKAN_BREADCRUMBS")) {
-            fprintf(stderr, "[VK-TRACE] Application: --enable-vulkan -> UseVulkanRenderer=1\n");
-        }
+        VK_BREADCRUMB("[VK-TRACE] Application: --enable-vulkan -> UseVulkanRenderer=1\n");
         mConfig["UseVulkanRenderer"] = "1";
     }
 

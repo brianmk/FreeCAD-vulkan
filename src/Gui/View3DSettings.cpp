@@ -35,7 +35,6 @@
 #include "Selection/SelectionColors.h"
 #include "SoFCSelectionAction.h"
 #include "View3DSettings.h"
-#include "View3DInventor.h"
 #include "View3DInventorViewer.h"
 
 #include <Base/Tools.h>
@@ -522,12 +521,10 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
              || strcmp(Reason, "VulkanShowPoints") == 0
              || strcmp(Reason, "VulkanEdgeColor") == 0
              || strcmp(Reason, "VulkanPathTracing") == 0) {
-        // Vulkan-only display options live on the owning View3DInventor, not
-        // the viewer itself, so re-apply them through the parent view.
+        // Vulkan-only display options are owned by the viewers; each viewer
+        // reloads them from the preferences and notifies its Vulkan viewport.
         for (auto _viewer : _viewers) {
-            if (_viewer->parentView()) {
-                _viewer->parentView()->applyVulkanSettings();
-            }
+            _viewer->applyVulkanSettings();
         }
     }
     else {

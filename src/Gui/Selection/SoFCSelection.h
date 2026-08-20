@@ -140,6 +140,7 @@ private:
     static void turnoffcurrent(SoAction* action);
     bool setOverride(SoGLRenderAction* action, SelContextPtr);
     bool setOverrideIR(SoIRRenderAction* action, SelContextPtr);
+    bool getOverrideColor(SelContextPtr ctx, bool& preselected, SbColor& color) const;
     SbBool isHighlighted(SoAction* action);
     SbBool preRender(SoGLRenderAction* act, GLint& oldDepthFunc);
     const SoPickedPoint* getPickedPoint(SoHandleEventAction*) const;

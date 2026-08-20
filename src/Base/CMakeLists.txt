@@ -320,6 +320,7 @@ SET(FreeCADBase_HPP_SRCS
     Uuid.h
     Vector3D.h
     ViewProj.h
+    VulkanBreadcrumbs.h
     Writer.h
     XMLTools.h
     ZipHeader.h

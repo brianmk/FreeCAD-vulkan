@@ -181,9 +181,6 @@ public:
     //! True while a progressive accumulation is running.
     bool getPathTracingActive() const;
 
-    //! Samples accumulated in the current progressive run (0 when idle).
-    unsigned getPathTracingSampleCount() const;
-
 protected:
     bool eventFilter(QObject * watched, QEvent * event) override;
 

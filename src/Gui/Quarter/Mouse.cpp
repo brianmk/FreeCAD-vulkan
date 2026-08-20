@@ -53,7 +53,7 @@
 #include <Inventor/events/SoEvents.h>
 
 #include "QuarterWidget.h"
-#include "VulkanBreadcrumbs.h"
+#include <Base/VulkanBreadcrumbs.h>
 #include "devices/Mouse.h"
 
 
@@ -158,13 +158,11 @@ MouseP::resizeEvent(QResizeEvent * event)
 {
   this->windowsize = SbVec2s(event->size().width(),
                              event->size().height());
-  if (getenv("FC_VULKAN_BREADCRUMBS")) {
-    Gui::vulkanBreadcrumb(
-            "[VK-TRACE] MouseP::resizeEvent widget=%dx%d event=%dx%d -> windowsize=%d,%d\n",
-            publ->quarter->width(), publ->quarter->height(),
-            event->size().width(), event->size().height(),
-            this->windowsize[0], this->windowsize[1]);
-  }
+  VK_BREADCRUMB(
+          "[VK-TRACE] MouseP::resizeEvent widget=%dx%d event=%dx%d -> windowsize=%d,%d\n",
+          publ->quarter->width(), publ->quarter->height(),
+          event->size().width(), event->size().height(),
+          this->windowsize[0], this->windowsize[1]);
 }
 
 const SoEvent *

@@ -138,10 +138,6 @@ public:
     bool containsViewProvider(const ViewProvider*) const override;
 
 public Q_SLOTS:
-    /// Re-read Vulkan-only display options from the preferences and push
-    /// them to the Vulkan viewer (no-op on the OpenGL path).
-    void applyVulkanSettings();
-
     /// override the cursor in this view
     void setOverrideCursor(const QCursor&) override;
     void restoreOverrideCursor() override;
@@ -166,10 +162,15 @@ public Q_SLOTS:
 
 protected Q_SLOTS:
     void stopAnimating();
+    /// Push the viewer-owned Vulkan options to the Vulkan widget.
+    void onVulkanSettingsChanged();
 
 private:
     void applySettings();
     void syncVulkanViewer();
+    /// Push the viewer-owned Vulkan options to the Vulkan widget (no-op
+    /// without a Vulkan viewer).
+    void pushVulkanSettings();
 
 protected:
     void windowStateChanged(QWidget* view) override;

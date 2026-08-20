@@ -23,7 +23,7 @@
 
 #include <algorithm>
 #include <cstdlib>
-#include <Gui/VulkanBreadcrumbs.h>
+#include <Base/VulkanBreadcrumbs.h>
 #include <limits>
 #include <set>
 #include <vector>
@@ -231,6 +231,59 @@ static void renderOverlayFacesIR(
     state->pop();
 }
 
+//! Shared decision logic for renderHighlight()/renderHighlightIR(): which
+//! parts the highlight covers, and whether it covers all parts.
+static bool collectHighlightParts(Gui::SoFCSelectionContextExPtr ctx,
+                                  int partCount,
+                                  std::set<int>& parts,
+                                  bool& selectAll)
+{
+    if (!ctx || ctx->highlightIndex < 0) {
+        return false;
+    }
+
+    const int id = ctx->highlightIndex;
+    if (id != std::numeric_limits<int>::max() && (id < 0 || id >= partCount)) {
+        SoDebugError::postWarning("SoBrepFaceSet::collectHighlightParts",
+                                  "highlightIndex out of range");
+        return false;
+    }
+
+    selectAll = (id == std::numeric_limits<int>::max());
+    if (!selectAll) {
+        parts.insert(id);
+    }
+    return true;
+}
+
+//! Shared decision logic for renderSelection()/renderSelectionIR().
+static bool collectSelectionParts(Gui::SoFCSelectionContextExPtr ctx,
+                                  int partCount,
+                                  std::set<int>& parts,
+                                  bool& selectAll)
+{
+    if (!ctx || ctx->selectionIndex.empty()) {
+        return false;
+    }
+
+    selectAll = ctx->isSelectAll();
+    if (selectAll) {
+        return true;
+    }
+
+    for (int idx : ctx->selectionIndex) {
+        if (idx >= 0 && idx < partCount) {
+            parts.insert(idx);
+        }
+    }
+    if (parts.empty()) {
+        SoDebugError::postWarning("SoBrepFaceSet::collectSelectionParts",
+                                  "selectionIndex out of range");
+        return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 void SoBrepFaceSet::initClass()
@@ -271,14 +324,10 @@ void SoBrepFaceSet::doAction(SoAction* action)
     if (action->getTypeId() == Gui::SoHighlightElementAction::getClassTypeId()) {
         auto* hlaction = static_cast<Gui::SoHighlightElementAction*>(action);
         selCounter.checkAction(hlaction);
-        if (getenv("FC_VULKAN_BREADCRUMBS")) {
-            static int logged = 0;
-            if (logged++ < 30) {
-                Gui::vulkanBreadcrumb( "[VK-TRACE] SoBrepFaceSet::doAction HL this=%p highlighted=%d detail=%p\n",
-                        this, hlaction->isHighlighted() ? 1 : 0,
-                        (const void*)hlaction->getElement());
-            }
-        }
+        VK_BREADCRUMB_LIMITED(30,
+                              "[VK-TRACE] SoBrepFaceSet::doAction HL this=%p highlighted=%d detail=%p\n",
+                              this, hlaction->isHighlighted() ? 1 : 0,
+                              (const void*)hlaction->getElement());
         if (!hlaction->isHighlighted()) {
             SelContextPtr ctx
                 = Gui::SoFCSelectionRoot::getActionContext(action, this, selContext, false);
@@ -450,25 +499,15 @@ void SoBrepFaceSet::doAction(SoAction* action)
 
 void SoBrepFaceSet::renderHighlight(SoGLRenderAction* action, SelContextPtr ctx)
 {
-    if (!ctx || ctx->highlightIndex < 0) {
-        return;
-    }
-
     const int32_t* partCounts = this->partIndex.getValues(0);
     const int partCount = this->partIndex.getNum();
     const int32_t* ci = this->coordIndex.getValues(0);
     const int ciCount = this->coordIndex.getNum();
 
-    const int id = ctx->highlightIndex;
-    if (id != std::numeric_limits<int>::max() && (id < 0 || id >= partCount)) {
-        SoDebugError::postWarning("SoBrepFaceSet::renderHighlight", "highlightIndex out of range");
-        return;
-    }
-
     std::set<int> parts;
-    const bool selectAll = (id == std::numeric_limits<int>::max());
-    if (!selectAll) {
-        parts.insert(id);
+    bool selectAll = false;
+    if (!collectHighlightParts(ctx, partCount, parts, selectAll)) {
+        return;
     }
     buildOverlayCoordIndex(overlayCoordIndex, ci, ciCount, partCounts, partCount, parts, selectAll);
 
@@ -480,65 +519,35 @@ void SoBrepFaceSet::renderHighlight(SoGLRenderAction* action, SelContextPtr ctx)
 
 void SoBrepFaceSet::renderSelection(SoGLRenderAction* action, SelContextPtr ctx, bool /*push*/)
 {
-    if (!ctx || ctx->selectionIndex.empty()) {
-        return;
-    }
-
     const int32_t* partCounts = this->partIndex.getValues(0);
     const int partCount = this->partIndex.getNum();
     const int32_t* ci = this->coordIndex.getValues(0);
     const int ciCount = this->coordIndex.getNum();
 
-    if (ctx->isSelectAll()) {
-        std::set<int> dummy;
-        buildOverlayCoordIndex(overlayCoordIndex, ci, ciCount, partCounts, partCount, dummy, true);
-        renderOverlayFaces(action, overlayFaceSet, overlayCoordIndex, ctx->selectionColor, false);
-        return;
-    }
-
     std::set<int> parts;
-    for (int idx : ctx->selectionIndex) {
-        if (idx >= 0 && idx < partCount) {
-            parts.insert(idx);
-        }
-    }
-    if (parts.empty()) {
-        SoDebugError::postWarning("SoBrepFaceSet::renderSelection", "selectionIndex out of range");
+    bool selectAll = false;
+    if (!collectSelectionParts(ctx, partCount, parts, selectAll)) {
         return;
     }
-
-    buildOverlayCoordIndex(overlayCoordIndex, ci, ciCount, partCounts, partCount, parts, false);
+    buildOverlayCoordIndex(overlayCoordIndex, ci, ciCount, partCounts, partCount, parts, selectAll);
     renderOverlayFaces(action, overlayFaceSet, overlayCoordIndex, ctx->selectionColor, false);
 }
 
 void SoBrepFaceSet::renderHighlightIR(SoIRRenderAction* action, SelContextPtr ctx)
 {
-    if (getenv("FC_VULKAN_BREADCRUMBS")) {
-        static int logged = 0;
-        if (logged++ < 5) {
-            Gui::vulkanBreadcrumb( "[VK-TRACE] SoBrepFaceSet::renderHighlightIR ctx=%p hlIdx=%d\n",
-                    ctx.get(), ctx ? ctx->highlightIndex : -2);
-        }
-    }
-    if (!ctx || ctx->highlightIndex < 0) {
-        return;
-    }
+    VK_BREADCRUMB_LIMITED(5,
+                          "[VK-TRACE] SoBrepFaceSet::renderHighlightIR ctx=%p hlIdx=%d\n",
+                          ctx.get(), ctx ? ctx->highlightIndex : -2);
 
     const int32_t* partCounts = this->partIndex.getValues(0);
     const int partCount = this->partIndex.getNum();
     const int32_t* ci = this->coordIndex.getValues(0);
     const int ciCount = this->coordIndex.getNum();
 
-    const int id = ctx->highlightIndex;
-    if (id != std::numeric_limits<int>::max() && (id < 0 || id >= partCount)) {
-        SoDebugError::postWarning("SoBrepFaceSet::renderHighlightIR", "highlightIndex out of range");
-        return;
-    }
-
     std::set<int> parts;
-    const bool selectAll = (id == std::numeric_limits<int>::max());
-    if (!selectAll) {
-        parts.insert(id);
+    bool selectAll = false;
+    if (!collectHighlightParts(ctx, partCount, parts, selectAll)) {
+        return;
     }
     buildOverlayCoordIndex(overlayCoordIndex, ci, ciCount, partCounts, partCount, parts, selectAll);
     renderOverlayFacesIR(action, overlayFaceSet, overlayCoordIndex, ctx->highlightColor, true);
@@ -546,34 +555,17 @@ void SoBrepFaceSet::renderHighlightIR(SoIRRenderAction* action, SelContextPtr ct
 
 void SoBrepFaceSet::renderSelectionIR(SoIRRenderAction* action, SelContextPtr ctx)
 {
-    if (!ctx || ctx->selectionIndex.empty()) {
-        return;
-    }
-
     const int32_t* partCounts = this->partIndex.getValues(0);
     const int partCount = this->partIndex.getNum();
     const int32_t* ci = this->coordIndex.getValues(0);
     const int ciCount = this->coordIndex.getNum();
 
-    if (ctx->isSelectAll()) {
-        std::set<int> dummy;
-        buildOverlayCoordIndex(overlayCoordIndex, ci, ciCount, partCounts, partCount, dummy, true);
-        renderOverlayFacesIR(action, overlayFaceSet, overlayCoordIndex, ctx->selectionColor, false);
-        return;
-    }
-
     std::set<int> parts;
-    for (int idx : ctx->selectionIndex) {
-        if (idx >= 0 && idx < partCount) {
-            parts.insert(idx);
-        }
-    }
-    if (parts.empty()) {
-        SoDebugError::postWarning("SoBrepFaceSet::renderSelectionIR", "selectionIndex out of range");
+    bool selectAll = false;
+    if (!collectSelectionParts(ctx, partCount, parts, selectAll)) {
         return;
     }
-
-    buildOverlayCoordIndex(overlayCoordIndex, ci, ciCount, partCounts, partCount, parts, false);
+    buildOverlayCoordIndex(overlayCoordIndex, ci, ciCount, partCounts, partCount, parts, selectAll);
     renderOverlayFacesIR(action, overlayFaceSet, overlayCoordIndex, ctx->selectionColor, false);
 }
 
@@ -915,14 +907,10 @@ void SoBrepFaceSet::IRRender(SoIRRenderAction* action)
 
     SelContextPtr ctx2;
     SelContextPtr ctx = Gui::SoFCSelectionRoot::getRenderContext(this, selContext, ctx2);
-    if (getenv("FC_VULKAN_BREADCRUMBS")) {
-        static int logged = 0;
-        if (logged++ < 5) {
-            Gui::vulkanBreadcrumb( "[VK-TRACE] SoBrepFaceSet::IRRender this=%p ctx=%p hlIdx=%d ctx2=%p selIdx=%zu\n",
-                    this, ctx.get(), ctx ? ctx->highlightIndex : -2,
-                    ctx2.get(), ctx2 ? ctx2->selectionIndex.size() : (size_t)-1);
-        }
-    }
+    VK_BREADCRUMB_LIMITED(5,
+                          "[VK-TRACE] SoBrepFaceSet::IRRender this=%p ctx=%p hlIdx=%d ctx2=%p selIdx=%zu\n",
+                          this, ctx.get(), ctx ? ctx->highlightIndex : -2,
+                          ctx2.get(), ctx2 ? ctx2->selectionIndex.size() : (size_t)-1);
     const bool hasSecondaryColors = ctx2 && !ctx2->colors.empty();
     const bool hasOverlayFields = (highlightPartIndex.getNum() > 0)
         || (selectionPartIndex.getNum() > 0);

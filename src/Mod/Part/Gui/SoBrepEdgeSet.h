@@ -35,11 +35,21 @@
 
 class SoCoordinateElement;
 class SoIRRenderAction;
+class SoState;
 
 namespace PartGui
 {
 
 class ViewProviderPartExt;
+
+/// Controls how B-rep overlay primitives interact with the scene depth buffer.
+enum class OverlayDepthMode
+{
+    /// Keep normal occlusion so committed selection does not expose hidden geometry.
+    RespectDepth,
+    /// Render above model geometry for hover and preselection feedback.
+    DrawOnTop,
+};
 
 class PartGuiExport SoBrepEdgeSet: public SoIndexedLineSet
 {
@@ -80,10 +90,21 @@ private:
     struct SelContext;
     using SelContextPtr = std::shared_ptr<SelContext>;
 
+    /// Indices/color/depth-mode payload shared by the GL and IR overlay paths.
+    struct OverlayLines
+    {
+        const int32_t* indices = nullptr;
+        int count = 0;
+        SbColor color;
+        OverlayDepthMode depthMode = OverlayDepthMode::RespectDepth;
+    };
+
     void renderHighlight(SoGLRenderAction* action, SelContextPtr);
     void renderSelection(SoGLRenderAction* action, SelContextPtr, bool push = true);
     void renderHighlightIR(SoIRRenderAction* action, SelContextPtr);
     void renderSelectionIR(SoIRRenderAction* action, SelContextPtr);
+    bool collectHighlightLines(SoState*, SelContextPtr, OverlayLines&) const;
+    bool collectSelectionLines(SoState*, SelContextPtr, OverlayLines&) const;
     bool validIndexes(const SoCoordinateElement*, const std::vector<int32_t>&) const;
 
 

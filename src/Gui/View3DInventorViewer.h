@@ -35,6 +35,7 @@
 
 #include <Inventor/SbRotation.h>
 #include <Inventor/SbTime.h>
+#include <Inventor/SbColor4f.h>
 #include <Inventor/nodes/SoEnvironment.h>
 #include <Inventor/nodes/SoEventCallback.h>
 #include <Inventor/nodes/SoRotation.h>
@@ -109,6 +110,19 @@ class GLGraphicsItem;
 class RubberbandOverlay;
 class SoShapeScale;
 class ViewerEventFilter;
+
+/** Vulkan-only display options owned by the 3D viewer.
+ *  They mirror the OpenGL view preferences (draw style, vertex visibility)
+ *  but are only honored by the Vulkan backend.  View3DInventorViewer keeps
+ *  the canonical instance and refreshes it from the user preferences.
+ */
+struct VulkanViewSettings
+{
+    bool showEdges = false;
+    bool showPoints = false;
+    SbColor4f edgeColor = SbColor4f(0.05f, 0.05f, 0.05f, 1.0f);
+    bool pathTracing = false;
+};
 
 /** GUI view into a 3D scene provided by View3DInventor
  *
@@ -591,11 +605,22 @@ public:
     bool getSceneBoundBox(SbBox3f& box) const;
     bool getSceneBoundBox(Base::BoundBox3d& box) const;
 
-    void setParentView(View3DInventor* view) { parentView_ = view; }
-    View3DInventor* parentView() const { return parentView_; }
+    //! Vulkan-only display options owned by the viewer.  They mirror the
+    //! OpenGL equivalents (draw style, vertex visibility) but only the
+    //! Vulkan backend honors them.  Read them with getVulkanViewSettings();
+    //! applyVulkanSettings() reloads them from the preferences and emits
+    //! vulkanSettingsChanged().
+    const VulkanViewSettings& getVulkanViewSettings() const
+    {
+        return vulkanSettings_;
+    }
+    void applyVulkanSettings();
 
 Q_SIGNALS:
     void cameraChanged();
+    //! Emitted after applyVulkanSettings() reloaded the Vulkan options from
+    //! the preferences.
+    void vulkanSettingsChanged();
 
 protected:
     static GLenum getInternalTextureFormat();
@@ -660,7 +685,7 @@ private:
     std::list<GLGraphicsItem*> graphicsItems;
     std::unique_ptr<RubberbandOverlay> rubberbandOverlayRenderer;
     ViewProvider* editViewProvider;
-    View3DInventor* parentView_ = nullptr;
+    VulkanViewSettings vulkanSettings_;
     SoFCBackgroundGradient* pcBackGround;
     SoSeparator* backgroundroot;
     SoSeparator* foregroundroot;
