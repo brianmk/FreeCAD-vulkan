@@ -36,11 +36,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 
 #include <QInputEvent>
 #include <QPointF>
 #include <Inventor/events/SoEvents.h>
+
+#include "VulkanBreadcrumbs.h"
 
 #include "devices/InputDevice.h"
 
@@ -70,6 +73,15 @@ InputDevice::toDevicePixelPosition(
   int xpos = static_cast<int>(std::lround(logicalPosition.x() * devicePixelRatio));
   int ypos = static_cast<int>(
       std::lround((logicalWindowSize[1] - logicalPosition.y() - 1.0) * devicePixelRatio));
+
+  if (getenv("FC_VULKAN_BREADCRUMBS")) {
+    Gui::vulkanBreadcrumb(
+            "[VK-TRACE] toDevicePixelPosition logical=(%.1f,%.1f) "
+            "windowLogical=%dx%d dpr=%.3f -> device=%d,%d\n",
+            logicalPosition.x(), logicalPosition.y(),
+            logicalWindowSize[0], logicalWindowSize[1],
+            devicePixelRatio, xpos, ypos);
+  }
 
   constexpr int ShortMin = std::numeric_limits<short>::min();
   constexpr int ShortMax = std::numeric_limits<short>::max();

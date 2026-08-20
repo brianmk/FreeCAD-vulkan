@@ -138,11 +138,31 @@ public:
     bool containsViewProvider(const ViewProvider*) const override;
 
 public Q_SLOTS:
+    /// Re-read Vulkan-only display options from the preferences and push
+    /// them to the Vulkan viewer (no-op on the OpenGL path).
+    void applyVulkanSettings();
+
     /// override the cursor in this view
     void setOverrideCursor(const QCursor&) override;
     void restoreOverrideCursor() override;
 
     void dump(const char* filename, bool onlyVisible = false);
+
+    /// Enable/disable path tracing on the Vulkan viewport (no-op without a
+    /// Vulkan viewer or ray-tracing device).  See QuarterVulkanWidget::
+    /// setPathTracingEnabled() for the semantics.
+    void setPathTracingEnabled(bool enabled);
+
+    /// Start flag: begins a progressive path-traced render (one jittered
+    /// sample per frame with denoising).  Camera moves or scene changes
+    /// drop back to a single-sample preview until the flag is raised again.
+    void setPathTracingStart(bool start);
+
+    /// Whether path tracing is enabled on the Vulkan viewport.
+    bool isPathTracingEnabled() const;
+
+    /// Whether a progressive path-tracing accumulation is running.
+    bool isPathTracingActive() const;
 
 protected Q_SLOTS:
     void stopAnimating();
@@ -167,6 +187,7 @@ private:
     QTimer* stopSpinTimer;
     QStackedWidget* stack;
     SIM::Coin3D::Quarter::QuarterVulkanWidget* _vulkanViewer = nullptr;
+    bool _initialVulkanFitDone = false;
     std::unique_ptr<View3DSettings> viewSettings;
     std::unique_ptr<NaviCubeSettings> naviSettings;
 

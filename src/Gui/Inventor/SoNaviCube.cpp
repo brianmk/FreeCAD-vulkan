@@ -35,6 +35,7 @@
 #include <numbers>
 
 #include <Inventor/actions/SoGLRenderAction.h>
+#include <Inventor/actions/SoIRRenderAction.h>
 #include <Inventor/actions/SoRayPickAction.h>
 #include <Inventor/details/SoFaceDetail.h>
 #include <Inventor/lists/SoPickedPointList.h>
@@ -67,6 +68,7 @@
 #include <Inventor/nodes/SoTransform.h>
 #include <Inventor/nodes/SoTexture2.h>
 #include <Inventor/nodes/SoVertexProperty.h>
+#include <Inventor/rendering/SoRenderIR.h>
 #include <Inventor/SbVec2f.h>
 #include <Inventor/SbVec4f.h>
 #include <Inventor/SbViewVolume.h>
@@ -1363,6 +1365,96 @@ void SoNaviCube::GLRender(SoGLRenderAction* action)
         return;
     }
     renderCoin(action);
+}
+
+void SoNaviCube::IRRender(SoIRRenderAction* action)
+{
+    if (!action) {
+        return;
+    }
+    renderOverlayIR(action);
+}
+
+void SoNaviCube::renderOverlayIR(SoIRRenderAction* action)
+{
+    const SbVec4f& rect = viewportRect.getValue();
+    const int viewportX = static_cast<int>(std::lround(rect[0]));
+    const int viewportY = static_cast<int>(std::lround(rect[1]));
+    const int viewportWidth = static_cast<int>(std::lround(rect[2]));
+    const int viewportHeight = static_cast<int>(std::lround(rect[3]));
+
+    if (viewportWidth <= 0 || viewportHeight <= 0) {
+        return;
+    }
+
+    if (getenv("FC_VULKAN_NAVI_DEBUG")) {
+        fprintf(stderr, "[NAVI] IRRender rect=(%d,%d %dx%d) size=%.1f opacity=%.2f\n",
+                viewportX, viewportY, viewportWidth, viewportHeight,
+                size.getValue(), opacity.getValue());
+    }
+
+    SoState* state = action->getState();
+    if (!state) {
+        return;
+    }
+
+    ensureGeometry();
+    ensureSceneGraph();
+    const RenderParams params = makeRenderParams();
+    updateSceneGraph(params);
+
+    SoDrawList& list = action->getMutableDrawList();
+    const int firstCommand = list.getNumCommands();
+
+    state->push();
+
+    // Scope the overlay scene to the NaviCube's corner viewport (Coin
+    // bottom-left origin; the backend flips it into Vulkan coordinates).
+    SbViewportRegion vp = SoViewportRegionElement::get(state);
+    vp.setViewportPixels(viewportX, viewportY, viewportWidth, viewportHeight);
+    SoViewportRegionElement::set(state, vp);
+
+    // Like the GL overlay pass, force BASE_COLOR lighting so viewer overrides
+    // and headlight state cannot tint the cube.
+    SoLightModelElement::set(state, this, SoLightModelElement::BASE_COLOR);
+    SoShapeStyleElement::setLightModel(state, SoLazyElement::BASE_COLOR);
+    SoLazyElement::setLightModel(state, SoLazyElement::BASE_COLOR);
+
+    // The sub-scene contains its own orthographic camera, so its commands
+    // carry the overlay projection/view matrices.
+    sceneRoot->IRRender(action);
+
+    // Promote the recorded commands to the overlay pass and scope them to the
+    // NaviCube rect: the backend draws this pass last, clearing the rect's
+    // depth first so the cube self-occludes independently of the main scene.
+    const int count = list.getNumCommands();
+    for (int i = firstCommand; i < count; ++i) {
+        SoRenderCommand& cmd = list.getCommand(i);
+        cmd.pass = SO_RENDERPASS_OVERLAY;
+        cmd.state.raster.viewportEnabled = TRUE;
+        cmd.state.raster.viewportX = viewportX;
+        cmd.state.raster.viewportY = viewportY;
+        cmd.state.raster.viewportWidth = viewportWidth;
+        cmd.state.raster.viewportHeight = viewportHeight;
+        cmd.state.raster.scissorEnabled = TRUE;
+        cmd.state.raster.scissorX = viewportX;
+        cmd.state.raster.scissorY = viewportY;
+        cmd.state.raster.scissorWidth = viewportWidth;
+        cmd.state.raster.scissorHeight = viewportHeight;
+    }
+
+    if (getenv("FC_VULKAN_NAVI_DEBUG") && count > firstCommand) {
+        const SoRenderCommand& c0 = list.getCommand(firstCommand);
+        float pm[4][4];
+        c0.projMatrix.getValue(reinterpret_cast<SbMat&>(pm));
+        fprintf(stderr, "[NAVI] first cmd pass=%d verts=%u proj00=%.4f proj33=%.4f viewport=%d,%d %dx%d\n",
+                static_cast<int>(c0.pass), c0.geometry.vertexCount,
+                pm[0][0], pm[3][3],
+                c0.state.raster.viewportX, c0.state.raster.viewportY,
+                c0.state.raster.viewportWidth, c0.state.raster.viewportHeight);
+    }
+
+    state->pop();
 }
 
 void SoNaviCube::computeBBox(SoAction*, SbBox3f& box, SbVec3f& center)

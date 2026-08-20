@@ -37,6 +37,8 @@
 #include <QEvent>
 #include <QMouseEvent>
 
+#include "VulkanBreadcrumbs.h"
+
 #include "QuarterWidget.h"
 #include "devices/Keyboard.h"
 #include "devices/Mouse.h"
@@ -87,8 +89,17 @@ public:
 
     SbVec2s mousepos = InputDevice::toDevicePixelPosition(
         getLocalPosition(event),
-        this->windowsize,
+        effectiveWindowSize(quarterwidget),
         quarterwidget->devicePixelRatio());
+    if (getenv("FC_VULKAN_BREADCRUMBS")) {
+        Gui::vulkanBreadcrumb(
+                "[VK-TRACE] toDevicePixelPosition logical=(%.1f,%.1f) "
+                "windowLogical=%dx%d dpr=%.2f -> device=%d,%d\n",
+                getLocalPosition(event).x(), getLocalPosition(event).y(),
+                this->windowsize[0], this->windowsize[1],
+                quarterwidget->devicePixelRatio(),
+                mousepos[0], mousepos[1]);
+    }
     Q_FOREACH(InputDevice * device, this->devices) {
       device->setMousePosition(mousepos);
     }

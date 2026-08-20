@@ -34,6 +34,7 @@
 
 
 class SoCoordinateElement;
+class SoIRRenderAction;
 
 namespace PartGui
 {
@@ -63,6 +64,7 @@ public:
 protected:
     ~SoBrepEdgeSet() override;
     void GLRender(SoGLRenderAction* action) override;
+    void IRRender(SoIRRenderAction* action) override;
     void GLRenderBelowPath(SoGLRenderAction* action) override;
     void doAction(SoAction* action) override;
     SoDetail* createLineSegmentDetail(
@@ -80,6 +82,8 @@ private:
 
     void renderHighlight(SoGLRenderAction* action, SelContextPtr);
     void renderSelection(SoGLRenderAction* action, SelContextPtr, bool push = true);
+    void renderHighlightIR(SoIRRenderAction* action, SelContextPtr);
+    void renderSelectionIR(SoIRRenderAction* action, SelContextPtr);
     bool validIndexes(const SoCoordinateElement*, const std::vector<int32_t>&) const;
 
 

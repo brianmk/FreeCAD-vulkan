@@ -35,6 +35,7 @@
 #include "Selection/SelectionColors.h"
 #include "SoFCSelectionAction.h"
 #include "View3DSettings.h"
+#include "View3DInventor.h"
 #include "View3DInventorViewer.h"
 
 #include <Base/Tools.h>
@@ -105,6 +106,10 @@ void View3DSettings::applySettings()
     OnChange(*hGrp, "DimensionsDeltaVisible");
     OnChange(*hGrp, "PickRadius");
     OnChange(*hGrp, "TransparentObjectRenderType");
+    OnChange(*hGrp, "VulkanShowEdges");
+    OnChange(*hGrp, "VulkanShowPoints");
+    OnChange(*hGrp, "VulkanEdgeColor");
+    OnChange(*hGrp, "VulkanPathTracing");
 
     auto lightSourcesGrp = hGrp->GetGroup("LightSources");
     OnChange(*lightSourcesGrp, "EnableHeadlight");
@@ -510,6 +515,18 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
                         SoGLRenderAction::NONSOLID_SEPARATE_BACKFACE_PASS
                     );
                 }
+            }
+        }
+    }
+    else if (strcmp(Reason, "VulkanShowEdges") == 0
+             || strcmp(Reason, "VulkanShowPoints") == 0
+             || strcmp(Reason, "VulkanEdgeColor") == 0
+             || strcmp(Reason, "VulkanPathTracing") == 0) {
+        // Vulkan-only display options live on the owning View3DInventor, not
+        // the viewer itself, so re-apply them through the parent view.
+        for (auto _viewer : _viewers) {
+            if (_viewer->parentView()) {
+                _viewer->parentView()->applyVulkanSettings();
             }
         }
     }

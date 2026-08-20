@@ -23,6 +23,8 @@
 
 #include <FCConfig.h>
 
+#include "VulkanBreadcrumbs.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -2004,6 +2006,12 @@ View3DInventorViewer::Background View3DInventorViewer::getGradientBackground() c
     return Background::RadialGradient;
 }
 
+void View3DInventorViewer::getGradientBackgroundColor(SbColor& fromColor, SbColor& toColor) const
+{
+    fromColor = pcBackGround->fromColor.getValue();
+    toColor = pcBackGround->toColor.getValue();
+}
+
 void View3DInventorViewer::setGradientBackgroundColor(const SbColor& fromColor, const SbColor& toColor)
 {
     pcBackGround->setColorGradient(fromColor, toColor);
@@ -2207,6 +2215,11 @@ void View3DInventorViewer::setNaviCubeCorner(int cc)
 NaviCube* View3DInventorViewer::getNaviCube() const
 {
     return naviCube;
+}
+
+SoAnnotation* View3DInventorViewer::getNaviCubeAnnotation() const
+{
+    return naviCubeAnnotation;
 }
 
 void View3DInventorViewer::setAxisCross(bool on)
@@ -3382,6 +3395,27 @@ void View3DInventorViewer::renderScene()
     SbVec2s origin = vp.getViewportOriginPixels();
     SbVec2s size = vp.getViewportSizePixels();
     glViewport(origin[0], origin[1], size[0], size[1]);
+
+    if (getenv("FC_VULKAN_BREADCRUMBS")) {
+        static bool logged = false;
+        if (!logged) {
+            logged = true;
+            SbViewVolume vv;
+            SoCamera* cam = this->getSoRenderManager()->getCamera();
+            if (cam) {
+                vv = cam->getViewVolume();
+            }
+            vulkanBreadcrumb(
+                    "[VK-TRACE] renderScene glViewport=%dx%d glGLWidget=%dx%d aspect=%f "
+                    "near=%f far=%f depth=%f width=%f height=%f\n",
+                    size[0], size[1],
+                    this->getGLWidget() ? this->getGLWidget()->width() : -1,
+                    this->getGLWidget() ? this->getGLWidget()->height() : -1,
+                    vp.getViewportAspectRatio(), vv.getNearDist(),
+                    vv.getNearDist() + vv.getDepth(), vv.getDepth(),
+                    vv.getWidth(), vv.getHeight());
+        }
+    }
 
     const QColor col = this->backgroundColor();
     glClearColor(float(col.redF()), float(col.greenF()), float(col.blueF()), 0.0F);

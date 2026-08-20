@@ -22,13 +22,16 @@
  ******************************************************************************/
 
 #include <FCConfig.h>
+#include <Gui/VulkanBreadcrumbs.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <limits>
 #include <Inventor/SoPickedPoint.h>
 #include <Inventor/SoPrimitiveVertex.h>
 #include <Inventor/actions/SoGetBoundingBoxAction.h>
 #include <Inventor/actions/SoGLRenderAction.h>
+#include <Inventor/actions/SoIRRenderAction.h>
 #include <Inventor/details/SoLineDetail.h>
 #include <Inventor/elements/SoCoordinateElement.h>
 #include <Inventor/elements/SoDepthBufferElement.h>
@@ -255,6 +258,153 @@ static void renderColorOverrides(
     }
 }
 
+static void renderOverlayLinesIR(
+    SoIRRenderAction* action,
+    SoIndexedLineSet* lineSet,
+    const int32_t* indices,
+    int numIndices,
+    const Base::Color& color,
+    OverlayDepthMode depthMode
+)
+{
+    if (!action || !lineSet || !indices || numIndices <= 0) {
+        return;
+    }
+
+    // Match the GL path by drawing each edge segment independently.
+    std::vector<int32_t> lineIndices;
+    lineIndices.reserve(static_cast<size_t>(numIndices) * 3);
+
+    int32_t previous = -1;
+    for (int i = 0; i < numIndices; i++) {
+        const int32_t current = indices[i];
+        if (current < 0) {
+            previous = -1;
+            continue;
+        }
+        if (previous >= 0) {
+            lineIndices.push_back(previous);
+            lineIndices.push_back(current);
+            lineIndices.push_back(-1);
+        }
+        previous = current;
+    }
+
+    if (lineIndices.empty()) {
+        return;
+    }
+
+    auto state = action->getState();
+    state->push();
+
+    applyOverlayPrimitiveState(state, lineSet);
+    applyOverlayDepthState(state, depthMode);
+
+    const SbColor sbColor(color.r, color.g, color.b);
+    const float transparency = std::max(0.0f, 1.0f - color.a);
+    const bool hasTransparency = transparency > 0.0f;
+    if (hasTransparency) {
+        SoShapeStyleElement::setTransparencyType(state, SoGLRenderAction::BLEND);
+        SoLazyElement::setTransparencyType(state, SoGLRenderAction::BLEND);
+    }
+
+    SoLazyElement::setEmissive(state, &sbColor);
+    uint32_t packedColor = sbColor.getPackedValue(transparency);
+    SoLazyElement::setPacked(state, lineSet, 1, &packedColor, hasTransparency);
+
+    lineSet->coordIndex.setNum(static_cast<int>(lineIndices.size()));
+    int32_t* coordIndex = lineSet->coordIndex.startEditing();
+    std::copy(lineIndices.begin(), lineIndices.end(), coordIndex);
+    lineSet->coordIndex.finishEditing();
+    lineSet->IRRender(action);
+
+    state->pop();
+}
+
+static void renderOverlayLinesIR(
+    SoIRRenderAction* action,
+    SoIndexedLineSet* lineSet,
+    const int32_t* indices,
+    int numIndices,
+    const SbColor& color,
+    OverlayDepthMode depthMode
+)
+{
+    renderOverlayLinesIR(
+        action,
+        lineSet,
+        indices,
+        numIndices,
+        Base::Color(color[0], color[1], color[2], 1.0f),
+        depthMode
+    );
+}
+
+static void renderColorOverridesIR(
+    SoIRRenderAction* action,
+    SoIndexedLineSet* lineSet,
+    const int32_t* indices,
+    int numIndices,
+    const std::map<int, Base::Color>& colors
+)
+{
+    if (!action || !lineSet || !indices || numIndices <= 0 || colors.empty()) {
+        return;
+    }
+
+    struct ColorGroup
+    {
+        Base::Color color;
+        std::vector<int32_t> indices;
+    };
+
+    std::map<uint32_t, ColorGroup> colorGroups;
+    const auto wildcard = colors.find(-1);
+
+    int lineIndex = 0;
+    for (int i = 0; i < numIndices; ++lineIndex) {
+        const int sectionStart = i;
+        while (i < numIndices && indices[i] >= 0) {
+            ++i;
+        }
+
+        const Base::Color* color = nullptr;
+        auto it = colors.find(lineIndex);
+        if (it != colors.end()) {
+            color = &it->second;
+        }
+        else if (wildcard != colors.end()) {
+            color = &wildcard->second;
+        }
+
+        if (color) {
+            const SbColor sbColor(color->r, color->g, color->b);
+            const uint32_t key = sbColor.getPackedValue(std::max(0.0f, 1.0f - color->a));
+            auto& group = colorGroups[key];
+            if (group.indices.empty()) {
+                group.color = *color;
+            }
+            group.indices.insert(group.indices.end(), indices + sectionStart, indices + i);
+            group.indices.push_back(-1);
+        }
+
+        if (i < numIndices && indices[i] < 0) {
+            ++i;
+        }
+    }
+
+    for (const auto& [_, group] : colorGroups) {
+        renderOverlayLinesIR(
+            action,
+            lineSet,
+            group.indices.data(),
+            static_cast<int>(group.indices.size()),
+            group.color,
+            OverlayDepthMode::DrawOnTop
+        );
+    }
+}
+
 void SoBrepEdgeSet::initClass()
 {
     SO_NODE_INIT_CLASS(SoBrepEdgeSet, SoIndexedLineSet, "IndexedLineSet");
@@ -449,6 +599,132 @@ void SoBrepEdgeSet::GLRender(SoGLRenderAction* action)
     }
 }
 
+void SoBrepEdgeSet::IRRender(SoIRRenderAction* action)
+{
+    auto state = action->getState();
+    selCounter.checkRenderCache(state);
+    if (getenv("FC_VULKAN_BREADCRUMBS")) {
+        static int logged = 0;
+        if (logged++ < 30) {
+            Gui::vulkanBreadcrumb( "[VK-TRACE] SoBrepEdgeSet::IRRender this=%p\n", this);
+        }
+    }
+
+    SelContextPtr ctx2;
+    SelContextPtr ctx = Gui::SoFCSelectionRoot::getRenderContext<SelContext>(this, selContext, ctx2);
+    if (getenv("FC_VULKAN_BREADCRUMBS")) {
+        static int logged2 = 0;
+        if (logged2++ < 30) {
+            Gui::vulkanBreadcrumb( "[VK-TRACE] SoBrepEdgeSet::IRRender ctx=%p hlIdx=%d selIdx=%zu ctx2=%p ctx2selIdx=%zu ctx2colors=%zu\n",
+                    ctx.get(), ctx ? ctx->highlightIndex : -2,
+                    ctx ? ctx->selectionIndex.size() : (size_t)-1,
+                    ctx2.get(), ctx2 ? ctx2->selectionIndex.size() : (size_t)-1,
+                    ctx2 ? ctx2->colors.size() : (size_t)-1);
+        }
+    }
+    if (ctx2 && ctx2->selectionIndex.empty() && ctx2->colors.empty()) {
+        inherited::IRRender(action);
+        return;
+    }
+
+    const bool hasColorOverride = (ctx2 && !ctx2->colors.empty());
+
+    if (selContext2->checkGlobal(ctx)) {
+        if (selContext2->isSelectAll()) {
+            selContext2->sl.clear();
+            selContext2->sl.push_back(-1);
+        }
+        else if (ctx) {
+            selContext2->sl = ctx->sl;
+        }
+        if (selContext2->highlightIndex == std::numeric_limits<int>::max()) {
+            selContext2->hl.clear();
+            selContext2->hl.push_back(-1);
+        }
+        else if (ctx) {
+            selContext2->hl = ctx->hl;
+        }
+        ctx = selContext2;
+    }
+
+    inherited::IRRender(action);
+
+    if (ctx && ctx->highlightIndex == std::numeric_limits<int>::max() && !ctx->isSelectAll()) {
+        if (ctx->selectionIndex.empty()) {
+            if (ctx2) {
+                ctx2->selectionColor = ctx->highlightColor;
+                renderSelectionIR(action, ctx2);
+            }
+            else {
+                renderHighlightIR(action, ctx);
+            }
+        }
+        else {
+            renderSelectionIR(action, ctx);
+            if (ctx2) {
+                ctx2->selectionColor = ctx->highlightColor;
+                renderSelectionIR(action, ctx2);
+            }
+            else {
+                renderHighlightIR(action, ctx);
+            }
+        }
+        return;
+    }
+
+    renderHighlightIR(action, ctx);
+    if (ctx && !ctx->selectionIndex.empty()) {
+        if (ctx->isSelectAll()) {
+            if (ctx2) {
+                ctx2->selectionColor = ctx->selectionColor;
+                renderSelectionIR(action, ctx2);
+            }
+            else {
+                renderSelectionIR(action, ctx);
+            }
+        }
+        else {
+            renderSelectionIR(action, ctx);
+        }
+    }
+    if (hasColorOverride) {
+        renderColorOverridesIR(
+            action,
+            overlayLineSet,
+            this->coordIndex.getValues(0),
+            this->coordIndex.getNum(),
+            ctx2->colors
+        );
+    }
+    else if (ctx2 && !ctx2->selectionIndex.empty()) {
+        renderSelectionIR(action, ctx2);
+    }
+
+    // Optional overlay rendering for deterministic tests (and programmatic usage).
+    const int hlNum = highlightCoordIndex.getNum();
+    if (hlNum > 0) {
+        renderOverlayLinesIR(
+            action,
+            overlayLineSet,
+            highlightCoordIndex.getValues(0),
+            hlNum,
+            highlightColor.getValue(),
+            OverlayDepthMode::DrawOnTop
+        );
+    }
+    const int selNum = selectionCoordIndex.getNum();
+    if (selNum > 0) {
+        renderOverlayLinesIR(
+            action,
+            overlayLineSet,
+            selectionCoordIndex.getValues(0),
+            selNum,
+            selectionColor.getValue(),
+            OverlayDepthMode::DrawOnTop
+        );
+    }
+}
+
 void SoBrepEdgeSet::GLRenderBelowPath(SoGLRenderAction* action)
 {
     inherited::GLRenderBelowPath(action);
@@ -581,6 +857,88 @@ void SoBrepEdgeSet::renderSelection(SoGLRenderAction* action, SelContextPtr ctx,
     }
 }
 
+void SoBrepEdgeSet::renderHighlightIR(SoIRRenderAction* action, SelContextPtr ctx)
+{
+    if (!ctx || ctx->highlightIndex < 0) {
+        return;
+    }
+
+    const SoCoordinateElement* coords = SoCoordinateElement::getInstance(action->getState());
+    if (!coords) {
+        return;
+    }
+
+    int num = static_cast<int>(ctx->hl.size());
+    if (num > 0) {
+        if (ctx->hl[0] < 0) {
+            renderOverlayLinesIR(
+                action,
+                overlayLineSet,
+                this->coordIndex.getValues(0),
+                this->coordIndex.getNum(),
+                ctx->highlightColor,
+                OverlayDepthMode::DrawOnTop
+            );
+        }
+        else {
+            if (!validIndexes(coords, ctx->hl)) {
+                SoDebugError::postWarning("SoBrepEdgeSet::renderHighlightIR", "highlightIndex out of range");
+            }
+            else {
+                renderOverlayLinesIR(
+                    action,
+                    overlayLineSet,
+                    ctx->hl.data(),
+                    num,
+                    ctx->highlightColor,
+                    OverlayDepthMode::DrawOnTop
+                );
+            }
+        }
+    }
+}
+
+void SoBrepEdgeSet::renderSelectionIR(SoIRRenderAction* action, SelContextPtr ctx)
+{
+    if (!ctx) {
+        return;
+    }
+
+    const SoCoordinateElement* coords = SoCoordinateElement::getInstance(action->getState());
+    if (!coords) {
+        return;
+    }
+
+    int num = static_cast<int>(ctx->sl.size());
+    if (num > 0) {
+        if (ctx->sl[0] < 0) {
+            renderOverlayLinesIR(
+                action,
+                overlayLineSet,
+                this->coordIndex.getValues(0),
+                this->coordIndex.getNum(),
+                ctx->selectionColor,
+                OverlayDepthMode::RespectDepth
+            );
+        }
+        else {
+            if (!validIndexes(coords, ctx->sl)) {
+                SoDebugError::postWarning("SoBrepEdgeSet::renderSelectionIR", "selectionIndex out of range");
+            }
+            else {
+                renderOverlayLinesIR(
+                    action,
+                    overlayLineSet,
+                    ctx->sl.data(),
+                    num,
+                    ctx->selectionColor,
+                    OverlayDepthMode::RespectDepth
+                );
+            }
+        }
+    }
+}
+
 bool SoBrepEdgeSet::validIndexes(const SoCoordinateElement* coords, const std::vector<int32_t>& pts) const
 {
     for (int32_t it : pts) {
@@ -596,6 +954,14 @@ void SoBrepEdgeSet::doAction(SoAction* action)
     if (action->getTypeId() == Gui::SoHighlightElementAction::getClassTypeId()) {
         Gui::SoHighlightElementAction* hlaction = static_cast<Gui::SoHighlightElementAction*>(action);
         selCounter.checkAction(hlaction);
+        if (getenv("FC_VULKAN_BREADCRUMBS")) {
+            static int logged = 0;
+            if (logged++ < 30) {
+                Gui::vulkanBreadcrumb( "[VK-TRACE] SoBrepEdgeSet::doAction HL this=%p highlighted=%d detail=%p\n",
+                        this, hlaction->isHighlighted() ? 1 : 0,
+                        (const void*)hlaction->getElement());
+            }
+        }
         if (!hlaction->isHighlighted()) {
             SelContextPtr ctx
                 = Gui::SoFCSelectionRoot::getActionContext(action, this, selContext, false);

@@ -23,10 +23,14 @@
 
 
 #include <QString>
+#include "VulkanBreadcrumbs.h"
+#include <cstdio>
+#include <cstdlib>
 #include <Inventor/SoFullPath.h>
 #include <Inventor/SoPickedPoint.h>
 #include <Inventor/actions/SoGLRenderAction.h>
 #include <Inventor/actions/SoHandleEventAction.h>
+#include <Inventor/actions/SoIRRenderAction.h>
 #include <Inventor/details/SoFaceDetail.h>
 #include <Inventor/details/SoLineDetail.h>
 #include <Inventor/elements/SoLazyElement.h>
@@ -618,6 +622,54 @@ void SoFCSelection::GLRender(SoGLRenderAction* action)
     }
 }
 
+// The Vulkan/IR path does not go through GLRender, so apply the same
+// selection/preselection color override before traversing the children with
+// the retained-render action.  SoIRRenderAction dispatches SoNode::IRRenderS
+// -> virtual SoNode::IRRender, so this override is picked up automatically.
+void SoFCSelection::IRRender(SoIRRenderAction* action)
+{
+    if (getenv("FC_VULKAN_BREADCRUMBS")) {
+        static int logged = 0;
+        if (logged++ < 20) {
+            vulkanBreadcrumb( "[VK-TRACE] SoFCSelection::IRRender this=%p selected=%d highlighted=%d\n",
+                    this, this->selected.getValue(), this->highlighted ? 1 : 0);
+        }
+    }
+    SoState* state = action->getState();
+    SelContextPtr ctx = Gui::SoFCSelectionRoot::getRenderContext<SelContext>(this, selContext);
+    if (selContext2->checkGlobal(ctx)) {
+        ctx = selContext2;
+    }
+    if (!useNewSelection.getValue() && selContext == ctx) {
+        ctx->selectionColor = this->colorSelection.getValue();
+        ctx->highlightColor = this->colorHighlight.getValue();
+        if (this->selected.getValue() == SELECTED) {
+            ctx->selectAll();
+        }
+        else {
+            ctx->selectionIndex.clear();
+        }
+        ctx->highlightIndex = this->highlighted ? 0 : -1;
+    }
+    if (getenv("FC_VULKAN_BREADCRUMBS")) {
+        static int logged2 = 0;
+        if (logged2++ < 20) {
+            vulkanBreadcrumb( "[VK-TRACE] SoFCSelection::IRRender ctx=%p selAll=%d hlIdx=%d selIdx=%zu\n",
+                    ctx.get(), ctx ? ctx->isSelectAll() : -1,
+                    ctx ? ctx->highlightIndex : -2,
+                    ctx ? ctx->selectionIndex.size() : (size_t)-1);
+        }
+    }
+
+    if (this->setOverrideIR(action, ctx)) {
+        inherited::IRRender(action);
+        state->pop();
+    }
+    else {
+        inherited::IRRender(action);
+    }
+}
+
 // doc from parent
 void SoFCSelection::GLRenderInPath(SoGLRenderAction* action)
 {
@@ -779,6 +831,60 @@ bool SoFCSelection::setOverride(SoGLRenderAction* action, SelContextPtr ctx)
     }
 
     this->uniqueId = oldId;
+    return true;
+}
+
+// Retained/IR equivalent of setOverride(): apply the selection/preselection
+// color overrides to the traversal state without the GL-only bits (bounding
+// box rendering and depth-func handling).  SoLazyElement is shared between
+// the GL and IR actions, so the recorded draw commands pick up the override.
+bool SoFCSelection::setOverrideIR(SoIRRenderAction* action, SelContextPtr ctx)
+{
+    auto mymode = static_cast<PreselectionModes>(this->preselectionMode.getValue());
+    bool preselected = ctx && ctx->isHighlighted() && (useNewSelection.getValue() || mymode == AUTO);
+    if (getenv("FC_VULKAN_BREADCRUMBS")) {
+        static int logged = 0;
+        if (logged++ < 20) {
+            vulkanBreadcrumb( "[VK-TRACE] SoFCSelection::setOverrideIR this=%p ctx=%p preselected=%d mymode=%d style=%d useNew=%d\n",
+                    this, ctx.get(), preselected ? 1 : 0, (int)mymode,
+                    (int)this->style.getValue(), useNewSelection.getValue() ? 1 : 0);
+        }
+    }
+    if (!preselected && mymode != ON && (!ctx || !ctx->isSelected())) {
+        return false;
+    }
+
+    auto mystyle = static_cast<Styles>(this->style.getValue());
+    if (mystyle == SoFCSelection::BOX) {
+        // Bounding-box selection drawing is GL-only for now.
+        return false;
+    }
+
+    SoState* state = action->getState();
+    state->push();
+
+    SoMaterialBindingElement::set(state, SoMaterialBindingElement::OVERALL);
+    SoOverrideElement::setMaterialBindingOverride(state, this, true);
+
+    if (!preselected && ctx) {
+        SoLazyElement::setEmissive(state, &ctx->selectionColor);
+    }
+    else if (ctx) {
+        SoLazyElement::setEmissive(state, &ctx->highlightColor);
+    }
+    SoOverrideElement::setEmissiveColorOverride(state, this, true);
+
+    if (SoLazyElement::getLightModel(state) == SoLazyElement::BASE_COLOR
+        || mystyle == SoFCSelection::EMISSIVE_DIFFUSE) {
+        if (!preselected && ctx) {
+            SoLazyElement::setDiffuse(state, this, 1, &ctx->selectionColor, &colorpacker);
+        }
+        else if (ctx) {
+            SoLazyElement::setDiffuse(state, this, 1, &ctx->highlightColor, &colorpacker);
+        }
+        SoOverrideElement::setDiffuseColorOverride(state, this, true);
+    }
+
     return true;
 }
 

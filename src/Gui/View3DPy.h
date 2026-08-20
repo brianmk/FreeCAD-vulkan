@@ -77,6 +77,10 @@ public:
     Py::Object dumpNode(const Py::Tuple&);
     Py::Object saveImage(const Py::Tuple&);
     Py::Object saveVectorGraphic(const Py::Tuple&);
+    Py::Object setPathTracingEnabled(const Py::Tuple&);
+    Py::Object isPathTracingEnabled();
+    Py::Object startPathTracing();
+    Py::Object isPathTracingActive();
     Py::Object getCamera();
     Py::Object getViewDirection();
     Py::Object getUpDirection();

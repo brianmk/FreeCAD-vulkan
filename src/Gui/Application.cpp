@@ -545,6 +545,13 @@ Application::Application(bool GUIenabled)
             (void)coin_setenv("COIN_VBO", "1", true);
         }
 
+        // Honor the --enable-vulkan command-line flag: persist it into the
+        // view preferences before any 3D view is constructed, so the
+        // View3DInventor path picks the Vulkan renderer for this run.
+        if (App::Application::Config().count("UseVulkanRenderer")) {
+            hViewGrp->SetBool("UseVulkanRenderer", true);
+        }
+
         // Check for the symbols for group separator and decimal point. They must be different
         // otherwise Qt doesn't work properly.
 #if defined(Q_OS_WIN32)

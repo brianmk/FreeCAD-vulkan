@@ -232,6 +232,19 @@ void SIM::Coin3D::Quarter::SoQTQuarterAdaptor::setCameraType(SoType type)
                                  dynamic_cast<SoOrthographicCamera*>(newcamera));
     }
 
+    // Keep the old camera's clipping planes as the starting point for the
+    // new node.  The old node holds the most recently auto-clipped near/far
+    // values; leaving the new camera at its defaults (near=1, far=10) culls
+    // the whole scene for every frame until the next auto-clipping pass
+    // runs -- which never happens on the Vulkan path, where the hidden GL
+    // viewer never renders.  The distances are measured along the view axis
+    // and stay valid across the projection-type change; the render manager
+    // re-fits them on the next frame anyway.
+    if (currentcam) {
+        newcamera->nearDistance = currentcam->nearDistance.getValue();
+        newcamera->farDistance = currentcam->farDistance.getValue();
+    }
+
     getSoRenderManager()->setCamera(newcamera);
     getSoEventManager()->setCamera(newcamera);
 

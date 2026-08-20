@@ -32,6 +32,8 @@
 #include <Mod/Part/PartGlobal.h>
 
 
+class SoIRRenderAction;
+
 namespace PartGui
 {
 
@@ -101,6 +103,7 @@ public:
 protected:
     ~SoBrepFaceSet() override;
     void GLRender(SoGLRenderAction* action) override;
+    void IRRender(SoIRRenderAction* action) override;
     void GLRenderBelowPath(SoGLRenderAction* action) override;
     void doAction(SoAction* action) override;
     SoDetail* createTriangleDetail(
@@ -132,6 +135,8 @@ private:
 
     void renderHighlight(SoGLRenderAction* action, SelContextPtr);
     void renderSelection(SoGLRenderAction* action, SelContextPtr, bool push = true);
+    void renderHighlightIR(SoIRRenderAction* action, SelContextPtr);
+    void renderSelectionIR(SoIRRenderAction* action, SelContextPtr);
 
     bool overrideMaterialBinding(SoGLRenderAction* action, SelContextPtr ctx, SelContextPtr ctx2);
 

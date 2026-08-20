@@ -22,6 +22,7 @@
  ***************************************************************************/
 
 #include <FCConfig.h>
+#include "VulkanBreadcrumbs.h"
 
 #include <Inventor/SoFullPath.h>
 #include <Inventor/SoPickedPoint.h>
@@ -32,6 +33,7 @@
 #include <Inventor/actions/SoGetPrimitiveCountAction.h>
 #include <Inventor/actions/SoGLRenderAction.h>
 #include <Inventor/actions/SoHandleEventAction.h>
+#include <Inventor/actions/SoIRRenderAction.h>
 #include <Inventor/actions/SoWriteAction.h>
 #include <Inventor/bundles/SoMaterialBundle.h>
 #include <Inventor/details/SoFaceDetail.h>
@@ -556,6 +558,13 @@ void SoFCUnifiedSelection::doAction(SoAction* action)
             }
 
             if (pathToHighlight) {
+                if (getenv("FC_VULKAN_BREADCRUMBS")) {
+                    static int logged = 0;
+                    if (logged++ < 20) {
+                        vulkanBreadcrumb( "[VK-TRACE] SoFCUnifiedSelection setPreselect apply highlight path len=%d\n",
+                                pathToHighlight->getLength());
+                    }
+                }
                 SoHighlightElementAction highlightAction;
                 highlightAction.setHighlighted(true);
                 highlightAction.setColor(this->colorHighlight.getValue());
@@ -645,6 +654,13 @@ void SoFCUnifiedSelection::doAction(SoAction* action)
                     SoSelectionElementAction selectionAction(type);
                     selectionAction.setColor(this->colorSelection.getValue());
                     selectionAction.setElement(detail);
+                    if (getenv("FC_VULKAN_BREADCRUMBS")) {
+                        static int logged = 0;
+                        if (logged++ < 20) {
+                            vulkanBreadcrumb( "[VK-TRACE] SoFCUnifiedSelection apply selection type=%d detailPathLen=%d\n",
+                                    (int)type, detailPath->getLength());
+                        }
+                    }
                     if (detailPath->getLength()) {
                         selectionAction.apply(detailPath);
                     }
@@ -787,6 +803,12 @@ bool SoFCUnifiedSelection::setPreselect(
             currentHighlightPath = Gui::toFullPath(path->copy());
             currentHighlightPath->ref();
             highlighted = true;
+            if (getenv("FC_VULKAN_BREADCRUMBS")) {
+                Gui::vulkanBreadcrumb(
+                        "[VK-TRACE] setPreselect HIGHLIGHT-ON doc=%s obj=%s "
+                        "elem=%s world=(%.4f,%.4f,%.4f)\n",
+                        docname, objname, element ? element : "", x, y, z);
+            }
         }
     }
 
@@ -1053,6 +1075,17 @@ void SoFCUnifiedSelection::handleEvent(SoHandleEventAction* action)
     //
     bool isMouseMotionEvent = event->isOfType(SoLocation2Event::getClassTypeId());
     if (isMouseMotionEvent) {
+        if (getenv("FC_VULKAN_BREADCRUMBS")) {
+            const SbVec2s pos = event->getPosition();
+            const SbViewportRegion vp = action->getViewportRegion();
+            const SbVec2s vpsize = vp.getViewportSizePixels();
+            Gui::vulkanBreadcrumb(
+                    "[VK-TRACE] SoFCUnifiedSelection::handleEvent motion "
+                    "eventPos=%d,%d viewport=%dx%d normalized=(%.4f,%.4f)\n",
+                    pos[0], pos[1], vpsize[0], vpsize[1],
+                    vpsize[0] > 0 ? float(pos[0]) / float(vpsize[0]) : 0.0f,
+                    vpsize[1] > 0 ? float(pos[1]) / float(vpsize[1]) : 0.0f);
+        }
         // NOTE: If preselection is off then we do not check for a picked point because otherwise
         // this search may slow down extremely the system on really big data sets. In this case we
         // just check for a picked point if the data set has been selected.
@@ -1944,6 +1977,101 @@ void SoFCSelectionRoot::GLRenderInPath(SoGLRenderAction* action)
     renderPrivate(action, true);
 }
 
+void SoFCSelectionRoot::IRRender(SoIRRenderAction* action)
+{
+    renderPrivateIR(action);
+}
+
+void SoFCSelectionRoot::renderPrivateIR(SoIRRenderAction* action)
+{
+    if (getenv("FC_VULKAN_BREADCRUMBS")) {
+        static int logged = 0;
+        if (logged++ < 10) {
+            vulkanBreadcrumb( "[VK-TRACE] SoFCSelectionRoot::renderPrivateIR this=%p SelStack.size=%zu\n",
+                    this, SelStack.size());
+        }
+    }
+    if (ViewParams::instance()->getCoinCycleCheck() && !SelStack.nodeSet.insert(this).second) {
+        std::time_t t = std::time(nullptr);
+        if (_CyclicLastReported < t) {
+            _CyclicLastReported = t + 5;
+            FC_ERR("Cyclic scene graph: " << getName());
+        }
+        return;
+    }
+    SelStack.push_back(this);
+    if (_renderPrivateIR(action)) {
+        inherited::IRRender(action);
+    }
+    SelStack.pop_back();
+    SelStack.nodeSet.erase(this);
+}
+
+bool SoFCSelectionRoot::_renderPrivateIR(SoIRRenderAction* action)
+{
+    auto ctx2 = std::static_pointer_cast<SelContext>(
+        getNodeContext2(SelStack, this, SelContext::merge)
+    );
+    if (ctx2 && ctx2->hideAll) {
+        return false;
+    }
+
+    auto state = action->getState();
+    SelContextPtr ctx = getRenderContext<SelContext>(this);
+    const int style = selectionStyle.getValue();
+    if (getenv("FC_VULKAN_BREADCRUMBS")) {
+        static int logged2 = 0;
+        if (logged2++ < 10) {
+            vulkanBreadcrumb( "[VK-TRACE] SoFCSelectionRoot::_renderPrivateIR this=%p ctx=%p selAll=%d hlAll=%d style=%d\n",
+                    this, ctx.get(), ctx ? ctx->selAll : -1, ctx ? ctx->hlAll : -1, style);
+        }
+    }
+    if (ctx && ctx->hideAll) {
+        return false;
+    }
+
+    // Bounding-box selection drawing is GL-only; skip the box geometry and
+    // fall through so children still render normally.
+
+    bool selPushed = false;
+    bool hlPushed = false;
+    if (ctx) {
+        if ((selPushed = ctx->selAll)) {
+            SelColorStack.push_back(ctx->selColor);
+            if (style != SoFCSelectionRoot::Box) {
+                state->push();
+                auto& color = SelColorStack.back();
+                SoLazyElement::setEmissive(state, &color);
+                SoOverrideElement::setEmissiveColorOverride(state, this, true);
+                if (SoLazyElement::getLightModel(state) == SoLazyElement::BASE_COLOR) {
+                    auto& packer = shapeColorPacker;
+                    SoLazyElement::setDiffuse(state, this, 1, &color, &packer);
+                    SoOverrideElement::setDiffuseColorOverride(state, this, true);
+                    SoMaterialBindingElement::set(state, this, SoMaterialBindingElement::OVERALL);
+                    SoOverrideElement::setMaterialBindingOverride(state, this, true);
+                }
+            }
+        }
+        if ((hlPushed = ctx->hlAll)) {
+            HlColorStack.push_back(ctx->hlColor);
+        }
+    }
+
+    inherited::IRRender(action);
+
+    if (hlPushed) {
+        HlColorStack.pop_back();
+    }
+    if (selPushed) {
+        SelColorStack.pop_back();
+        if (style != SoFCSelectionRoot::Box) {
+            state->pop();
+        }
+    }
+
+    return false;
+}
+
 bool SoFCSelectionRoot::checkColorOverride(SoState* state)
 {
     if (ShapeColorNode) {
@@ -2089,9 +2217,16 @@ void SoFCSelectionRoot::callback(SoCallbackAction* action)
 void SoFCSelectionRoot::doAction(SoAction* action)
 {
     BEGIN_ACTION
+
+    // Selection and preselection contexts are maintained in SelStack by
+    // renderPrivate() for the OpenGL path and by renderPrivateIR() for the
+    // retained/IR path.  doAction() only has to keep ActionStacks keyed for
+    // the selection/highlight actions, so nothing extra is pushed here.
+
     if (doActionPrivate(stack, action)) {
         inherited::doAction(action);
     }
+
     END_ACTION
 }
 

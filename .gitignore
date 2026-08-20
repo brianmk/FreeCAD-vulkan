@@ -26,6 +26,7 @@
 *.output
 *.pch
 *.pyc
+*.spv
 *.vcproj
 # Ignore .db files created by Qt Designer when editing .ui files
 *.db

@@ -3,6 +3,7 @@
 // SPDX-FileNotice: Part of the FreeCAD project.
 
 #include "QuarterVulkanWidget.h"
+#include "VulkanBreadcrumbs.h"
 
 #ifdef FREECAD_USE_VULKAN
 
@@ -84,23 +85,42 @@ public:
     QuarterVulkanRenderer(QVulkanInstance * instance,
                           QVulkanWindow * window,
                           SoNode * scene,
-                          SoCamera * camera)
+                          SoCamera * camera,
+                          QuarterVulkanWidget * owner,
+                          bool rayTracing)
         : m_instance(instance)
         , m_scene(scene)
         , m_camera(camera)
         , m_window(window)
+        , m_owner(owner)
+        , m_rayTracing(rayTracing)
     {
     }
 
     void setScene(SoNode * scene) { m_scene = scene; }
+    void setOverlayScene(SoNode * scene) { m_overlayScene = scene; }
     void setCamera(SoCamera * camera) { m_camera = camera; }
-    void setViewportRegion(const SbViewportRegion & vp) { m_viewport = vp; }
     void setClearEnabled(bool window, bool depth)
     {
         m_clearWindow = window;
         m_clearDepth = depth;
     }
     void setBackgroundColor(const SbColor4f & color) { m_background = color; }
+    void setBackgroundGradient(bool enabled,
+                               const SbColor4f & top,
+                               const SbColor4f & bottom)
+    {
+        if (getenv("FC_VULKAN_BREADCRUMBS")) {
+            Gui::vulkanBreadcrumb( "[VK-TRACE] QuarterVulkanRenderer::setBackgroundGradient enabled=%d top=(%.3f,%.3f,%.3f) bottom=(%.3f,%.3f,%.3f)\n",
+                    enabled ? 1 : 0, top[0], top[1], top[2], bottom[0], bottom[1], bottom[2]);
+        }
+        m_backgroundGradient = enabled;
+        m_backgroundTop = top;
+        m_backgroundBottom = bottom;
+    }
+    void setWireframeOverlay(bool enabled) { m_wireframeOverlay = enabled; }
+    void setPointsOverlay(bool enabled) { m_pointsOverlay = enabled; }
+    void setEdgeColor(const SbColor4f & color) { m_edgeColor = color; }
 
     SoVulkanRenderManager * getManager() { return &m_manager; }
 
@@ -124,8 +144,28 @@ public:
         context.device = m_window->device();
         context.graphicsQueue = m_window->graphicsQueue();
         context.graphicsQueueFamilyIndex = m_window->graphicsQueueFamilyIndex();
+        if (props) {
+            context.apiVersion = props->apiVersion;
+        }
         m_initialized = m_manager.initialize(&context);
         if (m_initialized) {
+            // Mirror the GL viewer (QuarterWidget sets
+            // SoRenderManager::VARIABLE_NEAR_PLANE): re-fit the camera
+            // near/far to the scene bounding box every frame so zooming and
+            // orbiting never clip the model at the near/far planes.  The
+            // hidden GL viewer never renders, so its own auto-clipping would
+            // never run.
+            m_manager.setAutoClipping(SoVulkanRenderManager::VARIABLE_NEAR_PLANE);
+            m_manager.setRayTracing(m_rayTracing);
+            if (m_rayTracing) {
+                if (m_manager.getRayTracingActive()) {
+                    vkLog("initResources: ray tracing active");
+                }
+                else {
+                    vkWarn("initResources: ray tracing requested but "
+                           "unavailable; using raster Vulkan backend");
+                }
+            }
             vkLog("initResources: backend initialized OK");
         }
         else {
@@ -145,12 +185,123 @@ public:
               static_cast<int>(m_window->depthStencilFormat()));
         vkLog("  sample count: %d", static_cast<int>(samples));
         vkLog("  swapchain images: %d", m_window->swapChainImageCount());
+
+        // Frame-dump staging buffer (FC_VULKAN_DUMP_FRAME).
+        const QSize imgSize = m_window->swapChainImageSize();
+        if (m_dumpBuffer == VK_NULL_HANDLE && imgSize.width() > 0
+            && imgSize.height() > 0) {
+            QVulkanDeviceFunctions * vkdf =
+                m_instance->deviceFunctions(m_window->device());
+            VkBufferCreateInfo bci {};
+            bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+            bci.size = static_cast<VkDeviceSize>(imgSize.width())
+                * static_cast<VkDeviceSize>(imgSize.height()) * 4;
+            bci.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+            VkBuffer buf = VK_NULL_HANDLE;
+            VkDeviceMemory mem = VK_NULL_HANDLE;
+            if (vkdf->vkCreateBuffer(m_window->device(), &bci, nullptr, &buf)
+                == VK_SUCCESS) {
+                VkMemoryRequirements memReq {};
+                vkdf->vkGetBufferMemoryRequirements(m_window->device(), buf,
+                                                    &memReq);
+                VkMemoryAllocateInfo mai {};
+                mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+                mai.allocationSize = memReq.size;
+                mai.memoryTypeIndex = findMemoryType(
+                    m_window, memReq,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+                        | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                if (vkdf->vkAllocateMemory(m_window->device(), &mai, nullptr,
+                                           &mem) == VK_SUCCESS
+                    && vkdf->vkBindBufferMemory(m_window->device(), buf, mem,
+                                                0) == VK_SUCCESS) {
+                    m_dumpBuffer = buf;
+                    m_dumpMemory = mem;
+                    m_dumpSize = imgSize;
+                    vkLog("frame dump staging buffer: %dx%d (%llu bytes)",
+                          imgSize.width(), imgSize.height(),
+                          static_cast<unsigned long long>(bci.size));
+                }
+                else {
+                    vkErr("frame dump staging buffer alloc failed");
+                    if (mem != VK_NULL_HANDLE) {
+                        vkdf->vkFreeMemory(m_window->device(), mem, nullptr);
+                    }
+                    vkdf->vkDestroyBuffer(m_window->device(), buf, nullptr);
+                }
+            }
+            else {
+                vkErr("frame dump staging buffer creation failed");
+            }
+        }
     }
 
     void releaseSwapChainResources() override
     {
         vkLog("releaseSwapChainResources");
         m_manager.setRenderTarget(nullptr);
+        destroyDumpBuffer();
+    }
+
+    void destroyDumpBuffer()
+    {
+        if (m_dumpBuffer != VK_NULL_HANDLE) {
+            QVulkanDeviceFunctions * vkdf =
+                m_instance->deviceFunctions(m_window->device());
+            vkdf->vkDestroyBuffer(m_window->device(), m_dumpBuffer, nullptr);
+            if (m_dumpMemory != VK_NULL_HANDLE) {
+                vkdf->vkFreeMemory(m_window->device(), m_dumpMemory, nullptr);
+            }
+            m_dumpBuffer = VK_NULL_HANDLE;
+            m_dumpMemory = VK_NULL_HANDLE;
+        }
+    }
+
+    static uint32_t findMemoryType(QVulkanWindow * window,
+                                   const VkMemoryRequirements & memReq,
+                                   uint32_t props)
+    {
+        // Pick a memory type supporting the requested properties.  The
+        // physical device memory properties are fetched with the vulkan
+        // loader directly (QVulkanWindow does not expose them).
+        VkPhysicalDeviceMemoryProperties memProps {};
+        vkGetPhysicalDeviceMemoryProperties(window->physicalDevice(),
+                                            &memProps);
+        for (uint32_t i = 0; i < memProps.memoryTypeCount; ++i) {
+            if ((memReq.memoryTypeBits & (1u << i))
+                && (memProps.memoryTypes[i].propertyFlags & props) == props) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
+    void saveDumpImage()
+    {
+        if (m_dumpBuffer == VK_NULL_HANDLE || m_dumpMemory == VK_NULL_HANDLE) {
+            return;
+        }
+        QVulkanDeviceFunctions * vkdf =
+            m_instance->deviceFunctions(m_window->device());
+        vkdf->vkQueueWaitIdle(m_window->graphicsQueue());
+        void * data = nullptr;
+        if (vkdf->vkMapMemory(m_window->device(), m_dumpMemory, 0,
+                              VK_WHOLE_SIZE, 0, &data) == VK_SUCCESS) {
+            const QImage img(static_cast<const uchar *>(data),
+                             m_dumpSize.width(), m_dumpSize.height(),
+                             static_cast<qsizetype>(m_dumpSize.width()) * 4,
+                             QImage::Format_ARGB32);
+            const QString path = QStringLiteral("/tmp/vk_frame_%1.png")
+                                     .arg(dumpCount);
+            if (!img.isNull() && img.save(path)) {
+                vkLog("frame dump %d: %dx%d -> %s", dumpCount, img.width(),
+                      img.height(), qPrintable(path));
+            }
+            else {
+                vkErr("frame dump %d: image save failed", dumpCount);
+            }
+            vkdf->vkUnmapMemory(m_window->device(), m_dumpMemory);
+        }
     }
 
     void releaseResources() override
@@ -204,29 +355,62 @@ public:
         m_target.sampleCount = samples;
 
         m_manager.setSceneGraph(m_scene);
+        m_manager.setOverlaySceneGraph(m_overlayScene);
         m_manager.setCamera(m_camera);
 
-        // If no viewport region has been configured yet, fall back to the
-        // full swapchain extent so the frame renders correctly on first show.
-        // SbViewportRegion's default constructor is 100x100 (not 0x0), so the
-        // sentinel must be tested against the default-constructed value rather
-        // than a zero size.
-        SbViewportRegion vp = m_viewport;
-        if (m_viewport == SbViewportRegion()) {
-            vp.setWindowSize(static_cast<short>(size.width()),
+        // The hidden GL viewer's viewport region is not authoritative: the
+        // Vulkan surface always covers the entire stacked-widget area, while
+        // the GL viewer may still report a stale or default size (it is never
+        // shown).  Using the GL-derived region produced a small rendering
+        // window in a corner of an otherwise clear-colored surface.  Always
+        // drive the Vulkan viewport/projection from the swapchain extent.
+        SbViewportRegion vp(static_cast<short>(size.width()),
+                            static_cast<short>(size.height()));
+        vp.setViewportPixels(0, 0,
+                             static_cast<short>(size.width()),
                              static_cast<short>(size.height()));
-            vp.setViewportPixels(0, 0,
-                                 static_cast<short>(size.width()),
-                                 static_cast<short>(size.height()));
-        }
         m_manager.setViewportRegion(vp);
         m_manager.setBackgroundColor(m_background);
+        if (getenv("FC_VULKAN_BREADCRUMBS")) {
+            static bool logged = false;
+            if (!logged) {
+                logged = true;
+                Gui::vulkanBreadcrumb( "[VK-TRACE] startNextFrame: setBackgroundGradient enabled=%d top=(%.3f,%.3f,%.3f) bottom=(%.3f,%.3f,%.3f)\n",
+                        m_backgroundGradient ? 1 : 0,
+                        m_backgroundTop[0], m_backgroundTop[1], m_backgroundTop[2],
+                        m_backgroundBottom[0], m_backgroundBottom[1], m_backgroundBottom[2]);
+            }
+        }
+        m_manager.setBackgroundGradient(m_backgroundGradient,
+                                        m_backgroundTop,
+                                        m_backgroundBottom);
+        m_manager.setWireframeOverlay(m_wireframeOverlay);
+        m_manager.setPointsOverlay(m_pointsOverlay);
+        m_manager.setEdgeColor(m_edgeColor);
         m_manager.setClearEnabled(m_clearWindow, m_clearDepth);
         m_manager.setRenderTarget(&m_target);
 
-        vkLog("startNextFrame: frame=%d swapchainImage=%d extent=%dx%d samples=%d",
-              m_window->currentFrame(), index, size.width(), size.height(),
-              static_cast<int>(samples));
+        // Log once per swapchain recreation (not per frame) to avoid console
+        // spam now that the renderer requests a new frame continuously.
+        static QSize lastLoggedSize;
+        static uint32_t lastLoggedSamples = 0;
+        if (size != lastLoggedSize || samples != lastLoggedSamples) {
+            lastLoggedSize = size;
+            lastLoggedSamples = samples;
+            vkLog("startNextFrame: swapchainImage=%d extent=%dx%d samples=%d",
+                  index, size.width(), size.height(),
+                  static_cast<int>(samples));
+        }
+
+        // Notify the GUI thread so the hidden OpenGL viewer (which owns
+        // navigation/picking) can keep its viewport region in sync with the
+        // visible Vulkan surface size.
+        if (size != m_lastSurfaceSize) {
+            m_lastSurfaceSize = size;
+            QMetaObject::invokeMethod(m_owner, "surfaceSizeChanged",
+                                      Qt::QueuedConnection,
+                                      Q_ARG(QSize, size));
+        }
 
         // QVulkanWindow does not begin/end the render pass for us; the
         // renderer is expected to do it in startNextFrame() using
@@ -243,8 +427,33 @@ public:
         rpBegin.renderArea.extent = {
             static_cast<uint32_t>(size.width()),
             static_cast<uint32_t>(size.height())};
-        rpBegin.clearValueCount = 0;
-        rpBegin.pClearValues = nullptr;
+
+        // QVulkanWindow's default render pass is created with
+        // LOAD_OP_CLEAR on the color, depth and (when MSAA is active) MSAA
+        // color attachments, so the begin info must carry one clear value
+        // per cleared attachment.  With multisampling Qt's pass clears
+        // attachment 0 (swapchain resolve target), 1 (depth) and 2 (MSAA
+        // color); without it only attachments 0 and 1 are cleared.  Passing
+        // fewer clear values than cleared attachments is a spec violation
+        // (VUID-VkRenderPassBeginInfo-clearValueCount-00902) and leaves the
+        // MSAA color attachment uninitialized, which resolves to an
+        // undefined (white) frame.  Clear color to the configured viewport
+        // background and depth to 1.0 (the conventional far value) to match
+        // the legacy clear behavior; the backend additionally issues clear
+        // attachments only when its clear flags request it.
+        VkClearValue clearValues[3] {};
+        clearValues[0].color.float32[0] = m_background[0];
+        clearValues[0].color.float32[1] = m_background[1];
+        clearValues[0].color.float32[2] = m_background[2];
+        clearValues[0].color.float32[3] = m_background[3];
+        clearValues[1].depthStencil.depth = 1.0f;
+        clearValues[1].depthStencil.stencil = 0;
+        if (multisample) {
+            // MSAA color attachment: same clear color as the resolve target.
+            clearValues[2] = clearValues[0];
+        }
+        rpBegin.clearValueCount = multisample ? 3u : 2u;
+        rpBegin.pClearValues = clearValues;
 
         QVulkanDeviceFunctions * vkdf = m_instance->deviceFunctions(m_window->device());
         vkdf->vkCmdBeginRenderPass(cb, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
@@ -257,21 +466,107 @@ public:
         }
 
         vkdf->vkCmdEndRenderPass(cb);
+
+        // Env-gated frame dump: copy the swapchain color image into a
+        // staging buffer inside the same command buffer, then read it back
+        // after submission and write a PNG.  This captures the exact pixels
+        // the backend rasterized (grab() renders its own frame and returned
+        // null in this setup).  The dump window is controlled with
+        // FC_VULKAN_DUMP_START / FC_VULKAN_DUMP_END (defaults 240-245).
+        frameCount++;
+        static int dumpStart = qEnvironmentVariableIntValue("FC_VULKAN_DUMP_START");
+        static int dumpEnd = qEnvironmentVariableIntValue("FC_VULKAN_DUMP_END");
+        if (dumpStart < 0) {
+            dumpStart = 240;
+        }
+        if (dumpEnd <= 0) {
+            dumpEnd = 246;
+        }
+        const bool dumpThisFrame = qEnvironmentVariableIsSet("FC_VULKAN_DUMP_FRAME")
+            && frameCount >= dumpStart && frameCount < dumpEnd;
+        if (dumpThisFrame) {
+            dumpCount++;
+            if (m_dumpMemory != VK_NULL_HANDLE) {
+                VkImage srcImage = m_window->swapChainImage(index);
+                VkImageMemoryBarrier barrier {};
+                barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                barrier.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+                barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.image = srcImage;
+                barrier.subresourceRange = {
+                    VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+                vkdf->vkCmdPipelineBarrier(
+                    cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
+                    1, &barrier);
+
+                VkBufferImageCopy region {};
+                region.imageSubresource = {
+                    VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                region.imageExtent = {static_cast<uint32_t>(size.width()),
+                                      static_cast<uint32_t>(size.height()), 1};
+                vkdf->vkCmdCopyImageToBuffer(cb, srcImage,
+                                             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                             m_dumpBuffer, 1, &region);
+
+                barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+                barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+                vkdf->vkCmdPipelineBarrier(
+                    cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0,
+                    nullptr, 1, &barrier);
+            }
+        }
+
         m_window->frameReady();
+
+        if (qEnvironmentVariableIsSet("FC_VULKAN_DUMP_FRAME") && dumpCount > 0
+            && dumpCount <= 6) {
+            saveDumpImage();
+        }
+        // Re-render every frame.  The Vulkan surface is display-only: camera
+        // navigation, selection and scene-graph edits all happen on the
+        // (hidden) OpenGL viewer that owns the same SoCamera and scene-graph
+        // nodes this renderer references.  Those mutations do not emit
+        // signals the Vulkan side can cheaply subscribe to, so request the
+        // next frame unconditionally.  Without this the image stays frozen
+        // after the first frame (camera moves, highlight and picking updates
+        // never appear).
+        m_window->requestUpdate();
     }
 
 private:
     QVulkanInstance * m_instance = nullptr;
     SoNode * m_scene = nullptr;
+    SoNode * m_overlayScene = nullptr;
     SoCamera * m_camera = nullptr;
     QVulkanWindow * m_window = nullptr;
-    SbViewportRegion m_viewport;
+    QuarterVulkanWidget * m_owner = nullptr;
+    QSize m_lastSurfaceSize;
     SbColor4f m_background = SbColor4f(0.0f, 0.0f, 0.0f, 1.0f);
+    bool m_backgroundGradient = false;
+    SbColor4f m_backgroundTop = SbColor4f(0.0f, 0.0f, 0.0f, 1.0f);
+    SbColor4f m_backgroundBottom = SbColor4f(0.0f, 0.0f, 0.0f, 1.0f);
+    bool m_wireframeOverlay = false;
+    bool m_pointsOverlay = false;
+    SbColor4f m_edgeColor = SbColor4f(0.05f, 0.05f, 0.05f, 1.0f);
     bool m_clearWindow = true;
     bool m_clearDepth = true;
     bool m_initialized = false;
+    bool m_rayTracing = false;
     SoVulkanRenderManager m_manager;
     SoVulkanRenderTarget m_target;
+    VkBuffer m_dumpBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory m_dumpMemory = VK_NULL_HANDLE;
+    QSize m_dumpSize;
+    int dumpCount = 0;
+    int frameCount = 0;
 };
 
 /*!
@@ -287,14 +582,27 @@ class QuarterVulkanWindow : public QVulkanWindow
 public:
     QuarterVulkanWindow(QVulkanInstance * instance,
                         SoNode * scene,
-                        SoCamera * camera)
-        : m_renderer(new QuarterVulkanRenderer(instance, this, scene, camera))
+                        SoCamera * camera,
+                        QuarterVulkanWidget * owner,
+                        bool rayTracing)
+        : m_renderer(new QuarterVulkanRenderer(instance, this, scene, camera, owner, rayTracing))
     {
     }
 
     QVulkanWindowRenderer * createRenderer() override { return m_renderer; }
 
     QuarterVulkanRenderer * renderer() const { return m_renderer; }
+
+    // Ray tracing feature structs referenced by the enabled-features
+    // modifier (see QuarterVulkanWidget).  They must outlive the modifier
+    // call: QVulkanWindowPrivate::init() uses the populated VkPhysical-
+    // DeviceFeatures2 (with this pNext chain) when it later calls
+    // vkCreateDevice, so structs on the modifier lambda's stack would
+    // dangle.
+    VkPhysicalDeviceBufferDeviceAddressFeatures rtBufferDeviceAddress {};
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR rtAccelerationStructure {};
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtRayTracingPipeline {};
+    VkPhysicalDeviceRayQueryFeaturesKHR rtRayQuery {};
 
 private:
     QuarterVulkanRenderer * m_renderer;
@@ -311,21 +619,31 @@ public:
     QWidget * container = nullptr;
     QuarterVulkanRenderer * renderer = nullptr;
     SoNode * scene = nullptr;
+    SoNode * overlayScene = nullptr;
     SoCamera * camera = nullptr;
-    SbViewportRegion viewport;
     SbColor4f background = SbColor4f(0.0f, 0.0f, 0.0f, 1.0f);
+    bool backgroundGradient = false;
+    SbColor4f backgroundTop = SbColor4f(0.0f, 0.0f, 0.0f, 1.0f);
+    SbColor4f backgroundBottom = SbColor4f(0.0f, 0.0f, 0.0f, 1.0f);
     bool clearWindow = true;
     bool clearDepth = true;
+    bool rayTracing = false;
     QWidget * forwardTarget = nullptr;
 };
 
-QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent)
+QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent, bool rayTracing)
     : QWidget(parent)
     , d(new QuarterVulkanWidgetPrivate)
 {
-    vkLog("QuarterVulkanWidget: constructing");
+    vkLog("QuarterVulkanWidget: constructing%s",
+          rayTracing ? " (ray tracing requested)" : "");
+    d->rayTracing = rayTracing;
 
     d->instance = new QVulkanInstance;
+    // Ray tracing requires Vulkan 1.2+ (acceleration-structure and
+    // ray-tracing-pipeline APIs are core-adjacent KHR extensions promoted to
+    // 1.2); advertise 1.2 so the device can expose them.
+    d->instance->setApiVersion(QVersionNumber(1, 2, 0));
     d->instance->setLayers({QByteArrayLiteral("VK_LAYER_KHRONOS_validation")});
     if (!d->instance->create()) {
         vkWarn("QuarterVulkanWidget: could not create instance with validation "
@@ -353,10 +671,85 @@ QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent)
               static_cast<int>(d->instance->errorCode()));
     }
 
-    d->vulkanWindow = new QuarterVulkanWindow(d->instance, d->scene, d->camera);
+    d->vulkanWindow = new QuarterVulkanWindow(d->instance, d->scene, d->camera,
+                                              this, rayTracing);
     d->window = d->vulkanWindow;
     d->window->setVulkanInstance(d->instance);
     d->renderer = d->vulkanWindow->renderer();
+
+    if (rayTracing) {
+        // Request the RT device extensions; QVulkanWindow creates the device
+        // on first expose, so this must happen before the window is shown.
+        const auto supported = d->window->supportedDeviceExtensions();
+        bool haveAS = false;
+        bool haveRTPipeline = false;
+        bool haveRayQuery = false;
+        for (const auto & ext : supported) {
+            if (ext.name == "VK_KHR_acceleration_structure") haveAS = true;
+            if (ext.name == "VK_KHR_ray_tracing_pipeline") haveRTPipeline = true;
+            if (ext.name == "VK_KHR_ray_query") haveRayQuery = true;
+        }
+        if (haveAS && haveRTPipeline && haveRayQuery) {
+            d->window->setDeviceExtensions({
+                QByteArrayLiteral("VK_KHR_acceleration_structure"),
+                QByteArrayLiteral("VK_KHR_ray_tracing_pipeline"),
+                QByteArrayLiteral("VK_KHR_ray_query"),
+                QByteArrayLiteral("VK_KHR_deferred_host_operations"),
+            });
+            // Enable the device features behind those extensions.  The
+            // modifier receives VkPhysicalDeviceFeatures2 after Qt has
+            // populated it; chain the RT feature structs onto pNext.
+            //
+            // VK_KHR_acceleration_structure requires the core
+            // bufferDeviceAddress feature: every BLAS/TLAS is referenced by
+            // device address and the RTX backend calls
+            // vkGetBufferDeviceAddress() unconditionally.  Without this
+            // feature the addresses are zero and the acceleration structure
+            // builds are invalid (validation error or device lost on strict
+            // drivers).
+            //
+            // The path tracer runs as a VK_KHR_ray_tracing_pipeline with a
+            // five-group shader binding table, so the ray-tracing-pipeline
+            // feature is required in addition.
+            //
+            // The feature structs live on the window object (not the
+            // modifier lambda's stack): QVulkanWindowPrivate::init() reads
+            // the pNext chain after the callback returns.
+            d->vulkanWindow->rtBufferDeviceAddress.sType =
+              VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+            d->vulkanWindow->rtBufferDeviceAddress.bufferDeviceAddress = VK_TRUE;
+            d->vulkanWindow->rtAccelerationStructure.sType =
+              VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+            d->vulkanWindow->rtAccelerationStructure.accelerationStructure = VK_TRUE;
+            d->vulkanWindow->rtRayTracingPipeline.sType =
+              VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+            d->vulkanWindow->rtRayTracingPipeline.rayTracingPipeline = VK_TRUE;
+            // The default dispatch mode is a ray-query compute path tracer
+            // (FC_VULKAN_RT_SBT=1 opts into the ray tracing pipeline), so
+            // the ray-query feature is required in addition.
+            d->vulkanWindow->rtRayQuery.sType =
+              VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+            d->vulkanWindow->rtRayQuery.rayQuery = VK_TRUE;
+            d->window->setEnabledFeaturesModifier(
+              [this](VkPhysicalDeviceFeatures2 & features) {
+                d->vulkanWindow->rtRayQuery.pNext = features.pNext;
+                d->vulkanWindow->rtRayTracingPipeline.pNext =
+                  &d->vulkanWindow->rtRayQuery;
+                d->vulkanWindow->rtAccelerationStructure.pNext =
+                  &d->vulkanWindow->rtRayTracingPipeline;
+                d->vulkanWindow->rtBufferDeviceAddress.pNext =
+                  &d->vulkanWindow->rtAccelerationStructure;
+                features.pNext = &d->vulkanWindow->rtBufferDeviceAddress;
+              });
+            vkLog("QuarterVulkanWidget: requested ray tracing pipeline device "
+                  "extensions");
+        }
+        else {
+            vkWarn("QuarterVulkanWidget: ray tracing requested but the device "
+                   "does not advertise VK_KHR_ray_tracing_pipeline / "
+                   "VK_KHR_acceleration_structure; falling back to raster");
+        }
+    }
 
     const QList<int> samples = d->window->supportedSampleCounts();
     QByteArray samplesStr;
@@ -400,6 +793,18 @@ SoNode * QuarterVulkanWidget::getSceneGraph() const
     return d->scene;
 }
 
+void QuarterVulkanWidget::setOverlaySceneGraph(SoNode * root)
+{
+    d->overlayScene = root;
+    d->renderer->setOverlayScene(root);
+    redraw();
+}
+
+SoNode * QuarterVulkanWidget::getOverlaySceneGraph() const
+{
+    return d->overlayScene;
+}
+
 void QuarterVulkanWidget::setCamera(SoCamera * camera)
 {
     d->camera = camera;
@@ -412,21 +817,44 @@ SoCamera * QuarterVulkanWidget::getCamera() const
     return d->camera;
 }
 
-void QuarterVulkanWidget::setViewportRegion(const SbViewportRegion & region)
-{
-    d->viewport = region;
-    d->renderer->setViewportRegion(region);
-}
-
-const SbViewportRegion & QuarterVulkanWidget::getViewportRegion() const
-{
-    return d->viewport;
-}
-
 void QuarterVulkanWidget::setBackgroundColor(const SbColor4f & color)
 {
     d->background = color;
     d->renderer->setBackgroundColor(color);
+}
+
+void QuarterVulkanWidget::setBackgroundGradient(bool enabled,
+                                                const SbColor4f & topColor,
+                                                const SbColor4f & bottomColor)
+{
+    if (getenv("FC_VULKAN_BREADCRUMBS")) {
+        Gui::vulkanBreadcrumb( "[VK-TRACE] QuarterVulkanWidget::setBackgroundGradient enabled=%d top=(%.3f,%.3f,%.3f) bottom=(%.3f,%.3f,%.3f)\n",
+                enabled ? 1 : 0, topColor[0], topColor[1], topColor[2],
+                bottomColor[0], bottomColor[1], bottomColor[2]);
+    }
+    d->backgroundGradient = enabled;
+    d->backgroundTop = topColor;
+    d->backgroundBottom = bottomColor;
+    d->renderer->setBackgroundGradient(enabled, topColor, bottomColor);
+    redraw();
+}
+
+void QuarterVulkanWidget::setWireframeOverlay(bool enabled)
+{
+    d->renderer->setWireframeOverlay(enabled);
+    redraw();
+}
+
+void QuarterVulkanWidget::setPointsOverlay(bool enabled)
+{
+    d->renderer->setPointsOverlay(enabled);
+    redraw();
+}
+
+void QuarterVulkanWidget::setEdgeColor(const SbColor4f & color)
+{
+    d->renderer->setEdgeColor(color);
+    redraw();
 }
 
 void QuarterVulkanWidget::setEventForwardTarget(QWidget * target)
@@ -439,6 +867,30 @@ bool QuarterVulkanWidget::eventFilter(QObject * watched, QEvent * event)
     Q_UNUSED(watched);
     if (!d->forwardTarget) {
         return QWidget::eventFilter(watched, event);
+    }
+
+    if (getenv("FC_VULKAN_BREADCRUMBS")) {
+        if (event->type() == QEvent::MouseMove
+            || event->type() == QEvent::MouseButtonPress
+            || event->type() == QEvent::MouseButtonRelease) {
+            const auto* me = static_cast<const QMouseEvent*>(event);
+            const QWidget* gl = d->forwardTarget;
+            const QWidget* container = d->container;
+            Gui::vulkanBreadcrumb(
+                    "[VK-TRACE] eventFilter watched=%s type=%d pos=(%.1f,%.1f) "
+                    "global=(%.1f,%.1f) | container rect=(%d,%d %dx%d) dpr=%.2f "
+                    "| glWidget rect=(%d,%d %dx%d) dpr=%.2f\n",
+                    watched == d->container ? "container"
+                    : (watched == static_cast<QObject*>(d->window) ? "window"
+                                                                    : "other"),
+                    static_cast<int>(event->type()),
+                    me->position().x(), me->position().y(),
+                    me->globalPosition().x(), me->globalPosition().y(),
+                    container->x(), container->y(), container->width(),
+                    container->height(), container->devicePixelRatioF(),
+                    gl->x(), gl->y(), gl->width(), gl->height(),
+                    gl->devicePixelRatioF());
+        }
     }
 
     // Only forward input events.  The coordinates are left untouched: the
@@ -520,18 +972,63 @@ SoVulkanRenderManager * QuarterVulkanWidget::getRenderManager() const
     return d->renderer->getManager();
 }
 
+bool QuarterVulkanWidget::isRayTracingActive() const
+{
+    if (!d->renderer) {
+        return false;
+    }
+    return d->renderer->getManager()->getRayTracingActive();
+}
+
+void QuarterVulkanWidget::setPathTracingEnabled(bool enabled)
+{
+    if (!d->renderer) {
+        return;
+    }
+    if (getenv("FC_VULKAN_BREADCRUMBS")) {
+        Gui::vulkanBreadcrumb("[VK-TRACE] QuarterVulkanWidget::setPathTracingEnabled enabled=%d\n",
+                              enabled ? 1 : 0);
+    }
+    d->renderer->getManager()->setPathTracingEnabled(enabled ? TRUE : FALSE);
+    redraw();
+}
+
+bool QuarterVulkanWidget::getPathTracingEnabled() const
+{
+    if (!d->renderer) {
+        return false;
+    }
+    return d->renderer->getManager()->getPathTracingEnabled() ? true : false;
+}
+
+void QuarterVulkanWidget::setPathTracingStart(bool start)
+{
+    if (!d->renderer) {
+        return;
+    }
+    d->renderer->getManager()->setPathTracingStart(start ? TRUE : FALSE);
+    redraw();
+}
+
+bool QuarterVulkanWidget::getPathTracingActive() const
+{
+    if (!d->renderer) {
+        return false;
+    }
+    return d->renderer->getManager()->getPathTracingActive() ? true : false;
+}
+
+unsigned QuarterVulkanWidget::getPathTracingSampleCount() const
+{
+    if (!d->renderer) {
+        return 0;
+    }
+    return d->renderer->getManager()->getPathTracingSampleCount();
+}
+
 QWidget * QuarterVulkanWidget::getNativeWidget()
 {
     return d->container;
-}
-
-void QuarterVulkanWidget::viewAll()
-{
-    if (d->camera) {
-        vkLog("viewAll: fitting camera to viewport");
-        d->camera->viewAll(static_cast<SoNode *>(nullptr), d->viewport);
-        redraw();
-    }
 }
 
 #endif // FREECAD_USE_VULKAN

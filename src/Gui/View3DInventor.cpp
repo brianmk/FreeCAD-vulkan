@@ -22,6 +22,8 @@
 
 
 #include <string>
+
+#include "VulkanBreadcrumbs.h"
 #include <QApplication>
 #include <QKeyEvent>
 #include <QEvent>
@@ -45,7 +47,12 @@
 #include <Inventor/nodes/SoOrthographicCamera.h>
 #include <Inventor/nodes/SoPerspectiveCamera.h>
 #include <Inventor/nodes/SoSeparator.h>
+#include <Inventor/nodes/SoAnnotation.h>
 #include <Inventor/SoPickedPoint.h>
+#include <Inventor/SbColor.h>
+#include <Inventor/SbColor4f.h>
+#include <Inventor/SbViewportRegion.h>
+#include <Inventor/SoEventManager.h>
 
 
 #include <App/Application.h>
@@ -138,6 +145,7 @@ View3DInventor::View3DInventor(
     }
 
     // create the inventor widget and set the defaults
+    _viewer->setParentView(this);
     _viewer->setDocument(this->_pcDocument);
     stack->addWidget(_viewer->getWidget());
     // https://forum.freecad.org/viewtopic.php?f=3&t=6055&sid=150ed90cbefba50f1e2ad4b4e6684eba
@@ -152,20 +160,133 @@ View3DInventor::View3DInventor(
     applySettings();
 
 #ifdef FREECAD_USE_VULKAN
+    if (getenv("FC_VULKAN_BREADCRUMBS")) {
+        vulkanBreadcrumb( "[VK-TRACE] View3DInventor: UseVulkanRenderer=%d\n",
+                App::GetApplication()
+                        .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
+                        ->GetBool("UseVulkanRenderer", false) ? 1 : 0);
+    }
     if (_viewer && App::GetApplication()
                            .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
                            ->GetBool("UseVulkanRenderer", false)) {
-        _vulkanViewer = new SIM::Coin3D::Quarter::QuarterVulkanWidget(stack);
+        const bool useRayTracing =
+            getenv("FC_VULKAN_RAYTRACING") != nullptr ||
+            App::GetApplication()
+                    .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
+                    ->GetBool("UseVulkanRayTracing", false);
+        if (getenv("FC_VULKAN_BREADCRUMBS")) {
+            vulkanBreadcrumb( "[VK-TRACE] View3DInventor: UseVulkanRayTracing=%d\n",
+                    useRayTracing ? 1 : 0);
+        }
+        _vulkanViewer = new SIM::Coin3D::Quarter::QuarterVulkanWidget(stack, useRayTracing);
         _vulkanViewer->setSampleCount(View3DInventorViewer::getNumSamples());
         // QVulkanWindow::grab() only converts 8-bit swapchain formats;
         // request B8G8R8A8_UNORM so screenshot tests read exact pixels.
         _vulkanViewer->setPreferredColorFormat(VK_FORMAT_B8G8R8A8_UNORM);
         stack->addWidget(_vulkanViewer);
+        if (getenv("FC_VULKAN_BREADCRUMBS")) {
+            vulkanBreadcrumb( "[VK-TRACE] View3DInventor: QuarterVulkanWidget created\n");
+        }
         syncVulkanViewer();
+        // The viewer replaces its camera node whenever the projection type
+        // changes (menu toggle, Python setCameraType, camera restore on
+        // document load).  Re-sync the Vulkan widget immediately so its
+        // render manager never keeps referencing the orphaned old camera:
+        // a stale camera makes the auto-clipping update the wrong node's
+        // near/far planes while the rendered view uses the new node, whose
+        // planes stay at their defaults and cull everything beyond 10 units.
+        connect(_viewer, &View3DInventorViewer::cameraChanged,
+                this, &View3DInventor::syncVulkanViewer);
         stack->setCurrentWidget(_vulkanViewer);
         // The Vulkan widget is display-only; relay its viewport input events
         // to the (hidden) OpenGL viewer so navigation and picking still work.
         _vulkanViewer->setEventForwardTarget(_viewer->getWidget());
+        // Keep the hidden GL viewer's viewport region in sync with the
+        // Vulkan surface so navigation (aspect/near-far) and ray picking
+        // use the visible surface size rather than a stale default.
+        connect(_vulkanViewer, &SIM::Coin3D::Quarter::QuarterVulkanWidget::surfaceSizeChanged,
+                this, [this](const QSize& surfaceSize) {
+            // The Vulkan swapchain size is in device pixels and is not a
+            // stable source for sizing the hidden GL widget: resizing a
+            // non-current QStackedWidget page changes the stack's sizeHint,
+            // which feeds back into the window and, in turn, the swapchain
+            // (this produced an oscillating surface size).  Size the hidden
+            // viewer to the visible Vulkan container instead.
+            //
+            // Event positions reach the hidden GL viewer already scaled to
+            // device pixels: EventFilter::trackPointerPosition() runs
+            // InputDevice::toDevicePixelPosition(), which multiplies the
+            // logical Qt position by the widget's device pixel ratio, and
+            // QuarterWidget::resizeEvent() sets the render/event manager
+            // viewport region to dpr * size (device pixels).  The viewport
+            // region must therefore be in the same device-pixel space for
+            // SoRayPickAction's normalized coordinates to match the ray;
+            // using the logical size would shift hover picking and
+            // navigation by the DPI factor on high-density displays.
+            QWidget* container = _vulkanViewer->getNativeWidget();
+            QWidget* glWidget = _viewer->getWidget();
+            if (!container || !glWidget) {
+                return;
+            }
+            const QSize logical = container->size();
+            if (logical.width() <= 0 || logical.height() <= 0) {
+                return;
+            }
+            const qreal dpr = glWidget->devicePixelRatioF();
+            const int pw = qMax(1, static_cast<int>(logical.width() * dpr));
+            const int ph = qMax(1, static_cast<int>(logical.height() * dpr));
+            if (getenv("FC_VULKAN_BREADCRUMBS")) {
+                const SbVec2s glSize = _viewer->getSoRenderManager()->getViewportRegion().getViewportSizePixels();
+                vulkanBreadcrumb( "[VK-TRACE] surfaceSizeChanged surface=%dx%d container=%dx%d logical=%dx%d glViewport(before)=%dx%d glWidgetSize=%dx%d dpr=%.3f\n",
+                        surfaceSize.width(), surfaceSize.height(),
+                        container->width(), container->height(),
+                        logical.width(), logical.height(),
+                        glSize[0], glSize[1],
+                        glWidget->width(), glWidget->height(), dpr);
+            }
+
+            SbViewportRegion vp(static_cast<short>(pw), static_cast<short>(ph));
+            _viewer->getSoRenderManager()->setViewportRegion(vp);
+            _viewer->getSoEventManager()->setViewportRegion(vp);
+
+            // The hidden GL viewer is the source of truth for navigation,
+            // but its viewport (and therefore the camera aspect used by
+            // viewAll()) is stale while the widget is hidden.  Drive the
+            // shared camera's aspect ratio from the real Vulkan surface so
+            // viewAll()/navigation frame the scene for the visible surface;
+            // otherwise the camera distance is computed for a wrong aspect
+            // and the camera ends up inside the object (near-plane clipping
+            // on load).
+            SoCamera* cam = _viewer->getSoRenderManager()->getCamera();
+            if (cam) {
+                const float surfaceAspect =
+                    ph > 0 ? static_cast<float>(pw) / static_cast<float>(ph)
+                           : 1.0f;
+                if (cam->aspectRatio.getValue() != surfaceAspect) {
+                    cam->aspectRatio.setValue(surfaceAspect);
+                }
+            }
+
+            // Re-frame once the surface has a real size.  At startup the
+            // swapchain is created with a default size and only later
+            // matches the window, so the first viewAll() ran against a
+            // wrong viewport/aspect and framed the camera too close to the
+            // scene.  Re-running it here (only on the first stable size)
+            // repositions the camera outside the object.
+            if (!_initialVulkanFitDone && pw > 1 && ph > 1) {
+                _initialVulkanFitDone = true;
+                _viewer->viewAll();
+            }
+
+            // Prevent the hidden page from affecting the stack's sizeHint so
+            // this does not feed back into the window/swapchain size.
+            if (glWidget->sizePolicy() != QSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored)) {
+                glWidget->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+            }
+            if (glWidget->size() != logical) {
+                glWidget->resize(logical);
+            }
+        });
     }
 #endif
 
@@ -270,15 +391,115 @@ void View3DInventor::syncVulkanViewer()
     if (!_vulkanViewer) {
         return;
     }
+    if (getenv("FC_VULKAN_BREADCRUMBS")) {
+        vulkanBreadcrumb( "[VK-TRACE] View3DInventor::syncVulkanViewer enter\n");
+    }
     SoRenderManager* rm = _viewer->getSoRenderManager();
     if (!rm) {
         return;
     }
     _vulkanViewer->setSceneGraph(rm->getSceneGraph());
+    _vulkanViewer->setOverlaySceneGraph(_viewer->getNaviCubeAnnotation());
     _vulkanViewer->setCamera(rm->getCamera());
-    _vulkanViewer->setViewportRegion(rm->getViewportRegion());
+    if (getenv("FC_VULKAN_BREADCRUMBS")) {
+        SoCamera* cam = rm->getCamera();
+        vulkanBreadcrumb( "[VK-TRACE] syncVulkanViewer camptr=%p %s\n",
+                static_cast<void*>(cam),
+                cam ? cam->getTypeId().getName().getString() : "null");
+        const SbVec2s glSize = rm->getViewportRegion().getViewportSizePixels();
+        vulkanBreadcrumb( "[VK-TRACE] syncVulkanViewer glViewport=%dx%d glWidget=%dx%d\n",
+                glSize[0], glSize[1],
+                _viewer->getWidget() ? _viewer->getWidget()->width() : -1,
+                _viewer->getWidget() ? _viewer->getWidget()->height() : -1);
+    }
     _vulkanViewer->setBackgroundColor(rm->getBackgroundColor());
+    const View3DInventorViewer::Background gradient = _viewer->getGradientBackground();
+    if (getenv("FC_VULKAN_BREADCRUMBS")) {
+        vulkanBreadcrumb( "[VK-TRACE] syncVulkanViewer gradient enum=%d\n", static_cast<int>(gradient));
+    }
+    if (gradient != View3DInventorViewer::Background::NoGradient) {
+        SbColor from;
+        SbColor to;
+        _viewer->getGradientBackgroundColor(from, to);
+        _vulkanViewer->setBackgroundGradient(true, SbColor4f(from[0], from[1], from[2], 1.0f), SbColor4f(to[0], to[1], to[2], 1.0f));
+    }
+    else {
+        _vulkanViewer->setBackgroundGradient(false, SbColor4f(0.0f, 0.0f, 0.0f, 1.0f), SbColor4f(0.0f, 0.0f, 0.0f, 1.0f));
+    }
+    applyVulkanSettings();
     _vulkanViewer->redraw();
+#endif
+}
+
+void View3DInventor::applyVulkanSettings()
+{
+#ifdef FREECAD_USE_VULKAN
+    if (!_vulkanViewer) {
+        return;
+    }
+    auto hGrp = App::GetApplication().GetParameterGroupByPath(
+        "User parameter:BaseApp/Preferences/View");
+    if (!hGrp) {
+        return;
+    }
+    if (getenv("FC_VULKAN_BREADCRUMBS")) {
+        vulkanBreadcrumb( "[VK-TRACE] applyVulkanSettings edges=%d points=%d\n",
+                hGrp->GetBool("VulkanShowEdges", false) ? 1 : 0,
+                hGrp->GetBool("VulkanShowPoints", false) ? 1 : 0);
+    }
+    _vulkanViewer->setWireframeOverlay(hGrp->GetBool("VulkanShowEdges", false));
+    _vulkanViewer->setPointsOverlay(hGrp->GetBool("VulkanShowPoints", false));
+    unsigned long color = hGrp->GetUnsigned("VulkanEdgeColor", 0x050505FFUL);
+    SbColor4f edgeColor(
+        ((color >> 24) & 0xff) / 255.0f,
+        ((color >> 16) & 0xff) / 255.0f,
+        ((color >> 8) & 0xff) / 255.0f,
+        1.0f);
+    _vulkanViewer->setEdgeColor(edgeColor);
+
+    // Path tracing toggle (start flag: enabling kicks off a progressive
+    // render; camera moves reset to the live preview until restarted).
+    const bool pathTracing = hGrp->GetBool("VulkanPathTracing", false);
+    _vulkanViewer->setPathTracingEnabled(pathTracing);
+    if (pathTracing) {
+        _vulkanViewer->setPathTracingStart(true);
+    }
+#endif
+}
+
+void View3DInventor::setPathTracingEnabled(bool enabled)
+{
+#ifdef FREECAD_USE_VULKAN
+    if (_vulkanViewer) {
+        _vulkanViewer->setPathTracingEnabled(enabled);
+    }
+#endif
+}
+
+void View3DInventor::setPathTracingStart(bool start)
+{
+#ifdef FREECAD_USE_VULKAN
+    if (_vulkanViewer) {
+        _vulkanViewer->setPathTracingStart(start);
+    }
+#endif
+}
+
+bool View3DInventor::isPathTracingEnabled() const
+{
+#ifdef FREECAD_USE_VULKAN
+    return _vulkanViewer && _vulkanViewer->getPathTracingEnabled();
+#else
+    return false;
+#endif
+}
+
+bool View3DInventor::isPathTracingActive() const
+{
+#ifdef FREECAD_USE_VULKAN
+    return _vulkanViewer && _vulkanViewer->getPathTracingActive();
+#else
+    return false;
 #endif
 }
 
@@ -463,10 +684,12 @@ bool View3DInventor::onMsg(const char* pMsg)
     }
     else if (strcmp("OrthographicCamera", pMsg) == 0) {
         _viewer->setCameraType(SoOrthographicCamera::getClassTypeId());
+        syncVulkanViewer();
         return true;
     }
     else if (strcmp("PerspectiveCamera", pMsg) == 0) {
         _viewer->setCameraType(SoPerspectiveCamera::getClassTypeId());
+        syncVulkanViewer();
         return true;
     }
     else if (strcmp("Undo", pMsg) == 0) {

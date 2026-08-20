@@ -42,6 +42,7 @@
 class SoFullPath;
 class SoPickedPoint;
 class SoDetail;
+class SoIRRenderAction;
 class SbBox3f;
 class SbMatrix;
 
@@ -304,6 +305,7 @@ public:
 
     void GLRenderBelowPath(SoGLRenderAction* action) override;
     void GLRenderInPath(SoGLRenderAction* action) override;
+    void IRRender(SoIRRenderAction* action) override;
 
     void doAction(SoAction* action) override;
     void pick(SoPickAction* action) override;
@@ -483,6 +485,8 @@ protected:
 
     void renderPrivate(SoGLRenderAction*, bool inPath);
     bool _renderPrivate(SoGLRenderAction*, bool inPath);
+    void renderPrivateIR(SoIRRenderAction*);
+    bool _renderPrivateIR(SoIRRenderAction*);
 
     class Stack: public std::vector<SoNode*>
     {

@@ -41,6 +41,8 @@
 #pragma warning(disable : 4267)
 #endif
 
+#include <cstdlib>
+
 #include <QEvent>
 #include <QMouseEvent>
 #include <QWheelEvent>
@@ -51,6 +53,7 @@
 #include <Inventor/events/SoEvents.h>
 
 #include "QuarterWidget.h"
+#include "VulkanBreadcrumbs.h"
 #include "devices/Mouse.h"
 
 
@@ -155,6 +158,13 @@ MouseP::resizeEvent(QResizeEvent * event)
 {
   this->windowsize = SbVec2s(event->size().width(),
                              event->size().height());
+  if (getenv("FC_VULKAN_BREADCRUMBS")) {
+    Gui::vulkanBreadcrumb(
+            "[VK-TRACE] MouseP::resizeEvent widget=%dx%d event=%dx%d -> windowsize=%d,%d\n",
+            publ->quarter->width(), publ->quarter->height(),
+            event->size().width(), event->size().height(),
+            this->windowsize[0], this->windowsize[1]);
+  }
 }
 
 const SoEvent *
@@ -165,7 +175,7 @@ MouseP::mouseMoveEvent(QMouseEvent * event)
   assert(this->windowsize[1] != -1);
   SbVec2s pos = InputDevice::toDevicePixelPosition(
       getLocalPosition(event),
-      this->windowsize,
+      effectiveWindowSize(publ->quarter),
       publ->quarter->devicePixelRatio());
   this->location2->setPosition(pos);
   this->mousebutton->setPosition(pos);
@@ -178,7 +188,7 @@ MouseP::mouseWheelEvent(QWheelEvent * event)
   PUBLIC(this)->setModifiers(this->wheel, event);
   SbVec2s pos = InputDevice::toDevicePixelPosition(
       getLocalPosition(event),
-      PUBLIC(this)->windowsize,
+      effectiveWindowSize(PUBLIC(this)->quarter),
       publ->quarter->devicePixelRatio());
   this->location2->setPosition(pos); //I don't know why location2 is assigned here, I assumed it important  --DeepSOIC
   this->wheel->setPosition(pos);
@@ -200,7 +210,7 @@ MouseP::mouseButtonEvent(QMouseEvent * event)
   PUBLIC(this)->setModifiers(this->mousebutton, event);
   SbVec2s pos = InputDevice::toDevicePixelPosition(
       getLocalPosition(event),
-      PUBLIC(this)->windowsize,
+      effectiveWindowSize(PUBLIC(this)->quarter),
       publ->quarter->devicePixelRatio());
   this->location2->setPosition(pos);
   this->mousebutton->setPosition(pos);

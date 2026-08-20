@@ -547,6 +547,7 @@ public:
 
     void setGradientBackground(Background);
     Background getGradientBackground() const;
+    void getGradientBackgroundColor(SbColor& fromColor, SbColor& toColor) const;
     void setGradientBackgroundColor(const SbColor& fromColor, const SbColor& toColor);
     void setGradientBackgroundColor(
         const SbColor& fromColor,
@@ -567,6 +568,8 @@ public:
     bool isEnabledNaviCube() const;
     void setNaviCubeCorner(int);
     NaviCube* getNaviCube() const;
+    //! The annotation group holding the nav cube coin node (empty when hidden).
+    SoAnnotation* getNaviCubeAnnotation() const;
     void setEnabledVBO(bool on);
     bool isEnabledVBO() const;
     void setRenderCache(int);
@@ -587,6 +590,9 @@ public:
 
     bool getSceneBoundBox(SbBox3f& box) const;
     bool getSceneBoundBox(Base::BoundBox3d& box) const;
+
+    void setParentView(View3DInventor* view) { parentView_ = view; }
+    View3DInventor* parentView() const { return parentView_; }
 
 Q_SIGNALS:
     void cameraChanged();
@@ -654,6 +660,7 @@ private:
     std::list<GLGraphicsItem*> graphicsItems;
     std::unique_ptr<RubberbandOverlay> rubberbandOverlayRenderer;
     ViewProvider* editViewProvider;
+    View3DInventor* parentView_ = nullptr;
     SoFCBackgroundGradient* pcBackGround;
     SoSeparator* backgroundroot;
     SoSeparator* foregroundroot;

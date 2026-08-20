@@ -58,6 +58,7 @@ class SoOrthographicCamera;
 class SoPerspectiveCamera;
 class SoTransform;
 class SoVertexProperty;
+class SoIRRenderAction;
 namespace Gui
 {
 
@@ -129,6 +130,7 @@ protected:
     ~SoNaviCube() override;
 
     void GLRender(SoGLRenderAction* action) override;
+    void IRRender(SoIRRenderAction* action) override;
     void generatePrimitives(SoAction* action) override;
     void computeBBox(SoAction* action, SbBox3f& box, SbVec3f& center) override;
 
@@ -156,6 +158,7 @@ private:
     };
 
     void renderCoin(SoGLRenderAction* action);
+    void renderOverlayIR(SoIRRenderAction* action);
     void ensureSceneGraph() const;
     void rebuildSceneGraph() const;
     void resetSceneGraph() const;

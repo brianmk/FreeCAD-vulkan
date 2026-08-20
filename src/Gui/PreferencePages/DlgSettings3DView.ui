@@ -545,6 +545,88 @@ bounding box size of the 3D object that is currently displayed.</string>
     </widget>
    </item>
    <item>
+    <widget class="QGroupBox" name="groupBoxVulkan">
+     <property name="title">
+      <string>Vulkan rendering (experimental)</string>
+     </property>
+     <property name="toolTip">
+      <string>These options affect only the Vulkan viewport renderer and are ignored by the standard OpenGL renderer.  Requires a FreeCAD build with FREECAD_USE_VULKAN and the UseVulkanRenderer preference enabled.</string>
+     </property>
+     <layout class="QVBoxLayout" name="verticalLayoutVulkan">
+      <item>
+       <widget class="Gui::PrefCheckBox" name="CheckBox_VulkanShowEdges">
+        <property name="text">
+         <string>Show edges (wireframe overlay)</string>
+        </property>
+        <property name="prefEntry" stdset="0">
+         <cstring>VulkanShowEdges</cstring>
+        </property>
+        <property name="prefPath" stdset="0">
+         <cstring>View</cstring>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="Gui::PrefCheckBox" name="CheckBox_VulkanShowPoints">
+        <property name="text">
+         <string>Show vertices (point overlay)</string>
+        </property>
+        <property name="prefEntry" stdset="0">
+         <cstring>VulkanShowPoints</cstring>
+        </property>
+        <property name="prefPath" stdset="0">
+         <cstring>View</cstring>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="Gui::PrefCheckBox" name="CheckBox_VulkanPathTracing">
+        <property name="text">
+         <string>Path tracing (global illumination)</string>
+        </property>
+        <property name="toolTip">
+         <string>Render with the Vulkan ray-tracing path tracer: multi-bounce global illumination with shadow rays, progressive accumulation and edge-stopping denoising.  Enabling starts a progressive render; camera moves drop back to a live preview.  Requires UseVulkanRenderer and UseVulkanRayTracing and a ray-tracing capable GPU.  Also available from Python as startPathTracing() on the view.</string>
+        </property>
+        <property name="prefEntry" stdset="0">
+         <cstring>VulkanPathTracing</cstring>
+        </property>
+        <property name="prefPath" stdset="0">
+         <cstring>View</cstring>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="horizontalLayoutVulkanEdge">
+        <item>
+         <widget class="QLabel" name="labelVulkanEdgeColor">
+          <property name="text">
+           <string>Edge color</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="Gui::PrefColorButton" name="VulkanEdgeColor">
+          <property name="color">
+           <color>
+            <red>5</red>
+            <green>5</green>
+            <blue>5</blue>
+           </color>
+          </property>
+          <property name="prefEntry" stdset="0">
+           <cstring>VulkanEdgeColor</cstring>
+          </property>
+          <property name="prefPath" stdset="0">
+           <cstring>View</cstring>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
     <widget class="QGroupBox" name="groupBoxCamera">
      <property name="title">
       <string>Camera Type</string>

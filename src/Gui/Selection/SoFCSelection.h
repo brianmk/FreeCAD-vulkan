@@ -46,6 +46,7 @@
 
 class SoFullPath;
 class SoPickedPoint;
+class SoIRRenderAction;
 
 
 namespace Gui
@@ -115,6 +116,7 @@ public:
 
     void doAction(SoAction* action) override;
     void GLRender(SoGLRenderAction* action) override;
+    void IRRender(SoIRRenderAction* action) override;
 
     void handleEvent(SoHandleEventAction* action) override;
     void GLRenderBelowPath(SoGLRenderAction* action) override;
@@ -137,6 +139,7 @@ private:
     static int getPriority(const SoPickedPoint*);
     static void turnoffcurrent(SoAction* action);
     bool setOverride(SoGLRenderAction* action, SelContextPtr);
+    bool setOverrideIR(SoIRRenderAction* action, SelContextPtr);
     SbBool isHighlighted(SoAction* action);
     SbBool preRender(SoGLRenderAction* act, GLint& oldDepthFunc);
     const SoPickedPoint* getPickedPoint(SoHandleEventAction*) const;

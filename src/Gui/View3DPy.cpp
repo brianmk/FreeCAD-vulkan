@@ -130,6 +130,31 @@ void View3DInventorPy::init_type()
     add_varargs_method("dumpNode", &View3DInventorPy::dumpNode, "dumpNode(node)");
     add_varargs_method("saveImage", &View3DInventorPy::saveImage, "saveImage()");
     add_varargs_method("saveVectorGraphic", &View3DInventorPy::saveVectorGraphic, "saveVectorGraphic()");
+    add_varargs_method(
+        "setPathTracingEnabled",
+        &View3DInventorPy::setPathTracingEnabled,
+        "setPathTracingEnabled(enabled): enable/disable path tracing on the "
+        "Vulkan viewport (no-op without a Vulkan ray-tracing viewer). "
+        "Enabling starts a progressive multi-bounce render."
+    );
+    add_noargs_method(
+        "isPathTracingEnabled",
+        &View3DInventorPy::isPathTracingEnabled,
+        "isPathTracingEnabled() -> bool: whether path tracing is enabled"
+    );
+    add_noargs_method(
+        "startPathTracing",
+        &View3DInventorPy::startPathTracing,
+        "startPathTracing(): start flag for a fresh progressive path-traced "
+        "render (one jittered sample per frame with denoising).  Camera "
+        "moves or scene changes drop back to a single-sample preview."
+    );
+    add_noargs_method(
+        "isPathTracingActive",
+        &View3DInventorPy::isPathTracingActive,
+        "isPathTracingActive() -> bool: whether a progressive accumulation "
+        "is running"
+    );
     add_noargs_method("getCamera", &View3DInventorPy::getCamera, "getCamera()");
     add_noargs_method("getCameraNode", &View3DInventorPy::getCameraNode, "getCameraNode()");
     add_noargs_method(
@@ -1334,6 +1359,32 @@ Py::Object View3DInventorPy::dump(const Py::Tuple& args)
     catch (...) {
         throw Py::RuntimeError("Unknown C++ exception");
     }
+}
+
+Py::Object View3DInventorPy::setPathTracingEnabled(const Py::Tuple& args)
+{
+    PyObject* enabled = Py_False;
+    if (!PyArg_ParseTuple(args.ptr(), "|O!", &PyBool_Type, &enabled)) {
+        throw Py::Exception();
+    }
+    getView3DInventorPtr()->setPathTracingEnabled(Base::asBoolean(enabled));
+    return Py::None();
+}
+
+Py::Object View3DInventorPy::isPathTracingEnabled()
+{
+    return Py::Boolean(getView3DInventorPtr()->isPathTracingEnabled());
+}
+
+Py::Object View3DInventorPy::startPathTracing()
+{
+    getView3DInventorPtr()->setPathTracingStart(true);
+    return Py::None();
+}
+
+Py::Object View3DInventorPy::isPathTracingActive()
+{
+    return Py::Boolean(getView3DInventorPtr()->isPathTracingActive());
 }
 
 Py::Object View3DInventorPy::dumpNode(const Py::Tuple& args)

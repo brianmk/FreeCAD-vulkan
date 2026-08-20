@@ -431,12 +431,11 @@ void NaviCubeImplementation::syncNodeState(SoAction* action)
     const SoType type = action->getTypeId();
     const bool isGLRender = type.isDerivedFrom(SoGLRenderAction::getClassTypeId());
 
-    if (isGLRender) {
-        if (!readyToRender()) {
-            return;
-        }
-    }
-    else if (!prepared) {
+    // Both the legacy GL render path and the Vulkan/IR overlay path must run
+    // prepare() (label textures, chamfer geometry) before they can render; the
+    // hidden GL viewer may never paint, so the Vulkan traversal has to trigger
+    // it too.
+    if (!readyToRender()) {
         return;
     }
 
