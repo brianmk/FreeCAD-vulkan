@@ -22,6 +22,7 @@
 
 
 #include <string>
+#include <cstring>
 
 #include <Base/VulkanBreadcrumbs.h>
 #include <QApplication>
@@ -166,8 +167,13 @@ View3DInventor::View3DInventor(
     if (_viewer && App::GetApplication()
                            .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
                            ->GetBool("UseVulkanRenderer", false)) {
+        const char * envRayTracing = getenv("FC_VULKAN_RAYTRACING");
+        const bool envRayTracingEnabled =
+            envRayTracing && std::strcmp(envRayTracing, "0") != 0 &&
+            std::strcmp(envRayTracing, "false") != 0 &&
+            std::strcmp(envRayTracing, "off") != 0;
         const bool useRayTracing =
-            getenv("FC_VULKAN_RAYTRACING") != nullptr ||
+            envRayTracingEnabled ||
             App::GetApplication()
                     .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
                     ->GetBool("UseVulkanRayTracing", false);

@@ -102,6 +102,23 @@ bool hasEmissive(const SoRenderCommand& cmd, float r, float g, float b)
         && std::fabs(e[2] - b) < kEps;
 }
 
+bool hasDiffuse(const SoRenderCommand& cmd, float r, float g, float b)
+{
+    const auto& d = cmd.material.diffuse;
+    constexpr float kEps = 1e-4F;
+    return std::fabs(d[0] - r) < kEps && std::fabs(d[1] - g) < kEps
+        && std::fabs(d[2] - b) < kEps;
+}
+
+// The highlight/selection color must appear in the recorded commands.  With
+// GL parity the color is baked into the base pass's per-face colors
+// (diffuse) via the material remap; the explicit emissive overlay only
+// appears when the remap cannot be expressed through Coin state.
+bool hasFaceColor(const SoRenderCommand& cmd, float r, float g, float b)
+{
+    return hasEmissive(cmd, r, g, b) || hasDiffuse(cmd, r, g, b);
+}
+
 // Mirror the view-provider click path: a selection action carrying a
 // SoFaceDetail that names part 0 of the face set.
 void selectFace(Gui::SoFCSelectionRoot* root, PartGui::SoBrepFaceSet* face)
@@ -154,18 +171,18 @@ TEST_F(VulkanPartSelectionTest, highlightedFaceRecordsOverlayCommandInIR)
     const SoDrawList& list = action.getDrawList();
     ASSERT_GT(list.getNumCommands(), 0);
 
-    // The face itself is unlit and the highlight overlay is a separate command
-    // with the highlight color set as emissive.
+    // The highlighted part must carry the highlight color (baked into the
+    // per-face diffuse colors, or as an emissive overlay fallback).
     bool found = false;
     for (int i = 0; i < list.getNumCommands(); ++i) {
-        if (hasEmissive(list.getCommand(i), kFaceR, kFaceG, kFaceB)) {
+        if (hasFaceColor(list.getCommand(i), kFaceR, kFaceG, kFaceB)) {
             found = true;
             break;
         }
     }
 
     root->unref();
-    EXPECT_TRUE(found) << "no IR draw command carried the face-highlight emissive color";
+    EXPECT_TRUE(found) << "no IR draw command carried the face-highlight color";
 }
 
 TEST_F(VulkanPartSelectionTest, selectedFaceRecordsOverlayCommandInIR)
@@ -184,14 +201,14 @@ TEST_F(VulkanPartSelectionTest, selectedFaceRecordsOverlayCommandInIR)
 
     bool found = false;
     for (int i = 0; i < list.getNumCommands(); ++i) {
-        if (hasEmissive(list.getCommand(i), kSelectionR, kSelectionG, kSelectionB)) {
+        if (hasFaceColor(list.getCommand(i), kSelectionR, kSelectionG, kSelectionB)) {
             found = true;
             break;
         }
     }
 
     root->unref();
-    EXPECT_TRUE(found) << "no IR draw command carried the face-selection emissive color";
+    EXPECT_TRUE(found) << "no IR draw command carried the face-selection color";
 }
 
 Gui::SoFCSelectionRoot* makeEdgeScene(PartGui::SoBrepEdgeSet*& edgeOut)

@@ -26,6 +26,7 @@
 #include <QApplication>
 #include <QEvent>
 #include <QKeyEvent>
+#include <QMutex>
 #include <QMouseEvent>
 #include <QWheelEvent>
 
@@ -141,6 +142,11 @@ public:
             memReq,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
                 | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        if (mai.memoryTypeIndex == UINT32_MAX) {
+            vkErr("frame dump: no host-visible memory type available");
+            vkdf->vkDestroyBuffer(m_window->device(), buf, nullptr);
+            return;
+        }
         if (vkdf->vkAllocateMemory(m_window->device(), &mai, nullptr, &mem)
                 != VK_SUCCESS
             || vkdf->vkBindBufferMemory(m_window->device(), buf, mem, 0)
@@ -232,8 +238,9 @@ public:
     //! disabled, without a buffer, or after the dump window).
     void saveFrame()
     {
+        const int windowFrames = m_dumpEnd - m_dumpStart + 1;
         if (!m_enabled || m_buffer == VK_NULL_HANDLE || m_dumpCount <= 0
-            || m_dumpCount > 6) {
+            || m_dumpCount > windowFrames) {
             return;
         }
         QVulkanDeviceFunctions * vkdf =
@@ -261,6 +268,8 @@ public:
     }
 
 private:
+    // Returns UINT32_MAX when no memory type matches, so callers can fail
+    // with a diagnostic instead of silently falling back to type 0.
     uint32_t findMemoryType(const VkMemoryRequirements & memReq,
                             uint32_t props)
     {
@@ -276,7 +285,7 @@ private:
                 return i;
             }
         }
-        return 0;
+        return UINT32_MAX;
     }
 
     QVulkanInstance * m_instance = nullptr;
@@ -312,15 +321,32 @@ public:
     {
     }
 
-    void setScene(SoNode * scene) { m_scene = scene; }
-    void setOverlayScene(SoNode * scene) { m_overlayScene = scene; }
-    void setCamera(SoCamera * camera) { m_camera = camera; }
+    void setScene(SoNode * scene)
+    {
+        QMutexLocker locker(&m_stateMutex);
+        m_scene = scene;
+    }
+    void setOverlayScene(SoNode * scene)
+    {
+        QMutexLocker locker(&m_stateMutex);
+        m_overlayScene = scene;
+    }
+    void setCamera(SoCamera * camera)
+    {
+        QMutexLocker locker(&m_stateMutex);
+        m_camera = camera;
+    }
     void setClearEnabled(bool window, bool depth)
     {
+        QMutexLocker locker(&m_stateMutex);
         m_clearWindow = window;
         m_clearDepth = depth;
     }
-    void setBackgroundColor(const SbColor4f & color) { m_background = color; }
+    void setBackgroundColor(const SbColor4f & color)
+    {
+        QMutexLocker locker(&m_stateMutex);
+        m_background = color;
+    }
     void setBackgroundGradient(bool enabled,
                                const SbColor4f & top,
                                const SbColor4f & bottom)
@@ -329,13 +355,50 @@ public:
                       "enabled=%d top=(%.3f,%.3f,%.3f) bottom=(%.3f,%.3f,%.3f)\n",
                       enabled ? 1 : 0, top[0], top[1], top[2],
                       bottom[0], bottom[1], bottom[2]);
+        QMutexLocker locker(&m_stateMutex);
         m_backgroundGradient = enabled;
         m_backgroundTop = top;
         m_backgroundBottom = bottom;
     }
-    void setWireframeOverlay(bool enabled) { m_wireframeOverlay = enabled; }
-    void setPointsOverlay(bool enabled) { m_pointsOverlay = enabled; }
-    void setEdgeColor(const SbColor4f & color) { m_edgeColor = color; }
+    void setWireframeOverlay(bool enabled)
+    {
+        QMutexLocker locker(&m_stateMutex);
+        m_wireframeOverlay = enabled;
+    }
+    void setPointsOverlay(bool enabled)
+    {
+        QMutexLocker locker(&m_stateMutex);
+        m_pointsOverlay = enabled;
+    }
+    void setEdgeColor(const SbColor4f & color)
+    {
+        QMutexLocker locker(&m_stateMutex);
+        m_edgeColor = color;
+    }
+
+    // Path tracing state is applied to the manager on the render thread
+    // (startNextFrame) instead of being called into the manager from the
+    // GUI thread, keeping every manager access on the render thread.
+    void setPathTracingEnabled(bool enabled)
+    {
+        QMutexLocker locker(&m_stateMutex);
+        m_pathTracingEnabled = enabled;
+    }
+    void setPathTracingStart(bool start)
+    {
+        QMutexLocker locker(&m_stateMutex);
+        m_pathTracingStart = start;
+    }
+    bool getPathTracingEnabled() const
+    {
+        QMutexLocker locker(&m_stateMutex);
+        return m_pathTracingEnabled;
+    }
+    bool getPathTracingActive() const
+    {
+        QMutexLocker locker(&m_stateMutex);
+        return m_pathTracingActive;
+    }
 
     SoVulkanRenderManager * getManager() { return &m_manager; }
 
@@ -432,7 +495,50 @@ public:
 
     void startNextFrame() override
     {
-        if (!m_initialized || !m_scene) {
+        // The state members below are written by the GUI thread (through the
+        // setters) while this function runs on QVulkanWindow's render
+        // thread.  Snapshot everything under the mutex and use the locals
+        // for the rest of the frame; pending path-tracing requests are
+        // applied to the manager here on the render thread.
+        SoNode * scene = nullptr;
+        SoNode * overlayScene = nullptr;
+        SoCamera * camera = nullptr;
+        SbColor4f background;
+        SbColor4f backgroundTop;
+        SbColor4f backgroundBottom;
+        SbColor4f edgeColor;
+        bool backgroundGradient = false;
+        bool wireframeOverlay = false;
+        bool pointsOverlay = false;
+        bool clearWindow = true;
+        bool clearDepth = true;
+        {
+            QMutexLocker locker(&m_stateMutex);
+            scene = m_scene;
+            overlayScene = m_overlayScene;
+            camera = m_camera;
+            background = m_background;
+            backgroundTop = m_backgroundTop;
+            backgroundBottom = m_backgroundBottom;
+            edgeColor = m_edgeColor;
+            backgroundGradient = m_backgroundGradient;
+            wireframeOverlay = m_wireframeOverlay;
+            pointsOverlay = m_pointsOverlay;
+            clearWindow = m_clearWindow;
+            clearDepth = m_clearDepth;
+
+            if (m_pathTracingStart) {
+                m_manager.setPathTracingStart(TRUE);
+                m_pathTracingStart = false;
+            }
+            if (m_pathTracingEnabled != m_appliedPathTracingEnabled) {
+                m_manager.setPathTracingEnabled(m_pathTracingEnabled ? TRUE
+                                                                     : FALSE);
+                m_appliedPathTracingEnabled = m_pathTracingEnabled;
+            }
+        }
+
+        if (!m_initialized || !scene) {
             if (!m_initialized) {
                 vkWarn("startNextFrame: backend not initialized, skipping");
             }
@@ -461,9 +567,9 @@ public:
                            static_cast<uint32_t>(size.height())};
         m_target.sampleCount = samples;
 
-        m_manager.setSceneGraph(m_scene);
-        m_manager.setOverlaySceneGraph(m_overlayScene);
-        m_manager.setCamera(m_camera);
+        m_manager.setSceneGraph(scene);
+        m_manager.setOverlaySceneGraph(overlayScene);
+        m_manager.setCamera(camera);
 
         // The hidden GL viewer's viewport region is not authoritative: the
         // Vulkan surface always covers the entire stacked-widget area, while
@@ -477,19 +583,19 @@ public:
                              static_cast<short>(size.width()),
                              static_cast<short>(size.height()));
         m_manager.setViewportRegion(vp);
-        m_manager.setBackgroundColor(m_background);
+        m_manager.setBackgroundColor(background);
         VK_BREADCRUMB_ONCE("[VK-TRACE] startNextFrame: setBackgroundGradient "
                            "enabled=%d top=(%.3f,%.3f,%.3f) bottom=(%.3f,%.3f,%.3f)\n",
-                           m_backgroundGradient ? 1 : 0,
-                           m_backgroundTop[0], m_backgroundTop[1], m_backgroundTop[2],
-                           m_backgroundBottom[0], m_backgroundBottom[1], m_backgroundBottom[2]);
-        m_manager.setBackgroundGradient(m_backgroundGradient,
-                                        m_backgroundTop,
-                                        m_backgroundBottom);
-        m_manager.setWireframeOverlay(m_wireframeOverlay);
-        m_manager.setPointsOverlay(m_pointsOverlay);
-        m_manager.setEdgeColor(m_edgeColor);
-        m_manager.setClearEnabled(m_clearWindow, m_clearDepth);
+                           backgroundGradient ? 1 : 0,
+                           backgroundTop[0], backgroundTop[1], backgroundTop[2],
+                           backgroundBottom[0], backgroundBottom[1], backgroundBottom[2]);
+        m_manager.setBackgroundGradient(backgroundGradient,
+                                        backgroundTop,
+                                        backgroundBottom);
+        m_manager.setWireframeOverlay(wireframeOverlay);
+        m_manager.setPointsOverlay(pointsOverlay);
+        m_manager.setEdgeColor(edgeColor);
+        m_manager.setClearEnabled(clearWindow, clearDepth);
         m_manager.setRenderTarget(&m_target);
 
         // Log once per swapchain recreation (not per frame) to avoid console
@@ -544,10 +650,10 @@ public:
         // the legacy clear behavior; the backend additionally issues clear
         // attachments only when its clear flags request it.
         VkClearValue clearValues[3] {};
-        clearValues[0].color.float32[0] = m_background[0];
-        clearValues[0].color.float32[1] = m_background[1];
-        clearValues[0].color.float32[2] = m_background[2];
-        clearValues[0].color.float32[3] = m_background[3];
+        clearValues[0].color.float32[0] = background[0];
+        clearValues[0].color.float32[1] = background[1];
+        clearValues[0].color.float32[2] = background[2];
+        clearValues[0].color.float32[3] = background[3];
         clearValues[1].depthStencil.depth = 1.0f;
         clearValues[1].depthStencil.stencil = 0;
         if (multisample) {
@@ -560,7 +666,7 @@ public:
         QVulkanDeviceFunctions * vkdf = m_instance->deviceFunctions(m_window->device());
         vkdf->vkCmdBeginRenderPass(cb, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
 
-        const SbBool ok = m_manager.renderExternal(m_clearWindow, m_clearDepth,
+        const SbBool ok = m_manager.renderExternal(clearWindow, clearDepth,
                                                    cb,
                                                    m_window->defaultRenderPass());
         if (!ok) {
@@ -575,6 +681,14 @@ public:
         m_dumper.recordFrameCopy(cb, index, size);
 
         m_window->frameReady();
+
+        // Report the path-tracing status back to the GUI thread (one frame
+        // of latency is acceptable for a status getter).
+        {
+            QMutexLocker locker(&m_stateMutex);
+            m_pathTracingActive = m_manager.getPathTracingActive() ? true
+                                                                   : false;
+        }
 
         m_dumper.saveFrame();
         // Re-render every frame.  The Vulkan surface is display-only: camera
@@ -607,6 +721,16 @@ private:
     bool m_clearDepth = true;
     bool m_initialized = false;
     bool m_rayTracing = false;
+    // Path tracing state mirrored here: the GUI thread writes the
+    // requested values, startNextFrame applies them to the manager on the
+    // render thread and reports the active status back.
+    bool m_pathTracingEnabled = false;
+    bool m_pathTracingStart = false;
+    bool m_pathTracingActive = false;
+    bool m_appliedPathTracingEnabled = false;
+    // Guards every state member written from the GUI thread and read by
+    // the render thread (startNextFrame snapshots under this lock).
+    mutable QMutex m_stateMutex;
     SoVulkanRenderManager m_manager;
     SoVulkanRenderTarget m_target;
     VulkanFrameDumper m_dumper;
@@ -821,6 +945,27 @@ QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent, bool rayTracing)
 QuarterVulkanWidget::~QuarterVulkanWidget()
 {
     vkLog("QuarterVulkanWidget: destroying");
+    // Stop forwarding events before anything is freed: deferred events
+    // delivered to the container/window after `d` is gone would otherwise
+    // hit the event filter with a dangling private pointer.
+    if (d->container) {
+        d->container->removeEventFilter(this);
+    }
+    if (d->window) {
+        d->window->removeEventFilter(this);
+    }
+    // The container owns the QVulkanWindow child; destroying it destroys
+    // the window and the renderer it owns while the QVulkanInstance is
+    // still alive (the renderer shutdown needs the device/queue).
+    delete d->container;
+    d->container = nullptr;
+    d->window = nullptr;
+    d->vulkanWindow = nullptr;
+    d->renderer = nullptr;
+    // QVulkanWindow::setVulkanInstance() does not take ownership; release
+    // the instance we created.
+    delete d->instance;
+    d->instance = nullptr;
     delete d;
 }
 
@@ -1029,7 +1174,7 @@ void QuarterVulkanWidget::setPathTracingEnabled(bool enabled)
     }
     VK_BREADCRUMB("[VK-TRACE] QuarterVulkanWidget::setPathTracingEnabled enabled=%d\n",
                   enabled ? 1 : 0);
-    d->renderer->getManager()->setPathTracingEnabled(enabled ? TRUE : FALSE);
+    d->renderer->setPathTracingEnabled(enabled);
     redraw();
 }
 
@@ -1038,7 +1183,7 @@ bool QuarterVulkanWidget::getPathTracingEnabled() const
     if (!d->renderer) {
         return false;
     }
-    return d->renderer->getManager()->getPathTracingEnabled() ? true : false;
+    return d->renderer->getPathTracingEnabled();
 }
 
 void QuarterVulkanWidget::setPathTracingStart(bool start)
@@ -1046,7 +1191,7 @@ void QuarterVulkanWidget::setPathTracingStart(bool start)
     if (!d->renderer) {
         return;
     }
-    d->renderer->getManager()->setPathTracingStart(start ? TRUE : FALSE);
+    d->renderer->setPathTracingStart(start);
     redraw();
 }
 
@@ -1055,7 +1200,7 @@ bool QuarterVulkanWidget::getPathTracingActive() const
     if (!d->renderer) {
         return false;
     }
-    return d->renderer->getManager()->getPathTracingActive() ? true : false;
+    return d->renderer->getPathTracingActive();
 }
 
 QWidget * QuarterVulkanWidget::getNativeWidget()

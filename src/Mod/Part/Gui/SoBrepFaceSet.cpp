@@ -569,16 +569,19 @@ void SoBrepFaceSet::renderSelectionIR(SoIRRenderAction* action, SelContextPtr ct
     renderOverlayFacesIR(action, overlayFaceSet, overlayCoordIndex, ctx->selectionColor, false);
 }
 
-bool SoBrepFaceSet::overrideMaterialBinding(SoGLRenderAction* action, SelContextPtr ctx, SelContextPtr ctx2)
+// Shared GL/IR material-remap pass: SoBrepFaceSet groups rendered triangles
+// into topological faces via partIndex.  Coin's IndexedFaceSet consumes one
+// material index per rendered triangle face, so any per-part coloring must
+// be remapped to per-face indices before GLRender()/IRRender().
+// Selection/highlight overlays reuse the same remap path.
+//
+// The computation and the Coin state element writes are identical for both
+// actions (every element used here is enabled on SoIRRenderAction as well),
+// so both render paths funnel through this function.
+bool SoBrepFaceSet::overrideMaterialBindingCommon(SoState* state, SelContextPtr ctx, SelContextPtr ctx2)
 {
-    // SoBrepFaceSet groups rendered triangles into topological faces via
-    // partIndex. Coin's IndexedFaceSet consumes one material index per
-    // rendered triangle face, so any per-part coloring must be remapped to
-    // per-face indices before GLRender(). Selection/highlight overlays reuse
-    // the same remap path.
     const bool hasPrimary = ctx && (ctx->isHighlighted() || !ctx->selectionIndex.empty());
     const bool hasSecondary = ctx2 && (!ctx2->colors.empty() || !ctx2->selectionIndex.empty());
-    auto* state = action->getState();
     const auto mb = SoMaterialBindingElement::get(state);
     const int partCount = this->partIndex.getNum();
     if (partCount <= 0) {
@@ -601,7 +604,7 @@ bool SoBrepFaceSet::overrideMaterialBinding(SoGLRenderAction* action, SelContext
         if (!warnedUnsupportedBinding) {
             warnedUnsupportedBinding = true;
             SoDebugError::postWarning(
-                "SoBrepFaceSet::overrideMaterialBinding",
+                "SoBrepFaceSet::overrideMaterialBindingCommon",
                 "Unsupported material binding for Coin face remap; falling back to explicit "
                 "overlay passes. Current Part face rendering expects OVERALL or PER_PART."
             );
@@ -783,6 +786,11 @@ bool SoBrepFaceSet::overrideMaterialBinding(SoGLRenderAction* action, SelContext
     return true;
 }
 
+bool SoBrepFaceSet::overrideMaterialBinding(SoGLRenderAction* action, SelContextPtr ctx, SelContextPtr ctx2)
+{
+    return this->overrideMaterialBindingCommon(action->getState(), ctx, ctx2);
+}
+
 void SoBrepFaceSet::GLRender(SoGLRenderAction* action)
 {
     ZoneScoped;
@@ -914,8 +922,9 @@ void SoBrepFaceSet::IRRender(SoIRRenderAction* action)
     const bool hasSecondaryColors = ctx2 && !ctx2->colors.empty();
     const bool hasOverlayFields = (highlightPartIndex.getNum() > 0)
         || (selectionPartIndex.getNum() > 0);
+    // Parity with GLRender(): an existing-but-empty secondary context
+    // inhibits drawing of the base geometry in partial-render scenarios.
     if (!hasOverlayFields && ctx2 && ctx2->selectionIndex.empty() && !hasSecondaryColors) {
-        inherited::IRRender(action);
         return;
     }
     if (selContext2->checkGlobal(ctx)) {
@@ -925,16 +934,27 @@ void SoBrepFaceSet::IRRender(SoIRRenderAction* action)
         ctx.reset();
     }
 
+    auto state = action->getState();
+    // Same material remap as GLRender(): per-face colors and partial-render
+    // hiding are baked into the base pass; when the current binding cannot
+    // be expressed, selection/highlight fall back to explicit overlay
+    // passes below.
+    const bool pushed = this->overrideMaterialBindingCommon(state, ctx, ctx2);
     inherited::IRRender(action);
+    if (pushed) {
+        state->pop();
+    }
 
-    if (ctx2 && !hasSecondaryColors && !ctx2->selectionIndex.empty()) {
-        renderSelectionIR(action, ctx2);
-    }
-    if (ctx && !ctx->selectionIndex.empty()) {
-        renderSelectionIR(action, ctx);
-    }
-    if (ctx) {
-        renderHighlightIR(action, ctx);
+    if (!pushed) {
+        if (ctx2 && !hasSecondaryColors && !ctx2->selectionIndex.empty()) {
+            renderSelectionIR(action, ctx2);
+        }
+        if (ctx && !ctx->selectionIndex.empty()) {
+            renderSelectionIR(action, ctx);
+        }
+        if (ctx) {
+            renderHighlightIR(action, ctx);
+        }
     }
 
     // Optional overlay rendering for deterministic tests (and programmatic

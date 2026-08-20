@@ -78,6 +78,8 @@
 
 #include <QOpenGLWidget>
 
+#include <cstdlib>
+
 #include <App/Document.h>
 #include <App/GeoFeature.h>
 #include <App/ElementNamingUtils.h>

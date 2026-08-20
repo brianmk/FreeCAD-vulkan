@@ -16,8 +16,15 @@ add_executable(Gui_tests_run
         InputHintTest.cpp
         SelectionTest.cpp
         SoRayPickActionTest.cpp
-        VulkanSelectionTest.cpp
 )
+
+# The Vulkan viewport test includes <Inventor/actions/SoIRRenderAction.h>,
+# which only exists in the bundled Coin (FREECAD_USE_VULKAN implies it).
+if(FREECAD_USE_VULKAN)
+    target_sources(Gui_tests_run PRIVATE
+        VulkanSelectionTest.cpp
+    )
+endif()
 
 # Qt tests
 setup_qt_test(QuantitySpinBox)

@@ -605,8 +605,9 @@ void SoBrepEdgeSet::IRRender(SoIRRenderAction* action)
                           ctx ? ctx->selectionIndex.size() : (size_t)-1,
                           ctx2.get(), ctx2 ? ctx2->selectionIndex.size() : (size_t)-1,
                           ctx2 ? ctx2->colors.size() : (size_t)-1);
+    // Parity with GLRender(): an existing-but-empty secondary context
+    // inhibits drawing of the base geometry in partial-render scenarios.
     if (ctx2 && ctx2->selectionIndex.empty() && ctx2->colors.empty()) {
-        inherited::IRRender(action);
         return;
     }
 

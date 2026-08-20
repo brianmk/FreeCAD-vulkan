@@ -139,6 +139,7 @@ private:
     void renderSelectionIR(SoIRRenderAction* action, SelContextPtr);
 
     bool overrideMaterialBinding(SoGLRenderAction* action, SelContextPtr ctx, SelContextPtr ctx2);
+    bool overrideMaterialBindingCommon(SoState* state, SelContextPtr ctx, SelContextPtr ctx2);
 
 #ifdef RENDER_GLARRAYS
     void renderSimpleArray();

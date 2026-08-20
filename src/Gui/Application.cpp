@@ -548,7 +548,12 @@ Application::Application(bool GUIenabled)
         // Honor the --enable-vulkan command-line flag: persist it into the
         // view preferences before any 3D view is constructed, so the
         // View3DInventor path picks the Vulkan renderer for this run.
-        if (App::Application::Config().count("UseVulkanRenderer")) {
+        // Only an explicit truthy value enables it: an explicit
+        // "--set-config UseVulkanRenderer=0" must be able to override the
+        // flag (count() alone would treat the key's mere presence as on).
+        auto configIt = App::Application::Config().find("UseVulkanRenderer");
+        if (configIt != App::Application::Config().end()
+            && configIt->second == "1") {
             hViewGrp->SetBool("UseVulkanRenderer", true);
         }
 
