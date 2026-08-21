@@ -14,6 +14,8 @@
 #include <Inventor/nodes/SoNode.h>
 #include <Inventor/rendering/SoVulkanRenderManager.h>
 #include <Inventor/rendering/SoVulkanRenderTarget.h>
+#include <Inventor/sensors/SoFieldSensor.h>
+#include <Inventor/sensors/SoNodeSensor.h>
 
 #include <vulkan/vulkan.h>
 
@@ -243,9 +245,13 @@ public:
             || m_dumpCount > windowFrames) {
             return;
         }
+        // Called after QVulkanWindow::frameReady(), which QVulkanWindow
+        // only emits once this frame's fence has signaled, so the recorded
+        // copy has completed and the staging buffer is safe to read.  A
+        // vkQueueWaitIdle here would additionally drain unrelated in-flight
+        // frames and stall the whole pipeline.
         QVulkanDeviceFunctions * vkdf =
             m_instance->deviceFunctions(m_window->device());
-        vkdf->vkQueueWaitIdle(m_window->graphicsQueue());
         void * data = nullptr;
         if (vkdf->vkMapMemory(m_window->device(), m_memory, 0,
                               VK_WHOLE_SIZE, 0, &data) != VK_SUCCESS) {
@@ -409,6 +415,64 @@ public:
         return m_rayTracingActive;
     }
 
+    // Demand-driven redraws: the surface re-renders only when something
+    // changed.  Widget setters call redraw() from the GUI thread; camera
+    // navigation and scene-graph edits arrive through these sensors (the
+    // hidden GL viewer mutates the shared camera/scene without touching the
+    // Vulkan widget).  Sensor callbacks fire during scene-graph
+    // notification; QVulkanWindow::requestUpdate() is documented thread-safe.
+    static void sceneChangedCb(void * data, SoSensor *)
+    {
+        static_cast<QuarterVulkanRenderer *>(data)->requestFrame();
+    }
+    static void cameraChangedCb(void * data, SoSensor *)
+    {
+        static_cast<QuarterVulkanRenderer *>(data)->requestFrame();
+    }
+    void requestFrame()
+    {
+        if (m_window) {
+            m_window->requestUpdate();
+        }
+    }
+
+    // Attach/detach the redraw sensors when the managed scene or camera
+    // changes.  Idempotent: re-attaching the same node is skipped.
+    void attachSensors(SoNode * scene, SoCamera * camera)
+    {
+        if (scene != m_sensorScene) {
+            delete m_sceneSensor;
+            m_sceneSensor = nullptr;
+            m_sensorScene = scene;
+            if (scene) {
+                m_sceneSensor = new SoNodeSensor(sceneChangedCb, this);
+                m_sceneSensor->attach(scene);
+            }
+        }
+        if (camera != m_sensorCamera) {
+            for (SoFieldSensor * sensor : m_cameraSensors) {
+                delete sensor;
+            }
+            m_cameraSensors.clear();
+            m_sensorCamera = camera;
+            if (camera) {
+                static const char * const fields[] = {
+                    "position", "orientation", "aspectRatio", "nearDistance",
+                    "farDistance", "focalDistance", "viewportMapping",
+                    "heightAngle", "height"};
+                for (const char * name : fields) {
+                    SoField * field = camera->getField(SbName(name));
+                    if (!field) {
+                        continue;
+                    }
+                    auto * sensor = new SoFieldSensor(cameraChangedCb, this);
+                    sensor->attach(field);
+                    m_cameraSensors.push_back(sensor);
+                }
+            }
+        }
+    }
+
     void preInitResources() override {}
 
     void initResources() override
@@ -492,6 +556,15 @@ public:
         vkLog("releaseResources: shutting down backend");
         m_manager.shutdown();
         m_initialized = false;
+        // Drop the redraw sensors: the scene/camera may outlive the window.
+        delete m_sceneSensor;
+        m_sceneSensor = nullptr;
+        m_sensorScene = nullptr;
+        for (SoFieldSensor * sensor : m_cameraSensors) {
+            delete sensor;
+        }
+        m_cameraSensors.clear();
+        m_sensorCamera = nullptr;
     }
 
     void physicalDeviceLost() override
@@ -521,8 +594,6 @@ public:
         bool backgroundGradient = false;
         bool wireframeOverlay = false;
         bool pointsOverlay = false;
-        bool clearWindow = true;
-        bool clearDepth = true;
         {
             QMutexLocker locker(&m_stateMutex);
             scene = m_scene;
@@ -535,8 +606,6 @@ public:
             backgroundGradient = m_backgroundGradient;
             wireframeOverlay = m_wireframeOverlay;
             pointsOverlay = m_pointsOverlay;
-            clearWindow = m_clearWindow;
-            clearDepth = m_clearDepth;
 
             if (m_pathTracingStart) {
                 m_manager.setPathTracingStart(TRUE);
@@ -548,6 +617,10 @@ public:
                 m_appliedPathTracingEnabled = m_pathTracingEnabled;
             }
         }
+
+        // Keep the redraw sensors in sync with the scene/camera the renderer
+        // is about to consume.
+        this->attachSensors(scene, camera);
 
         if (!m_initialized || !scene) {
             if (!m_initialized) {
@@ -606,7 +679,10 @@ public:
         m_manager.setWireframeOverlay(wireframeOverlay);
         m_manager.setPointsOverlay(pointsOverlay);
         m_manager.setEdgeColor(edgeColor);
-        m_manager.setClearEnabled(clearWindow, clearDepth);
+        // The external path relies on QVulkanWindow's default render pass
+        // clear (see rpBegin below); the backend must never issue its own
+        // full-frame clear attachments into that pass.
+        m_manager.setClearEnabled(false, false);
         m_manager.setRenderTarget(&m_target);
 
         // Log once per swapchain recreation (not per frame) to avoid console
@@ -677,7 +753,11 @@ public:
         QVulkanDeviceFunctions * vkdf = m_instance->deviceFunctions(m_window->device());
         vkdf->vkCmdBeginRenderPass(cb, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
 
-        const SbBool ok = m_manager.renderExternal(clearWindow, clearDepth,
+        // QVulkanWindow's default render pass already clears color and depth
+        // with the values in rpBegin above, so the backend must not issue
+        // its own full-frame clear attachments (a second clear per frame).
+        // The overlay block's sub-rect depth clear is unaffected.
+        const SbBool ok = m_manager.renderExternal(false, false,
                                                    cb,
                                                    m_window->defaultRenderPass());
         if (!ok) {
@@ -704,15 +784,15 @@ public:
         }
 
         m_dumper.saveFrame();
-        // Re-render every frame.  The Vulkan surface is display-only: camera
-        // navigation, selection and scene-graph edits all happen on the
-        // (hidden) OpenGL viewer that owns the same SoCamera and scene-graph
-        // nodes this renderer references.  Those mutations do not emit
-        // signals the Vulkan side can cheaply subscribe to, so request the
-        // next frame unconditionally.  Without this the image stays frozen
-        // after the first frame (camera moves, highlight and picking updates
-        // never appear).
-        m_window->requestUpdate();
+        // Progressive path tracing accumulates samples across frames and
+        // therefore needs continuous re-renders while accumulating.  Every
+        // other state change requests its own update: widget setters call
+        // redraw(), and camera/scene-graph mutations trigger the field/node
+        // sensors attached in attachSensors().  Without this the Vulkan
+        // surface used to busy-loop requestUpdate() at full swapchain rate.
+        if (m_pathTracingEnabled && m_pathTracingActive) {
+            m_window->requestUpdate();
+        }
     }
 
 private:
@@ -742,6 +822,12 @@ private:
     bool m_pathTracingActive = false;
     bool m_appliedPathTracingEnabled = false;
     bool m_rayTracingActive = false;
+    // Redraw sensors (see attachSensors()): owned by the renderer, deleted
+    // on releaseResources()/destruction; coin sensors detach on deletion.
+    SoNodeSensor * m_sceneSensor = nullptr;
+    SoNode * m_sensorScene = nullptr;
+    std::vector<SoFieldSensor *> m_cameraSensors;
+    SoCamera * m_sensorCamera = nullptr;
     // Guards every state member written from the GUI thread and read by
     // the render thread (startNextFrame snapshots under this lock).
     mutable QMutex m_stateMutex;
@@ -795,6 +881,10 @@ class SIM::Coin3D::Quarter::QuarterVulkanWidgetPrivate
 {
 public:
     QVulkanInstance * instance = nullptr;
+    // Shared-instance bookkeeping (see the constructor): the last widget
+    // destroys the process-wide QVulkanInstance.
+    QMutex * instanceMutex = nullptr;
+    int * instanceRefs = nullptr;
     QVulkanWindow * window = nullptr;
     QuarterVulkanWindow * vulkanWindow = nullptr;
     QWidget * container = nullptr;
@@ -820,36 +910,57 @@ QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent, bool rayTracing)
           rayTracing ? " (ray tracing requested)" : "");
     d->rayTracing = rayTracing;
 
-    d->instance = new QVulkanInstance;
-    // Ray tracing requires Vulkan 1.2+ (acceleration-structure and
-    // ray-tracing-pipeline APIs are core-adjacent KHR extensions promoted to
-    // 1.2); advertise 1.2 so the device can expose them.
-    d->instance->setApiVersion(QVersionNumber(1, 2, 0));
-    d->instance->setLayers({QByteArrayLiteral("VK_LAYER_KHRONOS_validation")});
-    if (!d->instance->create()) {
-        vkWarn("QuarterVulkanWidget: could not create instance with validation "
-               "layer (error %d), retrying without layers",
-               static_cast<int>(d->instance->errorCode()));
-        d->instance->setLayers({});
-        d->instance->create();
-    }
+    // One QVulkanInstance is shared across every 3D view (Qt intends a
+    // single app-wide instance; N views no longer allocate N instances).
+    // Refcounted so the last widget tears it down.
+    {
+        static QMutex instanceMutex;
+        static QVulkanInstance * sharedInstance = nullptr;
+        static int sharedInstanceRefs = 0;
+        QMutexLocker locker(&instanceMutex);
+        if (!sharedInstance) {
+            sharedInstance = new QVulkanInstance;
+            // Ray tracing requires Vulkan 1.2+ (acceleration-structure and
+            // ray-tracing-pipeline APIs are core-adjacent KHR extensions
+            // promoted to 1.2); advertise 1.2 so the device can expose them.
+            sharedInstance->setApiVersion(QVersionNumber(1, 2, 0));
+            // The validation layer is opt-in (FC_VULKAN_VALIDATION): it
+            // costs real CPU per draw and must not ship enabled by default.
+            if (getenv("FC_VULKAN_VALIDATION")) {
+                sharedInstance->setLayers(
+                    {QByteArrayLiteral("VK_LAYER_KHRONOS_validation")});
+            }
+            if (!sharedInstance->create()) {
+                vkWarn("QuarterVulkanWidget: could not create instance with "
+                       "validation layer (error %d), retrying without layers",
+                       static_cast<int>(sharedInstance->errorCode()));
+                sharedInstance->setLayers({});
+                sharedInstance->create();
+            }
 
-    if (d->instance->isValid()) {
-        const QVersionNumber api = d->instance->supportedApiVersion();
-        vkLog("QuarterVulkanWidget: instance created (Vulkan %d.%d.%d)",
-              api.majorVersion(), api.minorVersion(), api.microVersion());
-        const auto layers = d->instance->layers();
-        for (const QByteArray & l : layers) {
-            vkLog("  enabled layer: %s", l.constData());
+            if (sharedInstance->isValid()) {
+                const QVersionNumber api = sharedInstance->supportedApiVersion();
+                vkLog("QuarterVulkanWidget: instance created (Vulkan %d.%d.%d)",
+                      api.majorVersion(), api.minorVersion(), api.microVersion());
+                const auto layers = sharedInstance->layers();
+                for (const QByteArray & l : layers) {
+                    vkLog("  enabled layer: %s", l.constData());
+                }
+                const auto extensions = sharedInstance->extensions();
+                for (const QByteArray & e : extensions) {
+                    vkLog("  enabled extension: %s", e.constData());
+                }
+            }
+            else {
+                vkErr("QuarterVulkanWidget: Vulkan instance creation FAILED "
+                      "(error %d)",
+                      static_cast<int>(sharedInstance->errorCode()));
+            }
         }
-        const auto extensions = d->instance->extensions();
-        for (const QByteArray & e : extensions) {
-            vkLog("  enabled extension: %s", e.constData());
-        }
-    }
-    else {
-        vkErr("QuarterVulkanWidget: Vulkan instance creation FAILED (error %d)",
-              static_cast<int>(d->instance->errorCode()));
+        ++sharedInstanceRefs;
+        d->instance = sharedInstance;
+        d->instanceRefs = &sharedInstanceRefs;
+        d->instanceMutex = &instanceMutex;
     }
 
     d->vulkanWindow = new QuarterVulkanWindow(d->instance, d->scene, d->camera,
@@ -977,8 +1088,13 @@ QuarterVulkanWidget::~QuarterVulkanWidget()
     d->vulkanWindow = nullptr;
     d->renderer = nullptr;
     // QVulkanWindow::setVulkanInstance() does not take ownership; release
-    // the instance we created.
-    delete d->instance;
+    // our reference on the shared instance (the last widget destroys it).
+    if (d->instanceMutex && d->instanceRefs) {
+        QMutexLocker locker(d->instanceMutex);
+        if (--(*d->instanceRefs) == 0) {
+            delete d->instance;
+        }
+    }
     d->instance = nullptr;
     delete d;
 }
@@ -1023,6 +1139,7 @@ void QuarterVulkanWidget::setBackgroundColor(const SbColor4f & color)
 {
     d->background = color;
     d->renderer->setBackgroundColor(color);
+    redraw();
 }
 
 void QuarterVulkanWidget::setBackgroundGradient(bool enabled,
