@@ -48,157 +48,13 @@
 #include <Gui/Inventor/So3DAnnotation.h>
 
 #include "ViewProviderExt.h"
+#include "SoBrepOverlayHelpers.h"
 #include "SoBrepPointSet.h"
 
 
 using namespace PartGui;
 
 SO_NODE_SOURCE(SoBrepPointSet)
-
-static void applyOverlayPrimitiveState(SoState* state, SoNode* node)
-{
-    if (!state || !node) {
-        return;
-    }
-
-    SoLazyElement::setLightModel(state, SoLazyElement::BASE_COLOR);
-    SoTextureEnabledElement::set(state, node, false);
-    SoMaterialBindingElement::set(state, SoMaterialBindingElement::OVERALL);
-    SoOverrideElement::setMaterialBindingOverride(state, node, true);
-}
-
-static void applyOverlayDepthState(SoState* state, OverlayDepthMode depthMode)
-{
-    switch (depthMode) {
-        case OverlayDepthMode::DrawOnTop:
-            SoDepthBufferElement::set(
-                state,
-                FALSE,
-                FALSE,
-                SoDepthBufferElement::ALWAYS,
-                SbVec2f(0.0f, 1.0f)
-            );
-            return;
-        case OverlayDepthMode::RespectDepth:
-            SoDepthBufferElement::set(
-                state,
-                TRUE,
-                FALSE,
-                SoDepthBufferElement::LEQUAL,
-                SbVec2f(0.0f, 1.0f)
-            );
-            return;
-    }
-}
-
-static void renderOverlayPoints(
-    SoGLRenderAction* action,
-    SoIndexedPointSet* pointSet,
-    const int32_t* indices,
-    int numIndices,
-    const SbColor& color,
-    OverlayDepthMode depthMode
-)
-{
-    if (!action || !pointSet || !indices || numIndices <= 0) {
-        return;
-    }
-
-    std::vector<int32_t> pointIndices;
-    pointIndices.reserve(static_cast<size_t>(numIndices) + 1);
-
-    for (int i = 0; i < numIndices; i++) {
-        const int32_t idx = indices[i];
-        if (idx >= 0) {
-            pointIndices.push_back(idx);
-        }
-    }
-    pointIndices.push_back(-1);
-
-    if (pointIndices.size() <= 1) {
-        return;
-    }
-
-    auto state = action->getState();
-    state->push();
-
-    applyOverlayPrimitiveState(state, pointSet);
-    applyOverlayDepthState(state, depthMode);
-
-    SoLazyElement::setEmissive(state, &color);
-    uint32_t packedColor = color.getPackedValue(0.0);
-    SoLazyElement::setPacked(state, pointSet, 1, &packedColor, false);
-
-    float ps = SoPointSizeElement::get(state);
-    if (ps < 4.0f) {
-        SoPointSizeElement::set(state, pointSet, 4.0f);
-    }
-
-    // setValues() does not shrink the field, so rewrite the overlay index array
-    // to the exact size to avoid stale points from the previous overlay render.
-    pointSet->coordIndex.setNum(static_cast<int>(pointIndices.size()));
-    int32_t* coordIndex = pointSet->coordIndex.startEditing();
-    std::copy(pointIndices.begin(), pointIndices.end(), coordIndex);
-    pointSet->coordIndex.finishEditing();
-    pointSet->GLRender(action);
-
-    state->pop();
-}
-
-// Retained/IR (Vulkan) equivalent of renderOverlayPoints().
-#ifdef HAVE_COIN_IR_RENDER_ACTION
-static void renderOverlayPointsIR(
-    SoIRRenderAction* action,
-    SoIndexedPointSet* pointSet,
-    const int32_t* indices,
-    int numIndices,
-    const SbColor& color,
-    OverlayDepthMode depthMode
-)
-{
-    if (!action || !pointSet || !indices || numIndices <= 0) {
-        return;
-    }
-
-    std::vector<int32_t> pointIndices;
-    pointIndices.reserve(static_cast<size_t>(numIndices) + 1);
-
-    for (int i = 0; i < numIndices; i++) {
-        const int32_t idx = indices[i];
-        if (idx >= 0) {
-            pointIndices.push_back(idx);
-        }
-    }
-    pointIndices.push_back(-1);
-
-    if (pointIndices.size() <= 1) {
-        return;
-    }
-
-    auto state = action->getState();
-    state->push();
-
-    applyOverlayPrimitiveState(state, pointSet);
-    applyOverlayDepthState(state, depthMode);
-
-    SoLazyElement::setEmissive(state, &color);
-    uint32_t packedColor = color.getPackedValue(0.0);
-    SoLazyElement::setPacked(state, pointSet, 1, &packedColor, false);
-
-    float ps = SoPointSizeElement::get(state);
-    if (ps < 4.0f) {
-        SoPointSizeElement::set(state, pointSet, 4.0f);
-    }
-
-    pointSet->coordIndex.setNum(static_cast<int>(pointIndices.size()));
-    int32_t* coordIndex = pointSet->coordIndex.startEditing();
-    std::copy(pointIndices.begin(), pointIndices.end(), coordIndex);
-    pointSet->coordIndex.finishEditing();
-    pointSet->IRRender(action);
-
-    state->pop();
-}
-#endif
 
 void SoBrepPointSet::initClass()
 {
@@ -382,16 +238,7 @@ void SoBrepPointSet::IRRender(SoIRRenderAction* action)
 
     SelContextPtr ctx2;
     SelContextPtr ctx = Gui::SoFCSelectionRoot::getRenderContext<SelContext>(this, selContext, ctx2);
-    // IR traversals run on the Vulkan render thread while the GUI thread
-    // mutates the same context objects in GLRender(); work on local copies
-    // so this traversal never writes (or reads half-updated) shared
-    // selection state.
-    if (ctx) {
-        ctx = std::dynamic_pointer_cast<SelContext>(ctx->copy());
-    }
-    if (ctx2) {
-        ctx2 = std::dynamic_pointer_cast<SelContext>(ctx2->copy());
-    }
+    copyIRRenderContexts(ctx, ctx2);
     VK_BREADCRUMB_LIMITED(30,
                           "[VK-TRACE] SoBrepPointSet::IRRender ctx=%p hlIdx=%d selIdx=%zu "
                           "ctx2=%p ctx2selIdx=%zu\n",
@@ -410,15 +257,12 @@ void SoBrepPointSet::IRRender(SoIRRenderAction* action)
     const bool hasContextHighlight = ctx && ctx->isHighlighted() && !ctx->isHighlightAll()
         && ctx->highlightIndex >= 0;
     if (Gui::Selection().isClarifySelectionActive() && hasContextHighlight) {
-        if (viewProvider) {
-            viewProvider->setFaceHighlightActive(true);
-        }
-        state->push();
-        SoDepthBufferElement::set(
-            state, FALSE, FALSE, SoDepthBufferElement::ALWAYS, SbVec2f(0.0f, 1.0f));
-        inherited::IRRender(action);
-        renderHighlightIR(action, ctx);
-        state->pop();
+        renderClarifySelectionIR(action,
+                                 ctx,
+                                 viewProvider,
+                                 &SoBrepPointSet::renderHighlightIR,
+                                 &SoPointSet::IRRender,
+                                 this);
         return;
     }
     SelContextPtr globalCtx = selContext2
@@ -474,7 +318,7 @@ void SoBrepPointSet::IRRender(SoIRRenderAction* action)
     // Optional overlay rendering for deterministic tests (and programmatic usage).
     const int hlNum = highlightCoordIndex.getNum();
     if (hlNum > 0) {
-        renderOverlayPointsIR(
+        renderOverlayPoints(
             action,
             overlayPointSet,
             highlightCoordIndex.getValues(0),
@@ -485,7 +329,7 @@ void SoBrepPointSet::IRRender(SoIRRenderAction* action)
     }
     const int selNum = selectionCoordIndex.getNum();
     if (selNum > 0) {
-        renderOverlayPointsIR(
+        renderOverlayPoints(
             action,
             overlayPointSet,
             selectionCoordIndex.getValues(0),
@@ -637,9 +481,9 @@ void SoBrepPointSet::renderHighlightIR(SoIRRenderAction* action, SelContextPtr c
     if (!collectHighlightPoints(this, action->getState(), ctx, pointIndices)) {
         return;
     }
-    renderOverlayPointsIR(action, overlayPointSet, pointIndices.data(),
-                          static_cast<int>(pointIndices.size()),
-                          ctx->highlightColor, OverlayDepthMode::DrawOnTop);
+    renderOverlayPoints(action, overlayPointSet, pointIndices.data(),
+                        static_cast<int>(pointIndices.size()),
+                        ctx->highlightColor, OverlayDepthMode::DrawOnTop);
 }
 
 void SoBrepPointSet::renderSelectionIR(SoIRRenderAction* action, SelContextPtr ctx)
@@ -648,9 +492,9 @@ void SoBrepPointSet::renderSelectionIR(SoIRRenderAction* action, SelContextPtr c
     if (!collectSelectionPoints(this, action->getState(), ctx, pointIndices)) {
         return;
     }
-    renderOverlayPointsIR(action, overlayPointSet, pointIndices.data(),
-                          static_cast<int>(pointIndices.size()),
-                          ctx->selectionColor, OverlayDepthMode::RespectDepth);
+    renderOverlayPoints(action, overlayPointSet, pointIndices.data(),
+                        static_cast<int>(pointIndices.size()),
+                        ctx->selectionColor, OverlayDepthMode::RespectDepth);
 }
 #endif
 

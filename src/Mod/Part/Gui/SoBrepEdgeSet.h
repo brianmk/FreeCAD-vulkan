@@ -32,6 +32,8 @@
 #include <Gui/Selection/SoFCSelectionContext.h>
 #include <Mod/Part/PartGlobal.h>
 
+#include "SoBrepOverlayHelpers.h"
+
 
 class SoCoordinateElement;
 class SoIRRenderAction;
@@ -41,15 +43,6 @@ namespace PartGui
 {
 
 class ViewProviderPartExt;
-
-/// Controls how B-rep overlay primitives interact with the scene depth buffer.
-enum class OverlayDepthMode
-{
-    /// Keep normal occlusion so committed selection does not expose hidden geometry.
-    RespectDepth,
-    /// Render above model geometry for hover and preselection feedback.
-    DrawOnTop,
-};
 
 class PartGuiExport SoBrepEdgeSet: public SoIndexedLineSet
 {

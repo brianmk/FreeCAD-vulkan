@@ -784,6 +784,45 @@ SbBool SoFCSelection::readInstance(SoInput* in, unsigned short flags)
 //
 // update override state before rendering
 //
+
+//! Shared state-application block of setOverride()/setOverrideIR(): pushes
+//! the traversal state and applies the selection/preselection color
+//! overrides.  SoLazyElement is shared between the GL and IR actions, so the
+//! same overrides reach both the immediate GL calls and the recorded IR draw
+//! commands.  Templated on the render action for GL/IR parity.
+namespace
+{
+template <typename Action, typename CtxPtr>
+bool applyOverrideState(Action* action,
+                        SoNode* node,
+                        CtxPtr ctx,
+                        const SbColor& color,
+                        SoFCSelection::Styles mystyle,
+                        SoColorPacker* colorpacker)
+{
+    SoState* state = action->getState();
+    state->push();
+
+    SoMaterialBindingElement::set(state, SoMaterialBindingElement::OVERALL);
+    SoOverrideElement::setMaterialBindingOverride(state, node, true);
+
+    if (ctx) {
+        SoLazyElement::setEmissive(state, &color);
+    }
+    SoOverrideElement::setEmissiveColorOverride(state, node, true);
+
+    if (SoLazyElement::getLightModel(state) == SoLazyElement::BASE_COLOR
+        || mystyle == SoFCSelection::EMISSIVE_DIFFUSE) {
+        if (ctx) {
+            SoLazyElement::setDiffuse(state, node, 1, &color, colorpacker);
+        }
+        SoOverrideElement::setDiffuseColorOverride(state, node, true);
+    }
+
+    return true;
+}
+}  // namespace
+
 bool SoFCSelection::setOverride(SoGLRenderAction* action, SelContextPtr ctx)
 {
     bool preselected = false;
@@ -809,33 +848,14 @@ bool SoFCSelection::setOverride(SoGLRenderAction* action, SelContextPtr ctx)
         return false;
     }
 
-    SoState* state = action->getState();
-    state->push();
-
-    SoMaterialBindingElement::set(state, SoMaterialBindingElement::OVERALL);
-    SoOverrideElement::setMaterialBindingOverride(state, this, true);
-
-    if (ctx) {
-        SoLazyElement::setEmissive(state, &color);
-    }
-    SoOverrideElement::setEmissiveColorOverride(state, this, true);
-
-    if (SoLazyElement::getLightModel(state) == SoLazyElement::BASE_COLOR
-        || mystyle == SoFCSelection::EMISSIVE_DIFFUSE) {
-        if (ctx) {
-            SoLazyElement::setDiffuse(state, this, 1, &color, &colorpacker);
-        }
-        SoOverrideElement::setDiffuseColorOverride(state, this, true);
-    }
-
+    const bool ret = applyOverrideState(action, this, ctx, color, mystyle, &colorpacker);
     this->uniqueId = oldId;
-    return true;
+    return ret;
 }
 
 // Retained/IR equivalent of setOverride(): apply the selection/preselection
 // color overrides to the traversal state without the GL-only bits (bounding
-// box rendering and depth-func handling).  SoLazyElement is shared between
-// the GL and IR actions, so the recorded draw commands pick up the override.
+// box rendering and depth-func handling).
 #ifdef HAVE_COIN_IR_RENDER_ACTION
 bool SoFCSelection::setOverrideIR(SoIRRenderAction* action, SelContextPtr ctx)
 {
@@ -855,26 +875,7 @@ bool SoFCSelection::setOverrideIR(SoIRRenderAction* action, SelContextPtr ctx)
         return false;
     }
 
-    SoState* state = action->getState();
-    state->push();
-
-    SoMaterialBindingElement::set(state, SoMaterialBindingElement::OVERALL);
-    SoOverrideElement::setMaterialBindingOverride(state, this, true);
-
-    if (ctx) {
-        SoLazyElement::setEmissive(state, &color);
-    }
-    SoOverrideElement::setEmissiveColorOverride(state, this, true);
-
-    if (SoLazyElement::getLightModel(state) == SoLazyElement::BASE_COLOR
-        || mystyle == SoFCSelection::EMISSIVE_DIFFUSE) {
-        if (ctx) {
-            SoLazyElement::setDiffuse(state, this, 1, &color, &colorpacker);
-        }
-        SoOverrideElement::setDiffuseColorOverride(state, this, true);
-    }
-
-    return true;
+    return applyOverrideState(action, this, ctx, color, mystyle, &colorpacker);
 }
 #endif
 

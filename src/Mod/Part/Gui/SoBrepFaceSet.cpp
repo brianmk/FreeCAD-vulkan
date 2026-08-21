@@ -58,6 +58,7 @@
 #include <Gui/Inventor/So3DAnnotation.h>
 
 #include "SoBrepFaceSet.h"
+#include "SoBrepOverlayHelpers.h"
 #include "ViewProviderExt.h"
 
 using namespace PartGui;
@@ -118,46 +119,6 @@ static void buildOverlayCoordIndex(
     }
 }
 
-static void renderOverlayFaces(
-    SoGLRenderAction* action,
-    SoIndexedFaceSet* faceSet,
-    const std::vector<int32_t>& coordIndex,
-    const SbColor& color,
-    bool onTop
-)
-{
-    if (!action || !faceSet || coordIndex.empty()) {
-        return;
-    }
-
-    auto state = action->getState();
-    state->push();
-
-    SoLazyElement::setLightModel(state, SoLazyElement::BASE_COLOR);
-    SoTextureEnabledElement::set(state, faceSet, false);
-    SoMaterialBindingElement::set(state, SoMaterialBindingElement::OVERALL);
-    SoOverrideElement::setMaterialBindingOverride(state, faceSet, true);
-
-    if (onTop) {
-        SoDepthBufferElement::set(state, FALSE, FALSE, SoDepthBufferElement::ALWAYS, SbVec2f(0.0f, 1.0f));
-        SoShapeStyleElement::setTransparencyType(state, SoGLRenderAction::BLEND);
-        SoLazyElement::setTransparencyType(state, SoGLRenderAction::BLEND);
-    }
-    else {
-        SoPolygonOffsetElement::set(state, faceSet, -0.00001f, -1.0f, SoPolygonOffsetElement::FILLED, TRUE);
-        SoDepthBufferElement::set(state, TRUE, FALSE, SoDepthBufferElement::LEQUAL, SbVec2f(0.0f, 1.0f));
-    }
-
-    SoLazyElement::setEmissive(state, &color);
-    const uint32_t packed = color.getPackedValue(0.0f);
-    SoLazyElement::setPacked(state, faceSet, 1, &packed, false);
-
-    faceSet->coordIndex.setValues(0, static_cast<int32_t>(coordIndex.size()), coordIndex.data());
-    faceSet->GLRender(action);
-
-    state->pop();
-}
-
 static void expandPartMaterialIndexToFaceMaterialIndex(
     std::vector<int32_t>& outFaceMaterialIndex,
     const int32_t* partTriCounts,
@@ -182,58 +143,6 @@ static void expandPartMaterialIndexToFaceMaterialIndex(
         outFaceMaterialIndex.insert(outFaceMaterialIndex.end(), repeats, perPartMaterialIndex[i]);
     }
 }
-
-// Retained/IR (Vulkan) equivalent of renderOverlayFaces(): records the
-// overlay into the SoIRRenderAction draw list instead of issuing GL calls.
-// The GL and IR actions share the SoLazyElement/SoDepthBufferElement state,
-// so the same override values are captured into each recorded command.
-#ifdef HAVE_COIN_IR_RENDER_ACTION
-static void renderOverlayFacesIR(
-    SoIRRenderAction* action,
-    SoIndexedFaceSet* faceSet,
-    const std::vector<int32_t>& coordIndex,
-    const SbColor& color,
-    bool onTop
-)
-{
-    if (!action || !faceSet || coordIndex.empty()) {
-        return;
-    }
-
-    auto state = action->getState();
-    state->push();
-
-    SoLazyElement::setLightModel(state, SoLazyElement::BASE_COLOR);
-    SoTextureEnabledElement::set(state, faceSet, false);
-    SoMaterialBindingElement::set(state, SoMaterialBindingElement::OVERALL);
-    SoOverrideElement::setMaterialBindingOverride(state, faceSet, true);
-
-    if (onTop) {
-        SoDepthBufferElement::set(
-            state, FALSE, FALSE, SoDepthBufferElement::ALWAYS, SbVec2f(0.0f, 1.0f)
-        );
-        SoShapeStyleElement::setTransparencyType(state, SoGLRenderAction::BLEND);
-        SoLazyElement::setTransparencyType(state, SoGLRenderAction::BLEND);
-    }
-    else {
-        SoPolygonOffsetElement::set(
-            state, faceSet, -0.00001f, -1.0f, SoPolygonOffsetElement::FILLED, TRUE
-        );
-        SoDepthBufferElement::set(
-            state, TRUE, FALSE, SoDepthBufferElement::LEQUAL, SbVec2f(0.0f, 1.0f)
-        );
-    }
-
-    SoLazyElement::setEmissive(state, &color);
-    const uint32_t packed = color.getPackedValue(0.0f);
-    SoLazyElement::setPacked(state, faceSet, 1, &packed, false);
-
-    faceSet->coordIndex.setValues(0, static_cast<int32_t>(coordIndex.size()), coordIndex.data());
-    faceSet->IRRender(action);
-
-    state->pop();
-}
-#endif
 
 //! Shared decision logic for renderHighlight()/renderHighlightIR(): which
 //! parts the highlight covers, and whether it covers all parts.
@@ -555,7 +464,7 @@ void SoBrepFaceSet::renderHighlightIR(SoIRRenderAction* action, SelContextPtr ct
         return;
     }
     buildOverlayCoordIndex(overlayCoordIndex, ci, ciCount, partCounts, partCount, parts, selectAll);
-    renderOverlayFacesIR(action, overlayFaceSet, overlayCoordIndex, ctx->highlightColor, true);
+    renderOverlayFaces(action, overlayFaceSet, overlayCoordIndex, ctx->highlightColor, true);
 }
 
 void SoBrepFaceSet::renderSelectionIR(SoIRRenderAction* action, SelContextPtr ctx)
@@ -571,7 +480,7 @@ void SoBrepFaceSet::renderSelectionIR(SoIRRenderAction* action, SelContextPtr ct
         return;
     }
     buildOverlayCoordIndex(overlayCoordIndex, ci, ciCount, partCounts, partCount, parts, selectAll);
-    renderOverlayFacesIR(action, overlayFaceSet, overlayCoordIndex, ctx->selectionColor, false);
+    renderOverlayFaces(action, overlayFaceSet, overlayCoordIndex, ctx->selectionColor, false);
 }
 #endif
 
@@ -922,17 +831,8 @@ void SoBrepFaceSet::IRRender(SoIRRenderAction* action)
 
     SelContextPtr ctx2;
     SelContextPtr ctx = Gui::SoFCSelectionRoot::getRenderContext(this, selContext, ctx2);
-    // IR traversals run on the Vulkan render thread while the GUI thread
-    // mutates the same context objects in GLRender(); work on local copies
-    // so this traversal never writes (or reads half-updated) shared
-    // selection state.
-    if (ctx) {
-        ctx = std::dynamic_pointer_cast<SelContext>(ctx->copy());
-    }
-    if (ctx2) {
-        ctx2 = std::dynamic_pointer_cast<SelContext>(ctx2->copy());
-    }
-    VK_BREADCRUMB_LIMITED(5,
+    copyIRRenderContexts(ctx, ctx2);
+    VK_BREADCRUMB_LIMITED(120,
                           "[VK-TRACE] SoBrepFaceSet::IRRender this=%p ctx=%p hlIdx=%d ctx2=%p selIdx=%zu\n",
                           this, ctx.get(), ctx ? ctx->highlightIndex : -2,
                           ctx2.get(), ctx2 ? ctx2->selectionIndex.size() : (size_t)-1);
@@ -964,16 +864,12 @@ void SoBrepFaceSet::IRRender(SoIRRenderAction* action)
     // write disabled, and the backend draws such commands after all other
     // geometry (see the on-top annotation pass in SoVulkanRenderBackend).
     if (Gui::Selection().isClarifySelectionActive() && hasContextHighlight) {
-        if (viewProvider) {
-            viewProvider->setFaceHighlightActive(true);
-        }
-        auto state = action->getState();
-        state->push();
-        SoDepthBufferElement::set(
-            state, FALSE, FALSE, SoDepthBufferElement::ALWAYS, SbVec2f(0.0f, 1.0f));
-        inherited::IRRender(action);
-        renderHighlightIR(action, ctx);
-        state->pop();
+        renderClarifySelectionIR(action,
+                                 ctx,
+                                 viewProvider,
+                                 &SoBrepFaceSet::renderHighlightIR,
+                                 &SoIndexedFaceSet::IRRender,
+                                 this);
         return;
     }
 

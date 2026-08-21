@@ -55,6 +55,8 @@
 
 #include <Gui/Inventor/So3DAnnotation.h>
 
+#include "SoBrepOverlayHelpers.h"
+
 
 using namespace PartGui;
 
@@ -71,341 +73,6 @@ struct SoBrepEdgeSet::SelContext: Gui::SoFCSelectionContextEx
         return std::make_shared<SelContext>(*this);
     }
 };
-
-static void applyOverlayPrimitiveState(SoState* state, SoNode* node)
-{
-    if (!state || !node) {
-        return;
-    }
-
-    SoLazyElement::setLightModel(state, SoLazyElement::BASE_COLOR);
-    SoTextureEnabledElement::set(state, node, false);
-    SoMaterialBindingElement::set(state, SoMaterialBindingElement::OVERALL);
-    SoOverrideElement::setMaterialBindingOverride(state, node, true);
-}
-
-static void applyOverlayDepthState(SoState* state, OverlayDepthMode depthMode)
-{
-    switch (depthMode) {
-        case OverlayDepthMode::DrawOnTop:
-            SoDepthBufferElement::set(
-                state,
-                FALSE,
-                FALSE,
-                SoDepthBufferElement::ALWAYS,
-                SbVec2f(0.0f, 1.0f)
-            );
-            return;
-        case OverlayDepthMode::RespectDepth:
-            SoDepthBufferElement::set(
-                state,
-                TRUE,
-                FALSE,
-                SoDepthBufferElement::LEQUAL,
-                SbVec2f(0.0f, 1.0f)
-            );
-            return;
-    }
-}
-
-static void renderOverlayLines(
-    SoGLRenderAction* action,
-    SoIndexedLineSet* lineSet,
-    const int32_t* indices,
-    int numIndices,
-    const Base::Color& color,
-    OverlayDepthMode depthMode
-)
-{
-    if (!action || !lineSet || !indices || numIndices <= 0) {
-        return;
-    }
-
-    // Match the legacy GL path by drawing each edge segment independently.
-    std::vector<int32_t> lineIndices;
-    lineIndices.reserve(static_cast<size_t>(numIndices) * 3);
-
-    int32_t previous = -1;
-    for (int i = 0; i < numIndices; i++) {
-        const int32_t current = indices[i];
-        if (current < 0) {
-            previous = -1;
-            continue;
-        }
-        if (previous >= 0) {
-            lineIndices.push_back(previous);
-            lineIndices.push_back(current);
-            lineIndices.push_back(-1);
-        }
-        previous = current;
-    }
-
-    if (lineIndices.empty()) {
-        return;
-    }
-
-    auto state = action->getState();
-    state->push();
-
-    applyOverlayPrimitiveState(state, lineSet);
-    applyOverlayDepthState(state, depthMode);
-
-    const SbColor sbColor(color.r, color.g, color.b);
-    const float transparency = std::max(0.0f, 1.0f - color.a);
-    const bool hasTransparency = transparency > 0.0f;
-    if (hasTransparency) {
-        SoShapeStyleElement::setTransparencyType(state, SoGLRenderAction::BLEND);
-        SoLazyElement::setTransparencyType(state, SoGLRenderAction::BLEND);
-    }
-
-    SoLazyElement::setEmissive(state, &sbColor);
-    uint32_t packedColor = sbColor.getPackedValue(transparency);
-    SoLazyElement::setPacked(state, lineSet, 1, &packedColor, hasTransparency);
-
-    // setValues() does not shrink the field, so rewrite the overlay index
-    // array to the exact size to avoid stale segments from the previous
-    // highlight.
-    lineSet->coordIndex.setNum(static_cast<int>(lineIndices.size()));
-    int32_t* coordIndex = lineSet->coordIndex.startEditing();
-    std::copy(lineIndices.begin(), lineIndices.end(), coordIndex);
-    lineSet->coordIndex.finishEditing();
-    lineSet->GLRender(action);
-
-    state->pop();
-}
-
-static void renderOverlayLines(
-    SoGLRenderAction* action,
-    SoIndexedLineSet* lineSet,
-    const int32_t* indices,
-    int numIndices,
-    const SbColor& color,
-    OverlayDepthMode depthMode
-)
-{
-    renderOverlayLines(
-        action,
-        lineSet,
-        indices,
-        numIndices,
-        Base::Color(color[0], color[1], color[2], 1.0f),
-        depthMode
-    );
-}
-
-static void renderColorOverrides(
-    SoGLRenderAction* action,
-    SoIndexedLineSet* lineSet,
-    const int32_t* indices,
-    int numIndices,
-    const std::map<int, Base::Color>& colors
-)
-{
-    if (!action || !lineSet || !indices || numIndices <= 0 || colors.empty()) {
-        return;
-    }
-
-    struct ColorGroup
-    {
-        Base::Color color;
-        std::vector<int32_t> indices;
-    };
-
-    std::map<uint32_t, ColorGroup> colorGroups;
-    const auto wildcard = colors.find(-1);
-
-    int lineIndex = 0;
-    for (int i = 0; i < numIndices; ++lineIndex) {
-        const int sectionStart = i;
-        while (i < numIndices && indices[i] >= 0) {
-            ++i;
-        }
-
-        const Base::Color* color = nullptr;
-        auto it = colors.find(lineIndex);
-        if (it != colors.end()) {
-            color = &it->second;
-        }
-        else if (wildcard != colors.end()) {
-            color = &wildcard->second;
-        }
-
-        if (color) {
-            const SbColor sbColor(color->r, color->g, color->b);
-            const uint32_t key = sbColor.getPackedValue(std::max(0.0f, 1.0f - color->a));
-            auto& group = colorGroups[key];
-            if (group.indices.empty()) {
-                group.color = *color;
-            }
-            group.indices.insert(group.indices.end(), indices + sectionStart, indices + i);
-            group.indices.push_back(-1);
-        }
-
-        if (i < numIndices && indices[i] < 0) {
-            ++i;
-        }
-    }
-
-    for (const auto& [_, group] : colorGroups) {
-        renderOverlayLines(
-            action,
-            lineSet,
-            group.indices.data(),
-            static_cast<int>(group.indices.size()),
-            group.color,
-            OverlayDepthMode::DrawOnTop
-        );
-    }
-}
-
-#ifdef HAVE_COIN_IR_RENDER_ACTION
-static void renderOverlayLinesIR(
-    SoIRRenderAction* action,
-    SoIndexedLineSet* lineSet,
-    const int32_t* indices,
-    int numIndices,
-    const Base::Color& color,
-    OverlayDepthMode depthMode
-)
-{
-    if (!action || !lineSet || !indices || numIndices <= 0) {
-        return;
-    }
-
-    // Match the GL path by drawing each edge segment independently.
-    std::vector<int32_t> lineIndices;
-    lineIndices.reserve(static_cast<size_t>(numIndices) * 3);
-
-    int32_t previous = -1;
-    for (int i = 0; i < numIndices; i++) {
-        const int32_t current = indices[i];
-        if (current < 0) {
-            previous = -1;
-            continue;
-        }
-        if (previous >= 0) {
-            lineIndices.push_back(previous);
-            lineIndices.push_back(current);
-            lineIndices.push_back(-1);
-        }
-        previous = current;
-    }
-
-    if (lineIndices.empty()) {
-        return;
-    }
-
-    auto state = action->getState();
-    state->push();
-
-    applyOverlayPrimitiveState(state, lineSet);
-    applyOverlayDepthState(state, depthMode);
-
-    const SbColor sbColor(color.r, color.g, color.b);
-    const float transparency = std::max(0.0f, 1.0f - color.a);
-    const bool hasTransparency = transparency > 0.0f;
-    if (hasTransparency) {
-        SoShapeStyleElement::setTransparencyType(state, SoGLRenderAction::BLEND);
-        SoLazyElement::setTransparencyType(state, SoGLRenderAction::BLEND);
-    }
-
-    SoLazyElement::setEmissive(state, &sbColor);
-    uint32_t packedColor = sbColor.getPackedValue(transparency);
-    SoLazyElement::setPacked(state, lineSet, 1, &packedColor, hasTransparency);
-
-    lineSet->coordIndex.setNum(static_cast<int>(lineIndices.size()));
-    int32_t* coordIndex = lineSet->coordIndex.startEditing();
-    std::copy(lineIndices.begin(), lineIndices.end(), coordIndex);
-    lineSet->coordIndex.finishEditing();
-    lineSet->IRRender(action);
-
-    state->pop();
-}
-
-static void renderOverlayLinesIR(
-    SoIRRenderAction* action,
-    SoIndexedLineSet* lineSet,
-    const int32_t* indices,
-    int numIndices,
-    const SbColor& color,
-    OverlayDepthMode depthMode
-)
-{
-    renderOverlayLinesIR(
-        action,
-        lineSet,
-        indices,
-        numIndices,
-        Base::Color(color[0], color[1], color[2], 1.0f),
-        depthMode
-    );
-}
-
-static void renderColorOverridesIR(
-    SoIRRenderAction* action,
-    SoIndexedLineSet* lineSet,
-    const int32_t* indices,
-    int numIndices,
-    const std::map<int, Base::Color>& colors
-)
-{
-    if (!action || !lineSet || !indices || numIndices <= 0 || colors.empty()) {
-        return;
-    }
-
-    struct ColorGroup
-    {
-        Base::Color color;
-        std::vector<int32_t> indices;
-    };
-
-    std::map<uint32_t, ColorGroup> colorGroups;
-    const auto wildcard = colors.find(-1);
-
-    int lineIndex = 0;
-    for (int i = 0; i < numIndices; ++lineIndex) {
-        const int sectionStart = i;
-        while (i < numIndices && indices[i] >= 0) {
-            ++i;
-        }
-
-        const Base::Color* color = nullptr;
-        auto it = colors.find(lineIndex);
-        if (it != colors.end()) {
-            color = &it->second;
-        }
-        else if (wildcard != colors.end()) {
-            color = &wildcard->second;
-        }
-
-        if (color) {
-            const SbColor sbColor(color->r, color->g, color->b);
-            const uint32_t key = sbColor.getPackedValue(std::max(0.0f, 1.0f - color->a));
-            auto& group = colorGroups[key];
-            if (group.indices.empty()) {
-                group.color = *color;
-            }
-            group.indices.insert(group.indices.end(), indices + sectionStart, indices + i);
-            group.indices.push_back(-1);
-        }
-
-        if (i < numIndices && indices[i] < 0) {
-            ++i;
-        }
-    }
-
-    for (const auto& [_, group] : colorGroups) {
-        renderOverlayLinesIR(
-            action,
-            lineSet,
-            group.indices.data(),
-            static_cast<int>(group.indices.size()),
-            group.color,
-            OverlayDepthMode::DrawOnTop
-        );
-    }
-}
-#endif
 
 void SoBrepEdgeSet::initClass()
 {
@@ -610,16 +277,7 @@ void SoBrepEdgeSet::IRRender(SoIRRenderAction* action)
 
     SelContextPtr ctx2;
     SelContextPtr ctx = Gui::SoFCSelectionRoot::getRenderContext<SelContext>(this, selContext, ctx2);
-    // IR traversals run on the Vulkan render thread while the GUI thread
-    // mutates the same context objects in GLRender(); work on local copies
-    // so this traversal never writes (or reads half-updated) shared
-    // selection state.
-    if (ctx) {
-        ctx = std::dynamic_pointer_cast<SelContext>(ctx->copy());
-    }
-    if (ctx2) {
-        ctx2 = std::dynamic_pointer_cast<SelContext>(ctx2->copy());
-    }
+    copyIRRenderContexts(ctx, ctx2);
     VK_BREADCRUMB_LIMITED(30,
                           "[VK-TRACE] SoBrepEdgeSet::IRRender ctx=%p hlIdx=%d selIdx=%zu "
                           "ctx2=%p ctx2selIdx=%zu ctx2colors=%zu\n",
@@ -642,15 +300,12 @@ void SoBrepEdgeSet::IRRender(SoIRRenderAction* action)
     const bool hasFaceHighlight = viewProvider && viewProvider->isFaceHighlightActive();
     if (Gui::Selection().isClarifySelectionActive()
         && (hasContextHighlight || hasFaceHighlight)) {
-        if (viewProvider) {
-            viewProvider->setFaceHighlightActive(true);
-        }
-        state->push();
-        SoDepthBufferElement::set(
-            state, FALSE, FALSE, SoDepthBufferElement::ALWAYS, SbVec2f(0.0f, 1.0f));
-        inherited::IRRender(action);
-        renderHighlightIR(action, ctx);
-        state->pop();
+        renderClarifySelectionIR(action,
+                                 ctx,
+                                 viewProvider,
+                                 &SoBrepEdgeSet::renderHighlightIR,
+                                 &SoIndexedLineSet::IRRender,
+                                 this);
         return;
     }
 
@@ -718,7 +373,7 @@ void SoBrepEdgeSet::IRRender(SoIRRenderAction* action)
         }
     }
     if (hasColorOverride) {
-        renderColorOverridesIR(
+        renderColorOverrides(
             action,
             overlayLineSet,
             this->coordIndex.getValues(0),
@@ -733,7 +388,7 @@ void SoBrepEdgeSet::IRRender(SoIRRenderAction* action)
     // Optional overlay rendering for deterministic tests (and programmatic usage).
     const int hlNum = highlightCoordIndex.getNum();
     if (hlNum > 0) {
-        renderOverlayLinesIR(
+        renderOverlayLines(
             action,
             overlayLineSet,
             highlightCoordIndex.getValues(0),
@@ -744,7 +399,7 @@ void SoBrepEdgeSet::IRRender(SoIRRenderAction* action)
     }
     const int selNum = selectionCoordIndex.getNum();
     if (selNum > 0) {
-        renderOverlayLinesIR(
+        renderOverlayLines(
             action,
             overlayLineSet,
             selectionCoordIndex.getValues(0),
@@ -903,7 +558,7 @@ void SoBrepEdgeSet::renderHighlightIR(SoIRRenderAction* action, SelContextPtr ct
     if (!collectHighlightLines(action->getState(), ctx, overlay)) {
         return;
     }
-    renderOverlayLinesIR(action, overlayLineSet, overlay.indices, overlay.count,
+    renderOverlayLines(action, overlayLineSet, overlay.indices, overlay.count,
                          overlay.color, overlay.depthMode);
 }
 
@@ -913,7 +568,7 @@ void SoBrepEdgeSet::renderSelectionIR(SoIRRenderAction* action, SelContextPtr ct
     if (!collectSelectionLines(action->getState(), ctx, overlay)) {
         return;
     }
-    renderOverlayLinesIR(action, overlayLineSet, overlay.indices, overlay.count,
+    renderOverlayLines(action, overlayLineSet, overlay.indices, overlay.count,
                          overlay.color, overlay.depthMode);
 }
 #endif
