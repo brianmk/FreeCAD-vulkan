@@ -847,7 +847,11 @@ bool SoFCSelection::setOverrideIR(SoIRRenderAction* action, SelContextPtr ctx)
 
     auto mystyle = static_cast<Styles>(this->style.getValue());
     if (mystyle == SoFCSelection::BOX) {
-        // Bounding-box selection drawing is GL-only for now.
+        // Bounding-box selection drawing: mirror the GL path's
+        // renderBBox() with a line-mode cube recorded into the draw list.
+        if (ctx) {
+            SoFCSelectionRoot::renderBBoxIR(action, this, color);
+        }
         return false;
     }
 

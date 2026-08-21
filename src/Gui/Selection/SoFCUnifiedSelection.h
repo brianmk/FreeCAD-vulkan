@@ -475,6 +475,23 @@ public:
         const SbMatrix* mat = 0
     );
 
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    //! Retained/IR (Vulkan) equivalent of renderBBox(): records a line-mode
+    //! cube for the node's bounding box into the draw list.
+    static bool renderBBoxIR(
+        SoIRRenderAction* action,
+        SoNode* node,
+        const SbColor& color
+    );
+
+    static bool renderBBoxIR(
+        SoIRRenderAction* action,
+        SoNode* node,
+        const SbBox3f& bbox,
+        SbColor color
+    );
+#endif
+
     static void setupSelectionLineRendering(
         SoState* state,
         SoNode* node,

@@ -1727,8 +1727,7 @@ bool SoFCSelectionRoot::renderBBox(
     SbColor color,
     const SbMatrix* mat
 )
-{
-    auto data = (SoFCBBoxRenderInfo*)so_bbox_storage->get();
+{    auto data = (SoFCBBoxRenderInfo*)so_bbox_storage->get();
     if (data->cube == NULL) {
         data->cube = new SoCube;
         data->cube->ref();
@@ -1805,6 +1804,115 @@ bool SoFCSelectionRoot::renderBBox(
     state->pop();
     return true;
 }
+
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+bool SoFCSelectionRoot::renderBBoxIR(
+    SoIRRenderAction* action,
+    SoNode* node,
+    const SbColor& color
+)
+{
+    auto data = static_cast<SoFCBBoxRenderInfo*>(so_bbox_storage->get());
+    if (!data->bboxaction) {
+        data->bboxaction = new SoGetBoundingBoxAction(SbViewportRegion());
+    }
+
+    auto state = action->getState();
+    data->bboxaction->setViewportRegion(action->getViewportRegion());
+    SoSwitchElement::set(data->bboxaction->getState(), SoSwitchElement::get(state));
+
+    bool project = ViewParams::instance()->getRenderProjectedBBox();
+    if (project || !node->isOfType(SoGroup::getClassTypeId())) {
+        data->bboxaction->apply(node);
+    }
+    else {
+        SoTempPath resetPath(2);
+        resetPath.ref();
+        auto group = static_cast<SoGroup*>(node);
+        for (int i = 0, count = group->getNumChildren(); i < count; ++i) {
+            auto child = group->getChild(i);
+            if (child->isOfType(SoTransform::getClassTypeId())) {
+                resetPath.append(group);
+                resetPath.append(child);
+                data->bboxaction->setResetPath(&resetPath, false);
+                break;
+            }
+        }
+        data->bboxaction->apply(node);
+        data->bboxaction->setResetPath(0);
+        resetPath.unrefNoDelete();
+    }
+
+    SbXfBox3f xbbox = data->bboxaction->getXfBoundingBox();
+    if (xbbox.isEmpty()) {
+        return false;
+    }
+
+    if (project) {
+        xbbox.transform(SoModelMatrixElement::get(state));
+    }
+    return renderBBoxIR(action, node, xbbox.project(), color);
+}
+
+bool SoFCSelectionRoot::renderBBoxIR(
+    SoIRRenderAction* action,
+    SoNode* node,
+    const SbBox3f& bbox,
+    SbColor color
+)
+{
+    auto data = static_cast<SoFCBBoxRenderInfo*>(so_bbox_storage->get());
+    if (data->cube == nullptr) {
+        data->cube = new SoCube;
+        data->cube->ref();
+    }
+
+    SoState* state = action->getState();
+    state->push();
+
+    if (ViewParams::instance()->getRenderProjectedBBox()) {
+        SoModelMatrixElement::makeIdentity(state, node);
+    }
+    else if (node->isOfType(SoGroup::getClassTypeId())) {
+        auto group = static_cast<SoGroup*>(node);
+        for (int i = 0, count = group->getNumChildren(); i < count; ++i) {
+            auto child = group->getChild(i);
+            if (child->isOfType(SoTransform::getClassTypeId())) {
+                SbMatrix matrix;
+                auto transform = static_cast<SoTransform*>(child);
+                matrix.setTransform(
+                    transform->translation.getValue(),
+                    transform->rotation.getValue(),
+                    transform->scaleFactor.getValue(),
+                    transform->scaleOrientation.getValue(),
+                    transform->center.getValue()
+                );
+                SoModelMatrixElement::mult(state, node, matrix);
+                break;
+            }
+        }
+    }
+
+    uint32_t packed = color.getPackedValue(0.0);
+    setupSelectionLineRendering(state, node, &packed, false);
+
+    SoDrawStyleElement::set(state, SoDrawStyleElement::LINES);
+    SoLineWidthElement::set(state, ViewParams::instance()->getSelectionBBoxLineWidth());
+
+    float x, y, z;
+    bbox.getSize(x, y, z);
+    data->cube->width = x;
+    data->cube->height = y;
+    data->cube->depth = z;
+
+    SoModelMatrixElement::translateBy(state, node, bbox.getCenter());
+
+    data->cube->IRRender(action);
+
+    state->pop();
+    return true;
+}
+#endif
 
 static std::time_t _CyclicLastReported;
 
@@ -2013,7 +2121,7 @@ bool SoFCSelectionRoot::_renderPrivateIR(SoIRRenderAction* action)
 
     auto state = action->getState();
     SelContextPtr ctx = getRenderContext<SelContext>(this);
-    const int style = selectionStyle.getValue();
+    int style = selectionStyle.getValue();
     VK_BREADCRUMB_LIMITED(10,
                           "[VK-TRACE] SoFCSelectionRoot::_renderPrivateIR this=%p ctx=%p "
                           "selAll=%d hlAll=%d style=%d\n",
@@ -2022,8 +2130,37 @@ bool SoFCSelectionRoot::_renderPrivateIR(SoIRRenderAction* action)
         return false;
     }
 
-    // Bounding-box selection drawing is GL-only; skip the box geometry and
-    // fall through so children still render normally.
+    // Bounding-box selection drawing: record a line-mode cube for the
+    // selection bounding box, mirroring the GL _renderPrivate() Box branch.
+    // The box replaces the selection color override, not the geometry, so
+    // children still render normally below.
+    if ((style == SoFCSelectionRoot::Box || SoFCUnifiedSelection::getShowSelectionBoundingBox())
+        && ctx && !ctx->hideAll && (ctx->selAll || ctx->hlAll)) {
+        if (style == SoFCSelectionRoot::PassThrough) {
+            style = SoFCSelectionRoot::Box;
+        }
+        else {
+            const SbColor& color = (ctx->hlAll && !ctx->selAll) ? ctx->hlColor : ctx->selColor;
+            if (SoFCUnifiedSelection::getShowSelectionBoundingBox()) {
+                if (ViewParams::instance()->getUseTightBoundingBox() && viewProvider) {
+                    Base::Matrix4D mat;
+                    bool project = ViewParams::instance()->getRenderProjectedBBox();
+                    if (project) {
+                        mat = ViewProvider::convert(SoModelMatrixElement::get(state));
+                    }
+                    auto fcbox = viewProvider->getBoundingBox(nullptr, &mat, project);
+                    SbBox3f bbox(fcbox.MinX, fcbox.MinY, fcbox.MinZ, fcbox.MaxX, fcbox.MaxY, fcbox.MaxZ);
+                    renderBBoxIR(action, this, bbox, color);
+                }
+                else {
+                    renderBBoxIR(action, this, color);
+                }
+            }
+            else {
+                renderBBoxIR(action, this, color);
+            }
+        }
+    }
 
     bool selPushed = false;
     bool hlPushed = false;
