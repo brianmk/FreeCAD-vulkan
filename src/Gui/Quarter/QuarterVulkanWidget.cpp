@@ -35,6 +35,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 using namespace SIM::Coin3D::Quarter;
 
@@ -870,6 +871,11 @@ public:
     VkPhysicalDeviceAccelerationStructureFeaturesKHR rtAccelerationStructure {};
     VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtRayTracingPipeline {};
     VkPhysicalDeviceRayQueryFeaturesKHR rtRayQuery {};
+    // Whether the device supports VK_POLYGON_MODE_LINE/POINT
+    // (fillModeNonSolid); the wireframe/points overlay pipelines need it
+    // and requesting an unsupported core feature would fail device
+    // creation, so it is queried up front and only then requested.
+    bool fillModeNonSolid = false;
 
 private:
     QuarterVulkanRenderer * m_renderer;
@@ -969,6 +975,30 @@ QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent, bool rayTracing)
     d->window->setVulkanInstance(d->instance);
     d->renderer = d->vulkanWindow->renderer();
 
+    // The wireframe/points overlay pipelines use VK_POLYGON_MODE_LINE and
+    // VK_POLYGON_MODE_POINT, which require the fillModeNonSolid device
+    // feature (not requested by Qt by default).  Requesting an unsupported
+    // feature fails device creation, so probe the first physical device
+    // first.  (Qt chooses the device itself; on multi-GPU systems this
+    // probes the primary one, which is also what Qt prefers.)
+    {
+        auto * f = d->instance->functions();
+        uint32_t devCount = 0;
+        f->vkEnumeratePhysicalDevices(d->instance->vkInstance(), &devCount,
+                                      nullptr);
+        std::vector<VkPhysicalDevice> devs(devCount);
+        if (devCount > 0) {
+            f->vkEnumeratePhysicalDevices(d->instance->vkInstance(), &devCount,
+                                          devs.data());
+            VkPhysicalDeviceFeatures devFeatures {};
+            f->vkGetPhysicalDeviceFeatures(devs[0], &devFeatures);
+            d->vulkanWindow->fillModeNonSolid = devFeatures.fillModeNonSolid
+                                              ? true : false;
+            vkLog("QuarterVulkanWidget: device %s fillModeNonSolid",
+                  devFeatures.fillModeNonSolid ? "supports" : "lacks");
+        }
+    }
+
     if (rayTracing) {
         // Request the RT device extensions; QVulkanWindow creates the device
         // on first expose, so this must happen before the window is shown.
@@ -1024,6 +1054,8 @@ QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent, bool rayTracing)
             d->vulkanWindow->rtRayQuery.rayQuery = VK_TRUE;
             d->window->setEnabledFeaturesModifier(
               [this](VkPhysicalDeviceFeatures2 & features) {
+                features.features.fillModeNonSolid =
+                  d->vulkanWindow->fillModeNonSolid ? VK_TRUE : VK_FALSE;
                 d->vulkanWindow->rtRayQuery.pNext = features.pNext;
                 d->vulkanWindow->rtRayTracingPipeline.pNext =
                   &d->vulkanWindow->rtRayQuery;
@@ -1041,6 +1073,15 @@ QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent, bool rayTracing)
                    "does not advertise VK_KHR_ray_tracing_pipeline / "
                    "VK_KHR_acceleration_structure; falling back to raster");
         }
+    }
+    else {
+        // Raster-only: still request fillModeNonSolid for the
+        // wireframe/points overlay pipelines.
+        d->window->setEnabledFeaturesModifier(
+          [this](VkPhysicalDeviceFeatures2 & features) {
+            features.features.fillModeNonSolid =
+              d->vulkanWindow->fillModeNonSolid ? VK_TRUE : VK_FALSE;
+          });
     }
 
     const QList<int> samples = d->window->supportedSampleCounts();
