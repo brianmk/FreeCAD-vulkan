@@ -554,6 +554,38 @@ bounding box size of the 3D object that is currently displayed.</string>
      </property>
      <layout class="QVBoxLayout" name="verticalLayoutVulkan">
       <item>
+       <widget class="Gui::PrefCheckBox" name="CheckBox_UseVulkanRenderer">
+        <property name="text">
+         <string>Render 3D views with Vulkan</string>
+        </property>
+        <property name="toolTip">
+         <string>Use the experimental Coin Vulkan render backend for new 3D views instead of the standard OpenGL renderer.  Requires a FreeCAD build with FREECAD_USE_VULKAN and a Vulkan-capable GPU.  Existing 3D views are not affected until the document is reopened.</string>
+        </property>
+        <property name="prefEntry" stdset="0">
+         <cstring>UseVulkanRenderer</cstring>
+        </property>
+        <property name="prefPath" stdset="0">
+         <cstring>View</cstring>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="Gui::PrefCheckBox" name="CheckBox_UseVulkanRayTracing">
+        <property name="text">
+         <string>Enable hardware ray tracing in the Vulkan renderer</string>
+        </property>
+        <property name="toolTip">
+         <string>Build ray-tracing acceleration structures in the Vulkan renderer so the path tracer and the ray-tracing display pass can run.  Requires the Vulkan renderer (see above) and a ray-tracing capable GPU.</string>
+        </property>
+        <property name="prefEntry" stdset="0">
+         <cstring>UseVulkanRayTracing</cstring>
+        </property>
+        <property name="prefPath" stdset="0">
+         <cstring>View</cstring>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="Gui::PrefCheckBox" name="CheckBox_VulkanShowEdges">
         <property name="text">
          <string>Show edges (wireframe overlay)</string>

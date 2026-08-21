@@ -105,6 +105,8 @@ void View3DSettings::applySettings()
     OnChange(*hGrp, "DimensionsDeltaVisible");
     OnChange(*hGrp, "PickRadius");
     OnChange(*hGrp, "TransparentObjectRenderType");
+    OnChange(*hGrp, "UseVulkanRenderer");
+    OnChange(*hGrp, "UseVulkanRayTracing");
     OnChange(*hGrp, "VulkanShowEdges");
     OnChange(*hGrp, "VulkanShowPoints");
     OnChange(*hGrp, "VulkanEdgeColor");
