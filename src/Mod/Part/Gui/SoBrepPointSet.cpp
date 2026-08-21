@@ -403,6 +403,24 @@ void SoBrepPointSet::IRRender(SoIRRenderAction* action)
     if (ctx2 && ctx2->selectionIndex.empty()) {
         return;
     }
+    // Clarify selection: render the highlighted points on top of everything
+    // else.  GL registers the node for the delayed-annotations pass; the IR
+    // path records the points inline with the depth test off and the
+    // backend draws such commands last.
+    const bool hasContextHighlight = ctx && ctx->isHighlighted() && !ctx->isHighlightAll()
+        && ctx->highlightIndex >= 0;
+    if (Gui::Selection().isClarifySelectionActive() && hasContextHighlight) {
+        if (viewProvider) {
+            viewProvider->setFaceHighlightActive(true);
+        }
+        state->push();
+        SoDepthBufferElement::set(
+            state, FALSE, FALSE, SoDepthBufferElement::ALWAYS, SbVec2f(0.0f, 1.0f));
+        inherited::IRRender(action);
+        renderHighlightIR(action, ctx);
+        state->pop();
+        return;
+    }
     SelContextPtr globalCtx = selContext2
         ? std::dynamic_pointer_cast<SelContext>(selContext2->copy())
         : SelContextPtr();

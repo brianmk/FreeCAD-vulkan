@@ -633,6 +633,27 @@ void SoBrepEdgeSet::IRRender(SoIRRenderAction* action)
         return;
     }
 
+    // Clarify selection: when a highlight is active (either an edge of this
+    // node or a face of the same view provider), render the edges on top of
+    // everything else.  GL registers the node for the delayed-annotations
+    // pass; the IR path records the edges inline with the depth test off
+    // and the backend draws such commands last.
+    const bool hasContextHighlight = ctx && !ctx->hl.empty();
+    const bool hasFaceHighlight = viewProvider && viewProvider->isFaceHighlightActive();
+    if (Gui::Selection().isClarifySelectionActive()
+        && (hasContextHighlight || hasFaceHighlight)) {
+        if (viewProvider) {
+            viewProvider->setFaceHighlightActive(true);
+        }
+        state->push();
+        SoDepthBufferElement::set(
+            state, FALSE, FALSE, SoDepthBufferElement::ALWAYS, SbVec2f(0.0f, 1.0f));
+        inherited::IRRender(action);
+        renderHighlightIR(action, ctx);
+        state->pop();
+        return;
+    }
+
     const bool hasColorOverride = (ctx2 && !ctx2->colors.empty());
 
     SelContextPtr globalCtx = selContext2

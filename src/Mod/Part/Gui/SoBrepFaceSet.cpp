@@ -954,6 +954,29 @@ void SoBrepFaceSet::IRRender(SoIRRenderAction* action)
         ctx.reset();
     }
 
+    const bool hasContextHighlight = ctx && ctx->isHighlighted() && !ctx->isHighlightAll()
+        && ctx->highlightIndex >= 0 && ctx->highlightIndex < partIndex.getNum();
+
+    // Clarify selection: render the highlighted shape as an on-top
+    // annotation.  GL defers the highlighted path to a delayed-annotations
+    // pass (depth cleared, shape + highlight drawn on top of everything);
+    // the IR path records the same geometry inline with the depth test and
+    // write disabled, and the backend draws such commands after all other
+    // geometry (see the on-top annotation pass in SoVulkanRenderBackend).
+    if (Gui::Selection().isClarifySelectionActive() && hasContextHighlight) {
+        if (viewProvider) {
+            viewProvider->setFaceHighlightActive(true);
+        }
+        auto state = action->getState();
+        state->push();
+        SoDepthBufferElement::set(
+            state, FALSE, FALSE, SoDepthBufferElement::ALWAYS, SbVec2f(0.0f, 1.0f));
+        inherited::IRRender(action);
+        renderHighlightIR(action, ctx);
+        state->pop();
+        return;
+    }
+
     auto state = action->getState();
     // Same material remap as GLRender(): per-face colors and partial-render
     // hiding are baked into the base pass; when the current binding cannot
