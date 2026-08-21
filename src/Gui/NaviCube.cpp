@@ -828,7 +828,7 @@ bool NaviCubeImplementation::populateRenderParams(
         return false;
     }
 
-    soNaviCube->size = static_cast<float>(cubeWidgetSize);
+    soNaviCube->size = static_cast<float>(getPhysicalCubeWidgetSize());
     soNaviCube->opacity = opacity;
     soNaviCube->borderWidth = static_cast<float>(borderWidth);
     soNaviCube->showCoordinateSystem = showCS;
@@ -885,12 +885,18 @@ void NaviCubeImplementation::createContextMenu(const std::vector<std::string>& c
 
 void NaviCubeImplementation::handleResize(const SbVec2s& viewSize)
 {
-    qreal currentDevicePixelRatio = viewer->devicePixelRatio();
+    // The viewer's viewport region can be sized in device pixels (Vulkan
+    // mode) or logical pixels (classic GL mode).  Size the cube in widget
+    // pixels in both cases by scaling with the region/widget ratio.
+    qreal currentDevicePixelRatio = viewer->viewportPixelScale()[0];
+    if (currentDevicePixelRatio <= 0.0) {
+        currentDevicePixelRatio = 1.0;
+    }
     if (viewSize != this->viewSize || currentDevicePixelRatio != devicePixelRatio) {
         devicePixelRatio = currentDevicePixelRatio;
         qreal physicalCubeWidgetSize = getPhysicalCubeWidgetSize();
-        posAreaBase[0] = std::min((int)(posOffset[0] + physicalCubeWidgetSize * 0.55), viewSize[0] / 2);
-        posAreaBase[1] = std::min((int)(posOffset[1] + physicalCubeWidgetSize * 0.55), viewSize[1] / 2);
+        posAreaBase[0] = std::min((int)(posOffset[0] * devicePixelRatio + physicalCubeWidgetSize * 0.55), viewSize[0] / 2);
+        posAreaBase[1] = std::min((int)(posOffset[1] * devicePixelRatio + physicalCubeWidgetSize * 0.55), viewSize[1] / 2);
         posAreaSize[0] = viewSize[0] - 2 * posAreaBase[0];
         posAreaSize[1] = viewSize[1] - 2 * posAreaBase[1];
         this->viewSize = viewSize;

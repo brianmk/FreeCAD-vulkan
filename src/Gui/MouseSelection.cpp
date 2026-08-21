@@ -599,10 +599,17 @@ void RubberbandSelection::updateOverlayPosition()
         return;
     }
 
-    const qreal dpr = _pcView3D->devicePixelRatio();
-    const qreal scale = dpr > 0.0 ? dpr : 1.0;
+    // Mouse positions are in viewport-region pixels which can be device
+    // pixels (Vulkan mode); the overlay rectangle lives in widget pixels.
+    // Use the region/widget scale so the conversion stays correct even
+    // when the viewer widget's own device pixel ratio is stale (the
+    // hidden GL viewer in Vulkan mode reports 1.0).
+    const SbVec2f viewScale = _pcView3D->viewportPixelScale();
+    const qreal scaleX = viewScale[0] > 0.0 ? viewScale[0] : 1.0;
+    const qreal scaleY = viewScale[1] > 0.0 ? viewScale[1] : 1.0;
     _pcView3D->rubberbandOverlay().setRectangle(
-        QRectF(QPointF(m_iXold / scale, m_iYold / scale), QPointF(m_iXnew / scale, m_iYnew / scale))
+        QRectF(QPointF(m_iXold / scaleX, m_iYold / scaleY),
+               QPointF(m_iXnew / scaleX, m_iYnew / scaleY))
     );
 }
 

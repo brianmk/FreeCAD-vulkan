@@ -441,6 +441,13 @@ public:
     /** Returns the 2d coordinates on the viewport to the given 3d point. */
     SbVec2s getPointOnViewport(const SbVec3f&) const;
 
+    /** Returns the per-axis scale between viewport-region pixels and widget
+     * pixels (region size / widget size).  The hidden GL viewer's viewport
+     * region may be sized in device pixels (Vulkan mode) or logical pixels
+     * (classic GL mode); dividing region-space coordinates by this scale
+     * yields widget-space coordinates in both cases. */
+    SbVec2f viewportPixelScale() const;
+
     /** Converts Inventor coordinates into Qt coordinates.
      * The conversion takes the device pixel ratio into account.
      */

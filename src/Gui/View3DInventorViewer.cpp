@@ -3986,6 +3986,15 @@ SbVec2s View3DInventorViewer::getPointOnViewport(const SbVec3f& pnt) const
     return {xpos, ypos};
 }
 
+SbVec2f View3DInventorViewer::viewportPixelScale() const
+{
+    const SbViewportRegion& vp = this->getSoRenderManager()->getViewportRegion();
+    const SbVec2s& vps = vp.getViewportSizePixels();
+    const float sx = (vps[0] > 0 && width() > 0) ? float(vps[0]) / float(width()) : 1.0f;
+    const float sy = (vps[1] > 0 && height() > 0) ? float(vps[1]) / float(height()) : 1.0f;
+    return {sx, sy};
+}
+
 QPoint View3DInventorViewer::toQPoint(const SbVec2s& pnt) const
 {
     const SbViewportRegion& vp = this->getSoRenderManager()->getViewportRegion();
@@ -3993,9 +4002,9 @@ QPoint View3DInventorViewer::toQPoint(const SbVec2s& pnt) const
     int xpos = pnt[0];
     int ypos = vps[1] - pnt[1] - 1;
 
-    qreal dev_pix_ratio = devicePixelRatio();
-    xpos = int(std::roundf(xpos / dev_pix_ratio));
-    ypos = int(std::roundf(ypos / dev_pix_ratio));
+    const SbVec2f scale = viewportPixelScale();
+    xpos = int(std::roundf(float(xpos) / scale[0]));
+    ypos = int(std::roundf(float(ypos) / scale[1]));
 
     return {xpos, ypos};
 }
@@ -5392,7 +5401,7 @@ void View3DInventorViewer::updateAxisCrossNodes()
     constexpr float letterHeightFraction = 0.07f;
     constexpr float minLetterHeight = 8.0f;
     constexpr float maxLetterHeight = 18.0f;
-    const float deviceScale = static_cast<float>(devicePixelRatio());
+    const float deviceScale = viewportPixelScale()[0];
     const float targetLetterHeight = std::clamp(
         miniViewportSize * letterHeightFraction,
         minLetterHeight * deviceScale,
