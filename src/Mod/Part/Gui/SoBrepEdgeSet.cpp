@@ -31,7 +31,9 @@
 #include <Inventor/SoPrimitiveVertex.h>
 #include <Inventor/actions/SoGetBoundingBoxAction.h>
 #include <Inventor/actions/SoGLRenderAction.h>
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/actions/SoIRRenderAction.h>
+#endif
 #include <Inventor/details/SoLineDetail.h>
 #include <Inventor/elements/SoCoordinateElement.h>
 #include <Inventor/elements/SoDepthBufferElement.h>
@@ -61,6 +63,13 @@ SO_NODE_SOURCE(SoBrepEdgeSet)
 struct SoBrepEdgeSet::SelContext: Gui::SoFCSelectionContextEx
 {
     std::vector<int32_t> hl, sl;
+
+    // Full copy including the derived hl/sl members: the Vulkan render
+    // thread works on copies of the GUI-owned contexts (see IRRender).
+    Gui::SoFCSelectionContextBasePtr copy() override
+    {
+        return std::make_shared<SelContext>(*this);
+    }
 };
 
 static void applyOverlayPrimitiveState(SoState* state, SoNode* node)
@@ -249,6 +258,7 @@ static void renderColorOverrides(
     }
 }
 
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 static void renderOverlayLinesIR(
     SoIRRenderAction* action,
     SoIndexedLineSet* lineSet,
@@ -395,6 +405,7 @@ static void renderColorOverridesIR(
         );
     }
 }
+#endif
 
 void SoBrepEdgeSet::initClass()
 {
@@ -590,6 +601,7 @@ void SoBrepEdgeSet::GLRender(SoGLRenderAction* action)
     }
 }
 
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 void SoBrepEdgeSet::IRRender(SoIRRenderAction* action)
 {
     auto state = action->getState();
@@ -598,6 +610,16 @@ void SoBrepEdgeSet::IRRender(SoIRRenderAction* action)
 
     SelContextPtr ctx2;
     SelContextPtr ctx = Gui::SoFCSelectionRoot::getRenderContext<SelContext>(this, selContext, ctx2);
+    // IR traversals run on the Vulkan render thread while the GUI thread
+    // mutates the same context objects in GLRender(); work on local copies
+    // so this traversal never writes (or reads half-updated) shared
+    // selection state.
+    if (ctx) {
+        ctx = std::dynamic_pointer_cast<SelContext>(ctx->copy());
+    }
+    if (ctx2) {
+        ctx2 = std::dynamic_pointer_cast<SelContext>(ctx2->copy());
+    }
     VK_BREADCRUMB_LIMITED(30,
                           "[VK-TRACE] SoBrepEdgeSet::IRRender ctx=%p hlIdx=%d selIdx=%zu "
                           "ctx2=%p ctx2selIdx=%zu ctx2colors=%zu\n",
@@ -613,22 +635,25 @@ void SoBrepEdgeSet::IRRender(SoIRRenderAction* action)
 
     const bool hasColorOverride = (ctx2 && !ctx2->colors.empty());
 
-    if (selContext2->checkGlobal(ctx)) {
-        if (selContext2->isSelectAll()) {
-            selContext2->sl.clear();
-            selContext2->sl.push_back(-1);
+    SelContextPtr globalCtx = selContext2
+        ? std::dynamic_pointer_cast<SelContext>(selContext2->copy())
+        : SelContextPtr();
+    if (globalCtx && globalCtx->checkGlobal(ctx)) {
+        if (globalCtx->isSelectAll()) {
+            globalCtx->sl.clear();
+            globalCtx->sl.push_back(-1);
         }
         else if (ctx) {
-            selContext2->sl = ctx->sl;
+            globalCtx->sl = ctx->sl;
         }
-        if (selContext2->highlightIndex == std::numeric_limits<int>::max()) {
-            selContext2->hl.clear();
-            selContext2->hl.push_back(-1);
+        if (globalCtx->highlightIndex == std::numeric_limits<int>::max()) {
+            globalCtx->hl.clear();
+            globalCtx->hl.push_back(-1);
         }
         else if (ctx) {
-            selContext2->hl = ctx->hl;
+            globalCtx->hl = ctx->hl;
         }
-        ctx = selContext2;
+        ctx = globalCtx;
     }
 
     inherited::IRRender(action);
@@ -708,6 +733,7 @@ void SoBrepEdgeSet::IRRender(SoIRRenderAction* action)
         );
     }
 }
+#endif
 
 void SoBrepEdgeSet::GLRenderBelowPath(SoGLRenderAction* action)
 {
@@ -849,6 +875,7 @@ void SoBrepEdgeSet::renderSelection(SoGLRenderAction* action, SelContextPtr ctx,
                        overlay.color, overlay.depthMode);
 }
 
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 void SoBrepEdgeSet::renderHighlightIR(SoIRRenderAction* action, SelContextPtr ctx)
 {
     OverlayLines overlay;
@@ -868,6 +895,7 @@ void SoBrepEdgeSet::renderSelectionIR(SoIRRenderAction* action, SelContextPtr ct
     renderOverlayLinesIR(action, overlayLineSet, overlay.indices, overlay.count,
                          overlay.color, overlay.depthMode);
 }
+#endif
 
 bool SoBrepEdgeSet::validIndexes(const SoCoordinateElement* coords, const std::vector<int32_t>& pts) const
 {

@@ -305,7 +305,9 @@ public:
 
     void GLRenderBelowPath(SoGLRenderAction* action) override;
     void GLRenderInPath(SoGLRenderAction* action) override;
+#ifdef HAVE_COIN_IR_RENDER_ACTION
     void IRRender(SoIRRenderAction* action) override;
+#endif
 
     void doAction(SoAction* action) override;
     void pick(SoPickAction* action) override;
@@ -485,8 +487,10 @@ protected:
 
     void renderPrivate(SoGLRenderAction*, bool inPath);
     bool _renderPrivate(SoGLRenderAction*, bool inPath);
+#ifdef HAVE_COIN_IR_RENDER_ACTION
     void renderPrivateIR(SoIRRenderAction*);
     bool _renderPrivateIR(SoIRRenderAction*);
+#endif
 
     class Stack: public std::vector<SoNode*>
     {

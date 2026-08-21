@@ -29,7 +29,9 @@
 #include <limits>
 #include <Inventor/actions/SoGetBoundingBoxAction.h>
 #include <Inventor/actions/SoGLRenderAction.h>
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/actions/SoIRRenderAction.h>
+#endif
 #include <Inventor/details/SoPointDetail.h>
 #include <Inventor/elements/SoCoordinateElement.h>
 #include <Inventor/elements/SoDepthBufferElement.h>
@@ -144,6 +146,7 @@ static void renderOverlayPoints(
 }
 
 // Retained/IR (Vulkan) equivalent of renderOverlayPoints().
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 static void renderOverlayPointsIR(
     SoIRRenderAction* action,
     SoIndexedPointSet* pointSet,
@@ -195,6 +198,7 @@ static void renderOverlayPointsIR(
 
     state->pop();
 }
+#endif
 
 void SoBrepPointSet::initClass()
 {
@@ -363,6 +367,7 @@ void SoBrepPointSet::GLRender(SoGLRenderAction* action)
     }
 }
 
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 void SoBrepPointSet::IRRender(SoIRRenderAction* action)
 {
     VK_BREADCRUMB_LIMITED(30, "[VK-TRACE] SoBrepPointSet::IRRender this=%p\n", this);
@@ -377,6 +382,16 @@ void SoBrepPointSet::IRRender(SoIRRenderAction* action)
 
     SelContextPtr ctx2;
     SelContextPtr ctx = Gui::SoFCSelectionRoot::getRenderContext<SelContext>(this, selContext, ctx2);
+    // IR traversals run on the Vulkan render thread while the GUI thread
+    // mutates the same context objects in GLRender(); work on local copies
+    // so this traversal never writes (or reads half-updated) shared
+    // selection state.
+    if (ctx) {
+        ctx = std::dynamic_pointer_cast<SelContext>(ctx->copy());
+    }
+    if (ctx2) {
+        ctx2 = std::dynamic_pointer_cast<SelContext>(ctx2->copy());
+    }
     VK_BREADCRUMB_LIMITED(30,
                           "[VK-TRACE] SoBrepPointSet::IRRender ctx=%p hlIdx=%d selIdx=%zu "
                           "ctx2=%p ctx2selIdx=%zu\n",
@@ -388,8 +403,11 @@ void SoBrepPointSet::IRRender(SoIRRenderAction* action)
     if (ctx2 && ctx2->selectionIndex.empty()) {
         return;
     }
-    if (selContext2->checkGlobal(ctx)) {
-        ctx = selContext2;
+    SelContextPtr globalCtx = selContext2
+        ? std::dynamic_pointer_cast<SelContext>(selContext2->copy())
+        : SelContextPtr();
+    if (globalCtx && globalCtx->checkGlobal(ctx)) {
+        ctx = globalCtx;
     }
 
     inherited::IRRender(action);
@@ -459,6 +477,7 @@ void SoBrepPointSet::IRRender(SoIRRenderAction* action)
         );
     }
 }
+#endif
 
 void SoBrepPointSet::GLRenderBelowPath(SoGLRenderAction* action)
 {
@@ -593,6 +612,7 @@ void SoBrepPointSet::renderSelection(SoGLRenderAction* action, SelContextPtr ctx
                         ctx->selectionColor, OverlayDepthMode::RespectDepth);
 }
 
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 void SoBrepPointSet::renderHighlightIR(SoIRRenderAction* action, SelContextPtr ctx)
 {
     std::vector<int32_t> pointIndices;
@@ -614,6 +634,7 @@ void SoBrepPointSet::renderSelectionIR(SoIRRenderAction* action, SelContextPtr c
                           static_cast<int>(pointIndices.size()),
                           ctx->selectionColor, OverlayDepthMode::RespectDepth);
 }
+#endif
 
 void SoBrepPointSet::doAction(SoAction* action)
 {

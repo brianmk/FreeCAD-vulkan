@@ -74,7 +74,9 @@ public:
 protected:
     ~SoBrepEdgeSet() override;
     void GLRender(SoGLRenderAction* action) override;
+#ifdef HAVE_COIN_IR_RENDER_ACTION
     void IRRender(SoIRRenderAction* action) override;
+#endif
     void GLRenderBelowPath(SoGLRenderAction* action) override;
     void doAction(SoAction* action) override;
     SoDetail* createLineSegmentDetail(
@@ -101,8 +103,10 @@ private:
 
     void renderHighlight(SoGLRenderAction* action, SelContextPtr);
     void renderSelection(SoGLRenderAction* action, SelContextPtr, bool push = true);
+#ifdef HAVE_COIN_IR_RENDER_ACTION
     void renderHighlightIR(SoIRRenderAction* action, SelContextPtr);
     void renderSelectionIR(SoIRRenderAction* action, SelContextPtr);
+#endif
     bool collectHighlightLines(SoState*, SelContextPtr, OverlayLines&) const;
     bool collectSelectionLines(SoState*, SelContextPtr, OverlayLines&) const;
     bool validIndexes(const SoCoordinateElement*, const std::vector<int32_t>&) const;

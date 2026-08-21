@@ -36,7 +36,9 @@
 #include <numbers>
 
 #include <Inventor/actions/SoGLRenderAction.h>
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/actions/SoIRRenderAction.h>
+#endif
 #include <Inventor/actions/SoRayPickAction.h>
 #include <Inventor/details/SoFaceDetail.h>
 #include <Inventor/lists/SoPickedPointList.h>
@@ -1368,6 +1370,7 @@ void SoNaviCube::GLRender(SoGLRenderAction* action)
     renderCoin(action);
 }
 
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 void SoNaviCube::IRRender(SoIRRenderAction* action)
 {
     if (!action) {
@@ -1457,6 +1460,7 @@ void SoNaviCube::renderOverlayIR(SoIRRenderAction* action)
 
     state->pop();
 }
+#endif
 
 void SoNaviCube::computeBBox(SoAction*, SbBox3f& box, SbVec3f& center)
 {

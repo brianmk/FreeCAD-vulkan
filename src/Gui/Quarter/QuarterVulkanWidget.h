@@ -140,8 +140,6 @@ public:
     */
     QImage grab() const;
 
-    SoVulkanRenderManager * getRenderManager() const;
-
     QWidget * getNativeWidget();
 
     /*!

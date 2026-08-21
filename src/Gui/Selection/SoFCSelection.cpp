@@ -29,7 +29,9 @@
 #include <Inventor/SoPickedPoint.h>
 #include <Inventor/actions/SoGLRenderAction.h>
 #include <Inventor/actions/SoHandleEventAction.h>
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/actions/SoIRRenderAction.h>
+#endif
 #include <Inventor/details/SoFaceDetail.h>
 #include <Inventor/details/SoLineDetail.h>
 #include <Inventor/elements/SoLazyElement.h>
@@ -626,17 +628,30 @@ void SoFCSelection::GLRender(SoGLRenderAction* action)
 // selection/preselection color override before traversing the children with
 // the retained-render action.  SoIRRenderAction dispatches SoNode::IRRenderS
 // -> virtual SoNode::IRRender, so this override is picked up automatically.
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 void SoFCSelection::IRRender(SoIRRenderAction* action)
 {
     VK_BREADCRUMB_LIMITED(20,
                           "[VK-TRACE] SoFCSelection::IRRender this=%p selected=%d highlighted=%d\n",
                           this, this->selected.getValue(), this->highlighted ? 1 : 0);
     SoState* state = action->getState();
-    SelContextPtr ctx = Gui::SoFCSelectionRoot::getRenderContext<SelContext>(this, selContext);
-    if (selContext2->checkGlobal(ctx)) {
-        ctx = selContext2;
+    SelContextPtr ctxOrig = Gui::SoFCSelectionRoot::getRenderContext<SelContext>(this, selContext);
+    // This traversal runs on the Vulkan render thread while the GUI thread
+    // mutates the same context objects in GLRender().  Work on local copies
+    // so the render thread never writes (or reads half-updated) shared
+    // selection state; the copies only need to be consistent within this
+    // traversal.
+    const bool ownContext = (selContext == ctxOrig);
+    SelContextPtr ctx = ctxOrig
+        ? std::dynamic_pointer_cast<SelContext>(ctxOrig->copy())
+        : SelContextPtr();
+    SelContextPtr ctx2 = selContext2
+        ? std::dynamic_pointer_cast<SelContext>(selContext2->copy())
+        : SelContextPtr();
+    if (ctx2 && ctx2->checkGlobal(ctx)) {
+        ctx = ctx2;
     }
-    if (!useNewSelection.getValue() && selContext == ctx) {
+    if (!useNewSelection.getValue() && ownContext && ctx) {
         ctx->selectionColor = this->colorSelection.getValue();
         ctx->highlightColor = this->colorHighlight.getValue();
         if (this->selected.getValue() == SELECTED) {
@@ -661,6 +676,7 @@ void SoFCSelection::IRRender(SoIRRenderAction* action)
         inherited::IRRender(action);
     }
 }
+#endif
 
 // doc from parent
 void SoFCSelection::GLRenderInPath(SoGLRenderAction* action)
@@ -820,6 +836,7 @@ bool SoFCSelection::setOverride(SoGLRenderAction* action, SelContextPtr ctx)
 // color overrides to the traversal state without the GL-only bits (bounding
 // box rendering and depth-func handling).  SoLazyElement is shared between
 // the GL and IR actions, so the recorded draw commands pick up the override.
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 bool SoFCSelection::setOverrideIR(SoIRRenderAction* action, SelContextPtr ctx)
 {
     bool preselected = false;
@@ -855,6 +872,7 @@ bool SoFCSelection::setOverrideIR(SoIRRenderAction* action, SelContextPtr ctx)
 
     return true;
 }
+#endif
 
 //! Shared decision logic for the GL and IR override paths: whether an
 //! override applies at all, whether it is a preselection (highlight) or a

@@ -31,7 +31,9 @@
 #include <Inventor/SoPrimitiveVertex.h>
 #include <Inventor/actions/SoGetBoundingBoxAction.h>
 #include <Inventor/actions/SoGLRenderAction.h>
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/actions/SoIRRenderAction.h>
+#endif
 #include <Inventor/actions/SoRayPickAction.h>
 #include <Inventor/bundles/SoMaterialBundle.h>
 #include <Inventor/details/SoFaceDetail.h>
@@ -185,6 +187,7 @@ static void expandPartMaterialIndexToFaceMaterialIndex(
 // overlay into the SoIRRenderAction draw list instead of issuing GL calls.
 // The GL and IR actions share the SoLazyElement/SoDepthBufferElement state,
 // so the same override values are captured into each recorded command.
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 static void renderOverlayFacesIR(
     SoIRRenderAction* action,
     SoIndexedFaceSet* faceSet,
@@ -230,6 +233,7 @@ static void renderOverlayFacesIR(
 
     state->pop();
 }
+#endif
 
 //! Shared decision logic for renderHighlight()/renderHighlightIR(): which
 //! parts the highlight covers, and whether it covers all parts.
@@ -533,6 +537,7 @@ void SoBrepFaceSet::renderSelection(SoGLRenderAction* action, SelContextPtr ctx,
     renderOverlayFaces(action, overlayFaceSet, overlayCoordIndex, ctx->selectionColor, false);
 }
 
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 void SoBrepFaceSet::renderHighlightIR(SoIRRenderAction* action, SelContextPtr ctx)
 {
     VK_BREADCRUMB_LIMITED(5,
@@ -568,6 +573,7 @@ void SoBrepFaceSet::renderSelectionIR(SoIRRenderAction* action, SelContextPtr ct
     buildOverlayCoordIndex(overlayCoordIndex, ci, ciCount, partCounts, partCount, parts, selectAll);
     renderOverlayFacesIR(action, overlayFaceSet, overlayCoordIndex, ctx->selectionColor, false);
 }
+#endif
 
 // Shared GL/IR material-remap pass: SoBrepFaceSet groups rendered triangles
 // into topological faces via partIndex.  Coin's IndexedFaceSet consumes one
@@ -905,6 +911,7 @@ void SoBrepFaceSet::GLRender(SoGLRenderAction* action)
     }
 }
 
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 void SoBrepFaceSet::IRRender(SoIRRenderAction* action)
 {
     ZoneScoped;
@@ -915,6 +922,16 @@ void SoBrepFaceSet::IRRender(SoIRRenderAction* action)
 
     SelContextPtr ctx2;
     SelContextPtr ctx = Gui::SoFCSelectionRoot::getRenderContext(this, selContext, ctx2);
+    // IR traversals run on the Vulkan render thread while the GUI thread
+    // mutates the same context objects in GLRender(); work on local copies
+    // so this traversal never writes (or reads half-updated) shared
+    // selection state.
+    if (ctx) {
+        ctx = std::dynamic_pointer_cast<SelContext>(ctx->copy());
+    }
+    if (ctx2) {
+        ctx2 = std::dynamic_pointer_cast<SelContext>(ctx2->copy());
+    }
     VK_BREADCRUMB_LIMITED(5,
                           "[VK-TRACE] SoBrepFaceSet::IRRender this=%p ctx=%p hlIdx=%d ctx2=%p selIdx=%zu\n",
                           this, ctx.get(), ctx ? ctx->highlightIndex : -2,
@@ -927,8 +944,11 @@ void SoBrepFaceSet::IRRender(SoIRRenderAction* action)
     if (!hasOverlayFields && ctx2 && ctx2->selectionIndex.empty() && !hasSecondaryColors) {
         return;
     }
-    if (selContext2->checkGlobal(ctx)) {
-        ctx = selContext2;
+    SelContextPtr globalCtx = selContext2
+        ? std::dynamic_pointer_cast<SelContext>(selContext2->copy())
+        : SelContextPtr();
+    if (globalCtx && globalCtx->checkGlobal(ctx)) {
+        ctx = globalCtx;
     }
     if (ctx && (ctx->selectionIndex.empty() && ctx->highlightIndex < 0)) {
         ctx.reset();
@@ -980,6 +1000,7 @@ void SoBrepFaceSet::IRRender(SoIRRenderAction* action)
         }
     }
 }
+#endif
 
 void SoBrepFaceSet::GLRenderBelowPath(SoGLRenderAction* action)
 {

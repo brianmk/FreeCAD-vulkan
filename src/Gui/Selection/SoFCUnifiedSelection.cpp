@@ -33,7 +33,9 @@
 #include <Inventor/actions/SoGetPrimitiveCountAction.h>
 #include <Inventor/actions/SoGLRenderAction.h>
 #include <Inventor/actions/SoHandleEventAction.h>
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/actions/SoIRRenderAction.h>
+#endif
 #include <Inventor/actions/SoWriteAction.h>
 #include <Inventor/bundles/SoMaterialBundle.h>
 #include <Inventor/details/SoFaceDetail.h>
@@ -1973,6 +1975,7 @@ void SoFCSelectionRoot::GLRenderInPath(SoGLRenderAction* action)
     renderPrivate(action, true);
 }
 
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 void SoFCSelectionRoot::IRRender(SoIRRenderAction* action)
 {
     renderPrivateIR(action);
@@ -2060,6 +2063,7 @@ bool SoFCSelectionRoot::_renderPrivateIR(SoIRRenderAction* action)
 
     return false;
 }
+#endif
 
 bool SoFCSelectionRoot::checkColorOverride(SoState* state)
 {

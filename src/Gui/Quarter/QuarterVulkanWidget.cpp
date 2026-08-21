@@ -400,7 +400,14 @@ public:
         return m_pathTracingActive;
     }
 
-    SoVulkanRenderManager * getManager() { return &m_manager; }
+    // Ray-tracing status mirrored from the manager (which is confined to the
+    // render thread) so the GUI thread never reads render-thread state
+    // without synchronization.
+    bool getRayTracingActive() const
+    {
+        QMutexLocker locker(&m_stateMutex);
+        return m_rayTracingActive;
+    }
 
     void preInitResources() override {}
 
@@ -454,6 +461,10 @@ public:
     void initSwapChainResources() override
     {
         m_manager.setRenderTarget(&m_target);
+        // QVulkanWindow may keep up to its swapchain image count frames in
+        // flight; give the backend one extra ring slot of margin.
+        m_manager.setMaxFramesInFlight(
+            static_cast<uint32_t>(m_window->swapChainImageCount()) + 1u);
         const VkSampleCountFlagBits samples = m_window->sampleCountFlagBits();
         vkLog("initSwapChainResources:");
         vkLog("  image size: %dx%d", m_window->swapChainImageSize().width(),
@@ -682,12 +693,14 @@ public:
 
         m_window->frameReady();
 
-        // Report the path-tracing status back to the GUI thread (one frame
-        // of latency is acceptable for a status getter).
+        // Report the path-tracing and ray-tracing status back to the GUI
+        // thread (one frame of latency is acceptable for status getters).
         {
             QMutexLocker locker(&m_stateMutex);
             m_pathTracingActive = m_manager.getPathTracingActive() ? true
                                                                    : false;
+            m_rayTracingActive = m_manager.getRayTracingActive() ? true
+                                                                 : false;
         }
 
         m_dumper.saveFrame();
@@ -728,6 +741,7 @@ private:
     bool m_pathTracingStart = false;
     bool m_pathTracingActive = false;
     bool m_appliedPathTracingEnabled = false;
+    bool m_rayTracingActive = false;
     // Guards every state member written from the GUI thread and read by
     // the render thread (startNextFrame snapshots under this lock).
     mutable QMutex m_stateMutex;
@@ -1154,17 +1168,12 @@ QImage QuarterVulkanWidget::grab() const
     return d->window->grab();
 }
 
-SoVulkanRenderManager * QuarterVulkanWidget::getRenderManager() const
-{
-    return d->renderer->getManager();
-}
-
 bool QuarterVulkanWidget::isRayTracingActive() const
 {
     if (!d->renderer) {
         return false;
     }
-    return d->renderer->getManager()->getRayTracingActive();
+    return d->renderer->getRayTracingActive();
 }
 
 void QuarterVulkanWidget::setPathTracingEnabled(bool enabled)

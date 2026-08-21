@@ -33,6 +33,15 @@ macro(SetupCoin3D)
         set(COIN3D_MICRO_VERSION "${CMAKE_MATCH_1}")
         set(COIN3D_VERSION "${COIN3D_MAJOR_VERSION}.${COIN3D_MINOR_VERSION}.${COIN3D_MICRO_VERSION}")
     ENDIF ()
+
+    # The retained (immediate-render) API used by the Vulkan viewport only
+    # exists in the bundled Coin.  Guard every SoIRRenderAction consumer with
+    # HAVE_COIN_IR_RENDER_ACTION so external/system Coin builds (which lack
+    # SoNode::IRRender) still compile; the IR overrides simply compile out.
+    if (EXISTS "${COIN3D_INCLUDE_DIRS}/Inventor/actions/SoIRRenderAction.h")
+        add_definitions(-DHAVE_COIN_IR_RENDER_ACTION)
+        message(STATUS "Coin3D provides the IR render API (SoIRRenderAction)")
+    endif ()
 endmacro(SetupCoin3D)
 
 macro(SetupPivy)
@@ -123,6 +132,11 @@ macro(SetupBundledCoinPivy)
     if (NOT DEFINED COIN_VERSION OR COIN_VERSION STREQUAL "")
         message(FATAL_ERROR "Bundled Coin did not define COIN_VERSION")
     endif ()
+    # The bundled Coin always provides the retained IR render API used by
+    # the Vulkan viewport.  The matching probe for external Coin lives in
+    # SetupCoin3D() above; both gate FreeCAD's SoIRRenderAction consumers on
+    # HAVE_COIN_IR_RENDER_ACTION.
+    add_definitions(-DHAVE_COIN_IR_RENDER_ACTION)
     set(COIN3D_VERSION "${COIN_VERSION}")
     # Match external Coin usage: FreeCAD targets should treat Coin headers as third-party headers.
     target_include_directories(Coin
