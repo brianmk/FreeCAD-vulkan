@@ -464,7 +464,17 @@ void SoBrepFaceSet::renderHighlightIR(SoIRRenderAction* action, SelContextPtr ct
         return;
     }
     buildOverlayCoordIndex(overlayCoordIndex, ci, ciCount, partCounts, partCount, parts, selectAll);
-    renderOverlayFaces(action, overlayFaceSet, overlayCoordIndex, ctx->highlightColor, true);
+
+    // Match GLRender(): the highlight is drawn on top (depth test off,
+    // blended) only for the clarify-selection on-top pass.  GL detects that
+    // pass with SoDelayedAnnotationsElement::isProcessingDelayedPaths; the
+    // IR path has no delayed-annotations pass, but the clarify-selection
+    // helper pushes the depth test off before recording the highlight, so
+    // the depth element marks the same condition.
+    const bool onTop = Gui::Selection().isClarifySelectionActive()
+        && !SoDepthBufferElement::getTestEnable(action->getState());
+
+    renderOverlayFaces(action, overlayFaceSet, overlayCoordIndex, ctx->highlightColor, onTop);
 }
 
 void SoBrepFaceSet::renderSelectionIR(SoIRRenderAction* action, SelContextPtr ctx)
@@ -829,6 +839,9 @@ void SoBrepFaceSet::IRRender(SoIRRenderAction* action)
         return;
     }
 
+    auto state = action->getState();
+    selCounter.checkRenderCache(state);
+
     SelContextPtr ctx2;
     SelContextPtr ctx = Gui::SoFCSelectionRoot::getRenderContext(this, selContext, ctx2);
     copyIRRenderContexts(ctx, ctx2);
@@ -869,11 +882,10 @@ void SoBrepFaceSet::IRRender(SoIRRenderAction* action)
                                  viewProvider,
                                  &SoBrepFaceSet::renderHighlightIR,
                                  &SoIndexedFaceSet::IRRender,
-                                 this);
+                                  this);
         return;
     }
 
-    auto state = action->getState();
     // Same material remap as GLRender(): per-face colors and partial-render
     // hiding are baked into the base pass; when the current binding cannot
     // be expressed, selection/highlight fall back to explicit overlay
