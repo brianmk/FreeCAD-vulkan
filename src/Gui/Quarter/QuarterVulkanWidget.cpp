@@ -338,6 +338,11 @@ public:
         QMutexLocker locker(&m_stateMutex);
         m_overlayScene = scene;
     }
+    void setDecorationScene(SoNode * scene)
+    {
+        QMutexLocker locker(&m_stateMutex);
+        m_decorationScene = scene;
+    }
     void setCamera(SoCamera * camera)
     {
         QMutexLocker locker(&m_stateMutex);
@@ -587,6 +592,7 @@ public:
         // applied to the manager here on the render thread.
         SoNode * scene = nullptr;
         SoNode * overlayScene = nullptr;
+        SoNode * decorationScene = nullptr;
         SoCamera * camera = nullptr;
         SbColor4f background;
         SbColor4f backgroundTop;
@@ -599,6 +605,7 @@ public:
             QMutexLocker locker(&m_stateMutex);
             scene = m_scene;
             overlayScene = m_overlayScene;
+            decorationScene = m_decorationScene;
             camera = m_camera;
             background = m_background;
             backgroundTop = m_backgroundTop;
@@ -654,6 +661,7 @@ public:
 
         m_manager.setSceneGraph(scene);
         m_manager.setOverlaySceneGraph(overlayScene);
+        m_manager.setDecorationSceneGraph(decorationScene);
         m_manager.setCamera(camera);
 
         // The hidden GL viewer's viewport region is not authoritative: the
@@ -800,6 +808,7 @@ private:
     QVulkanInstance * m_instance = nullptr;
     SoNode * m_scene = nullptr;
     SoNode * m_overlayScene = nullptr;
+    SoNode * m_decorationScene = nullptr;
     SoCamera * m_camera = nullptr;
     QVulkanWindow * m_window = nullptr;
     QuarterVulkanWidget * m_owner = nullptr;
@@ -897,6 +906,7 @@ public:
     QuarterVulkanRenderer * renderer = nullptr;
     SoNode * scene = nullptr;
     SoNode * overlayScene = nullptr;
+    SoNode * decorationScene = nullptr;
     SoCamera * camera = nullptr;
     SbColor4f background = SbColor4f(0.0f, 0.0f, 0.0f, 1.0f);
     bool backgroundGradient = false;
@@ -1162,6 +1172,18 @@ void QuarterVulkanWidget::setOverlaySceneGraph(SoNode * root)
 SoNode * QuarterVulkanWidget::getOverlaySceneGraph() const
 {
     return d->overlayScene;
+}
+
+void QuarterVulkanWidget::setDecorationSceneGraph(SoNode * root)
+{
+    d->decorationScene = root;
+    d->renderer->setDecorationScene(root);
+    redraw();
+}
+
+SoNode * QuarterVulkanWidget::getDecorationSceneGraph() const
+{
+    return d->decorationScene;
 }
 
 void QuarterVulkanWidget::setCamera(SoCamera * camera)

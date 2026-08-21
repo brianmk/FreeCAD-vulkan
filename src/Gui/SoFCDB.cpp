@@ -81,6 +81,7 @@
 #include "Inventor/SoFCBackgroundGradient.h"
 #include "Inventor/SoFCBoundingBox.h"
 #include "Inventor/SoNaviCube.h"
+#include "Inventor/SoAxisCrossOverlay.h"
 #include "Inventor/SoMouseWheelEvent.h"
 #include "Inventor/SoFCTransform.h"
 #include "Inventor/SoToggleSwitch.h"
@@ -145,6 +146,7 @@ void Gui::SoFCDB::init()
     SoRegPoint ::initClass();
     SoDrawingGrid ::initClass();
     SoNaviCube ::initClass();
+    SoAxisCrossOverlay ::initClass();
     SoFCTransform ::initClass();
     SoAutoZoomTranslation ::initClass();
     MarkerBitmaps ::initClass();

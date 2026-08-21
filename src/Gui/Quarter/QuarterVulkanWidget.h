@@ -62,6 +62,16 @@ public:
     void setOverlaySceneGraph(SoNode * root);
     SoNode * getOverlaySceneGraph() const;
 
+    /*!
+      \brief Set an optional decoration scene graph (axis cross overlay).
+
+      Traversed after the overlay scene graph each frame and drawn in the
+      overlay pass on top of it (see SoVulkanRenderManager::
+      setDecorationSceneGraph()).  Pass nullptr to disable it.
+    */
+    void setDecorationSceneGraph(SoNode * root);
+    SoNode * getDecorationSceneGraph() const;
+
     void setCamera(SoCamera * camera);
     SoCamera * getCamera() const;
 

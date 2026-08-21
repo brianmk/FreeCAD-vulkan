@@ -584,6 +584,15 @@ public:
     NaviCube* getNaviCube() const;
     //! The annotation group holding the nav cube coin node (empty when hidden).
     SoAnnotation* getNaviCubeAnnotation() const;
+    //! The axis cross overlay container for the IR (Vulkan) render path:
+    //! a SoAxisCrossOverlay scoping the shared axis/letter graphs to the
+    //! bottom-right corner viewport in the overlay render pass.
+    SoNode* getAxisCrossOverlay();
+    //! Refresh the axis cross overlay nodes (transforms, colors, letters)
+    //! without issuing any GL rendering; called by drawAxisCross() and by
+    //! the Vulkan viewport sync so the hidden GL viewer's frame loop is not
+    //! required for the IR render path.
+    void updateAxisCrossNodes();
     void setEnabledVBO(bool on);
     bool isEnabledVBO() const;
     void setRenderCache(int);

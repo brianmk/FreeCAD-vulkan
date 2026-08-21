@@ -132,6 +132,7 @@
 #include "GLPainter.h"
 #include "RubberbandOverlay.h"
 #include "Inventor/SoAxisCrossKit.h"
+#include "Inventor/SoAxisCrossOverlay.h"
 #include "Inventor/SoFCBackgroundGradient.h"
 #include "Inventor/SoFCBoundingBox.h"
 #include "MainWindow.h"
@@ -594,6 +595,11 @@ struct OverlayAxisCrossState
     Letter yLetter;
     Letter zLetter;
 
+    // Container handed to the IR (Vulkan) render path; children are the
+    // shared GL-updated axis/letter graphs, and the node itself scopes them
+    // to the corner viewport and the overlay render pass.
+    Gui::SoAxisCrossOverlay* overlayNode {nullptr};
+
     void ensureCreated()
     {
         if (axisRoot) {
@@ -726,6 +732,11 @@ struct OverlayAxisCrossState
         lettersRoot->addChild(xLetter.root);
         lettersRoot->addChild(yLetter.root);
         lettersRoot->addChild(zLetter.root);
+
+        overlayNode = new Gui::SoAxisCrossOverlay;
+        overlayNode->ref();
+        overlayNode->addChild(axisRoot);
+        overlayNode->addChild(lettersRoot);
     }
 };
 
@@ -2247,6 +2258,16 @@ NaviCube* View3DInventorViewer::getNaviCube() const
 SoAnnotation* View3DInventorViewer::getNaviCubeAnnotation() const
 {
     return naviCubeAnnotation;
+}
+
+SoNode* View3DInventorViewer::getAxisCrossOverlay()
+{
+    auto& overlay = overlayAxisCrossState();
+    overlay.ensureCreated();
+    if (overlay.overlayNode) {
+        overlay.overlayNode->enabled.setValue(this->axiscrossEnabled);
+    }
+    return overlay.overlayNode;
 }
 
 void View3DInventorViewer::setAxisCross(bool on)
@@ -5124,6 +5145,12 @@ void View3DInventorViewer::setFeedbackVisibility(bool enable)
     if (this->isViewing()) {
         this->getSoRenderManager()->scheduleRedraw();
     }
+
+    // Keep the IR (Vulkan) overlay container in sync; it is read from the
+    // render thread, so only touch it if it already exists.
+    if (auto* overlayNode = overlayAxisCrossState().overlayNode) {
+        overlayNode->enabled.setValue(enable);
+    }
 }
 
 /*!
@@ -5244,7 +5271,7 @@ void View3DInventorViewer::updateColors()
     }
 }
 
-void View3DInventorViewer::drawAxisCross()
+void View3DInventorViewer::updateAxisCrossNodes()
 {
     const SbVec2s view = this->getSoRenderManager()->getSize();
     const int viewWidth = view[0];
@@ -5259,8 +5286,6 @@ void View3DInventorViewer::drawAxisCross()
     if (pixelarea <= 0) {
         return;
     }
-
-    const SbVec2s origin(viewWidth - pixelarea, 0);
 
     constexpr float nearVal = 0.1f;
     constexpr float farVal = 10.0f;
@@ -5311,6 +5336,12 @@ void View3DInventorViewer::drawAxisCross()
     if (!overlay.axisRoot || !overlay.axisTransform || !overlay.axisGroup || !overlay.lettersRoot
         || !overlay.lettersCamera) {
         return;
+    }
+    // Keep the IR (Vulkan) overlay container in sync with the current size
+    // preference; it computes its own corner viewport from its viewport
+    // region when traversed.
+    if (overlay.overlayNode) {
+        overlay.overlayNode->sizeFraction.setValue(this->axiscrossSize);
     }
 
     SbRotation inv;
@@ -5394,6 +5425,30 @@ void View3DInventorViewer::drawAxisCross()
     overlay.xLetter.texture->image.setValue(SbVec2s(XPM_WIDTH, XPM_HEIGHT), 4, XPM_pixel_data);
     overlay.yLetter.texture->image.setValue(SbVec2s(YPM_WIDTH, YPM_HEIGHT), 4, YPM_pixel_data);
     overlay.zLetter.texture->image.setValue(SbVec2s(ZPM_WIDTH, ZPM_HEIGHT), 4, ZPM_pixel_data);
+}
+
+void View3DInventorViewer::drawAxisCross()
+{
+    this->updateAxisCrossNodes();
+
+    const SbVec2s view = this->getSoRenderManager()->getSize();
+    const int viewWidth = view[0];
+    const int viewHeight = view[1];
+    if (viewWidth <= 0 || viewHeight <= 0) {
+        return;
+    }
+    const int pixelarea = static_cast<int>(
+        static_cast<float>(this->axiscrossSize) / 100.0F * std::min(viewWidth, viewHeight)
+    );
+    if (pixelarea <= 0) {
+        return;
+    }
+    const SbVec2s origin(viewWidth - pixelarea, 0);
+
+    auto& overlay = overlayAxisCrossState();
+    if (!overlay.axisRoot || !overlay.lettersRoot) {
+        return;
+    }
 
     SbViewportRegion vp = this->getSoRenderManager()->getViewportRegion();
     vp.setViewportPixels(origin[0], origin[1], pixelarea, pixelarea);

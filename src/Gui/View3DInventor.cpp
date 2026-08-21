@@ -401,6 +401,10 @@ void View3DInventor::syncVulkanViewer()
     }
     _vulkanViewer->setSceneGraph(rm->getSceneGraph());
     _vulkanViewer->setOverlaySceneGraph(_viewer->getNaviCubeAnnotation());
+    // The hidden GL viewer's frame loop never runs, so the axis cross
+    // overlay nodes are refreshed here for the IR (Vulkan) render path.
+    _viewer->updateAxisCrossNodes();
+    _vulkanViewer->setDecorationSceneGraph(_viewer->getAxisCrossOverlay());
     _vulkanViewer->setCamera(rm->getCamera());
     if (getenv("FC_VULKAN_BREADCRUMBS")) {
         SoCamera* cam = rm->getCamera();
