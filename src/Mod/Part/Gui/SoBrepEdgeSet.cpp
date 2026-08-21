@@ -66,8 +66,8 @@ struct SoBrepEdgeSet::SelContext: Gui::SoFCSelectionContextEx
 {
     std::vector<int32_t> hl, sl;
 
-    // Full copy including the derived hl/sl members: the Vulkan render
-    // thread works on copies of the GUI-owned contexts (see IRRender).
+    // Full copy including the derived hl/sl members: the IR traversal
+    // works on copies of the shared contexts (see IRRender).
     Gui::SoFCSelectionContextBasePtr copy() override
     {
         return std::make_shared<SelContext>(*this);

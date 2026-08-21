@@ -45,7 +45,7 @@ public:
 
 Q_SIGNALS:
     //! Emitted when the Vulkan swapchain size is known or changes.
-    //! Delivered on the GUI thread (queued from the renderer thread).
+    //! Delivered on the GUI thread.
     void surfaceSizeChanged(const QSize & size);
 
 public:

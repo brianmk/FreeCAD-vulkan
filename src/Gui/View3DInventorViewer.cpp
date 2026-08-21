@@ -5159,8 +5159,8 @@ void View3DInventorViewer::setFeedbackVisibility(bool enable)
         this->getSoRenderManager()->scheduleRedraw();
     }
 
-    // Keep the IR (Vulkan) overlay container in sync; it is read from the
-    // render thread, so only touch it if it already exists.
+    // Keep the IR (Vulkan) overlay container in sync; it is read at frame
+    // start, so only touch it if it already exists.
     if (auto* overlayNode = overlayAxisCrossState().overlayNode) {
         overlayNode->enabled.setValue(enable);
     }

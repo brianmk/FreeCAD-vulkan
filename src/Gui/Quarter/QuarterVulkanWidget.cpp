@@ -391,9 +391,10 @@ public:
         m_edgeColor = color;
     }
 
-    // Path tracing state is applied to the manager on the render thread
-    // (startNextFrame) instead of being called into the manager from the
-    // GUI thread, keeping every manager access on the render thread.
+    // Path tracing state is staged here and applied to the manager at the
+    // next startNextFrame() instead of being called into the manager from
+    // arbitrary widget-API call sites, keeping every manager access inside
+    // frame setup.  Qt 6 invokes startNextFrame() on the GUI thread.
     void setPathTracingEnabled(bool enabled)
     {
         QMutexLocker locker(&m_stateMutex);
@@ -415,9 +416,9 @@ public:
         return m_pathTracingActive;
     }
 
-    // Ray-tracing status mirrored from the manager (which is confined to the
-    // render thread) so the GUI thread never reads render-thread state
-    // without synchronization.
+    // Ray-tracing status mirrored from the manager (which only re-evaluates
+    // device support during frame setup) so callers can query the cached
+    // value from anywhere.
     bool getRayTracingActive() const
     {
         QMutexLocker locker(&m_stateMutex);
@@ -592,11 +593,12 @@ public:
 
     void startNextFrame() override
     {
-        // The state members below are written by the GUI thread (through the
-        // setters) while this function runs on QVulkanWindow's render
-        // thread.  Snapshot everything under the mutex and use the locals
-        // for the rest of the frame; pending path-tracing requests are
-        // applied to the manager here on the render thread.
+        // Qt 6 invokes startNextFrame() on the GUI thread, like every other
+        // access to these state members; the setters and redraw sensors run
+        // on the same thread.  Snapshot everything under the mutex and use
+        // the locals for the rest of the frame so one frame always sees a
+        // consistent set of values.  Pending path-tracing requests are
+        // applied to the manager here, at frame setup.
         SoNode * scene = nullptr;
         SoNode * overlayScene = nullptr;
         SoNode * decorationScene = nullptr;
@@ -839,9 +841,9 @@ private:
     bool m_clearDepth = true;
     bool m_initialized = false;
     bool m_rayTracing = false;
-    // Path tracing state mirrored here: the GUI thread writes the
-    // requested values, startNextFrame applies them to the manager on the
-    // render thread and reports the active status back.
+    // Path tracing state mirrored here: requested values are written from
+    // the widget API, startNextFrame() applies them to the manager during
+    // frame setup and reports the active status back.
     bool m_pathTracingEnabled = false;
     bool m_pathTracingStart = false;
     bool m_pathTracingActive = false;
@@ -853,8 +855,11 @@ private:
     SoNode * m_sensorScene = nullptr;
     std::vector<SoFieldSensor *> m_cameraSensors;
     SoCamera * m_sensorCamera = nullptr;
-    // Guards every state member written from the GUI thread and read by
-    // the render thread (startNextFrame snapshots under this lock).
+    // Guards the frame-state members below, which are written from the
+    // widget API (and redraw sensors) and snapshotted by startNextFrame().
+    // Qt 6 runs both on the GUI thread, so the lock documents the snapshot
+    // contract rather than preventing data races; it also future-proofs the
+    // code if rendering ever moves to a dedicated thread.
     mutable QMutex m_stateMutex;
     SoVulkanRenderManager m_manager;
     SoVulkanRenderTarget m_target;

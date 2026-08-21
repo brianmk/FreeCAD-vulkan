@@ -636,11 +636,11 @@ void SoFCSelection::IRRender(SoIRRenderAction* action)
                           this, this->selected.getValue(), this->highlighted ? 1 : 0);
     SoState* state = action->getState();
     SelContextPtr ctxOrig = Gui::SoFCSelectionRoot::getRenderContext<SelContext>(this, selContext);
-    // This traversal runs on the Vulkan render thread while the GUI thread
-    // mutates the same context objects in GLRender().  Work on local copies
-    // so the render thread never writes (or reads half-updated) shared
-    // selection state; the copies only need to be consistent within this
-    // traversal.
+    // Qt 6 runs this traversal on the GUI thread like everything else, but
+    // the contexts returned by getRenderContext() are shared with GLRender()
+    // and the selection logic.  Work on local copies so this traversal never
+    // mutates the shared selection state; the copies only need to be
+    // consistent within this traversal.
     const bool ownContext = (selContext == ctxOrig);
     SelContextPtr ctx = ctxOrig
         ? std::dynamic_pointer_cast<SelContext>(ctxOrig->copy())

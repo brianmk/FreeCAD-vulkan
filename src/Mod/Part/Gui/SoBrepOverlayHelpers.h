@@ -369,9 +369,11 @@ static void renderOverlayFaces(
     state->pop();
 }
 
-//! Copy the render contexts so an IR traversal (which runs on the Vulkan
-//! render thread) never reads or writes context objects owned by the GUI
-//! thread mid-update.
+//! Copy the render contexts so an IR traversal never mutates the shared
+//! selection contexts.  Qt 6 runs the traversal on the GUI thread, but the
+//! contexts are shared with GLRender() and the selection logic, and the IR
+//! path works on throwaway copies that only need to be consistent within
+//! the traversal.
 template <typename CtxPtr>
 static inline void copyIRRenderContexts(CtxPtr& ctx, CtxPtr& ctx2)
 {
