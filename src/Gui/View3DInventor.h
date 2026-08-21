@@ -181,6 +181,7 @@ protected:
     void focusInEvent(QFocusEvent* e) override;
     void customEvent(QEvent* e) override;
     void contextMenuEvent(QContextMenuEvent* e) override;
+    bool eventFilter(QObject* watched, QEvent* e) override;
 
 private:
     View3DInventorViewer* _viewer;

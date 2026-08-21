@@ -204,6 +204,11 @@ View3DInventor::View3DInventor(
         // The Vulkan widget is display-only; relay its viewport input events
         // to the (hidden) OpenGL viewer so navigation and picking still work.
         _vulkanViewer->setEventForwardTarget(_viewer->getWidget());
+        // Navigation and picking run on the hidden OpenGL viewer, so cursor
+        // shape changes land on its widget.  Mirror them onto the visible
+        // Vulkan container (see eventFilter) and pick up the initial state.
+        _viewer->getWidget()->installEventFilter(this);
+        _vulkanViewer->setCursor(_viewer->getWidget()->cursor());
         // Keep the hidden GL viewer's viewport region in sync with the
         // Vulkan surface so navigation (aspect/near-far) and ray picking
         // use the visible surface size rather than a stale default.
@@ -1116,6 +1121,26 @@ void View3DInventor::keyReleaseEvent(QKeyEvent* e)
 void View3DInventor::focusInEvent(QFocusEvent*)
 {
     _viewer->getGLWidget()->setFocus();
+}
+
+bool View3DInventor::eventFilter(QObject* watched, QEvent* event)
+{
+#ifdef FREECAD_USE_VULKAN
+    // The hidden OpenGL viewer drives navigation and picking, and its widget
+    // is where the navigation code sets cursor shapes.  Mirror them onto the
+    // visible Vulkan container so modes like spin/zoom/pan show the right
+    // pointer shape over the viewport.
+    if (_vulkanViewer && event->type() == QEvent::CursorChange) {
+        auto* widget = qobject_cast<QWidget*>(watched);
+        if (widget && widget == _viewer->getWidget()) {
+            _vulkanViewer->setCursor(widget->cursor());
+        }
+    }
+#else
+    Q_UNUSED(watched);
+    Q_UNUSED(event);
+#endif
+    return MDIView::eventFilter(watched, event);
 }
 
 void View3DInventor::contextMenuEvent(QContextMenuEvent* e)
