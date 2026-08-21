@@ -3,6 +3,7 @@
 // SPDX-FileNotice: Part of the FreeCAD project.
 
 #include "QuarterVulkanWidget.h"
+#include "QuarterWidget.h"
 #include <Base/VulkanBreadcrumbs.h>
 
 #ifdef FREECAD_USE_VULKAN
@@ -26,10 +27,12 @@
 #include <QVBoxLayout>
 
 #include <QApplication>
+#include <QAbstractScrollArea>
 #include <QEvent>
 #include <QKeyEvent>
 #include <QMutex>
 #include <QMouseEvent>
+#include <QPointer>
 #include <QWheelEvent>
 
 #include <cstdarg>
@@ -502,6 +505,11 @@ public:
         if (props) {
             context.apiVersion = props->apiVersion;
         }
+        // Register the ray-tracing request BEFORE initialize(): the manager
+        // only attempts the RTX backend when it was requested, and the
+        // device must have been created with the KHR extensions for the
+        // entry points to resolve.
+        m_manager.setRayTracing(m_rayTracing);
         m_initialized = m_manager.initialize(&context);
         if (m_initialized) {
             // Mirror the GL viewer (QuarterWidget sets
@@ -511,7 +519,6 @@ public:
             // hidden GL viewer never renders, so its own auto-clipping would
             // never run.
             m_manager.setAutoClipping(SoVulkanRenderManager::VARIABLE_NEAR_PLANE);
-            m_manager.setRayTracing(m_rayTracing);
             if (m_rayTracing) {
                 if (m_manager.getRayTracingActive()) {
                     vkLog("initResources: ray tracing active");
@@ -688,6 +695,14 @@ public:
         m_manager.setWireframeOverlay(wireframeOverlay);
         m_manager.setPointsOverlay(pointsOverlay);
         m_manager.setEdgeColor(edgeColor);
+        if (getenv("FC_VULKAN_BACKEND_DEBUG")) {
+            static int syncLog = 0;
+            if (syncLog++ < 3) {
+                fprintf(stderr, "[VK-SET] startNextFrame wire=%d points=%d edge=(%.2f,%.2f,%.2f,%.2f)\n",
+                        wireframeOverlay ? 1 : 0, pointsOverlay ? 1 : 0,
+                        edgeColor[0], edgeColor[1], edgeColor[2], edgeColor[3]);
+            }
+        }
         // The external path relies on QVulkanWindow's default render pass
         // clear (see rpBegin below); the backend must never issue its own
         // full-frame clear attachments into that pass.
@@ -915,7 +930,9 @@ public:
     bool clearWindow = true;
     bool clearDepth = true;
     bool rayTracing = false;
-    QWidget * forwardTarget = nullptr;
+    // Auto-nulled when the forwarded widget is destroyed, so the event
+    // filter below can never dereference a dangling pointer.
+    QPointer<QWidget> forwardTarget;
 };
 
 QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent, bool rayTracing)
@@ -1274,15 +1291,65 @@ bool QuarterVulkanWidget::eventFilter(QObject * watched, QEvent * event)
         }
     }
 
-    // Only forward input events.  The coordinates are left untouched: the
-    // Vulkan container and the forward target occupy the same stacked-widget
-    // area, so positions map 1:1.
+    // Only forward input events.  The Vulkan container reports its device
+    // pixel ratio (the system scale factor, e.g. 1.25) while the hidden GL
+    // viewer is sized in raw device pixels and converts event positions
+    // with QuarterWidget::devicePixelRatio() (a cached value, 1.0 here).
+    // Positions must therefore be rescaled by srcDpr/dstDpr before
+    // forwarding, otherwise picking interprets logical pixels against a
+    // device-pixel viewport region (hover/preselection would trigger 1/dpr
+    // too early towards the origin).
+    qreal dstDpr = 1.0;
+    if (const auto * quarter =
+            qobject_cast<const QuarterWidget *>(d->forwardTarget)) {
+        // The exact value the GL side applies when converting positions.
+        dstDpr = quarter->devicePixelRatio();
+    } else if (const auto * area =
+                   qobject_cast<const QAbstractScrollArea *>(
+                       d->forwardTarget)) {
+        dstDpr = area->viewport() ? area->viewport()->devicePixelRatioF()
+                                  : area->devicePixelRatioF();
+    } else {
+        dstDpr = d->forwardTarget->devicePixelRatioF();
+    }
+    const qreal dprScale = d->container->devicePixelRatioF() / dstDpr;
+
     switch (event->type()) {
     case QEvent::MouseButtonPress:
     case QEvent::MouseButtonRelease:
     case QEvent::MouseButtonDblClick:
-    case QEvent::MouseMove:
-    case QEvent::Wheel:
+    case QEvent::MouseMove: {
+        const auto * me = static_cast<const QMouseEvent *>(event);
+        if (qFuzzyCompare(dprScale, 1.0)) {
+            if (QCoreApplication::sendEvent(d->forwardTarget, event)) {
+                return true;
+            }
+            break;
+        }
+        QMouseEvent scaled(me->type(), me->position() * dprScale,
+                           me->globalPosition(), me->button(), me->buttons(),
+                           me->modifiers(), me->pointingDevice());
+        if (QCoreApplication::sendEvent(d->forwardTarget, &scaled)) {
+            return true;
+        }
+        break;
+    }
+    case QEvent::Wheel: {
+        const auto * we = static_cast<const QWheelEvent *>(event);
+        if (qFuzzyCompare(dprScale, 1.0)) {
+            if (QCoreApplication::sendEvent(d->forwardTarget, event)) {
+                return true;
+            }
+            break;
+        }
+        QWheelEvent scaled(we->position() * dprScale, we->globalPosition(),
+                           we->pixelDelta(), we->angleDelta(), we->buttons(),
+                           we->modifiers(), we->phase(), we->inverted());
+        if (QCoreApplication::sendEvent(d->forwardTarget, &scaled)) {
+            return true;
+        }
+        break;
+    }
     case QEvent::KeyPress:
     case QEvent::KeyRelease:
     case QEvent::TabletPress:

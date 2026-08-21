@@ -23,6 +23,7 @@
 
 #include <FCConfig.h>
 
+#include <algorithm>
 #include <sstream>
 
 #include <Inventor/actions/SoGetBoundingBoxAction.h>
@@ -51,7 +52,9 @@
 
 #include "SoAxisCrossKit.h"
 #include "SoFCBoundingBox.h"
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/elements/SoDevicePixelRatioElement.h>
+#endif
 
 using namespace Gui;
 
@@ -64,6 +67,7 @@ SoShapeScale::SoShapeScale()
 
     SO_KIT_ADD_FIELD(active, (true));
     SO_KIT_ADD_FIELD(scaleFactor, (1.0f));
+    SO_KIT_ADD_FIELD(scaleAsFraction, (false));
 
     SO_KIT_ADD_CATALOG_ENTRY(topSeparator, SoSeparator, false, this, "", false);
     SO_KIT_ADD_CATALOG_ABSTRACT_ENTRY(shape, SoNode, SoCube, true, topSeparator, "", true);
@@ -108,7 +112,10 @@ void SoShapeScale::updateScale(SoState* state)
     else {
         if (!state->isElementEnabled(SoViewportRegionElement::getClassStackIndex())
             || !state->isElementEnabled(SoViewVolumeElement::getClassStackIndex())
-            || !state->isElementEnabled(SoDevicePixelRatioElement::getClassStackIndex())) {
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+            || !state->isElementEnabled(SoDevicePixelRatioElement::getClassStackIndex())
+#endif
+        ) {
             return;
         }
 
@@ -121,11 +128,44 @@ void SoShapeScale::updateScale(SoState* state)
         }
 
         SbVec3f center(0.0f, 0.0f, 0.0f);
-        float nsize = this->scaleFactor.getValue() / float(viewportSize[0]);
         SoModelMatrixElement::get(state).multVecMatrix(center, center);  // world coords
-        float sf = vv.getWorldToScreenScale(center, nsize);
 
-        sf *= SoDevicePixelRatioElement::get(state);
+        float sf;
+        if (this->scaleAsFraction.getValue()) {
+            // Fit the shape's bounding box to scaleFactor x viewport HEIGHT,
+            // so the on-screen size follows the display resolution instead
+            // of a fixed pixel count (large screens get proportionally
+            // larger temporarily enlarged datum planes).
+            SoNode* shape = this->getAnyPart(SbName("shape"), true);
+            if (!shape) {
+                return;
+            }
+            SoGetBoundingBoxAction bba(vp);
+            bba.apply(shape);
+            const SbBox3f bbox = bba.getBoundingBox();
+            if (bbox.isEmpty()) {
+                return;
+            }
+            const SbVec3f min = bbox.getMin();
+            const SbVec3f max = bbox.getMax();
+            const float extent = std::max(max[0] - min[0],
+                                          std::max(max[1] - min[1],
+                                                   max[2] - min[2]));
+            if (extent <= 0.0f) {
+                return;
+            }
+            // World size corresponding to the full viewport height.
+            const float worldPerViewportHeight =
+                vv.getWorldToScreenScale(center, 1.0f);
+            sf = this->scaleFactor.getValue() * worldPerViewportHeight / extent;
+        }
+        else {
+            float nsize = this->scaleFactor.getValue() / float(viewportSize[0]);
+            sf = vv.getWorldToScreenScale(center, nsize);
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+            sf *= SoDevicePixelRatioElement::get(state);
+#endif
+        }
 
         SbVec3f v(sf, sf, sf);
         if (scale->scaleFactor.getValue() != v) {

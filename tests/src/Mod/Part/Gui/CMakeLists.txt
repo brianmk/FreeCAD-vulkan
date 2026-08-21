@@ -1,11 +1,9 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
-add_executable(PartGui_tests_run)
-
 # The Vulkan selection test includes <Inventor/actions/SoIRRenderAction.h>,
 # which only exists in the bundled Coin (FREECAD_USE_VULKAN implies it).
 if(FREECAD_USE_VULKAN)
-    target_sources(PartGui_tests_run PRIVATE
+    add_executable(PartGui_tests_run
         VulkanSelectionTest.cpp
     )
 endif()

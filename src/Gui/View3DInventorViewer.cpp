@@ -142,7 +142,9 @@
 #include "Navigation/GestureNavigationStyle.h"
 #include "Navigation/SiemensNXNavigationStyle.h"
 #include "Selection.h"
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/elements/SoDevicePixelRatioElement.h>
+#endif
 #include "SoFCDB.h"
 #include "SoFCInteractiveElement.h"
 #include "SoFCOffscreenRenderer.h"
@@ -3395,7 +3397,9 @@ void View3DInventorViewer::renderGLActionScene(const QColor& backgroundColor, So
 
     {
         ZoneScopedN("Background");
+#ifdef HAVE_COIN_IR_RENDER_ACTION
         SoDevicePixelRatioElement::set(state, devicePixelRatio());
+#endif
         SoGLWidgetElement::set(state, qobject_cast<QOpenGLWidget*>(this->getGLWidget()));
         SoGLRenderActionElement::set(state, glra);
         SoGLVBOActivatedElement::set(state, this->vboEnabled);

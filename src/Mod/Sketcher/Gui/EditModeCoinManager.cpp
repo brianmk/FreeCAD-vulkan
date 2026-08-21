@@ -1961,7 +1961,7 @@ void EditModeCoinManager::createEditModeInventorNodes()
     Coordsep->addChild(editModeScenegraphNodes.textMaterial);
 
     editModeScenegraphNodes.textFont = new SoFont();
-    editModeScenegraphNodes.textFont->name.setValue("Helvetica");
+    editModeScenegraphNodes.textFont->name.setValue("Helvetica:bold");
     editModeScenegraphNodes.textFont->size.setValue(drawingParameters.coinFontSize);
 
     Coordsep->addChild(editModeScenegraphNodes.textFont);

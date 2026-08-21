@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include <Inventor/fields/SoSFBool.h>
 #include <Inventor/fields/SoSFColor.h>
 #include <Inventor/fields/SoSFFloat.h>
 #include <Inventor/fields/SoSFString.h>
@@ -64,6 +65,7 @@ public:
 
     SoSFFloat active;
     SoSFFloat scaleFactor;
+    SoSFBool scaleAsFraction;
 
 protected:
     void doAction(SoAction* action) override;

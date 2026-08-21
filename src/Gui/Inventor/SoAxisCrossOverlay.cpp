@@ -24,11 +24,15 @@
 #include "SoAxisCrossOverlay.h"
 
 #include <Inventor/actions/SoGLRenderAction.h>
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/actions/SoIRRenderAction.h>
+#endif
 #include <Inventor/elements/SoLazyElement.h>
 #include <Inventor/elements/SoShapeStyleElement.h>
 #include <Inventor/elements/SoViewportRegionElement.h>
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/rendering/SoRenderIR.h>
+#endif
 
 using namespace Gui;
 

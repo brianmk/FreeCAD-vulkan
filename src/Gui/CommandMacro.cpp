@@ -134,7 +134,7 @@ StdCmdDlgMacroExecuteDirect::StdCmdDlgMacroExecuteDirect()
 void StdCmdDlgMacroExecuteDirect::activated(int iMsg)
 {
     Q_UNUSED(iMsg);
-    doCommand(Command::Gui, "Gui.SendMsgToActiveView(\"Run\")");
+    getGuiApplication()->sendMsgToActiveView("Run");
 }
 
 bool StdCmdDlgMacroExecuteDirect::isActive()

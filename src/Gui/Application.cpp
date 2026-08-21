@@ -818,7 +818,7 @@ void Application::open(const char* FileName, const char* Module)
                         "User parameter:BaseApp/Preferences/View"
                     );
                     if (hGrp->GetBool("AutoFitToView", true)) {
-                        Command::doCommand(Command::Gui, "Gui.SendMsgToActiveView(\"ViewFit\")");
+                        sendMsgToActiveView("ViewFit");
                     }
                 }
             }

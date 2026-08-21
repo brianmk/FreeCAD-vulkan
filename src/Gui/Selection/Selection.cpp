@@ -28,6 +28,7 @@
 
 #include <QApplication>
 
+#include <Base/VulkanBreadcrumbs.h>
 #include <App/Application.h>
 #include <App/Document.h>
 #include <App/DocumentObject.h>
@@ -915,6 +916,8 @@ int SelectionSingleton::setPreselect(
 )
 {
     if (!pDocName || !pObjectName) {
+        VK_BREADCRUMB("[VK-TRACE] SelectionSingleton::setPreselect invalid args doc=%s obj=%s\n",
+                      pDocName ? pDocName : "(nil)", pObjectName ? pObjectName : "(nil)");
         rmvPreselect();  // Invalid request
         return 0;
     }
@@ -924,9 +927,13 @@ int SelectionSingleton::setPreselect(
     }
 
     if (DocName == pDocName && FeatName == pObjectName && SubName == pSubName) {
+        VK_BREADCRUMB("[VK-TRACE] SelectionSingleton::setPreselect already-selected ret=-1 doc=%s sub=%s\n",
+                      pDocName, pSubName);
         return -1;  // Already preselected
     }
 
+    VK_BREADCRUMB("[VK-TRACE] SelectionSingleton::setPreselect enter doc=%s obj=%s sub=%s\n",
+                  pDocName, pObjectName, pSubName);
     rmvPreselect();
 
     if (ActiveGate && signal != SelectionChanges::MsgSource::Internal) {
@@ -1126,6 +1133,8 @@ void SelectionSingleton::setPreselectCoord(float x, float y, float z)
 
 void SelectionSingleton::rmvPreselect(bool signal)
 {
+    VK_BREADCRUMB("[VK-TRACE] SelectionSingleton::rmvPreselect signal=%d doc=%s sub=%s\n",
+                  signal ? 1 : 0, DocName.c_str(), SubName.c_str());
     if (DocName.empty()) {
         return;
     }

@@ -257,23 +257,16 @@ View3DInventor::View3DInventor(
             _viewer->getSoRenderManager()->setViewportRegion(vp);
             _viewer->getSoEventManager()->setViewportRegion(vp);
 
-            // The hidden GL viewer is the source of truth for navigation,
-            // but its viewport (and therefore the camera aspect used by
-            // viewAll()) is stale while the widget is hidden.  Drive the
-            // shared camera's aspect ratio from the real Vulkan surface so
-            // viewAll()/navigation frame the scene for the visible surface;
-            // otherwise the camera distance is computed for a wrong aspect
-            // and the camera ends up inside the object (near-plane clipping
-            // on load).
-            SoCamera* cam = _viewer->getSoRenderManager()->getCamera();
-            if (cam) {
-                const float surfaceAspect =
-                    ph > 0 ? static_cast<float>(pw) / static_cast<float>(ph)
-                           : 1.0f;
-                if (cam->aspectRatio.getValue() != surfaceAspect) {
-                    cam->aspectRatio.setValue(surfaceAspect);
-                }
-            }
+            // NOTE: Do NOT write the surface aspect into the shared camera's
+            // aspectRatio field.  SoOrthographicCamera::getViewVolume() (and
+            // SoPerspectiveCamera::getViewVolume()) apply the aspectRatio
+            // FIELD, and FreeCAD-side math (the Sketcher's getProjectingLine,
+            // navigation) already applies the VIEWPORT aspect itself.  With
+            // the field also set, the aspect is applied twice and cursor
+            // mapping drifts away from the cursor, growing with the distance
+            // from the view center.  The Vulkan projection and viewAll()
+            // framing use the viewport region (kept in sync above), matching
+            // classic GL FreeCAD where the field stays at its default.
 
             // Re-frame once the surface has a real size.  At startup the
             // swapchain is created with a default size and only later
@@ -446,6 +439,13 @@ void View3DInventor::pushVulkanSettings()
         return;
     }
     const VulkanViewSettings& settings = _viewer->getVulkanViewSettings();
+    if (getenv("FC_VULKAN_BACKEND_DEBUG")) {
+        fprintf(stderr, "[VK-SET] pushVulkanSettings edges=%d points=%d edgeColor=(%.2f,%.2f,%.2f,%.2f) pt=%d\n",
+                settings.showEdges ? 1 : 0, settings.showPoints ? 1 : 0,
+                settings.edgeColor[0], settings.edgeColor[1],
+                settings.edgeColor[2], settings.edgeColor[3],
+                settings.pathTracing ? 1 : 0);
+    }
     _vulkanViewer->setWireframeOverlay(settings.showEdges);
     _vulkanViewer->setPointsOverlay(settings.showPoints);
     _vulkanViewer->setEdgeColor(settings.edgeColor);

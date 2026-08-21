@@ -481,7 +481,7 @@ void SelectionView::zoom()
 {
     select();
     try {
-        Gui::Command::runCommand(Gui::Command::Gui, "Gui.SendMsgToActiveView(\"ViewSelection\")");
+        Gui::Application::Instance->sendMsgToActiveView("ViewSelection");
     }
     catch (Base::Exception& e) {
         e.reportException();

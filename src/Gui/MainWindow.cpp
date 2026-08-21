@@ -994,6 +994,19 @@ void MainWindow::closeActiveWindow()
 
 int MainWindow::confirmSave(App::Document* doc, QWidget* parent, bool addCheckbox)
 {
+    // Testing flag: skip the unsaved-document prompt and discard changes.
+    // Enabled by the FC_SKIP_UNSAVED_PROMPT environment variable.
+    static int skipUnsaved = -1;
+    if (skipUnsaved == -1) {
+        const char* env = getenv("FC_SKIP_UNSAVED_PROMPT");
+        skipUnsaved = (env && env[0] && strcmp(env, "0") != 0
+                       && strcmp(env, "false") != 0 && strcmp(env, "off") != 0)
+            ? 1
+            : 0;
+    }
+    if (skipUnsaved) {
+        return ConfirmSaveResult::DiscardAll;
+    }
     QMessageBox box(parent ? parent : this);
     box.setObjectName(QStringLiteral("confirmSave"));
     box.setIcon(QMessageBox::Question);

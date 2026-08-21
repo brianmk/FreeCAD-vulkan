@@ -81,10 +81,14 @@
 #include <QOpenGLWidget>
 
 #include <cstdlib>
+#include <cstring>
+#include <iomanip>
+#include <sstream>
 
 #include <App/Document.h>
 #include <App/GeoFeature.h>
 #include <App/ElementNamingUtils.h>
+#include <Base/Console.h>
 #include <Base/Tools.h>
 #include <Base/UnitsApi.h>
 
@@ -508,6 +512,11 @@ void SoFCUnifiedSelection::doAction(SoAction* action)
 
     if (action->getTypeId() == SoFCPreselectionAction::getClassTypeId()) {
         auto preselectAction = static_cast<SoFCPreselectionAction*>(action);
+        VK_BREADCRUMB_LIMITED(20,
+                              "[VK-TRACE] SoFCUnifiedSelection::doAction preselect type=%d "
+                              "setPreSelection=%d hlPath=%p\n",
+                              static_cast<int>(preselectAction->SelChange.Type),
+                              setPreSelection ? 1 : 0, (void*)currentHighlightPath);
         // Do not clear currently preselected object when setting new preselection
         if (!setPreSelection && preselectAction->SelChange.Type == SelectionChanges::RmvPreselect) {
             if (currentHighlightPath) {
@@ -786,6 +795,10 @@ bool SoFCUnifiedSelection::setPreselect(
             SelectionChanges::MsgSource::Any,
             SelectionChanges::PickedPoint::Valid
         );
+        VK_BREADCRUMB_LIMITED(20,
+                              "[VK-TRACE] SoFCUnifiedSelection::setPreselect ret=%d "
+                              "hlPath=%p elem=%s\n",
+                              ret, (void*)currentHighlightPath, element ? element : "(nil)");
         if (ret < 0 && currentHighlightPath) {
             return true;
         }
@@ -809,6 +822,10 @@ bool SoFCUnifiedSelection::setPreselect(
     }
 
     if (currentHighlightPath) {
+        VK_BREADCRUMB_LIMITED(20,
+                              "[VK-TRACE] SoFCUnifiedSelection::setPreselect final apply "
+                              "highlighted=%d hlPathLen=%d\n",
+                              highlighted ? 1 : 0, currentHighlightPath->getLength());
         SoHighlightElementAction action;
         action.setHighlighted(highlighted);
         action.setColor(this->colorHighlight.getValue());
@@ -1054,6 +1071,79 @@ bool SoFCUnifiedSelection::setSelection(const std::vector<PickedInfo>& infos, bo
     return true;
 }
 
+// Pick-probe diagnostic (see PickProbe parameter / FC_PICK_PROBE env var).
+//
+// When enabled, hover (preselection) and click (selection) events log a
+// single parseable line with the mouse position and the scene-space location
+// of the pick: the world hit point, the hit point in the picked object's
+// local (placement) frame, the subelement and the object's local bounding
+// box.  The local hit point can be compared against the bounding box planes
+// to verify that hover/click trigger exactly on the geometry (e.g. a 10 mm
+// box must never preselect at a local x beyond +/-5 mm).
+namespace {
+
+bool pickProbeEnabled()
+{
+    static const bool enabled = []() {
+        const char* v = getenv("FC_PICK_PROBE");
+        if (v && *v) {
+            return std::strcmp(v, "0") != 0 && std::strcmp(v, "false") != 0
+                && std::strcmp(v, "off") != 0;
+        }
+        auto hGrp = App::GetApplication().GetParameterGroupByPath(
+            "User parameter:BaseApp/Preferences/View"
+        );
+        return hGrp && hGrp->GetBool("PickProbe", false);
+    }();
+    return enabled;
+}
+
+void logPickProbeEvent(const char* kind,
+                       const SoEvent* event,
+                       const SoPickedPoint* pp,
+                       const ViewProviderDocumentObject* vpd,
+                       const std::string& element)
+{
+    std::ostringstream ss;
+    ss << std::fixed << std::setprecision(4);
+    const SbVec2s pos = event->getPosition();
+    ss << "[PICKPROBE] event=" << kind << " pos=" << pos[0] << ',' << pos[1];
+    if (pp) {
+        const SbVec3f hit = pp->getPoint();
+        ss << " hit=" << hit[0] << ',' << hit[1] << ',' << hit[2];
+        if (vpd) {
+            const App::DocumentObject* obj = vpd->getObject();
+            if (obj) {
+                ss << " obj=" << obj->getNameInDocument();
+                const Base::BoundBox3d bbox = vpd->getBoundingBox(nullptr, nullptr, false);
+                if (bbox.IsValid()) {
+                    ss << " bbox=" << bbox.MinX << ',' << bbox.MinY << ','
+                       << bbox.MinZ << ".." << bbox.MaxX << ',' << bbox.MaxY
+                       << ',' << bbox.MaxZ;
+                }
+                if (auto* geo = dynamic_cast<const App::GeoFeature*>(obj)) {
+                    const Base::Placement& placement = geo->Placement.getValue();
+                    Base::Vector3d local;
+                    placement.inverse().multVec(
+                        Base::Vector3d(hit[0], hit[1], hit[2]), local
+                    );
+                    ss << " local=" << local.x << ',' << local.y << ','
+                       << local.z;
+                }
+            }
+        }
+        if (!element.empty()) {
+            ss << " sub=" << element;
+        }
+    }
+    else {
+        ss << " obj=-";
+    }
+    Base::Console().message("%s\n", ss.str().c_str());
+}
+
+}  // namespace
+
 // doc from parent
 void SoFCUnifiedSelection::handleEvent(SoHandleEventAction* action)
 {
@@ -1062,7 +1152,6 @@ void SoFCUnifiedSelection::handleEvent(SoHandleEventAction* action)
         inherited::handleEvent(action);
         return;
     }
-
     auto preselectionMode = static_cast<SelectionModes>(this->preselectionMode.getValue());
     const SoEvent* event = action->getEvent();
 
@@ -1090,6 +1179,13 @@ void SoFCUnifiedSelection::handleEvent(SoHandleEventAction* action)
         if (preselectionMode == AUTO || preselectionMode == ON) {
             // check to see if the mouse is over our geometry...
             auto infos = this->getPickedList(action, true);
+            if (pickProbeEnabled()) {
+                logPickProbeEvent("hover",
+                                  event,
+                                  infos.empty() ? nullptr : infos[0].pp,
+                                  infos.empty() ? nullptr : infos[0].vpd,
+                                  infos.empty() ? std::string() : infos[0].element);
+            }
             if (!infos.empty()) {
                 setPreselect(infos[0]);
             }
@@ -1113,6 +1209,13 @@ void SoFCUnifiedSelection::handleEvent(SoHandleEventAction* action)
         if (SoMouseButtonEvent::isButtonReleaseEvent(e, SoMouseButtonEvent::BUTTON1)) {
             // check to see if the mouse is over a geometry...
             auto infos = this->getPickedList(action, !Selection().needPickedList());
+            if (pickProbeEnabled()) {
+                logPickProbeEvent("click",
+                                  event,
+                                  infos.empty() ? nullptr : infos[0].pp,
+                                  infos.empty() ? nullptr : infos[0].vpd,
+                                  infos.empty() ? std::string() : infos[0].element);
+            }
             bool greedySel = Gui::Selection().getSelectionStyle()
                 == Gui::SelectionSingleton::SelectionStyle::GreedySelection;
             greedySel = greedySel || event->wasCtrlDown();

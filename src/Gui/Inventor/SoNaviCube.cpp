@@ -71,7 +71,9 @@
 #include <Inventor/nodes/SoTransform.h>
 #include <Inventor/nodes/SoTexture2.h>
 #include <Inventor/nodes/SoVertexProperty.h>
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/rendering/SoRenderIR.h>
+#endif
 #include <Inventor/SbVec2f.h>
 #include <Inventor/SbVec4f.h>
 #include <Inventor/SbViewVolume.h>

@@ -280,6 +280,17 @@ public:
     /** @brief function triggered by the handler when the mouse has been moved */
     void mouseMoved(Base::Vector2d originalSketchPosition)
     {
+        {
+            static int cnt = 0;
+            if (cnt++ < 3 && getenv("FC_VULKAN_BREADCRUMBS")) {
+                FILE* f = fopen("/tmp/freecad_vulkan_trace.log", "a");
+                if (f) {
+                    fprintf(f, "[VK-TRACE] Controller::mouseMoved pos=(%.4f,%.4f) firstMoveInit=%d\n",
+                            originalSketchPosition.x, originalSketchPosition.y, (int)firstMoveInit);
+                    fclose(f);
+                }
+            }
+        }
         onMouseMoved(originalSketchPosition);  // NVI
 
         if (!firstMoveInit) {
@@ -732,6 +743,18 @@ protected:
      * mode. It may be specialized if necessary.*/
     void setModeOnViewParameters()
     {
+        {
+            static bool loggedOnce = false;
+            if (!loggedOnce && getenv("FC_VULKAN_BREADCRUMBS")) {
+                loggedOnce = true;
+                FILE* f = fopen("/tmp/freecad_vulkan_trace.log", "a");
+                if (f) {
+                    fprintf(f, "[VK-TRACE] setModeOnViewParameters called nOVP=%d\n",
+                            (int)onViewParameters.size());
+                    fclose(f);
+                }
+            }
+        }
         // before each mode change we reset the dynamic override
         ovpVisibilityManager.resetDynamicOverride();
 
@@ -754,6 +777,13 @@ protected:
                 }
 
                 bool visible = isOnViewParameterVisible(i);
+                if (getenv("FC_VULKAN_BREADCRUMBS")) {
+                    FILE* f = fopen("/tmp/freecad_vulkan_trace.log", "a");
+                    if (f) {
+                        fprintf(f, "[VK-TRACE] OVP i=%d visible=%d\n", (int)i, (int)visible);
+                        fclose(f);
+                    }
+                }
 
                 if (visible) {
                     activateOnViewParameter(i);
