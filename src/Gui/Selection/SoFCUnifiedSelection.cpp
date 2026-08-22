@@ -81,7 +81,6 @@
 #include <QOpenGLWidget>
 
 #include <cstdlib>
-#include <cstring>
 #include <iomanip>
 #include <sstream>
 
@@ -572,8 +571,8 @@ void SoFCUnifiedSelection::doAction(SoAction* action)
 
             if (pathToHighlight) {
                 VK_BREADCRUMB_LIMITED(20,
-                                      "[VK-TRACE] SoFCUnifiedSelection setPreselect apply highlight "
-                                      "path len=%d\n",
+                                      "[VK-TRACE] SoFCUnifiedSelection setPreselect "
+                                      "apply highlight path len=%d\n",
                                       pathToHighlight->getLength());
                 SoHighlightElementAction highlightAction;
                 highlightAction.setHighlighted(true);
@@ -1085,10 +1084,10 @@ namespace {
 bool pickProbeEnabled()
 {
     static const bool enabled = []() {
-        const char* v = getenv("FC_PICK_PROBE");
+        const char* v = std::getenv("FC_PICK_PROBE");
         if (v && *v) {
-            return std::strcmp(v, "0") != 0 && std::strcmp(v, "false") != 0
-                && std::strcmp(v, "off") != 0;
+            // The env var wins over the preference; "0"/"false"/"off" disable.
+            return Base::envFlagTruthy("FC_PICK_PROBE");
         }
         auto hGrp = App::GetApplication().GetParameterGroupByPath(
             "User parameter:BaseApp/Preferences/View"
@@ -1139,6 +1138,11 @@ void logPickProbeEvent(const char* kind,
     else {
         ss << " obj=-";
     }
+    // Mirror the pick-probe event into the breadcrumb trace stream so a single
+    // file carries both [VK-TRACE] breadcrumbs and [PICKPROBE] events.  The
+    // breadcrumb writer truncates/creates the file on first use and serializes
+    // across threads; the call is already gated by pickProbeEnabled().
+    Base::vulkanBreadcrumb("%s\n", ss.str().c_str());
     Base::Console().message("%s\n", ss.str().c_str());
 }
 
@@ -1160,19 +1164,16 @@ void SoFCUnifiedSelection::handleEvent(SoHandleEventAction* action)
     //
     bool isMouseMotionEvent = event->isOfType(SoLocation2Event::getClassTypeId());
     if (isMouseMotionEvent) {
-        // Locals are computed inside the guard so the per-motion overhead
-        // stays zero when tracing is off.
-        if (getenv("FC_VULKAN_BREADCRUMBS")) {
-            const SbVec2s pos = event->getPosition();
-            const SbViewportRegion vp = action->getViewportRegion();
-            const SbVec2s vpsize = vp.getViewportSizePixels();
-            Base::vulkanBreadcrumb(
-                    "[VK-TRACE] SoFCUnifiedSelection::handleEvent motion "
-                    "eventPos=%d,%d viewport=%dx%d normalized=(%.4f,%.4f)\n",
-                    pos[0], pos[1], vpsize[0], vpsize[1],
-                    vpsize[0] > 0 ? float(pos[0]) / float(vpsize[0]) : 0.0f,
-                    vpsize[1] > 0 ? float(pos[1]) / float(vpsize[1]) : 0.0f);
-        }
+        // The locals are cheap copies; the expensive part (file I/O) stays
+        // behind the macro's env check.
+        const SbVec2s pos = event->getPosition();
+        const SbViewportRegion vp = action->getViewportRegion();
+        const SbVec2s vpsize = vp.getViewportSizePixels();
+        VK_BREADCRUMB_SAMPLED(32, "[VK-TRACE] SoFCUnifiedSelection::handleEvent motion "
+                      "eventPos=%d,%d viewport=%dx%d normalized=(%.4f,%.4f)\n",
+                      pos[0], pos[1], vpsize[0], vpsize[1],
+                      vpsize[0] > 0 ? float(pos[0]) / float(vpsize[0]) : 0.0f,
+                      vpsize[1] > 0 ? float(pos[1]) / float(vpsize[1]) : 0.0f);
         // NOTE: If preselection is off then we do not check for a picked point because otherwise
         // this search may slow down extremely the system on really big data sets. In this case we
         // just check for a picked point if the data set has been selected.
@@ -2070,7 +2071,8 @@ bool SoFCSelectionRoot::_renderPrivate(SoGLRenderAction* action, bool inPath)
                         mat = ViewProvider::convert(SoModelMatrixElement::get(state));
                     }
                     auto fcbox = viewProvider->getBoundingBox(nullptr, &mat, project);
-                    SbBox3f bbox(fcbox.MinX, fcbox.MinY, fcbox.MinZ, fcbox.MaxX, fcbox.MaxY, fcbox.MaxZ);
+                    SbBox3f bbox(fcbox.MinX, fcbox.MinY, fcbox.MinZ,
+                                 fcbox.MaxX, fcbox.MaxY, fcbox.MaxZ);
                     renderBBox(action, this, bbox, color);
                 }
                 else {
@@ -2195,7 +2197,8 @@ void SoFCSelectionRoot::IRRender(SoIRRenderAction* action)
 void SoFCSelectionRoot::renderPrivateIR(SoIRRenderAction* action)
 {
     VK_BREADCRUMB_LIMITED(10,
-                          "[VK-TRACE] SoFCSelectionRoot::renderPrivateIR this=%p SelStack.size=%zu\n",
+                          "[VK-TRACE] SoFCSelectionRoot::renderPrivateIR this=%p "
+                          "SelStack.size=%zu\n",
                           this, SelStack.size());
     if (ViewParams::instance()->getCoinCycleCheck() && !SelStack.nodeSet.insert(this).second) {
         std::time_t t = std::time(nullptr);
@@ -2252,7 +2255,8 @@ bool SoFCSelectionRoot::_renderPrivateIR(SoIRRenderAction* action)
                         mat = ViewProvider::convert(SoModelMatrixElement::get(state));
                     }
                     auto fcbox = viewProvider->getBoundingBox(nullptr, &mat, project);
-                    SbBox3f bbox(fcbox.MinX, fcbox.MinY, fcbox.MinZ, fcbox.MaxX, fcbox.MaxY, fcbox.MaxZ);
+                    SbBox3f bbox(fcbox.MinX, fcbox.MinY, fcbox.MinZ,
+                                 fcbox.MaxX, fcbox.MaxY, fcbox.MaxZ);
                     renderBBoxIR(action, this, bbox, color);
                 }
                 else {

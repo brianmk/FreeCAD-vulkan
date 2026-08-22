@@ -2,6 +2,11 @@
 
 #include <gtest/gtest.h>
 
+#include <QStringList>
+
+#include <src/App/InitApplication.h>
+
+#include <App/Application.h>
 #include <Gui/FileDialog.h>
 #include <Gui/FileDialogInternal.h>
 
@@ -148,4 +153,36 @@ TEST(FileDialog, testFilterWildcard)
     EXPECT_FALSE(F("Ext & Not dotted wildcard", {"*.abc", "*.*def"}).isWildcard());
     EXPECT_FALSE(F("Ext & Not dotted wildcard 2", {"*.abc", "def*.*"}).isWildcard());
     EXPECT_FALSE(F("Ext & Not dotted wildcard 3", {"*.abc", "def*.*ghi"}).isWildcard());
+}
+
+// SelectModule::exportHandler/importHandler were refactored into a single shared handler().
+class SelectModuleHandlerTest: public ::testing::Test
+{
+protected:
+    static void SetUpTestSuite()
+    {
+        tests::initApplication();
+    }
+};
+
+TEST_F(SelectModuleHandlerTest, emptyFileListReturnsEmptyDict)
+{
+    EXPECT_TRUE(SelectModule::exportHandler(QStringList(), QString()).isEmpty());
+    EXPECT_TRUE(SelectModule::importHandler(QStringList(), QString()).isEmpty());
+}
+
+TEST_F(SelectModuleHandlerTest, unmatchedFilterAndExtensionYieldNoModule)
+{
+    // A filter string that is not registered cannot map to any module.
+    EXPECT_TRUE(
+        SelectModule::exportHandler(QStringList{QStringLiteral("a.zzzzz")}, QStringLiteral("NotARealFilter"))
+            .isEmpty()
+    );
+    EXPECT_TRUE(
+        SelectModule::importHandler(QStringList{QStringLiteral("a.zzzzz")}, QStringLiteral("NotARealFilter"))
+            .isEmpty()
+    );
+    // An extension with no registered handler yields no module either.
+    EXPECT_TRUE(SelectModule::exportHandler("a.zzzzz").isEmpty());
+    EXPECT_TRUE(SelectModule::importHandler("a.zzzzz").isEmpty());
 }

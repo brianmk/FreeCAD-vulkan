@@ -686,9 +686,9 @@ PropertyFile::PropertyFile()
 
 PropertyFile::~PropertyFile() = default;
 
-void PropertyFile::setFilter(const std::string f)
+void PropertyFile::setFilter(std::string f)
 {
-    m_filter = f;
+    m_filter = std::move(f);
 }
 
 std::string PropertyFile::getFilter() const

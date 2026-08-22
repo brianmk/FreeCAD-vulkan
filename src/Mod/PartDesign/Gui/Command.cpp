@@ -1226,6 +1226,12 @@ void prepareProfileBased(Gui::Command* cmd, const std::string& which, double len
     PartDesign::Body* pcActiveBody = PartDesignGui::getBody(true);
 
     if (!pcActiveBody) {
+        // Never a silent no-op: surface the reason to the console so automated
+        // runs (and users looking at the output log) see why Pad/Pocket did not
+        // create a feature instead of just nothing happening.
+        Base::Console().error(
+            "PartDesign: %s requires an active body but none is set\n", which.c_str()
+        );
         return;
     }
 
@@ -1280,7 +1286,9 @@ void CmdPartDesignPad::activated(int iMsg)
 
 bool CmdPartDesignPad::isActive()
 {
-    return hasActiveDocument();
+    // Pad needs an active body to extrude a profile into; enabling it without
+    // one lets the tool be fired and then silently (or via a modal) bail.
+    return hasActiveDocument() && PartDesignGui::getBody(false, false, true);
 }
 
 //===========================================================================
@@ -1309,7 +1317,8 @@ void CmdPartDesignPocket::activated(int iMsg)
 
 bool CmdPartDesignPocket::isActive()
 {
-    return hasActiveDocument();
+    // Like Pad, Pocket needs an active body to subtract a profile from.
+    return hasActiveDocument() && PartDesignGui::getBody(false, false, true);
 }
 
 //===========================================================================
@@ -1846,6 +1855,12 @@ bool dressupGetSelected(
     PartDesign::Body* pcActiveBody = PartDesignGui::getBody(true);
 
     if (!pcActiveBody) {
+        // Never a silent no-op: surface the reason to the console so automated
+        // runs (and users looking at the output log) see why Pad/Pocket did not
+        // create a feature instead of just nothing happening.
+        Base::Console().error(
+            "PartDesign: %s requires an active body but none is set\n", which.c_str()
+        );
         return false;
     }
 

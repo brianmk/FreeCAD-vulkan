@@ -62,11 +62,11 @@ public:
     virtual std::vector<DocumentObject*> addObject(DocumentObject* obj);
     /* Adds the objects \a objs to this group. Returns all objects that have been added.
      */
-    virtual std::vector<DocumentObject*> addObjects(std::vector<DocumentObject*> obj);
+    virtual std::vector<DocumentObject*> addObjects(const std::vector<DocumentObject*>& obj);
 
     /* Sets the objects in this group. Everything contained already will be removed first
      */
-    virtual std::vector<DocumentObject*> setObjects(std::vector<DocumentObject*> obj);
+    virtual std::vector<DocumentObject*> setObjects(const std::vector<DocumentObject*>& obj);
 
     /*override this function if you want only special objects
      */
@@ -80,7 +80,7 @@ public:
     virtual std::vector<DocumentObject*> removeObject(DocumentObject* obj);
     /** Removes objects from this group. Returns all objects that have been removed.
      */
-    virtual std::vector<DocumentObject*> removeObjects(std::vector<DocumentObject*> obj);
+    virtual std::vector<DocumentObject*> removeObjects(const std::vector<DocumentObject*>& obj);
     /** Removes all children objects from this group and the document.
      */
     virtual void removeObjectsFromDocument();

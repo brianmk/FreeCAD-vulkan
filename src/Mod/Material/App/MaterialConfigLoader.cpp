@@ -1049,8 +1049,7 @@ MaterialConfigLoader::getMaterialFromPath(const std::shared_ptr<MaterialLibraryL
     // General section
     // QString name = value(fcmat, "Name", ""); - always get the name from the filename
     QFileInfo filepath(path);
-    QString name =
-        filepath.fileName().remove(QStringLiteral(".FCMat"), Qt::CaseInsensitive);
+    QString name = stripMaterialExtension(filepath.fileName());
     QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
 
     QString description = value(fcmat, "Description", "");

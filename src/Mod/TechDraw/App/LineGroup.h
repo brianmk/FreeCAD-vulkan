@@ -37,9 +37,9 @@ class TechDrawExport LineGroup
 {
 public:
     LineGroup();
-    LineGroup(std::string groupName);
+    LineGroup(const std::string& groupName);
     ~LineGroup();
-    double getWeight(std::string s);
+    double getWeight(const std::string& s);
     void setWeight(std::string s, double weight);
 //    void setWeight(const char* s, double weight);
     void dump(const char* title);
@@ -47,10 +47,10 @@ public:
     void setName(std::string s) { m_name = s; }
 
     //static support function: split comma separated string of values into vector of numbers
-    static std::vector<double> split(std::string line);
+    static std::vector<double> split(const std::string& line);
 
     //static support function: find group defn in file
-    static std::string getRecordFromFile(std::string parmFile, int groupNumber);
+    static std::string getRecordFromFile(const std::string& parmFile, int groupNumber);
 
     //static LineGroup maker
     static LineGroup* lineGroupFactory(int groupNumber);

@@ -363,6 +363,11 @@ private:
     QGridLayout* gridLayout1;
     QSpacerItem* spacerItem;
     QSpacerItem* spacerItem1;
+
+    static Dict handler(const QStringList& fileNames,
+                        const QString& filter,
+                        bool importFilter,
+                        bool cancelReturnsEmpty);
 };
 
 }  // namespace Gui
