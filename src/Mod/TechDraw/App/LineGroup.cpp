@@ -42,7 +42,7 @@ LineGroup::LineGroup()
     init();
 }
 
-LineGroup::LineGroup(std::string groupName)
+LineGroup::LineGroup(const std::string& groupName)
 {
     init();
     m_name = groupName;
@@ -62,7 +62,7 @@ void LineGroup::init()
     m_extra   = 1.40;
 }
 
-double LineGroup::getWeight(std::string s)
+double LineGroup::getWeight(const std::string& s)
 {
     if (s == "Thin") {
        return m_thin;
@@ -100,7 +100,7 @@ void LineGroup::dump(const char* title)
 }
 
 //static support function: split comma separated string of values into vector of numbers
-std::vector<double> LineGroup::split(std::string line)
+std::vector<double> LineGroup::split(const std::string& line)
 {
     std::vector<double>   result;
     std::stringstream     lineStream(line);
@@ -125,7 +125,7 @@ std::vector<double> LineGroup::split(std::string line)
 }
 
 //static support function: find group definition in file
-std::string LineGroup::getRecordFromFile(std::string parmFile, int groupNumber)
+std::string LineGroup::getRecordFromFile(const std::string& parmFile, int groupNumber)
 {
     std::string record;
     Base::FileInfo fi(parmFile);

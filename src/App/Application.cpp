@@ -934,7 +934,8 @@ Document *Application::getDocumentByPath(const char *path, PathMatchMode checkCa
                 DocFileMap[Base::FileInfo(file.c_str()).filePath()] = v.second;
         }
     }
-    const auto it = DocFileMap.find(Base::FileInfo(path).filePath());
+    const std::string filepath = Base::FileInfo(path).filePath();
+    const auto it = DocFileMap.find(filepath);
     if(it != DocFileMap.end())
         return it->second;
 
@@ -942,7 +943,6 @@ Document *Application::getDocumentByPath(const char *path, PathMatchMode checkCa
         return nullptr;
     }
 
-    const std::string filepath = Base::FileInfo(path).filePath();
     const QString canonicalPath = QFileInfo(QString::fromUtf8(path)).canonicalFilePath();
     for (const auto &v : DocMap) {
         QFileInfo fi(QString::fromUtf8(v.second->FileName.getValue()));

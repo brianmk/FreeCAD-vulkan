@@ -80,7 +80,7 @@ std::vector<DocumentObject*> GroupExtension::addObject(DocumentObject* obj)
     return addObjects(vec);
 }
 
-std::vector<DocumentObject*> GroupExtension::addObjects(std::vector<DocumentObject*> objs)
+std::vector<DocumentObject*> GroupExtension::addObjects(const std::vector<DocumentObject*>& objs)
 {
 
     std::vector<DocumentObject*> added;
@@ -125,7 +125,7 @@ std::vector<DocumentObject*> GroupExtension::addObjects(std::vector<DocumentObje
     return added;
 }
 
-std::vector<DocumentObject*> GroupExtension::setObjects(std::vector<DocumentObject*> obj)
+std::vector<DocumentObject*> GroupExtension::setObjects(const std::vector<DocumentObject*>& obj)
 {
 
     Group.setValues(std::vector<DocumentObject*>());
@@ -138,7 +138,7 @@ std::vector<DocumentObject*> GroupExtension::removeObject(DocumentObject* obj)
     return removeObjects(vec);
 }
 
-std::vector<DocumentObject*> GroupExtension::removeObjects(std::vector<DocumentObject*> objs)
+std::vector<DocumentObject*> GroupExtension::removeObjects(const std::vector<DocumentObject*>& objs)
 {
 
     const std::vector<DocumentObject*>& grp = Group.getValues();
@@ -330,7 +330,7 @@ DocumentObject* GroupExtension::getGroupOfObject(const DocumentObject* obj)
             ext = o->getExtension(GroupExtensionPython::getExtensionClassTypeId(), false, true);
         }
         if (ext) {
-            auto grp = static_cast<GroupExtension*>(ext)->Group.getValues();
+            const auto& grp = static_cast<GroupExtension*>(ext)->Group.getValues();
             if (std::find(grp.begin(), grp.end(), obj) != grp.end()) {
                 return o;
             }
@@ -369,7 +369,7 @@ void GroupExtension::extensionOnChanged(const Property* p)
                 for (auto in : list) {
                     auto ext = in->getExtension(GroupExtension::getExtensionClassTypeId(), false, true);
                     if (ext && (in != getExtendedObject())) {
-                        auto grp = static_cast<GroupExtension*>(ext)->Group.getValues();
+                        const auto& grp = static_cast<GroupExtension*>(ext)->Group.getValues();
                         if (std::find(grp.begin(), grp.end(), obj) != grp.end()) {
                             error = true;
                             corrected.erase(std::remove(corrected.begin(), corrected.end(), obj),

@@ -34,6 +34,7 @@
 
 #include <Mod/Material/App/MaterialManager.h>
 #include <Mod/Material/App/MaterialValue.h>
+#include <Mod/Material/App/MaterialLibrary.h>
 #include <Mod/Material/App/Model.h>
 #include <Mod/Material/App/ModelManager.h>
 #include <Mod/Material/App/ModelUuids.h>
@@ -372,6 +373,23 @@ TEST_F(TestMaterial, TestColumns)
     auto array3d = testMaterial.getPhysicalProperty(QStringLiteral("TestArray3D"))->getMaterialValue();
     EXPECT_TRUE(array3d);
     EXPECT_EQ(dynamic_cast<Materials::Array3D &>(*array3d).columns(), 2);
+}
+
+TEST(MaterialStripTest, StripMaterialExtension)
+{
+    using Materials::stripMaterialExtension;
+
+    EXPECT_EQ(stripMaterialExtension(QStringLiteral("Foo.FCMat")), QStringLiteral("Foo"));
+    // Case-insensitive extension removal
+    EXPECT_EQ(stripMaterialExtension(QStringLiteral("Foo.fcmat")), QStringLiteral("Foo"));
+    EXPECT_EQ(stripMaterialExtension(QStringLiteral("Foo.FCMAT")), QStringLiteral("Foo"));
+    // No extension: unchanged
+    EXPECT_EQ(stripMaterialExtension(QStringLiteral("Foo")), QStringLiteral("Foo"));
+    EXPECT_EQ(stripMaterialExtension(QStringLiteral("")), QStringLiteral(""));
+    // Removes every occurrence (matching QString::remove semantics)
+    EXPECT_EQ(stripMaterialExtension(QStringLiteral("A.FCMat.B.FCMat")), QStringLiteral("A.B"));
+    // Non-matching extension untouched
+    EXPECT_EQ(stripMaterialExtension(QStringLiteral("Foo.FCStd")), QStringLiteral("Foo.FCStd"));
 }
 
 // clang-format on

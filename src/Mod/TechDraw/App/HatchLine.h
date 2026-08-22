@@ -86,8 +86,8 @@ public:
     double getLength() {return m_dashParms.length(); }
     DashSpec getDashParms() {return m_dashParms;}
 
-    static std::vector<PATLineSpec> getSpecsForPattern(std::string& parmFile, std::string& parmName);
-    static bool  findPatternStart(std::ifstream& inFile, std::string& parmName);
+    static std::vector<PATLineSpec> getSpecsForPattern(const std::string& parmFile, const std::string& parmName);
+    static bool  findPatternStart(std::ifstream& inFile, const std::string& parmName);
     static std::vector<std::string> loadPatternDef(std::ifstream& inFile);
     static std::vector<std::string> getPatternList(std::string& parmFile);
 
@@ -97,7 +97,7 @@ public:
 
 private:
     void init();
-    std::vector<double> split(std::string line);
+    std::vector<double> split(const std::string& line);
     //PAT line extracted tokens
     double m_angle;
     Base::Vector3d m_origin;

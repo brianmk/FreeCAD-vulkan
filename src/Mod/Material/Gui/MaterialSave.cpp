@@ -129,7 +129,8 @@ void MaterialSave::onOk(bool checked)
 {
     Q_UNUSED(checked)
 
-    QString name = _filename.remove(QStringLiteral(".FCMat"), Qt::CaseInsensitive);
+    QString name = Materials::stripMaterialExtension(_filename);
+    _filename = name;
     if (name != _material->getName()) {
         _material->setName(name);
         _material->setEditStateAlter();  // ? Does a name change count?

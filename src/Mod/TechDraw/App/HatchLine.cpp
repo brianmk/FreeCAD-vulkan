@@ -258,7 +258,7 @@ void PATLineSpec::load(std::string& lineSpec)
     }
 }
 
-std::vector<double> PATLineSpec::split(std::string line)
+std::vector<double> PATLineSpec::split(const std::string& line)
 {
     std::vector<double>   result;
     std::stringstream     lineStream(line);
@@ -294,7 +294,7 @@ void PATLineSpec::dump(const char* title)
 }
 
 //static class methods
-std::vector<PATLineSpec> PATLineSpec::getSpecsForPattern(std::string& parmFile, std::string& parmName)
+std::vector<PATLineSpec> PATLineSpec::getSpecsForPattern(const std::string& parmFile, const std::string& parmName)
 {
     std::vector<std::string> lineSpecs;
     Base::FileInfo fi(parmFile);
@@ -321,7 +321,7 @@ std::vector<PATLineSpec> PATLineSpec::getSpecsForPattern(std::string& parmFile, 
     return result;
 }
 
-bool  PATLineSpec::findPatternStart(std::ifstream& inFile, std::string& parmName)
+bool  PATLineSpec::findPatternStart(std::ifstream& inFile, const std::string& parmName)
 {
 //    Base::Console().message("HL::findPatternStart() - parmName: %s\n", parmName.c_str());
     while (inFile.good() ){

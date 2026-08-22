@@ -1618,23 +1618,28 @@ void Application::setActiveDocument(Gui::Document* pcDocument)
     // Macro recording of this is problematic, thus it's written out as comment.
     if (pcDocument) {
         pcDocument->setIsActive(true);
+        const char* docName = pcDocument->getDocument()->getName();
 
+        nameApp.reserve(96);
         nameApp += "App.setActiveDocument(\"";
-        nameApp += pcDocument->getDocument()->getName();
+        nameApp += docName;
         nameApp += "\")\n";
         nameApp += "App.ActiveDocument=App.getDocument(\"";
-        nameApp += pcDocument->getDocument()->getName();
+        nameApp += docName;
         nameApp += "\")";
         macroManager()->addLine(MacroManager::Cmt, nameApp.c_str());
+        nameGui.reserve(64);
         nameGui += "Gui.ActiveDocument=Gui.getDocument(\"";
-        nameGui += pcDocument->getDocument()->getName();
+        nameGui += docName;
         nameGui += "\")";
         macroManager()->addLine(MacroManager::Cmt, nameGui.c_str());
     }
     else {
+        nameApp.reserve(48);
         nameApp += "App.setActiveDocument(\"\")\n";
         nameApp += "App.ActiveDocument=None";
         macroManager()->addLine(MacroManager::Cmt, nameApp.c_str());
+        nameGui.reserve(24);
         nameGui += "Gui.ActiveDocument=None";
         macroManager()->addLine(MacroManager::Cmt, nameGui.c_str());
     }

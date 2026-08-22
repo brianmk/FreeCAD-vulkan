@@ -226,6 +226,7 @@ std::string Base::Tools::escapeQuotesFromString(const std::string& s)
 std::string Base::Tools::escapeEncodeString(const std::string& s)
 {
     std::string result;
+    result.reserve(s.size());
     size_t len = s.size();
     for (size_t i = 0; i < len; ++i) {
         switch (s.at(i)) {
@@ -255,6 +256,7 @@ std::string Base::Tools::escapeEncodeString(const std::string& s)
 std::string Base::Tools::escapeEncodeFilename(const std::string& s)
 {
     std::string result;
+    result.reserve(s.size());
     size_t len = s.size();
     for (size_t i = 0; i < len; ++i) {
         switch (s.at(i)) {
@@ -274,25 +276,28 @@ std::string Base::Tools::escapeEncodeFilename(const std::string& s)
 
 std::string Base::Tools::quoted(const char* name)
 {
-    std::stringstream str;
-    str << "\"" << name << "\"";
-    return str.str();
+    return "\"" + std::string(name) + "\"";
 }
 
 std::string Base::Tools::quoted(const std::string& name)
 {
-    std::stringstream str;
-    str << "\"" << name << "\"";
-    return str.str();
+    return "\"" + name + "\"";
 }
 
 std::string Base::Tools::joinList(const std::vector<std::string>& vec, const std::string& sep)
 {
-    std::stringstream str;
+    size_t size = 0;
     for (const auto& it : vec) {
-        str << it << sep;
+        size += it.size();
     }
-    return str.str();
+    size += sep.size() * vec.size();
+    std::string out;
+    out.reserve(size);
+    for (const auto& it : vec) {
+        out += it;
+        out += sep;
+    }
+    return out;
 }
 
 std::string Base::Tools::currentDateTimeString()

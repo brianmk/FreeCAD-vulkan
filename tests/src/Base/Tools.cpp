@@ -108,6 +108,41 @@ TEST(BaseToolsSuite, TestJoinList)
 {
     EXPECT_EQ(Base::Tools::joinList({"AB", "CD"}), "AB, CD, ");
 }
+
+TEST(BaseToolsSuite, TestJoinListCustomSeparator)
+{
+    // Preserves the trailing-separator behavior of the original implementation.
+    EXPECT_EQ(Base::Tools::joinList({}, "."), "");
+    EXPECT_EQ(Base::Tools::joinList({}, "::"), "");
+    EXPECT_EQ(Base::Tools::joinList({"a"}, "."), "a.");
+    EXPECT_EQ(Base::Tools::joinList({"a", "b", "c"}, "."), "a.b.c.");
+    EXPECT_EQ(Base::Tools::joinList({"a", "b"}, "::"), "a::b::");
+}
+
+TEST(BaseToolsSuite, TestQuoted)
+{
+    EXPECT_EQ(Base::Tools::quoted(""), "\"\"");
+    EXPECT_EQ(Base::Tools::quoted("Test"), "\"Test\"");
+    EXPECT_EQ(Base::Tools::quoted("with \"quote\""), "\"with \"quote\"\"");
+    EXPECT_EQ(Base::Tools::quoted(std::string("std str")), "\"std str\"");
+}
+
+TEST(BaseToolsSuite, TestEscapeEncodeStringNoChange)
+{
+    // Plain input must round-trip untouched; each escapable char handled.
+    EXPECT_EQ(Base::Tools::escapeEncodeString(""), "");
+    EXPECT_EQ(Base::Tools::escapeEncodeString("plain text"), "plain text");
+    EXPECT_EQ(Base::Tools::escapeEncodeString("\n\r"), "\\n\\r");
+    EXPECT_EQ(Base::Tools::escapeEncodeString("\\\"\'"), "\\\\\\\"\\\'");
+}
+
+TEST(BaseToolsSuite, TestEscapeEncodeFilenameNoChange)
+{
+    EXPECT_EQ(Base::Tools::escapeEncodeFilename(""), "");
+    EXPECT_EQ(Base::Tools::escapeEncodeFilename("plain"), "plain");
+    EXPECT_EQ(Base::Tools::escapeEncodeFilename("\"\'\""), "\\\"\\\'\\\"");
+    EXPECT_EQ(Base::Tools::escapeEncodeFilename("a\\b"), "a\\b");
+}
 TEST(BaseToolsSuite, TestEscapeQuotesFromString)
 {
     EXPECT_EQ(Base::Tools::escapeQuotesFromString("\'"), "\\\'");

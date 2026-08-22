@@ -1,0 +1,1210 @@
+#!/usr/bin/env python3
+"""freecad_probe - unified testing harness for the FreeCAD debug build.
+
+This is the Tier-1 consolidation of the breadcrumb + pick-probe infrastructures
+into one tool.  It has two roles in one module:
+
+GUEST HARNESS
+    Imported *inside* a probe script that runs within FreeCAD (launched via
+    ``bin/FreeCAD probe.py``).  Provides viewport discovery, synthetic input,
+    dpr-aware coordinate mapping, typed diagnostic emission, a snapshot helper,
+    and a verdict accumulator -- replacing the duplicated helpers that have been
+    copy-pasted across ~50 vk_*.py scripts.
+
+HOST RUNNER
+    When executed directly (``python3 freecad_probe.py run ...``) it launches
+    FreeCAD with the right environment for a script/manifest, redirects the
+    breadcrumb trace into an artifact bundle, collects stdout + frames, and
+    writes a machine-readable ``report.json`` with a single exit code.
+
+The FreeCAD/PySide imports are lazy so this module can be imported from plain
+host Python too (for the parsers and report writer, which are pure Python).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+import uuid
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional
+
+# ---------------------------------------------------------------------------
+# Unified diagnostic event schema
+# ---------------------------------------------------------------------------
+# Normalized event: {"source": ..., "kind": ..., "fields": {...}, "text": ...}
+# Sources present in the FreeCAD logs:
+#   PICKPROBE  ObjectIdentifier/hover-click diagnostics (SoFCUnifiedSelection)
+#   VK-TRACE   Base::vulkanBreadcrumb stream (SoFCUnifiedSelection, Volume render)
+#   VKBE       Vulkan backend debug (draw/UBO/PUSH/OVL summaries)
+#   VK-VALIDATION  Khronos Vulkan validation layer messages (VUID- lines)
+#   HARNESS    this module's own typed events
+#
+# The HARNESS line format is "kind NAME k1=v1 k2=v2 ..." and is meant to be a
+# single, parseable record that mirrors the C-side log line conventions.
+
+# Mapping of source -> known integer/float/quoted field names, used by the
+# lenient key=value parser.  Any unrecognized token is kept as a raw field.
+_PICKPROBE_FIELDS = {"event", "pos", "hit", "obj", "bbox", "local", "sub"}
+
+# Substrings that identify an output line as a Khronos Vulkan validation-layer
+# diagnostic (VUID = Vulkan Validation ID).  These are ranked by specificity so
+# the scanner picks a stable classification; a line is classified as validation
+# output when any non-empty marker matches.
+_VALIDATION_MARKERS = (
+    "VUID-",
+    "UNASSIGNED-",
+    "Validation Error",
+    "Validation Warning",
+    "vk",
+)
+
+
+def _split_kv(token: str) -> Optional[tuple[str, str]]:
+    """Split ``key=value`` (key word chars only).  Returns None if not a kv."""
+    if "=" not in token:
+        return None
+    key, _, value = token.partition("=")
+    if not key or not (key[0].isalpha() or key[0] == "_") or not all(
+        c.isalnum() or c in "_.-" for c in key
+    ):
+        return None
+    return key, value
+
+
+def parse_event(line: str) -> Optional[dict[str, Any]]:
+    """Parse one log line into a normalized event dict, or None if not a known
+    diagnostic source."""
+    text = line.rstrip("\n")
+    if text.startswith("[PICKPROBE]"):
+        body = text[len("[PICKPROBE]") :].strip()
+        ev = _parse_tagged("PICKPROBE", body, _PICKPROBE_FIELDS)
+        # The PICKPROBE record's native "kind" is the `event=` field; surface it
+        # so consumers can filter hover vs click uniformly.
+        ev["kind"] = ev["fields"].get("event", "")
+    elif text.startswith("[VK-TRACE]"):
+        ev = {
+            "source": "VK-TRACE",
+            "kind": "breadcrumb",
+            "fields": {},
+            "text": text[len("[VK-TRACE]") :].strip(),
+        }
+    elif text.startswith("[VKBE]"):
+        ev = {
+            "source": "VKBE",
+            "kind": "backend",
+            "fields": {},
+            "text": text[len("[VKBE]") :].strip(),
+        }
+    elif text.startswith("[HARNESS]"):
+        ev = _parse_tagged("HARNESS", text[len("[HARNESS]") :].strip(), set())
+    elif text.startswith("[VERDICT]"):
+        body = text[len("[VERDICT]") :].split()
+        ev = {
+            "source": "VERDICT",
+            "kind": "verdict",
+            "fields": {},
+            "text": text[len("[VERDICT]") :].strip(),
+        }
+        if len(body) >= 2:
+            ev["fields"] = {"name": body[0], "result": body[1]}
+    elif _is_validation_line(text):
+        ev = {
+            "source": "VK-VALIDATION",
+            "kind": "validation",
+            "fields": _validation_fields(text),
+            "text": text,
+        }
+    else:
+        return None
+    return ev
+
+
+def _is_validation_line(text: str) -> bool:
+    """True when a line looks like Khronos Vulkan validation-layer output."""
+    # VUID identifiers are the definitive signal; "vk" alone is too greedy for
+    # a general log, so only treat bare "vk..." as validation when the line also
+    # mentions error/warning/validation.
+    if "VUID-" in text or "UNASSIGNED-" in text:
+        return True
+    if "Validation Error" in text or "Validation Warning" in text:
+        return True
+    return False
+
+
+def _validation_fields(text: str) -> dict[str, str]:
+    import re
+
+    fields: dict[str, str] = {}
+    # Capture the VUID / UNASSIGNED identifier (alphanumerics, hyphens, dots).
+    match = re.search(r"(?:VUID|UNASSIGNED)-[A-Za-z0-9_.-]+", text)
+    if match:
+        fields["vuid"] = match.group(0)
+    if "Error" in text:
+        fields["level"] = "ERROR"
+    elif "Warning" in text:
+        fields["level"] = "WARN"
+    else:
+        fields["level"] = "INFO"
+    return fields
+
+
+def extract_validation(lines: Iterable[str]) -> list[dict[str, Any]]:
+    """Return the Khronos VUID diagnostics found in `lines` as normalized events."""
+    out = []
+    for line in lines:
+        ev = parse_event(line)
+        if ev and ev["source"] == "VK-VALIDATION":
+            out.append(ev)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Tier 2 -- golden-frame, drawlist-hash and state-snapshot regression
+# ---------------------------------------------------------------------------
+
+def vkbe_lines(lines: Iterable[str]) -> list[dict[str, Any]]:
+    """Return the Vulkan backend draw-command summary events ([VKBE] lines)."""
+    return [ev for ev in iter_events(lines) if ev["source"] == "VKBE"]
+
+
+def drawlist_digest(events: Iterable[dict[str, Any]]) -> str:
+    """Canonical hash of a draw-command stream ([VKBE] records).
+
+    The backend emits one [VKBE] line per recorded command with its material
+    and push-constant state (draw/UBO/PUSH/OVL).  Canonicalizing those records
+    and hashing them yields a fingerprint that is stable across identical runs
+    and changes the instant any render state (geometry, material, overlay) does.
+    """
+    import hashlib
+    h = hashlib.sha256()
+    for ev in sorted(events, key=lambda e: e.get("text", "")):
+        h.update((ev.get("text", "") + "\n").encode("utf-8", "replace"))
+    return h.hexdigest()
+
+
+def collect_frame_dumps(dest_dir: str, source_glob: str = "/tmp/vk_frame_*.png") -> list[str]:
+    """Copy Vulkan frame dumps into `dest_dir/frames` and return the copied paths."""
+    import glob
+    import shutil
+    frames_dir = os.path.join(dest_dir, "frames")
+    os.makedirs(frames_dir, exist_ok=True)
+    copied = []
+    for src in sorted(glob.glob(source_glob)):
+        dst = os.path.join(frames_dir, os.path.basename(src))
+        shutil.copy2(src, dst)
+        copied.append(dst)
+    return copied
+
+
+def file_sha256(path: str) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def frame_hashes(frames_dir: str) -> dict[str, str]:
+    """Map frame filename -> content sha256 for every PNG in `frames_dir`."""
+    import glob
+    return {os.path.basename(p): file_sha256(p)
+            for p in sorted(glob.glob(os.path.join(frames_dir, "*.png")))}
+
+
+def image_metrics(a_path: str, b_path: str) -> dict[str, Any]:
+    """Pixel-diff two PNGs (RGB).  Returns mean abs diff + changed/area stats."""
+    from PIL import Image
+    import numpy as np
+    a = np.asarray(Image.open(a_path).convert("RGB"), dtype=np.int32)
+    b = np.asarray(Image.open(b_path).convert("RGB"), dtype=np.int32)
+    if a.shape != b.shape:
+        return {"error": f"size mismatch {a.shape} vs {b.shape}"}
+    diff = np.abs(a - b)
+    maxd = diff.max(axis=2)
+    return {
+        "mean_abs": float(diff.mean()),
+        "changed_frac": float((maxd > 0).mean()),
+        "big_diff_pixels": int((maxd > 8).sum()),
+        "max_delta": int(maxd.max()),
+    }
+
+
+def compare_frames(baseline_dir: str, frames_dir: str,
+                   mean_threshold: float = 1.5,
+                   big_threshold_px: int = 200) -> list[str]:
+    """Compare a run's frame dumps against a baseline, returning error strings."""
+    import glob
+    base = sorted(glob.glob(os.path.join(baseline_dir, "*.png")))
+    out = sorted(glob.glob(os.path.join(frames_dir, "*.png")))
+    errors = []
+    if not base and not out:
+        return ["no frames to compare"]
+    if len(base) != len(out):
+        errors.append(
+            f"frame count mismatch: baseline {len(base)} vs run {len(out)}"
+        )
+    for b, o in zip(base, out):
+        m = image_metrics(b, o)
+        if "error" in m:
+            errors.append(f"{os.path.basename(o)}: {m['error']}")
+        elif m["mean_abs"] > mean_threshold or m["big_diff_pixels"] > big_threshold_px:
+            errors.append(
+                f"{os.path.basename(o)}: mean_abs={m['mean_abs']:.2f} "
+                f"(> {mean_threshold}) big_diff_pixels={m['big_diff_pixels']} "
+                f"(> {big_threshold_px})"
+            )
+    return errors
+
+
+def extract_snapshot(events: Iterable[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """Rehydrate the first `[HARNESS] snapshot state=<json>` event into a dict."""
+    for ev in events:
+        if ev.get("source") == "HARNESS" and ev.get("kind") == "snapshot":
+            raw = ev.get("fields", {}).get("state")
+            if raw:
+                try:
+                    return json.loads(raw)
+                except (ValueError, TypeError):
+                    return {"_raw": raw}
+    return None
+
+
+def _parse_tagged(source: str, body: str, known: set[str]) -> dict[str, Any]:
+    """Parse `kind key=value ...` (and thus allow bare tokens to be grouped)."""
+    ev: dict[str, Any] = {"source": source, "kind": "", "fields": {}, "text": body}
+    tokens = body.split()
+    if not tokens:
+        return ev
+    # First token(s) before the first k=v form the kind.  Keep it simple: the
+    # leading free-form word is the kind; everything else is fields.
+    idx = 0
+    while idx < len(tokens) and not any("=" in t for t in tokens[idx : idx + 1]):
+        idx += 1
+    # Recompute: kind = everything before the first k=v token.
+    first_kv = next((i for i, t in enumerate(tokens) if "=" in t), len(tokens))
+    ev["kind"] = " ".join(tokens[:first_kv]) if first_kv else (tokens[0] if tokens else "")
+    for token in tokens[first_kv:]:
+        kv = _split_kv(token)
+        if kv:
+            ev["fields"][kv[0]] = kv[1]
+        else:
+            ev["fields"].setdefault("_extra", [])
+            ev["fields"]["_extra"].append(token)  # type: ignore[union-attr]
+    return ev
+
+
+def iter_events(lines: Iterable[str]) -> Iterator[dict[str, Any]]:
+    """Yield normalized events from an iterable of log lines."""
+    for line in lines:
+        ev = parse_event(line)
+        if ev is not None:
+            yield ev
+
+
+def format_event(ev: dict[str, Any]) -> str:
+    """Render a normalized event back to a canonical single-line record."""
+    parts = []
+    if ev.get("kind"):
+        parts.append(str(ev["kind"]))
+    for k, v in ev.get("fields", {}).items():
+        if k == "_extra":
+            parts.extend(str(x) for x in v)
+        else:
+            parts.append(f"{k}={v}")
+    text = ev.get("text") or " ".join(parts)
+    return f"[{ev['source']}] {text}"
+
+
+# ---------------------------------------------------------------------------
+# Artifact bundle + JSON report
+# ---------------------------------------------------------------------------
+@dataclass
+class RunReport:
+    """Collects the outcome of one harness run and writes it to an artifact dir."""
+
+    name: str
+    artifact_dir: str
+    started: float = field(default_factory=time.time)
+    verdict: str = "FAIL"  # PASS | FAIL | ERROR | TIMEOUT
+    errors: List[str] = field(default_factory=list)
+    events: List[dict[str, Any]] = field(default_factory=list)
+    session: Dict[str, Any] = field(default_factory=dict)
+    artifacts: List[str] = field(default_factory=list)
+
+    def log_event(self, source: str, kind: str, **fields: Any) -> None:
+        self.events.append({"source": source, "kind": kind, "fields": fields})
+
+    def add_error(self, fmt: str, *args: Any) -> None:
+        self.errors.append(fmt % args if args else fmt)
+
+    def mark(self, verdict: str) -> None:
+        self.verdict = verdict
+
+    def register(self, path: str) -> None:
+        """Record an artifact file (relative to artifact_dir)."""
+        if os.path.isabs(path):
+            path = os.path.relpath(path, self.artifact_dir)
+        if path not in self.artifacts:
+            self.artifacts.append(path)
+
+    def write(self) -> str:
+        """Write report.json and return its path."""
+        if "report.json" not in self.artifacts:
+            self.artifacts.append("report.json")
+        payload = {
+            "name": self.name,
+            "started": self.started,
+            "duration_ms": int((time.time() - self.started) * 1000),
+            "verdict": self.verdict,
+            "errors": self.errors,
+            "events": self.events,
+            "session": self.session,
+            "artifacts": self.artifacts,
+        }
+        path = os.path.join(self.artifact_dir, "report.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        return path
+
+
+def new_artifact_dir(parent: str, name: str) -> str:
+    """Create a fresh artifact directory `parent/<name>-<ts>[-<rand>]`."""
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    run_id = f"{name or 'run'}-{ts}-{uuid.uuid4().hex[:6]}"
+    path = os.path.join(parent, run_id)
+    os.makedirs(path, exist_ok=False)
+    return path
+
+
+# ---------------------------------------------------------------------------
+# Host runner
+# ---------------------------------------------------------------------------
+# Default environment presets.  These match the working harness configuration
+# for the Vulkan debug build on this machine.
+_PROFILES = {
+    "vulkan": {
+        "QT_STYLE_OVERRIDE": "fusion",
+        "QT_QPA_PLATFORM": "xcb",
+        "LD_LIBRARY_PATH": "/tmp/opencode/boost91",
+        "FC_SKIP_UNSAVED_PROMPT": "1",
+        "FC_VULKAN_BREADCRUMBS": "1",
+    },
+    "gl": {
+        "QT_STYLE_OVERRIDE": "fusion",
+        "QT_QPA_PLATFORM": "xcb",
+        "LD_LIBRARY_PATH": "/tmp/opencode/boost91",
+        "FC_SKIP_UNSAVED_PROMPT": "1",
+    },
+}
+
+_DEFAULT_FREECAD = "/home/phantom/dev/FreeCAD/build/debug/bin/FreeCAD"
+
+
+def _merge_env(
+    profile: str,
+    overrides: dict[str, str],
+    trace_path: Optional[str],
+    validation: bool = False,
+    layer_path: Optional[str] = None,
+) -> dict[str, str]:
+    env = dict(os.environ)
+    env.update(_PROFILES.get(profile, {}))
+    if trace_path:
+        env["FC_VULKAN_TRACE_FILE"] = trace_path
+    if validation:
+        # Qt (QuarterVulkanWidget) enables VK_LAYER_KHRONOS_validation when this
+        # flag is set; the Khronos VUID diagnostics are emitted on stderr and are
+        # captured by the runner for classification.
+        env["FC_VULKAN_VALIDATION"] = "1"
+    if layer_path:
+        env["VK_LAYER_PATH"] = layer_path
+    env.update({k: v for k, v in overrides.items() if v is not None})
+    return env
+
+
+def run_case(
+    script: str,
+    binary: str = _DEFAULT_FREECAD,
+    profile: str = "vulkan",
+    env_overrides: Optional[dict[str, str]] = None,
+    out_dir: str = "/tmp/opencode/runs",
+    timeout: int = 120,
+    report_name: Optional[str] = None,
+    validation: bool = False,
+    layer_path: Optional[str] = None,
+    fail_on_validation: bool = False,
+    baseline_dir: Optional[str] = None,
+    frame_mean_threshold: float = 1.5,
+    frame_big_threshold_px: int = 200,
+) -> RunReport:
+    """Launch FreeCAD with `script`, collect artifacts, and return the report.
+
+    This is the host-side entry point used by the `run` subcommand.  It does
+    not require FreeCAD to be importable from host Python.
+
+    Tier-2 behavior: collected frame dumps and the Vulkan draw-command stream
+    ([VKBE]) are fingerprinted and placed in the report.  When ``baseline_dir``
+    points at a previous run's ``frames/``, each frame is pixel-compared and any
+    frame exceeding the thresholds is recorded as an error (golden regression).
+    """
+    name = report_name or os.path.splitext(os.path.basename(script))[0]
+    artifact_dir = new_artifact_dir(out_dir, name)
+    trace_path = os.path.join(artifact_dir, "trace.log")
+    report = RunReport(name=name, artifact_dir=artifact_dir)
+    report.session.update(
+        {
+            "script": script,
+            "binary": binary,
+            "profile": profile,
+            "env_overrides": env_overrides or {},
+            "validation": validation,
+            "layer_path": layer_path,
+            "fail_on_validation": fail_on_validation,
+            "baseline_dir": baseline_dir,
+        }
+    )
+
+    env = _merge_env(profile, env_overrides or {}, trace_path, validation, layer_path)
+    report.register(trace_path)
+
+    stdout_path = os.path.join(artifact_dir, "stdout.log")
+    report.register(stdout_path)
+    with open(stdout_path, "w", encoding="utf-8", errors="replace") as outf:
+        proc = subprocess.Popen(
+            [binary, script],
+            cwd="/home/phantom/dev/FreeCAD",
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            errors="replace",
+        )
+        # Stream to both the artifact file and memory for parsing.
+        lines: List[str] = []
+        try:
+            for line in proc.stdout:  # type: ignore[union-attr]
+                lines.append(line)
+                outf.write(line)
+        finally:
+            try:
+                rc = proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                rc = proc.wait()
+                report.add_error("timeout after %ss", timeout)
+                report.mark("TIMEOUT")
+            else:
+                # Parse the unified event stream from stdout for the report.
+                for ev in iter_events(lines):
+                    report.events.append(ev)
+                if rc != 0:
+                    report.add_error("process exited with code %s", rc)
+
+    # Fold the breadcrumb trace events into the report too.
+    if os.path.exists(trace_path):
+        with open(trace_path, encoding="utf-8", errors="replace") as tf:
+            for ev in iter_events(tf):
+                report.events.append(ev)
+
+    # Khronos Vulkan validation diagnostics (VUID- lines) are emitted on
+    # stderr/stdout; classify them and surface them in the report.
+    validation_events = extract_validation(lines)
+    report.session["validation"] = validation
+    report.session["validation_count"] = len(validation_events)
+    for ev in validation_events:
+        report.events.append(ev)
+        level = ev.get("fields", {}).get("level", "INFO")
+        if level == "ERROR":
+            report.add_error("Vulkan validation: %s", ev.get("text", "")[:200])
+    if fail_on_validation and validation_events:
+        report.add_error("Vulkan validation produced %d diagnostics",
+                         len(validation_events))
+        report.mark("FAIL")
+
+    # -- Tier 2: draw-command fingerprint (drawlist hash) ------------------
+    vkbe = vkbe_lines(lines)
+    report.session["vkbe_count"] = len(vkbe)
+    report.session["drawlist_hash"] = drawlist_digest(vkbe)
+
+    # -- Tier 2: frame dumps -> copy into bundle + fingerprint -------------
+    frames = collect_frame_dumps(artifact_dir)
+    if frames:
+        reports_frames = os.path.join(artifact_dir, "frames")
+        for f in frames:
+            report.register(f)
+        if os.path.isdir(reports_frames):
+            report.session["frame_hashes"] = frame_hashes(reports_frames)
+            if baseline_dir:
+                base_frames = baseline_dir
+                if not base_frames.endswith("/frames") and os.path.isdir(
+                    os.path.join(base_frames, "frames")
+                ):
+                    base_frames = os.path.join(base_frames, "frames")
+                frame_errors = compare_frames(
+                    base_frames, reports_frames,
+                    mean_threshold=frame_mean_threshold,
+                    big_threshold_px=frame_big_threshold_px,
+                )
+                for fe in frame_errors:
+                    report.add_error("frame regression: %s", fe)
+                if frame_errors:
+                    report.mark("FAIL")
+
+    # -- Tier 2: state snapshot rehydrate ---------------------------------
+    snap = extract_snapshot(report.events)
+    if snap is not None:
+        report.session["state"] = snap
+
+    report.session["exit_code"] = rc
+    report.session["verdict_line"] = extract_verdict(lines)
+    if extract_verdict(lines) == "PASS":
+        report.mark("PASS")
+    elif report.verdict not in ("ERROR", "TIMEOUT", "FAIL"):
+        report.add_error("no VERDICT PASS line found")
+    report.write()
+    return report
+
+
+def extract_verdict(lines: Iterable[str]) -> str:
+    """Scan log lines for a `[VERDICT] NAME PASS|FAIL` record, return the result."""
+    for line in lines:
+        if line.startswith("[VERDICT]"):
+            tokens = line.split()
+            if len(tokens) >= 3:
+                return tokens[-1]
+    return ""
+
+
+def _cli(argv: List[str]) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    if args.command == "run":
+        report = run_case(
+            script=args.script,
+            binary=args.binary,
+            profile=args.profile,
+            env_overrides=args.env,
+            out_dir=args.out,
+            timeout=args.timeout,
+            report_name=args.name,
+            validation=args.validation,
+            layer_path=args.layer_path,
+            fail_on_validation=args.fail_on_validation,
+            baseline_dir=args.baseline,
+            frame_mean_threshold=args.frame_mean_threshold,
+            frame_big_threshold_px=args.frame_big_threshold_px,
+        )
+        print(f"[RUN] artifact_dir={report.artifact_dir}")
+        print(f"[RUN] verdict={report.verdict}")
+        print(f"[RUN] drawlist_hash={report.session.get('drawlist_hash', '')[:16]}")
+        print(f"[RUN] vkbe_count={report.session.get('vkbe_count')} "
+              f"validation={report.session.get('validation_count')}")
+        for e in report.errors:
+            print(f"[RUN] ERROR {e}")
+        return 0 if report.verdict == "PASS" else 1
+    if args.command == "report":
+        return _cli_report(args)
+    return 2
+
+
+def _cli_report(args: Any) -> int:
+    """Summarize one or more artifact bundle(s), optionally against a baseline."""
+    if args.artifact_dir:
+        _print_report(args.artifact_dir)
+    return 0
+
+
+def _print_report(artifact_dir: str) -> None:
+    report_path = os.path.join(artifact_dir, "report.json")
+    if not os.path.exists(report_path):
+        print(f"[report] no report.json in {artifact_dir}")
+        return
+    with open(report_path, encoding="utf-8") as f:
+        data = json.load(f)
+    print(f"[report] name={data.get('name')} verdict={data.get('verdict')} "
+          f"duration_ms={data.get('duration_ms')}")
+    sess = data.get("session", {})
+    if sess.get("drawlist_hash"):
+        print(f"[report] drawlist_hash={sess['drawlist_hash'][:16]} "
+              f"vkbe_count={sess.get('vkbe_count')}")
+    if sess.get("validation_count"):
+        print(f"[report] validation_count={sess['validation_count']}")
+    if "state" in sess:
+        print(f"[report] state={json.dumps(sess['state'], separators=(',', ':'))}")
+    if sess.get("frame_hashes"):
+        print(f"[report] frames={len(sess['frame_hashes'])}")
+    for e in data.get("errors", []):
+        print(f"[report] ERROR {e}")
+
+
+def _build_parser() -> Any:
+    import argparse
+
+    p = argparse.ArgumentParser(
+        prog="freecad_probe",
+        description="Unified FreeCAD testing harness (breadcrumbs + probes)",
+    )
+    sub = p.add_subparsers(dest="command", required=True)
+    run = sub.add_parser("run", help="launch FreeCAD with a probe script/manifest")
+    run.add_argument("script", help="path to a probe script (or .json manifest)")
+    run.add_argument("--binary", default=_DEFAULT_FREECAD, help="FreeCAD binary")
+    run.add_argument("--profile", default="vulkan", choices=sorted(_PROFILES))
+    run.add_argument(
+        "--env",
+        action="append",
+        default=[],
+        metavar="K=V",
+        help="extra environment variable, repeatable",
+    )
+    run.add_argument("--out", default="/tmp/opencode/runs", help="artifact dir parent")
+    run.add_argument("--name", default=None, help="run/artifact name")
+    run.add_argument("--timeout", type=int, default=120, help="seconds before kill")
+    run.add_argument(
+        "--validation",
+        action="store_true",
+        help="enable the Khronos Vulkan validation layer (FC_VULKAN_VALIDATION)",
+    )
+    run.add_argument(
+        "--layer-path",
+        default=None,
+        metavar="DIR",
+        help="set VK_LAYER_PATH to the bundled validation layer",
+    )
+    run.add_argument(
+        "--fail-on-validation",
+        action="store_true",
+        help="mark the run FAIL if any Vulkan validation diagnostic is emitted",
+    )
+    run.add_argument(
+        "--baseline",
+        default=None,
+        metavar="DIR",
+        help="a prior run's artifact dir (or its frames/) to golden-compare frames against",
+    )
+    run.add_argument(
+        "--frame-mean-threshold",
+        type=float,
+        default=1.5,
+        help="max mean abs pixel diff per frame before FAIL (default 1.5)",
+    )
+    run.add_argument(
+        "--frame-big-threshold-px",
+        type=int,
+        default=200,
+        help="max pixels differing by >8 per frame before FAIL (default 200)",
+    )
+    rep = sub.add_parser("report", help="summarize an artifact dir's report.json")
+    rep.add_argument("artifact_dir", help="path to an artifact directory (run bundle)")
+    return p
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    return _cli(argv)
+
+
+# ---------------------------------------------------------------------------
+# Guest harness (runs *inside* FreeCAD)
+# ---------------------------------------------------------------------------
+# Everything below the line is only used by probe scripts that run within a
+# FreeCAD process.  It lazily imports FreeCAD / FreeCADGui / PySide so that
+# importing this module from host Python stays side-effect free.
+
+class Session:
+    """One probe session: viewport session + synthetic input + verdict.
+
+    Typical guest usage::
+
+        s = Session("pick")
+        s.fit("Box")                      # activate Part workbench, fit view
+        s.move(...); s.click(...); s.menu("Select All"); s.command("Std_New")
+        s.verdict(ok)                     # -> [VERDICT] <name> PASS|FAIL
+        s.close()
+    """
+
+    def __init__(self, name: str = "run", record: bool = False):
+        self.name = name
+        self.errors: List[str] = []
+        self.record_enabled = record
+        self.recorded: List[tuple[Any, ...]] = []
+        self._login()
+
+    # -- lazy imports ------------------------------------------------------
+    def _login(self) -> None:
+        import FreeCAD  # noqa: F401  (available only inside FreeCAD)
+        import FreeCADGui
+        import PySide.QtCore as QtCore
+        import PySide.QtGui as QtGui
+        import PySide.QtWidgets as QtWidgets
+
+        self._FreeCAD = FreeCAD
+        self._Gui = FreeCADGui
+        self._QtCore = QtCore
+        self._QtGui = QtGui
+        self._QtWidgets = QtWidgets
+
+        self.win, self.container, self.stack = self.find_viewport()
+        self.available = self.container is not None
+        self.dpr = self.container.devicePixelRatioF() if self.available else 1.0
+        if self.available:
+            self.width = self.container.width()
+            self.height = self.container.height()
+        else:
+            self.width = self.height = 0
+
+    def find_viewport(self) -> tuple[Any, Any, Any]:
+        """Locate the 3D viewport container.  Returns (window, container, stack)."""
+        QW = self._QtWidgets
+        win = QW.QApplication.activeWindow()
+        if win is None:
+            for t in QW.QApplication.topLevelWidgets():
+                if isinstance(t, QW.QMainWindow) and t.isVisible():
+                    win = t
+                    break
+        if win is None:
+            return None, None, None
+        mdi = win.findChild(QW.QMdiArea)
+        if mdi is None:
+            return None, None, None
+        sub = mdi.currentSubWindow() or (mdi.subWindowList() or [None])[0]
+        if sub is None:
+            return None, None, None
+        view_widget = sub.widget()
+        stack = view_widget.findChild(QW.QStackedWidget)
+        container = stack.currentWidget() if stack else view_widget
+        container.setMouseTracking(True)
+        return win, container, stack
+
+    # -- coordinate helpers ------------------------------------------------
+    def device(self, x: float, y: float) -> tuple[int, int]:
+        """Convert logical container coords to device pixels for the view API."""
+        return (int(round(x * self.dpr)), int(round(y * self.dpr)))
+
+    def get_object_info(self, x: float, y: float) -> Optional[dict]:
+        view = self.active_view()
+        if view is None:
+            return None
+        dx, dy = self.device(x, y)
+        return view.getObjectInfo((dx, dy))
+
+    def active_view(self) -> Any:
+        try:
+            return self._Gui.activeView()
+        except Exception:
+            return None
+
+    # -- synthetic input ---------------------------------------------------
+    def send_mouse(self, etype: Any, pos: Any, btn: Any, btns: Any) -> None:
+        if not self.available:
+            return
+        QtCore = self._QtCore
+        QtGui = self._QtGui
+        QW = self._QtWidgets
+        container = self.container
+        # Deliver to the widget actually under the point; without
+        # setMouseTracking(True) on the target synthetic moves are dropped.
+        target = container.childAt(pos) or container
+        target.setMouseTracking(True)
+        tpos = target.mapFrom(container, pos)
+        ev = QtGui.QMouseEvent(etype, tpos, target.mapToGlobal(tpos), btn,
+                               btns, QtCore.Qt.NoModifier)
+        QW.QApplication.sendEvent(target, ev)
+        QW.QApplication.processEvents()
+
+    def _mouse(self, kind: str, x: float, y: float) -> None:
+        QtCore = self._QtCore
+        QtGui = self._QtGui
+        pos = QtCore.QPoint(int(x), int(y))
+        if kind == "move":
+            self.send_mouse(QtCore.QEvent.MouseMove, pos, QtCore.Qt.NoButton,
+                            QtCore.Qt.NoButton)
+        elif kind == "click":
+            self.send_mouse(QtCore.QEvent.MouseButtonPress, pos,
+                            QtCore.Qt.LeftButton, QtCore.Qt.LeftButton)
+            self.send_mouse(QtCore.QEvent.MouseButtonRelease, pos,
+                            QtCore.Qt.LeftButton, QtCore.Qt.NoButton)
+
+    def move(self, x: float, y: float) -> None:
+        self._record("move", x, y)
+        self._mouse("move", x, y)
+
+    def click(self, x: float, y: float) -> bool:
+        self._record("click", x, y)
+        self._mouse("click", x, y)
+        sel = self._Gui.Selection.getSelectionEx()
+        hit = bool(sel)
+        self._Gui.Selection.clearSelection()
+        self._QtCore.QCoreApplication.processEvents()
+        return hit
+
+    def key(self, key: Any, modifiers: Any = None) -> None:
+        QtCore = self._QtCore
+        QW = self._QtWidgets
+        mods = self._QtCore.Qt.ControlModifier if modifiers == "ctrl" else (
+            self._QtCore.Qt.NoModifier
+        )
+        ev = self._QtGui.QKeyEvent(QtCore.QEvent.KeyPress, key, mods)
+        QW.QApplication.sendEvent(self.win, ev)
+
+    def command(self, cmd: str, require: bool = False) -> bool:
+        """Run a FreeCAD command.
+
+        When ``require`` is True the call is guarded: if the command is not
+        currently available (its own `isActive()` precondition is false, e.g. a
+        tool that needs a sketch or selection that is not present), a dependency
+        error is recorded and False is returned -- instead of the command being
+        silently ignored by the GUI.  When False the command is fired verbatim
+        and True is returned once dispatched (the caller verifies the outcome).
+        """
+        self._record("command", cmd)
+        if require and not self.command_available(cmd):
+            self.error("command %r is not available (missing prerequisite "
+                       "object or selection)", cmd)
+            return False
+        try:
+            self._Gui.runCommand(cmd)
+        except Exception as exc:  # pragma: no cover - guest-only path
+            self.error("command %r raised %r", cmd, exc)
+            return False
+        return True
+
+    def command_available(self, name: str) -> bool:
+        """Best-effort check of a command's precondition (its `isActive()`).
+
+        FreeCAD exposes the static helper ``Gui.Command.isCmdActive(name)`` and
+        an instance ``Gui.getCommand(name).isActive()``.  If neither can be
+        probed the result is optimistic (True) so a genuinely valid command is
+        never blocked; a wrong dependency is still caught by the outcome-based
+        feature helpers below.
+        """
+        Gui = self._Gui
+        cmd_cls = getattr(Gui, "Command", None)
+        static = getattr(cmd_cls, "isCmdActive", None)
+        if static is not None:
+            try:
+                return bool(static(name))
+            except Exception:
+                pass
+        try:
+            cmd = Gui.getCommand(name)
+            return bool(cmd and cmd.isActive())
+        except Exception:
+            return True
+
+    # -- workbench / document API -----------------------------------------
+    # FreeCAD tools (workbenches, sketches, PartDesign features like Pad,
+    # Part primitives, GDML, Mesh, CAM, TechDraw, ...) are all reachable either
+    # through a command name (Gui.runCommand) or the Python API.  The helpers
+    # below make the common cases one call; anything else is just `session.eval(...)`.
+
+    def activate_workbench(self, name: str) -> None:
+        self._record("workbench", name)
+        self._Gui.activateWorkbench(name)
+
+    def new_document(self, name: str) -> Any:
+        return self._FreeCAD.newDocument(name)
+
+    def active_document(self) -> Any:
+        return self._FreeCAD.ActiveDocument
+
+    def add_object(self, type_id: str, name: str) -> Any:
+        doc = self.active_document()
+        return doc.addObject(type_id, name)
+
+    def recompute(self, doc: Any = None) -> None:
+        (doc or self.active_document()).recompute()
+
+    def eval(self, expr: str) -> Any:
+        """Evaluate a FreeCAD Python expression and return the result."""
+        return eval(expr, {"FreeCAD": self._FreeCAD, "Gui": self._Gui,
+                           "session": self})
+
+    def exec(self, code: str) -> None:
+        """Run a block of FreeCAD Python (e.g. model/tooling setup)."""
+        exec(code, {"FreeCAD": self._FreeCAD, "Gui": self._Gui, "session": self})
+
+    def clear_selection(self) -> None:
+        self._Gui.Selection.clearSelection()
+
+    def set_preselection(self, obj: str, sub: str = "", x: int = 0, y: int = 0,
+                         z: int = 0, w: int = 1) -> None:
+        try:
+            self._Gui.Selection.setPreselection(obj, sub, x, y, z, w)
+        except Exception:
+            self._Gui.Selection.setPreselection(obj, sub)
+
+    # -- feature dependency orchestration ----------------------------------
+    # PartDesign features (Pad, Pocket, ...) have a required dependency graph:
+    # Body -> Sketch (closed profile) -> feature.  FreeCAD enables the tool
+    # commands whenever a document is active, so a blind runCommand can silently
+    # do nothing.  These helpers enforce the prerequisite chain and verify the
+    # outcome, so a missing dependency becomes a recorded FAIL, not a silent PASS.
+
+    def get_active_body(self) -> Any:
+        """Return the active PartDesign::Body, or None.
+
+        The active body is a view-side setting not cleanly exposed to Python, so
+        we use a robust heuristic: the single Body, else the one with a current
+        tip, else the first.
+        """
+        doc = self.active_document()
+        if doc is None:
+            return None
+        bodies = [o for o in doc.Objects if o.TypeId == "PartDesign::Body"]
+        if len(bodies) == 1:
+            return bodies[0]
+        for b in bodies:
+            try:
+                if b.isTip():
+                    return b
+            except Exception:
+                pass
+        return bodies[0] if bodies else None
+
+    def ensure_body(self, name: str = "Body") -> Optional[Any]:
+        """Return the active Body, creating one (and activating the workbench)
+        if none exists.  This is the required first link of the feature chain."""
+        body = self.get_active_body()
+        if body is not None:
+            return body
+        doc = self.active_document()
+        if doc is None:
+            self.error("ensure_body: no active document")
+            return None
+        try:
+            self._Gui.activateWorkbench("PartDesignWorkbench")
+        except Exception:
+            pass
+        body = doc.addObject("PartDesign::Body", name)
+        doc.recompute()
+        return body
+
+    def make_rect_sketch(self, x0: float, y0: float, x1: float, y1: float,
+                         name: str = "Sketch") -> Optional[Any]:
+        """Create a closed rectangle sketch in the active Body and attach it to
+        the XY plane.  Returns the sketch, or None + error on failure.  This is
+        the required dependency for profile features like Pad/Pocket."""
+        import FreeCAD as App
+        import Part
+        import Sketcher
+
+        doc = self.active_document()
+        body = self.get_active_body()
+        if body is None:
+            self.error("make_rect_sketch: no PartDesign::Body (call ensure_body first)")
+            return None
+        sketch = doc.addObject("Sketcher::SketchObject", name)
+        body.addObject(sketch)
+        try:
+            sketch.Support = (body.Origin.OriginFeatures[0],)
+            sketch.MapMode = "FlatFace"
+        except Exception:
+            pass
+        doc.recompute()
+        edges = [
+            Part.LineSegment(App.Vector(x0, y0, 0), App.Vector(x1, y0, 0)),
+            Part.LineSegment(App.Vector(x1, y0, 0), App.Vector(x1, y1, 0)),
+            Part.LineSegment(App.Vector(x1, y1, 0), App.Vector(x0, y1, 0)),
+            Part.LineSegment(App.Vector(x0, y1, 0), App.Vector(x0, y0, 0)),
+        ]
+        for ln in edges:
+            sketch.addGeometry(ln, False)
+        # Tie the corners together (i.end -> (i+1).start), then close the loop.
+        for a, b in ((0, 1), (1, 2), (2, 3)):
+            sketch.addConstraint(Sketcher.Constraint("Coincident", a, 2, b, 1))
+        sketch.addConstraint(Sketcher.Constraint("Coincident", 3, 2, 0, 1))
+        doc.recompute()
+        return sketch
+
+    def add_partdesign_feature(self, cmd: str, type_id: str,
+                               profile: Optional[Any] = None) -> Optional[Any]:
+        """Run a profile-based PartDesign feature (`cmd`) with its prerequisites
+        satisfied and verify it was actually created.
+
+        Dependencies orchestrated here:
+          * a PartDesign::Body must exist;
+          * ``profile`` (e.g. a Sketch) must belong to that Body and is selected
+            as the feature input;
+          * the resulting object of ``type_id`` must appear -- otherwise the
+            missing/prereq or silent no-op case is recorded as an error.
+
+        Returns the created feature, or None + recorded error.
+        """
+        doc = self.active_document()
+        if doc is None:
+            self.error("add_partdesign_feature: no active document")
+            return None
+        body = self.get_active_body()
+        if body is None:
+            self.error("add_partdesign_feature: no PartDesign::Body (create one first)")
+            return None
+        if profile is not None and profile not in body.Group:
+            self.error("add_partdesign_feature: %s is not a member of the body",
+                       getattr(profile, "Label", profile))
+            return None
+        before = {o.Name for o in doc.Objects}
+        if profile is not None:
+            self._Gui.Selection.clearSelection()
+            self._Gui.Selection.addSelection(doc.Name, profile.Name)
+        if not self.command(cmd, require=True):
+            return None
+        doc.recompute()
+        created = [o for o in doc.Objects
+                   if o.Name not in before and o.TypeId.endswith(type_id)]
+        if not created:
+            self.error("add_partdesign_feature: %r produced no %s "
+                       "(check the dependency chain)", cmd, type_id)
+            return None
+        return created[0]
+
+    def has_object(self, name: str) -> bool:
+        doc = self.active_document()
+        return doc is not None and doc.getObject(name) is not None
+
+    def menu(self, text: str) -> bool:
+        """Trigger a real menu item whose label contains `text` (case-insensitive)."""
+        self._record("menu", text)
+        QW = self._QtWidgets
+        mw = self._Gui.getMainWindow()
+        needle = text.replace("&", "").lower()
+        for menu in mw.findChildren(QW.QMenu):
+            for act in menu.actions():
+                lbl = (act.text() or "").replace("&", "").lower()
+                if lbl and needle in lbl:
+                    act.trigger()
+                    return True
+        return False
+
+    def send_msg_to_view(self, msg: str) -> None:
+        self._Gui.SendMsgToActiveView(msg)
+
+    def fit(self, obj=None) -> None:
+        """Activate the Part workbench (if needed), fit the view.  Runs deferred."""
+        self.schedule(self._fit_now, 0)
+
+    def _fit_now(self) -> None:
+        try:
+            self._Gui.activateWorkbench("PartWorkbench")
+        except Exception:
+            pass
+        view = self.active_view()
+        if view is not None:
+            view.viewTop()
+            view.fitAll()
+
+    # -- diagnostics / verdict --------------------------------------------
+    def _record(self, kind: str, *args: Any) -> None:
+        if self.record_enabled:
+            self.recorded.append((kind,) + args)
+
+    def play(self, steps: Iterable[tuple[Any, ...]]) -> None:
+        """Replay a recorded (or hand-built) step sequence."""
+        for step in steps:
+            kind, *rest = step
+            if kind == "move":
+                self.move(*rest)
+            elif kind == "click":
+                self.click(*rest)
+            elif kind == "command":
+                self.command(*rest)
+            elif kind == "menu":
+                self.menu(*rest)
+
+    def emit(self, kind: str, **fields: Any) -> None:
+        line = " ".join(
+            [kind] + [f"{k}={v}" for k, v in fields.items()]
+        )
+        print(f"[HARNESS] {line}", flush=True)
+
+    def snapshot(self) -> dict[str, Any]:
+        view = self.active_view()
+        state: dict[str, Any] = {
+            "viewport": {
+                "w": self.width,
+                "h": self.height,
+                "dpr": self.dpr,
+            },
+        }
+        if view is not None:
+            try:
+                cam = view.getCameraType()
+                state["camera_type"] = cam
+            except Exception:
+                pass
+        try:
+            sel = self._Gui.Selection.getSelectionEx()
+            state["selection"] = [o.getName() for o in sel]
+        except Exception:
+            state["selection"] = []
+        self.emit("snapshot", state=json.dumps(state, separators=(",", ":")))
+        return state
+
+    def verdict(self, ok: bool, detail: str = "") -> None:
+        result = "PASS" if ok else "FAIL"
+        if not ok:
+            self.errors.append(detail)
+        print(f"[VERDICT] {self.name} {result}", flush=True)
+
+    def error(self, fmt: str, *args: Any) -> None:
+        msg = fmt % args if args else fmt
+        self.errors.append(msg)
+        self.emit("error", msg=msg)
+
+    def close(self) -> None:
+        self.schedule(self._close_now, 0)
+
+    def _close_now(self) -> None:
+        self._Gui.getMainWindow().close()
+
+    def schedule(self, fn: Callable[[], None], ms: int) -> None:
+        self._QtCore.QTimer.singleShot(ms, fn)
+
+    def run(self, main_fn: Callable[[], None], start_ms: int = 500,
+            step_ms: int = 200, close_delay: int = 400) -> None:
+        """Run `main_fn` deferred (avoids the startup crash on view ops) and
+        close the window shortly afterwards."""
+
+        def _go() -> None:
+            try:
+                main_fn()
+            except Exception as exc:  # pragma: no cover - guest-only path
+                self.error("probe raised %r", exc)
+            self.schedule(self._close_now, close_delay)
+
+        self.schedule(_go, start_ms)
+
+    @classmethod
+    def deferred(cls, name: str, run_fn: Callable[["Session"], None],
+                 start_ms: int = 500, close_delay: int = 400) -> None:
+        """Boot the session after the GUI is up, call ``run_fn(session)``, and
+        close.  This is the ergonomic top-level entry point for a probe script:
+        the session (and its GUI assumptions) are created inside a timer step,
+        which avoids the startup race on view/camera operations."""
+
+        def _boot() -> None:
+            from PySide import QtCore
+            try:
+                session = cls(name)
+            except Exception as exc:  # pragma: no cover - guest-only path
+                print(f"[HARNESS] boot failed: {exc!r}", flush=True)
+                return
+            try:
+                run_fn(session)
+            except Exception as exc:  # pragma: no cover - guest-only path
+                session.error("probe raised %r", exc)
+                session.verdict(False)
+            finally:
+                session.schedule(session._close_now, close_delay)
+
+        from PySide import QtCore
+        QtCore.QTimer.singleShot(start_ms, _boot)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
