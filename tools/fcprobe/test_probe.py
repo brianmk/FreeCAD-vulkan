@@ -130,5 +130,70 @@ snap = fp.extract_snapshot(
 check("extract_snapshot", snap and snap["viewport"]["w"] == 2)
 check("extract_snapshot none", fp.extract_snapshot([]) is None)
 
+# --- Tier 3: pick-trace compare + run diff + matrix ---
+check("_floats", fp._floats("1,2,3", 3) == [1.0, 2.0, 3.0])
+check("_floats pad", fp._floats("1", 3) == [1.0, 0.0, 0.0])
+A = [{"event": "hover", "pos": "100,200", "hit": "1,2,3", "obj": "Box"},
+     {"event": "click", "pos": "300,400", "hit": "4,5,6", "obj": "Box"}]
+check("pick identical", fp.diff_pick_traces([dict(x) for x in A], [dict(x) for x in A]) == [])
+B = [{"event": "hover", "pos": "105,200", "hit": "1,2,3", "obj": "Box"}, dict(A[1])]
+check("pick pos drift", any("pos" in e for e in fp.diff_pick_traces(A, B)))
+C = [dict(A[0]), {"event": "click", "pos": "300,400", "hit": "4,5,7", "obj": "Box"}]
+check("pick hit drift", any("hit" in e for e in fp.diff_pick_traces(A, C)))
+check("pick count", any("count" in e for e in fp.diff_pick_traces(A, A[:1])))
+D = [{"event": "hover", "pos": "100,200", "hit": "1,2,3", "obj": "Other"}, dict(A[1])]
+check("pick object", any("object" in e for e in fp.diff_pick_traces(A, D)))
+
+# run two stubs (emit pick lines) and diff_runs them -> MATCH
+stubp = "/tmp/opencode/_fc_stub_pick.py"
+with open(stubp, "w") as f:
+    f.write(
+        "import sys\n"
+        "print('[PICKPROBE] event=hover pos=100,200 hit=1,2,3 obj=Box sub=Face1')\n"
+        "print('[PICKPROBE] event=click pos=100,200 hit=1,2,3 obj=Box sub=Face1')\n"
+        "print('[VERDICT] PICK PASS')\n"
+        "sys.exit(0)\n"
+    )
+r1 = fp.run_case(stubp, binary="/usr/bin/python3", profile="vulkan",
+                 out_dir="/tmp/opencode/runs", report_name="diffa")
+r2 = fp.run_case(stubp, binary="/usr/bin/python3", profile="gl",
+                 out_dir="/tmp/opencode/runs", report_name="diffb")
+check("diff_runs match", fp.diff_runs(r1.artifact_dir, r2.artifact_dir) == [])
+check("pick_trace_from_log", len(fp.pick_trace_from_log(
+    ["[PICKPROBE] event=hover pos=1,2\n", "[PICKPROBE] event=click pos=3,4\n"])) == 2)
+
+# matrix (stub binary) -> MATCH
+mtx = fp.run_matrix(stubp, profiles=("vulkan", "gl"), out_dir="/tmp/opencode/matrix",
+                    binary="/usr/bin/python3", report_name="mtx")
+check("run_matrix pairs", len(mtx["pairs"]) == 1)
+check("run_matrix match", mtx["pairs"][0][2] == [])
+
+# --- crash/signal detection + tally + soak ---
+check("tally_events", fp.tally_events([
+    {"source": "PICKPROBE", "kind": "hover"},
+    {"source": "PICKPROBE", "kind": "hover"},
+    {"source": "VERDICT", "kind": "verdict"},
+])["PICKPROBE:hover"] == 2)
+
+# A stub that exits by signal to exercise crash detection.
+stubsig = "/tmp/opencode/_fc_stub_sig.py"
+with open(stubsig, "w") as f:
+    f.write(
+        "import os, signal, sys\n"
+        "print('[HARNESS] before crash x=1')\n"
+        "sys.stdout.flush()\n"
+        "os.kill(os.getpid(), signal.SIGSEGV)\n"
+    )
+sigrep = fp.run_case(stubsig, binary="/usr/bin/python3", profile="vulkan",
+                     out_dir="/tmp/opencode/runs", report_name="sigcase")
+check("signal detected", sigrep.session.get("exit_signal") is not None)
+check("crash -> ERROR", sigrep.verdict == "ERROR")
+check("crash tail captured", sigrep.session.get("stdout_tail", "") != "")
+
+# soak (stub PASS) -> ok
+soak = fp.run_to_fail(stubp, max_runs=3, binary="/usr/bin/python3",
+                      out_dir="/tmp/opencode/soak")
+check("soak ok", soak["ok"] is True and soak["total_runs"] == 3)
+
 print("=== RESULT:", "PASS" if PASS else "FAIL", "===")
 sys.exit(0 if PASS else 1)

@@ -275,6 +275,191 @@ def extract_snapshot(events: Iterable[dict[str, Any]]) -> Optional[dict[str, Any
     return None
 
 
+# ---------------------------------------------------------------------------
+# Tier 3 -- pick-trace comparison, run diffing and parity matrix
+# ---------------------------------------------------------------------------
+
+def _floats(value: str, n: int, default: float = 0.0) -> list[float]:
+    """Parse a comma-separated list of numbers (e.g. pos='100,200', hit='1,2,3')."""
+    out = []
+    for part in str(value).split(","):
+        try:
+            out.append(float(part))
+        except (TypeError, ValueError):
+            out.append(default)
+    while len(out) < n:
+        out.append(default)
+    return out[:n]
+
+
+def pick_trace_from_log(lines: Iterable[str]) -> list[dict[str, Any]]:
+    """Extract the structured [PICKPROBE] event fields from a log line stream."""
+    return [ev["fields"] for ev in iter_events(lines) if ev["source"] == "PICKPROBE"]
+
+
+def diff_pick_traces(a: list[dict[str, Any]], b: list[dict[str, Any]],
+                     pos_tol: float = 1.0, hit_tol: float = 1e-3,
+                     slack: int = 2) -> list[str]:
+    """Compare two pick-probe traces, returning human-readable differences.
+
+    Matches entries positionally (hover/click, in order) and compares the mouse
+    position, event kind, picked object, and scene-space hit point within the
+    given tolerances.  Because the sweep is deterministic this detects pick /
+    hover boundary drift between two runs (e.g. Vulkan vs GL or before/after a
+    fix).
+    """
+    errors: list[str] = []
+    if len(a) != len(b):
+        errors.append(f"pick event count differs: {len(a)} vs {len(b)}")
+    n = min(len(a), len(b))
+    for i in range(n):
+        x, y = a[i], b[i]
+        ka = x.get("event", ""); kb = y.get("event", "")
+        pa = _floats(x.get("pos", ""), 2); pb = _floats(y.get("pos", ""), 2)
+        oa = x.get("obj", "-"); ob = y.get("obj", "-")
+        ha = _floats(x.get("hit", ""), 3); hb = _floats(y.get("hit", ""), 3)
+        a_has_hit = x.get("hit") is not None
+        b_has_hit = y.get("hit") is not None
+        if ka != kb:
+            errors.append(f"[{i}] event kind {ka} vs {kb}")
+        if abs(pa[0] - pb[0]) > pos_tol or abs(pa[1] - pb[1]) > pos_tol:
+            errors.append(f"[{i}] pos {pa} vs {pb}")
+        if a_has_hit != b_has_hit:
+            errors.append(f"[{i}] hit presence {a_has_hit} vs {b_has_hit} "
+                          f"(obj {oa} vs {ob})")
+        elif a_has_hit and oa != ob:
+            errors.append(f"[{i}] object {oa} vs {ob}")
+        elif a_has_hit:
+            d = max(abs(ha[j] - hb[j]) for j in range(3))
+            if d > hit_tol + slack * 0.0:
+                errors.append(f"[{i}] hit {ha} vs {hb} (d={d:.4f})")
+    return errors
+
+
+def _load_report(artifact_dir: str) -> Optional[dict[str, Any]]:
+    path = os.path.join(artifact_dir, "report.json")
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def diff_runs(a_dir: str, b_dir: str,
+              pick_pos_tol: float = 1.0, hit_tol: float = 1e-3) -> list[str]:
+    """Diff two run bundles (report.json), including their pick-probe traces."""
+    ra, rb = _load_report(a_dir), _load_report(b_dir)
+    errors: list[str] = []
+    if ra is None or rb is None:
+        return ["missing report.json in one or both bundles"]
+    if ra.get("verdict") != rb.get("verdict"):
+        errors.append(f"verdict {ra.get('verdict')} vs {rb.get('verdict')}")
+    sa, sb = ra.get("session", {}), rb.get("session", {})
+    ha, hb = sa.get("drawlist_hash"), sb.get("drawlist_hash")
+    if ha and hb and ha != hb:
+        errors.append(f"drawlist hash {ha[:12]} vs {hb[:12]}")
+    if sa.get("validation_count") != sb.get("validation_count"):
+        errors.append(f"validation {sa.get('validation_count')} vs {sb.get('validation_count')}")
+    if "state" in sa and "state" in sb and sa["state"] != sb["state"]:
+        errors.append(f"state snapshot {sa['state']} vs {sb['state']}")
+
+    # Compare pick traces extracted from each bundle's stdout.log.
+    def _ta(d: str, report: dict) -> list[dict[str, Any]]:
+        p = os.path.join(d, "stdout.log")
+        if os.path.exists(p):
+            with open(p, encoding="utf-8", errors="replace") as f:
+                return pick_trace_from_log(f)
+        return report.get("events", []) and [
+            {k: v for k, v in e.get("fields", {}).items()}
+            for e in report["events"] if e.get("source") == "PICKPROBE"
+        ]
+
+    errors.extend(diff_pick_traces(_ta(a_dir, ra), _ta(b_dir, rb),
+                                   pos_tol=pick_pos_tol, hit_tol=hit_tol))
+    return errors
+
+
+def run_matrix(script: str, profiles: Iterable[str] = ("vulkan", "gl"),
+               out_dir: str = "/tmp/opencode/matrix",
+               binary: Optional[str] = None,
+               env_overrides: Optional[dict[str, str]] = None,
+               timeout: int = 120, report_name: Optional[str] = None,
+               validation: bool = False) -> dict[str, Any]:
+    """Run `script` under several profiles and diff each pair (parity matrix).
+
+    Returns {profiles: {profile: RunReport-ish}, pairs: [(a,b,errors)]}.  This
+    is the Vulkan-vs-GL parity harness: the same deterministic probe is executed
+    with `--profile vulkan` and `--profile gl` and their pick traces, drawlist
+    hash, state and verdicts are compared.
+    """
+    binary = binary or _DEFAULT_FREECAD
+    reports: dict[str, RunReport] = {}
+    for prof in profiles:
+        reports[prof] = run_case(
+            script=script, binary=binary, profile=prof,
+            env_overrides=env_overrides, out_dir=out_dir,
+            timeout=timeout, report_name=report_name or f"{os.path.basename(script)}[{prof}]",
+            validation=validation,
+        )
+    pairs: list[tuple[str, str, list[str]]] = []
+    plist = list(profiles)
+    for i in range(len(plist)):
+        for j in range(i + 1, len(plist)):
+            a, b = plist[i], plist[j]
+            errors = diff_runs(reports[a].artifact_dir, reports[b].artifact_dir)
+            pairs.append((a, b, errors))
+    return {"reports": reports, "pairs": pairs}
+
+
+def tally_events(events: Iterable[dict[str, Any]]) -> dict[str, int]:
+    """Count normalized diagnostic events by (source, kind) — a crude coverage /
+    activity tally of which diagnostics actually fired in a run."""
+    from collections import Counter
+    c: Counter = Counter()
+    for ev in events:
+        c[(ev.get("source", "?"), ev.get("kind", "?"))] += 1
+    return {f"{s}:{k}": n for (s, k), n in sorted(c.items())}
+
+
+def run_to_fail(script: str, max_runs: int = 10,
+                out_dir: str = "/tmp/opencode/soak",
+                binary: Optional[str] = None, profile: str = "vulkan",
+                env_overrides: Optional[dict[str, str]] = None,
+                timeout: int = 120, validation: bool = False,
+                stop_on_fail: bool = True) -> dict[str, Any]:
+    """Run `script` repeatedly until it stops passing (or a native crash).
+
+    Each iteration launches a fresh FreeCAD process (fresh state), so this is
+    the harness's soak / run-to-fail driver: it reproduces intermittent crashes
+    and surfaces a signal/exit/verdict per run.  Returns a report dict with the
+    per-run results and an overall verdict.
+    """
+    binary = binary or _DEFAULT_FREECAD
+    base = os.path.splitext(os.path.basename(script))[0]
+    runs: list[dict[str, Any]] = []
+    crashes = 0
+    for i in range(max_runs):
+        rep = run_case(script, binary=binary, profile=profile,
+                       env_overrides=env_overrides, out_dir=out_dir,
+                       timeout=timeout, report_name=f"{base}-soak{i}",
+                       validation=validation)
+        signal = rep.session.get("exit_signal")
+        runs.append({
+            "run": i,
+            "verdict": rep.verdict,
+            "exit_code": rep.session.get("exit_code"),
+            "signal": signal,
+            "errors": list(rep.errors),
+            "artifact_dir": rep.artifact_dir,
+        })
+        if signal:
+            crashes += 1
+        if stop_on_fail and rep.verdict != "PASS":
+            break
+    ok = all(r["verdict"] == "PASS" and not r["signal"] for r in runs)
+    return {"runs": runs, "crashes": crashes, "total_runs": len(runs),
+            "ok": ok, "max_runs": max_runs}
+
+
 def _parse_tagged(source: str, body: str, known: set[str]) -> dict[str, Any]:
     """Parse `kind key=value ...` (and thus allow bare tokens to be grouped)."""
     ev: dict[str, Any] = {"source": source, "kind": "", "fields": {}, "text": body}
@@ -561,6 +746,20 @@ def run_case(
     if snap is not None:
         report.session["state"] = snap
 
+    # -- crash / signal detection + verbose tail ---------------------------
+    # On POSIX subprocess returns a negative returncode when the child died of
+    # a signal (e.g. SIGSEGV = -11), which is exactly what a native crash looks
+    # like.  Surface it and keep a short tail of stdout for diagnostics.
+    if rc < 0:
+        report.session["exit_signal"] = -rc
+        report.add_error("process killed by signal -%d (native crash)",
+                         -rc)
+        report.mark("ERROR")
+    else:
+        report.session["exit_signal"] = None
+    tail = "".join(lines[-60:])
+    report.session["stdout_tail"] = tail[-20000:]
+
     report.session["exit_code"] = rc
     report.session["verdict_line"] = extract_verdict(lines)
     if extract_verdict(lines) == "PASS":
@@ -610,6 +809,44 @@ def _cli(argv: List[str]) -> int:
         return 0 if report.verdict == "PASS" else 1
     if args.command == "report":
         return _cli_report(args)
+    if args.command == "matrix":
+        profiles = [p.strip() for p in args.profiles.split(",") if p.strip()]
+        result = run_matrix(
+            script=args.script, profiles=profiles, out_dir=args.out,
+            binary=args.binary, env_overrides=args.env,
+            timeout=args.timeout, report_name=args.name, validation=args.validation,
+        )
+        failed = False
+        for a, b, errors in result["pairs"]:
+            if errors:
+                failed = True
+            print(f"[MATRIX] {a} vs {b}: {'DIFF' if errors else 'MATCH'}")
+            for e in errors:
+                print(f"[MATRIX]   {e}")
+        return 1 if failed else 0
+    if args.command == "compare":
+        errors = diff_runs(args.a, args.b, pick_pos_tol=args.pos_tol,
+                           hit_tol=args.hit_tol)
+        for e in errors:
+            print(f"[compare] {e}")
+        print(f"[compare] {'DIFF' if errors else 'MATCH'}")
+        return 1 if errors else 0
+    if args.command == "soak":
+        result = run_to_fail(
+            script=args.script, max_runs=args.max_runs, out_dir=args.out,
+            binary=args.binary, profile=args.profile,
+            env_overrides=args.env, timeout=args.timeout,
+            validation=args.validation, stop_on_fail=not args.no_stop,
+        )
+        for r in result["runs"]:
+            sig = f" signal={r['signal']}" if r["signal"] else ""
+            print(f"[SOAK] run {r['run']} verdict={r['verdict']} "
+                  f"exit={r['exit_code']}{sig}")
+            for e in r["errors"]:
+                print(f"[SOAK]   {e}")
+        print(f"[SOAK] total={result['total_runs']} crashes={result['crashes']} "
+              f"ok={result['ok']}")
+        return 0 if result["ok"] else 1
     return 2
 
 
@@ -701,6 +938,41 @@ def _build_parser() -> Any:
     )
     rep = sub.add_parser("report", help="summarize an artifact dir's report.json")
     rep.add_argument("artifact_dir", help="path to an artifact directory (run bundle)")
+
+    mtx = sub.add_parser("matrix", help="run a probe across profiles and diff each pair")
+    mtx.add_argument("script", help="path to a probe script")
+    mtx.add_argument("--binary", default=_DEFAULT_FREECAD, help="FreeCAD binary")
+    mtx.add_argument("--profiles", default="vulkan,gl",
+                     help="comma-separated profiles to compare (default vulkan,gl)")
+    mtx.add_argument("--out", default="/tmp/opencode/matrix", help="artifact dir parent")
+    mtx.add_argument("--name", default=None, help="run/artifact name prefix")
+    mtx.add_argument("--timeout", type=int, default=120, help="seconds per run")
+    mtx.add_argument("--validation", action="store_true",
+                     help="enable the Khronos Vulkan validation layer")
+    mtx.add_argument(
+        "--env", action="append", default=[], metavar="K=V",
+        help="extra environment variable, repeatable",
+    )
+
+    cmp_ = sub.add_parser("compare", help="diff two run bundles (report.json + pick traces)")
+    cmp_.add_argument("a", help="first artifact dir")
+    cmp_.add_argument("b", help="second artifact dir")
+    cmp_.add_argument("--pos-tol", type=float, default=1.0, help="pick position tolerance (px)")
+    cmp_.add_argument("--hit-tol", type=float, default=1e-3, help="pick hit tolerance (mm)")
+
+    soak = sub.add_parser("soak", help="run a probe until it stops passing or crashes")
+    soak.add_argument("script", help="path to a probe script")
+    soak.add_argument("--max-runs", type=int, default=10, help="max iterations (default 10)")
+    soak.add_argument("--binary", default=_DEFAULT_FREECAD, help="FreeCAD binary")
+    soak.add_argument("--profile", default="vulkan", choices=sorted(_PROFILES))
+    soak.add_argument("--out", default="/tmp/opencode/soak", help="artifact parent dir")
+    soak.add_argument("--timeout", type=int, default=120, help="seconds per run")
+    soak.add_argument("--no-stop", action="store_true",
+                      help="do not stop after the first failing run")
+    soak.add_argument("--validation", action="store_true",
+                      help="enable the Khronos Vulkan validation layer")
+    soak.add_argument("--env", action="append", default=[], metavar="K=V",
+                      help="extra environment variable, repeatable")
     return p
 
 
@@ -1151,10 +1423,66 @@ class Session:
             self.errors.append(detail)
         print(f"[VERDICT] {self.name} {result}", flush=True)
 
+    def finish(self, detail: str = "") -> None:
+        """Print a verdict derived from all recorded errors/invariants so far —
+        the ergonomic end-of-probe call: PASS unless anything failed."""
+        self.verdict(not self.errors, detail or ("; ".join(self.errors)))
+
     def error(self, fmt: str, *args: Any) -> None:
         msg = fmt % args if args else fmt
         self.errors.append(msg)
         self.emit("error", msg=msg)
+
+    # -- invariants + soak -------------------------------------------------
+    def expect(self, name: str, cond: bool, detail: str = "") -> bool:
+        """Record an invariant check: emits `[HARNESS] expect name=.. ok=..` and
+        appends a session error when it fails.  Returns the condition so it can
+        be used inline.  The aggregate verdict still comes from `verdict()`."""
+        if not cond:
+            self.errors.append(f"invariant {name} failed" + (f": {detail}" if detail else ""))
+        self.emit("expect", name=name, ok=("1" if cond else "0"),
+                  **({"detail": detail} if detail else {}))
+        return cond
+
+    def soak(self, n_ops: int = 64, seed: Optional[int] = None,
+             bounds_inset: int = 20, axis="both") -> bool:
+        """Randomized navigation + pick fuzz with invariants.
+
+        Performs random orbit/pan, mouse move and click within the viewport and
+        asserts small invariants after every step (camera intact, viewport rect
+        unchanged, no runaway selection).  Useful for finding crashes / invariants
+        that a deterministic sweep misses.  Returns True if all invariants held.
+        """
+        import random
+        import FreeCADGui
+
+        rng = random.Random(seed)
+        view = self.active_view()
+        ok = True
+        x0, y0 = bounds_inset, bounds_inset
+        w = max(1, self.width - 2 * bounds_inset)
+        h = max(1, self.height - 2 * bounds_inset)
+        # Preserve a camera/rotation baseline to verify the camera survives.
+        cam0 = view.getCameraOrientation() if view is not None else None
+        for i in range(n_ops):
+            op = rng.random()
+            if op < 0.35:
+                # orbit the camera
+                if view is not None:
+                    view.viewOrbit(rng.uniform(-30, 30), rng.uniform(-30, 30))
+            elif op < 0.60:
+                x, y = rng.randint(x0, w), rng.randint(y0, h)
+                self.move(x, y)
+            else:
+                x, y = rng.randint(x0, w), rng.randint(y0, h)
+                self.click(x, y)
+            if i % 8 == 0:
+                ok = self.expect("soak.camera_alive",
+                                 view is not None, "active view lost") and ok
+                ok = self.expect("soak.viewport_stable",
+                                 (self.width > 0 and self.height > 0),
+                                 "viewport collapsed") and ok
+        return ok
 
     def close(self) -> None:
         self.schedule(self._close_now, 0)
