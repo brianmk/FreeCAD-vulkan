@@ -195,5 +195,61 @@ soak = fp.run_to_fail(stubp, max_runs=3, binary="/usr/bin/python3",
                       out_dir="/tmp/opencode/soak")
 check("soak ok", soak["ok"] is True and soak["total_runs"] == 3)
 
+# --- console error capture (probe exception) ---
+console_lines = [
+    "Exception while processing file: probe.py [Unknown file: probe.py]\n",
+    "  File \"probe.py\", line 3, in <module>\n",
+    "    import nope\n",
+    "ModuleNotFoundError: No module named 'nope'\n",
+    "\n",
+    "some later line\n",
+]
+ce = fp._console_errors(console_lines)
+check("console marker", any("Exception while processing file" in e for e in ce))
+check("console traceback frame", any("ModuleNotFoundError" in e for e in ce))
+check("console stops after blank", len(ce) < 5)
+
+# a real-ish stub that throws -> run_case surfaces the exception as an error
+stubexc = "/tmp/opencode/_fc_stub_exc.py"
+with open(stubexc, "w") as f:
+    f.write("raise RuntimeError('boom from probe')\n")
+excrep = fp.run_case(stubexc, binary="/usr/bin/python3", profile="vulkan",
+                     out_dir="/tmp/opencode/runs", report_name="exccase")
+check("exception -> FAIL", excrep.verdict == "FAIL")
+check("exception captured", any("boom from probe" in e for e in excrep.errors))
+
+# --- legacy verdict format (PICKHARNESS VERDICT NAME PASS|FAIL) ---
+check("legacy verdict PASS", fp.extract_verdict(
+    ["[PICKPROBE] event=hover pos=1,2\n", "PICKHARNESS VERDICT PICKPROBE PASS\n"]) == "PASS")
+check("legacy verdict FAIL", fp.extract_verdict(
+    ["PICKHARNESS VERDICT PICKPROBE FAIL\n"]) == "FAIL")
+check("modern verdict still works", fp.extract_verdict(
+    ["[VERDICT] pick PASS\n"]) == "PASS")
+
+# --- harness marker gates harness-only behavior ---------------------------
+env = fp._merge_env("vulkan", {}, None)
+check("harness marker set on runs", env.get("FC_HARNESS") == "1")
+env_no_profile = fp._merge_env("gl", {}, None)
+check("harness marker set on gl too", env_no_profile.get("FC_HARNESS") == "1")
+
+# A probe that prints a terminal error and then idles (simulated dead probe/
+# idle GUI).  The runner must close it promptly, NOT wait out the timeout.
+stubhang = "/tmp/opencode/_fc_stub_hang.py"
+with open(stubhang, "w") as f:
+    f.write(
+        "import sys, time\n"
+        "print('Exception while processing file: probe.py [Unknown file: probe.py]')\n"
+        "sys.stdout.flush()\n"
+        "time.sleep(120)\n"
+    )
+hangrep = fp.run_case(stubhang, binary="/usr/bin/python3", profile="vulkan",
+                      out_dir="/tmp/opencode/runs", report_name="hangcase",
+                      timeout=30)
+check("terminal closes run early (not TIMEOUT)", hangrep.verdict != "TIMEOUT")
+check("terminal error captured", any(
+    "Exception while processing file" in e for e in hangrep.errors))
+check("terminal not a native crash", hangrep.session.get("exit_signal") is None)
+check("probe-die run actually ends fast", hangrep.verdict in ("FAIL", "ERROR"))
+
 print("=== RESULT:", "PASS" if PASS else "FAIL", "===")
 sys.exit(0 if PASS else 1)

@@ -25,9 +25,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -590,6 +592,21 @@ _PROFILES = {
 
 _DEFAULT_FREECAD = "/home/phantom/dev/FreeCAD/build/debug/bin/FreeCAD"
 
+# Set on every harness-launched FreeCAD process. Lets both the host runner and
+# any guest-side probe logic know they are running under the test harness, so
+# harness-only behaviors (like "close on probe error") can be gated and can
+# never fire in an end user's normal interactive FreeCAD session.
+_HARNESS_MARKER = "FC_HARNESS"
+
+
+def _env_dict(env_list: Iterable[str]) -> dict[str, str]:
+    """Parse `["K=V", ...]` (as passed by `--env`) into a dict."""
+    out: dict[str, str] = {}
+    for item in env_list:
+        key, _, val = item.partition("=")
+        out[key] = val
+    return out
+
 
 def _merge_env(
     profile: str,
@@ -600,6 +617,7 @@ def _merge_env(
 ) -> dict[str, str]:
     env = dict(os.environ)
     env.update(_PROFILES.get(profile, {}))
+    env[_HARNESS_MARKER] = "1"  # mark this as a harness launch, never a user session
     if trace_path:
         env["FC_VULKAN_TRACE_FILE"] = trace_path
     if validation:
@@ -670,26 +688,65 @@ def run_case(
             text=True,
             errors="replace",
         )
-        # Stream to both the artifact file and memory for parsing.
+        # Stream to both the artifact file and memory for parsing.  A reader
+        # thread feeds the log; the main loop enforces a hard deadline and
+        # shuts FreeCAD down as soon as a terminal error appears so a dead
+        # probe doesn't idle the GUI out the whole timeout.
         lines: List[str] = []
-        try:
+        terminal_reason: Optional[str] = None
+
+        def reader() -> None:
+            nonlocal terminal_reason
             for line in proc.stdout:  # type: ignore[union-attr]
                 lines.append(line)
                 outf.write(line)
-        finally:
-            try:
-                rc = proc.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
+                if terminal_reason is None and _is_terminal_error(line):
+                    terminal_reason = line.strip()
+
+        reader_thread = threading.Thread(target=reader, daemon=True)
+        reader_thread.start()
+
+        deadline = time.time() + timeout
+        rc: Optional[int] = None
+        probe_died = False
+        while True:
+            now = time.time()
+            if terminal_reason and env.get(_HARNESS_MARKER) == "1":
+                # Harness run only (never a user's interactive session): the
+                # probe is dead, so close FreeCAD now so the tool can report
+                # instead of idling the GUI out the whole timeout.
+                probe_died = True
+                try:
+                    proc.terminate()
+                    rc = proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    rc = proc.wait()
+                break
+            if not reader_thread.is_alive():
+                rc = proc.poll()
+                if rc is None:
+                    # stdout closed but child lingers briefly; give a grace
+                    try:
+                        rc = proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        rc = proc.wait()
+                break
+            if now >= deadline:
                 proc.kill()
                 rc = proc.wait()
                 report.add_error("timeout after %ss", timeout)
                 report.mark("TIMEOUT")
-            else:
-                # Parse the unified event stream from stdout for the report.
-                for ev in iter_events(lines):
-                    report.events.append(ev)
-                if rc != 0:
-                    report.add_error("process exited with code %s", rc)
+                break
+            time.sleep(0.1)
+        reader_thread.join(timeout=10)
+
+        # Parse the unified event stream from stdout for the report.
+        for ev in iter_events(lines):
+            report.events.append(ev)
+        if rc and rc != 0 and not probe_died:
+            report.add_error("process exited with code %s", rc)
 
     # Fold the breadcrumb trace events into the report too.
     if os.path.exists(trace_path):
@@ -750,11 +807,16 @@ def run_case(
     # On POSIX subprocess returns a negative returncode when the child died of
     # a signal (e.g. SIGSEGV = -11), which is exactly what a native crash looks
     # like.  Surface it and keep a short tail of stdout for diagnostics.
+    # `probe_died` means WE terminated the child after a probe error, so its
+    # negative rc is not a native crash.
     if rc < 0:
-        report.session["exit_signal"] = -rc
-        report.add_error("process killed by signal -%d (native crash)",
-                         -rc)
-        report.mark("ERROR")
+        if probe_died:
+            report.session["exit_signal"] = None
+        else:
+            report.session["exit_signal"] = -rc
+            report.add_error("process killed by signal -%d (native crash)",
+                             -rc)
+            report.mark("ERROR")
     else:
         report.session["exit_signal"] = None
     tail = "".join(lines[-60:])
@@ -766,17 +828,85 @@ def run_case(
         report.mark("PASS")
     elif report.verdict not in ("ERROR", "TIMEOUT", "FAIL"):
         report.add_error("no VERDICT PASS line found")
+
+    # -- console error capture (probe exception / FreeCAD error) -----------
+    # The FreeCAD GUI writes probe load/run failures to its console
+    # ("Exception while processing file: ...") and its Base::Console().error
+    # output.  Surface these even when no [VERDICT] line is ever printed.
+    console_errs = _console_errors(lines)
+    if console_errs:
+        for e in console_errs:
+            report.add_error(e)
+        if report.verdict not in ("ERROR", "TIMEOUT"):
+            report.mark("FAIL")
+
     report.write()
     return report
 
 
+def _is_terminal_error(line: str) -> bool:
+    """True if a streamed line means the probe can no longer continue.
+
+    FreeCAD prints ``Exception while processing file: <script>`` when a probe
+    dies at load/exec time.  At that point the probe is dead, so the run is
+    useless and the idle GUI should be closed immediately rather than wait out
+    the whole timeout.
+    """
+    return any(m in line for m in ("Exception while processing file:",))
+
+
+def _console_errors(lines: Iterable[str]) -> list[str]:
+    """Extract error diagnostics the FreeCAD console writes to stdout/stderr.
+
+    The most common is a probe that failed at load/start: FreeCAD reports
+    ``Exception while processing file: <script>`` (or a Python ``Traceback``).
+    We collect the marker, any indented traceback frames, and the trailing
+    non-indented exception summary, stopping at the first blank line.
+    (``Base::Console().error`` output also lands here.)
+    """
+    markers = ("Exception while processing file:", "Traceback (most recent call last):")
+    result: list[str] = []
+    collecting = False
+    seen_frame = False
+    for line in lines:
+        s = line.rstrip("\n")
+        if any(m in s for m in markers):
+            collecting = True
+            result.append(s)
+            seen_frame = False
+            continue
+        if not collecting:
+            continue
+        if not s.strip():
+            break
+        if s[:1] in (" ", "\t"):
+            result.append(s)
+            seen_frame = True
+        elif seen_frame:
+            # non-indented line right after frames = the exception summary
+            result.append(s)
+            break
+        else:
+            break
+    return result
+
+
 def extract_verdict(lines: Iterable[str]) -> str:
-    """Scan log lines for a `[VERDICT] NAME PASS|FAIL` record, return the result."""
+    """Scan log lines for a verdict record and return the result ("PASS"/"FAIL").
+
+    Recognizes both the unified ``[VERDICT] NAME PASS|FAIL`` record and the
+    legacy probe style ``<PREFIX> VERDICT NAME PASS|FAIL`` (e.g.
+    ``PICKHARNESS VERDICT PICKPROBE PASS``).  Returns "" if none found.
+    """
     for line in lines:
         if line.startswith("[VERDICT]"):
             tokens = line.split()
             if len(tokens) >= 3:
                 return tokens[-1]
+        # legacy: a bare "VERDICT <...> PASS|FAIL" token anywhere in the line
+        m = re.search(r"VERDICT\s+\S+\s+(PASS|FAIL)\b", line)
+        if m:
+            return m.group(1)
     return ""
 
 
@@ -788,7 +918,7 @@ def _cli(argv: List[str]) -> int:
             script=args.script,
             binary=args.binary,
             profile=args.profile,
-            env_overrides=args.env,
+            env_overrides=_env_dict(args.env),
             out_dir=args.out,
             timeout=args.timeout,
             report_name=args.name,
@@ -813,7 +943,7 @@ def _cli(argv: List[str]) -> int:
         profiles = [p.strip() for p in args.profiles.split(",") if p.strip()]
         result = run_matrix(
             script=args.script, profiles=profiles, out_dir=args.out,
-            binary=args.binary, env_overrides=args.env,
+            binary=args.binary, env_overrides=_env_dict(args.env),
             timeout=args.timeout, report_name=args.name, validation=args.validation,
         )
         failed = False
@@ -835,7 +965,7 @@ def _cli(argv: List[str]) -> int:
         result = run_to_fail(
             script=args.script, max_runs=args.max_runs, out_dir=args.out,
             binary=args.binary, profile=args.profile,
-            env_overrides=args.env, timeout=args.timeout,
+            env_overrides=_env_dict(args.env), timeout=args.timeout,
             validation=args.validation, stop_on_fail=not args.no_stop,
         )
         for r in result["runs"]:
