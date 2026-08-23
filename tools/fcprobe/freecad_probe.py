@@ -762,6 +762,7 @@ def run_case(
     points at a previous run's ``frames/``, each frame is pixel-compared and any
     frame exceeding the thresholds is recorded as an error (golden regression).
     """
+    script = os.path.abspath(script)
     name = report_name or os.path.splitext(os.path.basename(script))[0]
     artifact_dir = new_artifact_dir(out_dir, name)
     trace_path = os.path.join(artifact_dir, "trace.log")
