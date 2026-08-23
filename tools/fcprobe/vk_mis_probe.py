@@ -82,9 +82,17 @@ def step():
         cube.ViewObject.ShapeAppearance = cube_mat
         doc.recompute()
         view = FreeCADGui.ActiveDocument.ActiveView
-        # viewTop() is instant; fitAll() animates the camera and would
-        # keep the view "changed" for many frames, resetting accumulation.
+        # The document-view creation runs an animated fit-all which would
+        # keep overriding our camera for several seconds.  Kill it and
+        # frame the scene deterministically: straight down from above the
+        # cube, wide enough for the glow on the floor.  viewTop() is
+        # instant (rotation reset to straight down); the node edits then
+        # reach the renderer through the viewport adapter.
+        view.setAnimationEnabled(False)
         view.viewTop()
+        cam = view.getCameraNode()
+        cam.position.setValue(5.0, 0.0, 8.0)
+        cam.height.setValue(14.0)
         s.frame_phase("setup")
         log("phase=setup (path tracing on, analytic lights off)")
     elif k == 12:

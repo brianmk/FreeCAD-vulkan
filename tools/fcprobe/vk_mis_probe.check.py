@@ -11,8 +11,10 @@ frame and map 1:1 to the collected frame dumps (same assumption the BLAS
 check makes with its own per-frame line).
 
 Branches on the run's env:
-  - NEE ON (default): pool holds >= 12 triangles, and the pass-A mean
-    must exceed the pass-B mean by > 15%.
+  - NEE ON (default): pool holds >= 12 triangles, and the pass-A warm-glow
+    pixel count (unsaturated emission-tinted pixels in the central region,
+    excluding the cube's own saturated image and the UI overlays) must
+    exceed pass B's by > 25%.
   - FC_VULKAN_PT_NEE=0: control - both passes are equal (< 10% drift).
 """
 
@@ -33,16 +35,22 @@ def _stats(frame_path):
     img = Image.open(frame_path).convert("RGB")
     w, h = img.size
     px = img.load()
+    # Central 80%: excludes the navicube (top-right) and axis cross
+    # (bottom-left) overlays, which are raster-rendered on top of the
+    # traced image and carry their own red pixels.
+    x0, x1 = w // 10, 9 * w // 10
+    y0, y1 = h // 10, 9 * h // 10
     total = 0.0
     warm = 0
     n = 0
-    for y in range(0, h, 4):
-        for x in range(0, w, 4):
+    for y in range(y0, y1, 4):
+        for x in range(x0, x1, 4):
             r, g, b = px[x, y]
             total += 0.299 * r + 0.587 * g + 0.114 * b
             # Warm = orange-tinted (emission-colored) lit pixels: the
-            # cube's glow.  Excludes the neutral floor/background.
-            if r > 60 and r > g * 1.4 and g > b:
+            # cube's glow.  Excludes the neutral floor/background and the
+            # saturated emissive cube's own image (r < 250).
+            if r > 60 and r < 250 and r > g * 1.4 and g > b:
                 warm += 1
             n += 1
     return total / max(n, 1), warm
