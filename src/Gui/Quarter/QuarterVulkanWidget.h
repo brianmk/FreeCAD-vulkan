@@ -4,9 +4,14 @@
 
 #pragma once
 
+#include <QSize>
 #include <QWidget>
 
 #include <Inventor/SbColor4f.h>
+
+#ifdef FREECAD_USE_VULKAN
+#include <vulkan/vulkan.h>
+#endif
 
 class QVulkanInstance;
 class QVulkanWindow;
@@ -14,7 +19,6 @@ class QImage;
 
 class SoCamera;
 class SoNode;
-class SoVulkanRenderManager;
 
 namespace SIM {
 namespace Coin3D {
@@ -76,7 +80,7 @@ public:
     SoCamera * getCamera() const;
 
     void setBackgroundColor(const SbColor4f & color);
-    const SbColor4f & getBackgroundColor() const;
+    SbColor4f getBackgroundColor() const;
 
     /*!
       \brief Configure a vertical screen-space background gradient.
@@ -109,8 +113,20 @@ public:
       (normally the hidden OpenGL viewer) so navigation and picking keep
       working while the Vulkan surface is on top.
     */
-    void setEventForwardTarget(QWidget * target);
+    //! Forward input events to \a target (typically the hidden GL viewer that
+    //! owns navigation/picking).  \a targetDevicePixelRatio is the device
+    //! pixel ratio the target uses to convert event positions; pass -1 to
+    //! fall back to the target's current devicePixelRatioF().  Providing it
+    //! explicitly avoids sniffing the target's type at event time.
+    void setEventForwardTarget(QWidget * target, qreal targetDevicePixelRatio = -1.0);
 
+    /*!
+      \brief No-op kept for API parity with QuarterWidget.
+
+      QVulkanWindow's default render pass always clears color and depth
+      (LOAD_OP_CLEAR), so frame clears cannot be disabled on the Vulkan
+      path.  Calls log a one-time warning.
+    */
     void setClearEnabled(bool clearwindow, bool clearzbuffer);
 
     /*!
@@ -164,6 +180,25 @@ public:
     bool isRayTracingActive() const;
 
     /*!
+      \brief Whether hardware ray tracing is available on this device.
+
+      Independent of the live raster/RT toggle: TRUE when the RTX backend
+      initialized (the device advertises VK_KHR_acceleration_structure /
+      VK_KHR_ray_tracing_pipeline / VK_KHR_ray_query and the widget enabled
+      them).  When FALSE, path tracing can never run here.
+    */
+    bool isRayTracingAvailable() const;
+
+    /*!
+      \brief Whether availability has been determined (initResources ran).
+
+      False before the renderer first initialized the Vulkan backend; a
+      caller must not warn about missing hardware ray tracing until this
+      returns TRUE.
+    */
+    bool isRayTracingProbed() const;
+
+    /*!
       \brief Enable/disable path tracing on the ray-tracing backend.
 
       Path tracing renders multi-bounce global illumination with shadow
@@ -189,10 +224,44 @@ public:
     //! True while a progressive accumulation is running.
     bool getPathTracingActive() const;
 
+    /*!
+      \brief Maximum path-tracing bounces (1..16).
+
+      Higher bounce counts add more indirect-light transport at the cost of
+      noisier early frames.  Forwarded to the ray-tracing backend.
+    */
+    void setPathTracingBounces(int bounces);
+
+    /*!
+      \brief Frames of a static camera before the accumulation auto-restarts
+      (1..120).
+
+      After a camera or scene change the renderer drops to a single-sample
+      live preview; once the camera stays static for this many frames a fresh
+      accumulation starts automatically.  Forwarded to the ray-tracing
+      backend.
+    */
+    void setPathTracingSettleFrames(int frames);
+
+    /*!
+      \brief Enable/disable the edge-stopping denoise pass.
+
+      When disabled the raw accumulated radiance is shown, making the
+      Monte-Carlo noise of the early accumulation frames visible.  Forwarded
+      to the ray-tracing backend.
+    */
+    void setPathTracingDenoise(bool enabled);
+
 protected:
     bool eventFilter(QObject * watched, QEvent * event) override;
 
 private:
+    void ensureSharedInstance();
+    void selectPhysicalDevice();
+    bool deviceSupportsRayTracing(VkPhysicalDevice device);
+    void configureDeviceFeatures(bool rayTracing);
+    void logSupportedSampleCounts();
+
     QuarterVulkanWidgetPrivate * d;
 };
 

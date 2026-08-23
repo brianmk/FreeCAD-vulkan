@@ -216,6 +216,24 @@ public:
         return m_rayTracingActive;
     }
 
+    // Whether the RTX backend actually initialized (device support), which
+    // is independent of the live raster/RT toggle.  When false, path tracing
+    // can never run on this device.
+    bool getRayTracingAvailable() const
+    {
+        QMutexLocker locker(&m_stateMutex);
+        return m_rtxBackendAvailable;
+    }
+
+    // True once initResources() has run and m_rtxBackendAvailable is known
+    // (before that, availability cannot be judged; the adapter must not
+    // warn about "no hardware ray tracing" on an unprobed renderer).
+    bool getRayTracingProbed() const
+    {
+        QMutexLocker locker(&m_stateMutex);
+        return m_rtxBackendProbed;
+    }
+
     // Demand-driven redraws: the surface re-renders only when something
     // changed.  Widget setters call redraw() from the GUI thread; camera
     // navigation and scene-graph edits arrive through these sensors (the
@@ -297,12 +315,22 @@ public:
         if (props) {
             context.apiVersion = props->apiVersion;
         }
-        // Register the ray-tracing request BEFORE initialize(): the manager
-        // only attempts the RTX backend when it was requested, and the
-        // device must have been created with the KHR extensions for the
-        // entry points to resolve.
-        m_manager.setRayTracing(m_rayTracing);
+        // Always request the ray-tracing backend BEFORE initialize(): the
+        // manager only attempts the RTX backend when it was requested.  It is
+        // requested unconditionally (not just when the view was constructed
+        // for ray tracing) so the backend is available for live raster <->
+        // path-tracing toggling; initialize() brings it up best-effort and
+        // falls back to the raster backend when the device lacks it.
+        m_manager.setRayTracing(TRUE);
         m_initialized = m_manager.initialize(&context);
+        // Independent of the toggle flag: whether the RTX backend actually
+        // came up (device support).  Used by the adapter to decide whether a
+        // path-tracing request can ever succeed on this device.
+        m_rtxBackendAvailable = m_manager.getRayTracingBackend() ? true : false;
+        m_rtxBackendProbed = true;
+        VK_BREADCRUMB("[VK-TRACE] QuarterVulkanRenderer::initResources "
+                      "rtxBackendAvailable=%d\n",
+                      m_rtxBackendAvailable ? 1 : 0);
         if (m_initialized) {
             // Mirror the GL viewer (QuarterWidget sets
             // SoRenderManager::VARIABLE_NEAR_PLANE): re-fit the camera
@@ -311,19 +339,23 @@ public:
             // hidden GL viewer never renders, so its own auto-clipping would
             // never run.
             m_manager.setAutoClipping(SoVulkanRenderManager::VARIABLE_NEAR_PLANE);
-            if (m_rayTracing) {
-                if (m_manager.getRayTracingActive()) {
-                    vkLog("initResources: ray tracing active");
-                }
-                else {
-                    vkWarn("initResources: ray tracing requested but "
-                           "unavailable; using raster Vulkan backend");
-                }
+            if (m_rtxBackendAvailable) {
+                vkLog("initResources: ray tracing backend available");
+            }
+            else {
+                vkLog("initResources: ray tracing backend unavailable; "
+                      "using raster Vulkan backend");
             }
             vkLog("initResources: backend initialized OK");
         }
         else {
             vkErr("initResources: backend initialize FAILED");
+        }
+        // Establish the live mode from the current path-tracing preference so
+        // a view opened in raster mode does not start doing single-sample RT
+        // work until the user actually turns path tracing on.
+        if (m_rtxBackendAvailable) {
+            m_manager.setRayTracing(m_pathTracingEnabled ? TRUE : FALSE);
         }
     }
 
@@ -500,6 +532,16 @@ private:
         // latch if path tracing is not yet enabled (setPathTracingStart
         // ignores requests while ptEnabled is false).
         if (m_pathTracingEnabled != m_appliedPathTracingEnabled) {
+            // Live backend switch: path tracing ON selects the RTX backend,
+            // OFF returns to the raster backend.  The RTX backend was
+            // initialized up front (when the device supports it), so this is
+            // a cheap per-frame dispatch flag flip, no re-initialization.
+            VK_BREADCRUMB("[VK-TRACE] QuarterVulkanRenderer::startNextFrame "
+                          "rtBackendToggle=%d\n",
+                          m_pathTracingEnabled ? 1 : 0);
+            if (m_rtxBackendAvailable) {
+                m_manager.setRayTracing(m_pathTracingEnabled ? TRUE : FALSE);
+            }
             m_manager.setPathTracingEnabled(m_pathTracingEnabled ? TRUE
                                                                  : FALSE);
             m_appliedPathTracingEnabled = m_pathTracingEnabled;
@@ -580,9 +622,9 @@ private:
         if (Base::envFlagEnabled("FC_VULKAN_BACKEND_DEBUG")) {
             static int syncLog = 0;
             if (syncLog++ < 3) {
-                Base::Console().log("[VK-SET] startNextFrame wire=%d points=%d "
-                                    "edge=(%.2f,%.2f,%.2f,%.2f)\n",
-                                    frame.wireframeOverlay ? 1 : 0,
+                Base::Console().message("[VK-SET] startNextFrame wire=%d points=%d "
+                                       "edge=(%.2f,%.2f,%.2f,%.2f)\n",
+                                       frame.wireframeOverlay ? 1 : 0,
                                     frame.pointsOverlay ? 1 : 0,
                                     frame.edgeColor[0], frame.edgeColor[1],
                                     frame.edgeColor[2], frame.edgeColor[3]);
@@ -730,6 +772,8 @@ private:
     int m_appliedPathTracingSettleFrames = 0;
     bool m_appliedPathTracingDenoise = false;
     bool m_rayTracingActive = false;
+    bool m_rtxBackendAvailable = false;
+    bool m_rtxBackendProbed = false;
     // Redraw sensors (see attachSensors()): owned by the renderer, deleted
     // on releaseResources()/destruction; coin sensors detach on deletion.
     SoNodeSensor * m_sceneSensor = nullptr;
@@ -1045,29 +1089,34 @@ bool QuarterVulkanWidget::deviceSupportsRayTracing(VkPhysicalDevice device)
     return haveAS && haveRTPipeline && haveRayQuery;
 }
 
-// Request the device extensions and feature structs for ray tracing (or
-// raster-only fillModeNonSolid) before the window is first shown:
+// Request the device extensions and feature structs for ray tracing (when
+// the chosen device supports them) plus fillModeNonSolid for the
+// wireframe/points overlays, before the window is first shown:
 // QVulkanWindow creates the device on first expose.
+//
+// The ray-tracing feature set is requested whenever the device advertises
+// it, NOT only when the view was created with UseVulkanRayTracing.  That
+// keeps the RTX backend always available so path tracing can be toggled live
+// (raster <-> RT) with a preference change, instead of forcing a document
+// reopen.  The construction `rayTracing` flag only influences the log below.
 void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
 {
-    if (!rayTracing) {
-        // Raster-only: still request fillModeNonSolid for the
-        // wireframe/points overlay pipelines.
+    // The probe selected the physical device and recorded whether it
+    // advertises the ray-tracing extension set; requesting extensions a
+    // device does not support would fail device creation.
+    if (!d->vulkanWindow->rtRayTracingAvailable) {
+        if (rayTracing) {
+            vkWarn("QuarterVulkanWidget: ray tracing requested but the selected "
+                   "device does not advertise VK_KHR_ray_tracing_pipeline / "
+                   "VK_KHR_acceleration_structure; falling back to raster");
+        }
+        // Still request fillModeNonSolid for the wireframe/points overlay
+        // pipelines.
         d->window->setEnabledFeaturesModifier(
           [this](VkPhysicalDeviceFeatures2 & features) {
             features.features.fillModeNonSolid =
               d->vulkanWindow->fillModeNonSolid ? VK_TRUE : VK_FALSE;
           });
-        return;
-    }
-
-    // The probe selected the physical device and recorded whether it
-    // advertises the ray-tracing extension set; requesting extensions a
-    // device does not support would fail device creation.
-    if (!d->vulkanWindow->rtRayTracingAvailable) {
-        vkWarn("QuarterVulkanWidget: ray tracing requested but the selected "
-               "device does not advertise VK_KHR_ray_tracing_pipeline / "
-               "VK_KHR_acceleration_structure; falling back to raster");
         return;
     }
 
@@ -1437,6 +1486,22 @@ bool QuarterVulkanWidget::isRayTracingActive() const
         return false;
     }
     return d->renderer->getRayTracingActive();
+}
+
+bool QuarterVulkanWidget::isRayTracingAvailable() const
+{
+    if (!d->renderer) {
+        return false;
+    }
+    return d->renderer->getRayTracingAvailable();
+}
+
+bool QuarterVulkanWidget::isRayTracingProbed() const
+{
+    if (!d->renderer) {
+        return false;
+    }
+    return d->renderer->getRayTracingProbed();
 }
 
 void QuarterVulkanWidget::setPathTracingEnabled(bool enabled)
