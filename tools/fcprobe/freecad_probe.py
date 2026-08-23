@@ -623,6 +623,10 @@ class RunReport:
     events: List[dict[str, Any]] = field(default_factory=list)
     session: Dict[str, Any] = field(default_factory=dict)
     artifacts: List[str] = field(default_factory=list)
+    # True once an explicit verdict was stamped (mark).  Used so a later
+    # "probe printed PASS" decision at the end of run_case cannot clobber a
+    # FAIL/ERROR already set by validation gating or a frame regression.
+    _verdict_set: bool = field(default=False, repr=False)
 
     def log_event(self, source: str, kind: str, **fields: Any) -> None:
         self.events.append({"source": source, "kind": kind, "fields": fields})
@@ -632,6 +636,7 @@ class RunReport:
 
     def mark(self, verdict: str) -> None:
         self.verdict = verdict
+        self._verdict_set = True
 
     def register(self, path: str) -> None:
         """Record an artifact file (relative to artifact_dir)."""
@@ -742,6 +747,7 @@ def run_case(
     validation: bool = False,
     layer_path: Optional[str] = None,
     fail_on_validation: bool = False,
+    allow_vuid: Optional[Iterable[str]] = None,
     baseline_dir: Optional[str] = None,
     frame_mean_threshold: float = 1.5,
     frame_big_threshold_px: int = 200,
@@ -769,6 +775,7 @@ def run_case(
             "validation": validation,
             "layer_path": layer_path,
             "fail_on_validation": fail_on_validation,
+            "allow_vuid": sorted(set(allow_vuid or ())),
             "baseline_dir": baseline_dir,
         }
     )
@@ -860,14 +867,23 @@ def run_case(
     report.session["validation"] = validation
     report.session["validation_count"] = len(validation_events)
     report.session["validation_summary"] = validation_summary(validation_events)
+    allow = set(str(v) for v in (allow_vuid or ()))
+    # Diagnostics for allow-listed VUIDs are still reported but never fail the
+    # run; e.g. FreeCAD's swapchain acquire/present is owned by Qt's
+    # QVulkanWindow, so the Qt-side present/semaphore VUIDs there are expected
+    # and must not gate on regressions in FreeCAD's own code.
+    notable = [ev for ev in validation_events
+               if ev.get("fields", {}).get("vuid", "") not in allow]
+    report.session["validation_notable_count"] = len(notable)
     for ev in validation_events:
         report.events.append(ev)
+    for ev in notable:
         level = ev.get("fields", {}).get("level", "INFO")
         if level == "ERROR":
             report.add_error("Vulkan validation: %s", ev.get("text", "")[:200])
-    if fail_on_validation and validation_events:
+    if fail_on_validation and notable:
         report.add_error("Vulkan validation produced %d diagnostics",
-                         len(validation_events))
+                         len(notable))
         report.mark("FAIL")
 
     # -- Tier 2: draw-command fingerprint (drawlist hash) ------------------
@@ -926,7 +942,8 @@ def run_case(
     report.session["exit_code"] = rc
     report.session["verdict_line"] = extract_verdict(lines)
     if extract_verdict(lines) == "PASS":
-        report.mark("PASS")
+        if not report._verdict_set:
+            report.mark("PASS")
     elif report.verdict not in ("ERROR", "TIMEOUT", "FAIL"):
         report.add_error("no VERDICT PASS line found")
 
@@ -1026,6 +1043,7 @@ def _cli(argv: List[str]) -> int:
             validation=args.validation,
             layer_path=args.layer_path,
             fail_on_validation=args.fail_on_validation,
+            allow_vuid=args.allow_vuid,
             baseline_dir=args.baseline,
             frame_mean_threshold=args.frame_mean_threshold,
             frame_big_threshold_px=args.frame_big_threshold_px,
@@ -1047,10 +1065,13 @@ def _cli(argv: List[str]) -> int:
         print(f"[RUN] verdict={report.verdict}")
         print(f"[RUN] drawlist_hash={report.session.get('drawlist_hash', '')[:16]}")
         print(f"[RUN] vkbe_count={report.session.get('vkbe_count')} "
-              f"validation={report.session.get('validation_count')}")
+              f"validation={report.session.get('validation_count')} "
+              f"notable={report.session.get('validation_notable_count')}")
+        allowed = set(args.allow_vuid or ())
         for vuid, s in (report.session.get("validation_summary") or {}).items():
             lv = ",".join(s.get("levels", []))
-            print(f"[RUN] VALIDATION {vuid} count={s['count']} level={lv}")
+            tag = " (allowed)" if vuid in allowed else ""
+            print(f"[RUN] VALIDATION {vuid} count={s['count']} level={lv}{tag}")
         for e in report.errors:
             print(f"[RUN] ERROR {e}")
         return 0 if report.verdict == "PASS" else 1
@@ -1118,10 +1139,13 @@ def _print_report(artifact_dir: str) -> None:
         print(f"[report] drawlist_hash={sess['drawlist_hash'][:16]} "
               f"vkbe_count={sess.get('vkbe_count')}")
     if sess.get("validation_count"):
-        print(f"[report] validation_count={sess['validation_count']}")
+        print(f"[report] validation_count={sess['validation_count']} "
+              f"notable={sess.get('validation_notable_count')}")
+        allowed = set(sess.get("allow_vuid") or ())
         for vuid, s in (sess.get("validation_summary") or {}).items():
+            tag = " (allowed)" if vuid in allowed else ""
             print(f"[report]   VALIDATION {vuid} count={s['count']} "
-                  f"level={','.join(s['levels'])}")
+                  f"level={','.join(s['levels'])}{tag}")
     if "state" in sess:
         print(f"[report] state={json.dumps(sess['state'], separators=(',', ':'))}")
     if sess.get("frame_hashes"):
@@ -1167,6 +1191,13 @@ def _build_parser() -> Any:
         "--fail-on-validation",
         action="store_true",
         help="mark the run FAIL if any Vulkan validation diagnostic is emitted",
+    )
+    run.add_argument(
+        "--allow-vuid",
+        action="append",
+        default=[],
+        metavar="VUID",
+        help="suppress a VUID diagnostic (does not fail the run); repeatable",
     )
     run.add_argument(
         "--baseline",
