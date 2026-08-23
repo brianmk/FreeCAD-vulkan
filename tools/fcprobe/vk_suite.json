@@ -79,6 +79,45 @@
         "VUID-vkQueueSubmit-pSignalSemaphores-00067"
       ],
       "timeout": 300
+    },
+    {
+      "name": "mis-on",
+      "script": "vk_mis_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1",
+        "FC_VULKAN_DUMP_FRAME": "1",
+        "FC_VULKAN_DUMP_START": "0",
+        "FC_VULKAN_DUMP_END": "3000",
+        "FC_VULKAN_PT_MAXSAMPLES": "32",
+        "FC_VULKAN_PT_MIN_SAMPLES": "2",
+        "FC_VULKAN_PT_THRESHOLD": "0.8",
+        "FC_VULKAN_PT_STOP_FRACTION": "0",
+        "FC_VULKAN_PT_TEMPORAL": "0"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 300
+    },
+    {
+      "name": "mis-off",
+      "script": "vk_mis_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1",
+        "FC_VULKAN_DUMP_FRAME": "1",
+        "FC_VULKAN_DUMP_START": "0",
+        "FC_VULKAN_DUMP_END": "3000",
+        "FC_VULKAN_PT_NEE": "0",
+        "FC_VULKAN_PT_MAXSAMPLES": "32",
+        "FC_VULKAN_PT_MIN_SAMPLES": "2",
+        "FC_VULKAN_PT_THRESHOLD": "0.8",
+        "FC_VULKAN_PT_STOP_FRACTION": "0",
+        "FC_VULKAN_PT_TEMPORAL": "0"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 300
     }
   ]
 }
