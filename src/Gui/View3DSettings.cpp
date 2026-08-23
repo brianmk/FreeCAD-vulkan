@@ -79,6 +79,8 @@ void View3DSettings::applySettings()
     OnChange(*hGrp, "CornerCoordSystemSize");
     OnChange(*hGrp, "AxisLetterColor");
     OnChange(*hGrp, "ShowAxisCross");
+    OnChange(*hGrp, "ShowGroundPlane");
+    OnChange(*hGrp, "GroundPlaneOpacity");
     OnChange(*hGrp, "UseNavigationAnimations");
     OnChange(*hGrp, "UseSpinningAnimations");
     OnChange(*hGrp, "Gradient");
@@ -111,6 +113,10 @@ void View3DSettings::applySettings()
     OnChange(*hGrp, "VulkanShowPoints");
     OnChange(*hGrp, "VulkanEdgeColor");
     OnChange(*hGrp, "VulkanPathTracing");
+    OnChange(*hGrp, "VulkanPathTracingBounces");
+    OnChange(*hGrp, "VulkanPathTracingSettle");
+    OnChange(*hGrp, "VulkanPathTracingDenoise");
+    OnChange(*hGrp, "PreselectionMessageRate");
 
     auto lightSourcesGrp = hGrp->GetGroup("LightSources");
     OnChange(*lightSourcesGrp, "EnableHeadlight");
@@ -383,6 +389,16 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
             _viewer->setAxisCross(rGrp.GetBool("ShowAxisCross", false));
         }
     }
+    else if (strcmp(Reason, "ShowGroundPlane") == 0) {
+        for (auto _viewer : _viewers) {
+            _viewer->setGroundPlane(rGrp.GetBool("ShowGroundPlane", false));
+        }
+    }
+    else if (strcmp(Reason, "GroundPlaneOpacity") == 0) {
+        for (auto _viewer : _viewers) {
+            _viewer->setGroundPlaneOpacity(static_cast<float>(rGrp.GetFloat("GroundPlaneOpacity", 0.15)));
+        }
+    }
     else if (strcmp(Reason, "UseNavigationAnimations") == 0) {
         for (auto _viewer : _viewers) {
             _viewer->setAnimationEnabled(rGrp.GetBool("UseNavigationAnimations", true));
@@ -522,12 +538,25 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
     else if (strcmp(Reason, "VulkanShowEdges") == 0
              || strcmp(Reason, "VulkanShowPoints") == 0
              || strcmp(Reason, "VulkanEdgeColor") == 0
-             || strcmp(Reason, "VulkanPathTracing") == 0) {
+             || strcmp(Reason, "VulkanPathTracing") == 0
+             || strcmp(Reason, "VulkanPathTracingBounces") == 0
+             || strcmp(Reason, "VulkanPathTracingSettle") == 0
+             || strcmp(Reason, "VulkanPathTracingDenoise") == 0) {
         // Vulkan-only display options are owned by the viewers; each viewer
         // reloads them from the preferences and notifies its Vulkan viewport.
         for (auto _viewer : _viewers) {
             _viewer->applyVulkanSettings();
         }
+    }
+    else if (strcmp(Reason, "UseVulkanRenderer") == 0
+             || strcmp(Reason, "UseVulkanRayTracing") == 0) {
+        // The renderer backend is chosen when a view is created; existing
+        // views keep their backend until recreated.  Nothing to apply here.
+    }
+    else if (strcmp(Reason, "PreselectionMessageRate") == 0) {
+        // Consumed live by printPreselectionInfo()'s throttle; no
+        // per-viewer state to push.  Listed so it does not fall through to
+        // the background-color catch-all below.
     }
     else {
         unsigned long col1 = rGrp.GetUnsigned("BackgroundColor", 3940932863UL);
@@ -592,6 +621,7 @@ void NaviCubeSettings::applySettings()
     parameterChanged("CornerNaviCube");
     parameterChanged("OffsetX");  // Updates OffsetY too
     parameterChanged("CubeSize");
+    parameterChanged("NaviScale");
     parameterChanged("ChamferSize");
     parameterChanged("NaviRotateToNearest");
     parameterChanged("NaviStepByTurn");
@@ -622,6 +652,9 @@ void NaviCubeSettings::parameterChanged(const char* Name)
     }
     else if (strcmp(Name, "CubeSize") == 0) {
         nc->setSize(hGrp->GetInt("CubeSize", 132));
+    }
+    else if (strcmp(Name, "NaviScale") == 0) {
+        nc->setScale(hGrp->GetFloat("NaviScale", 1.0f));
     }
     else if (strcmp(Name, "NaviRotateToNearest") == 0) {
         nc->setNaviRotateToNearest(hGrp->GetBool("NaviRotateToNearest", true));

@@ -238,7 +238,8 @@ void SoBrepFaceSet::doAction(SoAction* action)
         auto* hlaction = static_cast<Gui::SoHighlightElementAction*>(action);
         selCounter.checkAction(hlaction);
         VK_BREADCRUMB_LIMITED(30,
-                              "[VK-TRACE] SoBrepFaceSet::doAction HL this=%p highlighted=%d detail=%p\n",
+                              "[VK-TRACE] SoBrepFaceSet::doAction HL this=%p "
+                              "highlighted=%d detail=%p\n",
                               this, hlaction->isHighlighted() ? 1 : 0,
                               (const void*)hlaction->getElement());
         if (!hlaction->isHighlighted()) {
@@ -503,7 +504,9 @@ void SoBrepFaceSet::renderSelectionIR(SoIRRenderAction* action, SelContextPtr ct
 // The computation and the Coin state element writes are identical for both
 // actions (every element used here is enabled on SoIRRenderAction as well),
 // so both render paths funnel through this function.
-bool SoBrepFaceSet::overrideMaterialBindingCommon(SoState* state, SelContextPtr ctx, SelContextPtr ctx2)
+bool SoBrepFaceSet::overrideMaterialBindingCommon(SoState* state,
+                                                  SelContextPtr ctx,
+                                                  SelContextPtr ctx2)
 {
     const bool hasPrimary = ctx && (ctx->isHighlighted() || !ctx->selectionIndex.empty());
     const bool hasSecondary = ctx2 && (!ctx2->colors.empty() || !ctx2->selectionIndex.empty());
@@ -711,7 +714,9 @@ bool SoBrepFaceSet::overrideMaterialBindingCommon(SoState* state, SelContextPtr 
     return true;
 }
 
-bool SoBrepFaceSet::overrideMaterialBinding(SoGLRenderAction* action, SelContextPtr ctx, SelContextPtr ctx2)
+bool SoBrepFaceSet::overrideMaterialBinding(SoGLRenderAction* action,
+                                            SelContextPtr ctx,
+                                            SelContextPtr ctx2)
 {
     return this->overrideMaterialBindingCommon(action->getState(), ctx, ctx2);
 }
@@ -845,8 +850,9 @@ void SoBrepFaceSet::IRRender(SoIRRenderAction* action)
     SelContextPtr ctx2;
     SelContextPtr ctx = Gui::SoFCSelectionRoot::getRenderContext(this, selContext, ctx2);
     copyIRRenderContexts(ctx, ctx2);
-    VK_BREADCRUMB_LIMITED(120,
-                          "[VK-TRACE] SoBrepFaceSet::IRRender this=%p ctx=%p hlIdx=%d ctx2=%p selIdx=%zu\n",
+    VK_BREADCRUMB_LIMITED(30,
+                          "[VK-TRACE] SoBrepFaceSet::IRRender this=%p ctx=%p "
+                          "hlIdx=%d ctx2=%p selIdx=%zu\n",
                           this, ctx.get(), ctx ? ctx->highlightIndex : -2,
                           ctx2.get(), ctx2 ? ctx2->selectionIndex.size() : (size_t)-1);
     const bool hasSecondaryColors = ctx2 && !ctx2->colors.empty();
@@ -880,9 +886,12 @@ void SoBrepFaceSet::IRRender(SoIRRenderAction* action)
         renderClarifySelectionIR(action,
                                  ctx,
                                  viewProvider,
-                                 &SoBrepFaceSet::renderHighlightIR,
-                                 &SoIndexedFaceSet::IRRender,
-                                  this);
+                                 [this](SoIRRenderAction* a, SelContextPtr c) {
+                                     this->renderHighlightIR(a, c);
+                                 },
+                                 [this](SoIRRenderAction* a) {
+                                     this->SoIndexedFaceSet::IRRender(a);
+                                 });
         return;
     }
 

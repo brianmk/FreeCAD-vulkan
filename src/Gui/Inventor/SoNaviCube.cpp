@@ -730,6 +730,11 @@ void SoNaviCube::buildCubeSection() const
         offset->on = TRUE;
         labelsGroup->addChild(offset);
 
+        // Do NOT rely on back-face culling here: label quad winding is
+        // inconsistent across the six faces, so SOLID hints would cull the
+        // wrong labels.  Visibility is decided per-frame by updateLabels()
+        // via the visSwitch (faces facing the camera), which is
+        // winding-agnostic.
         auto* hints = new SoShapeHints;
         hints->vertexOrdering = SoShapeHints::UNKNOWN_ORDERING;
         hints->shapeType = SoShapeHints::UNKNOWN_SHAPE_TYPE;
@@ -767,7 +772,15 @@ void SoNaviCube::buildCubeSection() const
         }
         nodes.sep->addChild(nodes.face);
 
-        labelsGroup->addChild(nodes.sep);
+        // Winding-agnostic visibility: each label is wrapped in a switch so
+        // updateLabels() can hide the labels of faces that face away from the
+        // camera, independent of quad winding.  (SoShapeHints culling is
+        // unreliable for the label quads, and half-clipping the cube would
+        // expose the hollow interior at some angles.)
+        nodes.visSwitch = new SoSwitch;
+        nodes.visSwitch->whichChild = 0;
+        nodes.visSwitch->addChild(nodes.sep);
+        labelsGroup->addChild(nodes.visSwitch);
         labelNodes[pickIndex(pickId)] = nodes;
     }
 }
@@ -1208,8 +1221,56 @@ void SoNaviCube::updateButtons(const RenderParams& params) const
     }
 }
 
+namespace {
+// Outward face normal (in the NavCube's local frame) for each labeled face.
+// The sub-scene camera looks down -Z and the cube is rotated by
+// cameraOrientation.inverse(); a face is visible when its transformed normal
+// points back toward the camera (+Z), i.e. the face is front-facing.
+SbVec3f labelFaceNormal(SoNaviCube::PickId id)
+{
+    using P = SoNaviCube::PickId;
+    switch (id) {
+        case P::Top: return SbVec3f(0.0F, 0.0F, 1.0F);
+        case P::Front: return SbVec3f(0.0F, -1.0F, 0.0F);
+        case P::Left: return SbVec3f(-1.0F, 0.0F, 0.0F);
+        case P::Rear: return SbVec3f(0.0F, 1.0F, 0.0F);
+        case P::Right: return SbVec3f(1.0F, 0.0F, 0.0F);
+        case P::Bottom: return SbVec3f(0.0F, 0.0F, -1.0F);
+        default: return SbVec3f(0.0F, 0.0F, 1.0F);
+    }
+}
+}  // namespace
+
 void SoNaviCube::updateLabels(const RenderParams& params) const
 {
+    // Hide labels on faces that point away from the camera.  This is the
+    // definitive "disappear faces not visible from camera" fix: it is
+    // winding-agnostic and, unlike half-clipping the cube, never exposes the
+    // hollow interior at steep angles.
+    const SbRotation inv = cameraOrientation.getValue().inverse();
+    uint32_t mask = 0;
+    uint32_t bit = 1;
+    for (PickId pickId : kLabelPickIds) {
+        SbVec3f n = labelFaceNormal(pickId);
+        SbVec3f wn;
+        inv.multVec(n, wn);
+        if (wn[2] > 0.0F) {
+            mask |= bit;
+        }
+        bit <<= 1;
+    }
+    if (mask != style.faceVisMask) {
+        bit = 1;
+        for (PickId pickId : kLabelPickIds) {
+            LabelNodes& nodes = labelNodes[pickIndex(pickId)];
+            if (nodes.visSwitch) {
+                nodes.visSwitch->whichChild = (mask & bit) ? 0 : SO_SWITCH_NONE;
+            }
+            bit <<= 1;
+        }
+        style.faceVisMask = mask;
+    }
+
     const bool labelsStyleChanged = style.labelDirty || !nearlyEqual(style.labelsRgb, params.emphRgb)
         || !nearlyEqual(style.labelsTr, params.emphTr);
 

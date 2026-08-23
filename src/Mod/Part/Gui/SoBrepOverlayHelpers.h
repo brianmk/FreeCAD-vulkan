@@ -390,18 +390,16 @@ static inline void copyIRRenderContexts(CtxPtr& ctx, CtxPtr& ctx2)
 //! overlay, and pops the state.  GL defers the highlighted path to the
 //! delayed-annotations pass; the IR path records the same geometry inline
 //! with the depth test off and the backend draws such commands last.  The
-//! inherited and highlight render entry points are passed as member function
-//! pointers because the helper has no access to the node's private members.
+//! two render entry points are passed as lambdas so callers can forward to
+//! their (private) member functions without exposing them.
 #ifdef HAVE_COIN_IR_RENDER_ACTION
-template <typename Node, typename CtxPtr, typename Base, typename VP>
+template <typename CtxPtr, typename VP, typename FnHighlight, typename FnInherited>
 static inline void renderClarifySelectionIR(
     SoIRRenderAction* action,
     CtxPtr ctx,
     VP* viewProvider,
-    void (Node::*renderHighlightIR)(SoIRRenderAction*, CtxPtr),
-    void (Base::*renderInheritedIR)(SoIRRenderAction*),
-    Node* self
-)
+    FnHighlight&& renderHighlightIR,
+    FnInherited&& renderInheritedIR)
 {
     if (viewProvider) {
         viewProvider->setFaceHighlightActive(true);
@@ -411,8 +409,8 @@ static inline void renderClarifySelectionIR(
     SoDepthBufferElement::set(
         state, FALSE, FALSE, SoDepthBufferElement::ALWAYS, SbVec2f(0.0f, 1.0f)
     );
-    (self->*renderInheritedIR)(action);
-    (self->*renderHighlightIR)(action, ctx);
+    renderInheritedIR(action);
+    renderHighlightIR(action, ctx);
     state->pop();
 }
 #endif

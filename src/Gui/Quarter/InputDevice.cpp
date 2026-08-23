@@ -74,12 +74,8 @@ InputDevice::toDevicePixelPosition(
   int ypos = static_cast<int>(
       std::lround((logicalWindowSize[1] - logicalPosition.y() - 1.0) * devicePixelRatio));
 
-  VK_BREADCRUMB(
-          "[VK-TRACE] toDevicePixelPosition logical=(%.1f,%.1f) "
-          "windowLogical=%dx%d dpr=%.3f -> device=%d,%d\n",
-          logicalPosition.x(), logicalPosition.y(),
-          logicalWindowSize[0], logicalWindowSize[1],
-          devicePixelRatio, xpos, ypos);
+  // Pure conversion helper; no logging here.  The (constant) dpr/window ->
+  // device mapping is traced once by the eventFilter caller in EventFilter.cpp.
 
   constexpr int ShortMin = std::numeric_limits<short>::min();
   constexpr int ShortMax = std::numeric_limits<short>::max();

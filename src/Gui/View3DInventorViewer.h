@@ -108,6 +108,7 @@ class SoFCUnifiedSelection;
 class Document;
 class GLGraphicsItem;
 class RubberbandOverlay;
+class SoGroundPlane;
 class SoShapeScale;
 class ViewerEventFilter;
 
@@ -122,6 +123,10 @@ struct VulkanViewSettings
     bool showPoints = false;
     SbColor4f edgeColor = SbColor4f(0.05f, 0.05f, 0.05f, 1.0f);
     bool pathTracing = false;
+    // Path-tracing tuning (see the View preferences dialog).
+    int pathTracingBounces = 4;
+    int pathTracingSettleFrames = 6;
+    bool pathTracingDenoise = true;
 };
 
 /** GUI view into a 3D scene provided by View3DInventor
@@ -581,6 +586,10 @@ public:
     void setAxisCross(bool on);
     bool hasAxisCross();
 
+    void setGroundPlane(bool on);
+    bool hasGroundPlane();
+    void setGroundPlaneOpacity(float opacity);
+
     void showRotationCenter(bool show);
     void changeRotationCenterPosition(const SbVec3f& newCenter);
 
@@ -745,6 +754,11 @@ private:
     // big one in the middle
     SoShapeScale* axisCross;
     SoGroup* axisGroup;
+
+    // ground plane grid on the world XY plane (Z=0)
+    SoSeparator* groundPlaneGroup;
+    SoGroundPlane* groundPlane;
+    float groundPlaneOpacity;
 
     SoGroup* rotationCenterGroup;
 

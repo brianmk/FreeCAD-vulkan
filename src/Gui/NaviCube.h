@@ -57,6 +57,7 @@ public:
     void updateColors();
     void setDraggable(bool draggable);
     void setSize(int size);
+    void setScale(float scale);
     void setChamfer(float size);
     void setNaviRotateToNearest(bool toNearest);
     void setNaviStepByTurn(int steps);

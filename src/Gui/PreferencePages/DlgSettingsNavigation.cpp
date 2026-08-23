@@ -109,6 +109,7 @@ void DlgSettingsNavigation::saveSettings()
     ui->naviCubeCorner->onSave();
     ui->naviCubeToNearest->onSave();
     ui->prefCubeSize->onSave();
+    ui->prefNaviScale->onSave();
     ui->naviCubeBaseColor->onSave();
     ui->naviCubeInactiveOpacity->onSave();
     ui->legacySpaceMouseDevices->onSave();
@@ -160,6 +161,7 @@ void DlgSettingsNavigation::loadSettings()
     ui->naviCubeCorner->onRestore();
     ui->naviCubeToNearest->onRestore();
     ui->prefCubeSize->onRestore();
+    ui->prefNaviScale->onRestore();
     ui->naviCubeBaseColor->onRestore();
     ui->naviCubeInactiveOpacity->onRestore();
     ui->legacySpaceMouseDevices->onRestore();

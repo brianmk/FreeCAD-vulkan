@@ -91,7 +91,10 @@ public:
         getLocalPosition(event),
         effectiveWindowSize(quarterwidget),
         quarterwidget->devicePixelRatio());
-    VK_BREADCRUMB(
+    // Duplicate of InputDevice::toDevicePixelPosition's own trace; the helper
+    // already logs the dpr/window mapping once, so log this around the same
+    // (constant) values at most once to avoid per-event repetition.
+    VK_BREADCRUMB_ONCE(
             "[VK-TRACE] toDevicePixelPosition logical=(%.1f,%.1f) "
             "windowLogical=%dx%d dpr=%.2f -> device=%d,%d\n",
             getLocalPosition(event).x(), getLocalPosition(event).y(),

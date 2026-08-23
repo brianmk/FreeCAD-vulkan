@@ -632,22 +632,34 @@ void SoFCSelection::GLRender(SoGLRenderAction* action)
 void SoFCSelection::IRRender(SoIRRenderAction* action)
 {
     VK_BREADCRUMB_LIMITED(20,
-                          "[VK-TRACE] SoFCSelection::IRRender this=%p selected=%d highlighted=%d\n",
+                          "[VK-TRACE] SoFCSelection::IRRender this=%p selected=%d "
+                          "highlighted=%d\n",
                           this, this->selected.getValue(), this->highlighted ? 1 : 0);
     SoState* state = action->getState();
     SelContextPtr ctxOrig = Gui::SoFCSelectionRoot::getRenderContext<SelContext>(this, selContext);
-    // Qt 6 runs this traversal on the GUI thread like everything else, but
-    // the contexts returned by getRenderContext() are shared with GLRender()
-    // and the selection logic.  Work on local copies so this traversal never
-    // mutates the shared selection state; the copies only need to be
-    // consistent within this traversal.
     const bool ownContext = (selContext == ctxOrig);
-    SelContextPtr ctx = ctxOrig
-        ? std::dynamic_pointer_cast<SelContext>(ctxOrig->copy())
-        : SelContextPtr();
-    SelContextPtr ctx2 = selContext2
-        ? std::dynamic_pointer_cast<SelContext>(selContext2->copy())
-        : SelContextPtr();
+    // ctx is only ever mutated by the legacy !useNewSelection block below, so
+    // on the default new-selection path it can be shared directly, avoiding a
+    // deep copy of the (potentially thousands-entry) std::set<int>
+    // selectionIndex on every node every frame.  ctx2 is still mutated by
+    // checkGlobal(), so it must be copied in both paths to avoid corrupting
+    // the shared selection state.
+    SelContextPtr ctx;
+    SelContextPtr ctx2;
+    if (useNewSelection.getValue()) {
+        ctx = ctxOrig;
+        ctx2 = selContext2
+            ? std::dynamic_pointer_cast<SelContext>(selContext2->copy())
+            : SelContextPtr();
+    }
+    else {
+        ctx = ctxOrig
+            ? std::dynamic_pointer_cast<SelContext>(ctxOrig->copy())
+            : SelContextPtr();
+        ctx2 = selContext2
+            ? std::dynamic_pointer_cast<SelContext>(selContext2->copy())
+            : SelContextPtr();
+    }
     if (ctx2 && ctx2->checkGlobal(ctx)) {
         ctx = ctx2;
     }
@@ -663,7 +675,8 @@ void SoFCSelection::IRRender(SoIRRenderAction* action)
         ctx->highlightIndex = this->highlighted ? 0 : -1;
     }
     VK_BREADCRUMB_LIMITED(20,
-                          "[VK-TRACE] SoFCSelection::IRRender ctx=%p selAll=%d hlIdx=%d selIdx=%zu\n",
+                          "[VK-TRACE] SoFCSelection::IRRender ctx=%p selAll=%d "
+                          "hlIdx=%d selIdx=%zu\n",
                           ctx.get(), ctx ? ctx->isSelectAll() : -1,
                           ctx ? ctx->highlightIndex : -2,
                           ctx ? ctx->selectionIndex.size() : (size_t)-1);

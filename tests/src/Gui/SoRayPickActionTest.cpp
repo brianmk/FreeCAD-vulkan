@@ -252,17 +252,20 @@ TEST_F(SoRayPickActionTest, setPointMatchesSetRayForSameLine)
     SoSeparator* root = makeLineRoot(0.002F);
     root->ref();
 
-    SoPickedPoint* pointPick = nullptr;
+    SbVec3f pointPickPoint;
     {
         SoRayPickAction action(SbViewportRegion(100, 100));
         action.setRadius(kRadiusPixels);
         action.setPoint(SbVec2s(50, 50));
         action.apply(root);
-        pointPick = action.getPickedPoint();
+        SoPickedPoint* pointPick = action.getPickedPoint();
+        ASSERT_NE(pointPick, nullptr);
+        // The action owns (and deletes) its picked points, so copy the
+        // position before the action goes out of scope.
+        pointPickPoint = pointPick->getPoint();
     }
-    ASSERT_NE(pointPick, nullptr);
 
-    SoPickedPoint* rayPick = nullptr;
+    SbVec3f rayPickPoint;
     {
         SoRayPickAction action(SbViewportRegion(100, 100));
         action.setRadius(kRadiusPixels);
@@ -271,11 +274,12 @@ TEST_F(SoRayPickActionTest, setPointMatchesSetRayForSameLine)
         const SbVec3f dir = line.getDirection();
         action.setRay(start, dir, 0.0F);
         action.apply(root);
-        rayPick = action.getPickedPoint();
+        SoPickedPoint* rayPick = action.getPickedPoint();
+        ASSERT_NE(rayPick, nullptr);
+        rayPickPoint = rayPick->getPoint();
     }
-    ASSERT_NE(rayPick, nullptr);
 
-    EXPECT_TRUE(rayPick->getPoint().equals(pointPick->getPoint(), kEps));
+    EXPECT_TRUE(rayPickPoint.equals(pointPickPoint, kEps));
 
     root->unref();
 }

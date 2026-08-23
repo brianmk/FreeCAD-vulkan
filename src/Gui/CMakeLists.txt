@@ -132,6 +132,11 @@ if(FREECAD_USE_VULKAN)
     find_package(Vulkan REQUIRED)
     list(APPEND FreeCADGui_LIBS Vulkan::Vulkan)
     target_compile_definitions(FreeCADGui PRIVATE FREECAD_USE_VULKAN=1)
+    # The bundled Coin is built with COIN_BUILD_VULKAN_RENDERER=ON (see
+    # SetupCoin3D.cmake).  Coin's public Vulkan headers are compiled only
+    # when this macro is set, so FreeCAD must define it for its own
+    # compilation of those headers (e.g. QuarterVulkanWidget.cpp).
+    target_compile_definitions(FreeCADGui PRIVATE COIN_BUILD_VULKAN_RENDERER=1)
     target_include_directories(FreeCADGui SYSTEM PRIVATE
         ${QtGui_INCLUDE_DIRS}
     )
@@ -926,6 +931,7 @@ SET(View3D_CPP_SRCS
     View3DPy.cpp
     View3DViewerPy.cpp
     NaviCube.cpp
+    VulkanViewportAdapter.cpp
 )
 SET(View3D_SRCS
     ${View3D_CPP_SRCS}
@@ -947,6 +953,7 @@ SET(View3D_SRCS
     CoinRiftWidget.h
     View3DViewerPy.h
     NaviCube.h
+    VulkanViewportAdapter.h
 )
 SOURCE_GROUP("View3D" FILES ${View3D_SRCS})
 
@@ -1099,6 +1106,7 @@ SET(Inventor_CPP_SRCS
     Inventor/SoFCBackgroundGradient.cpp
     Inventor/SoFCBoundingBox.cpp
     Inventor/SoNaviCube.cpp
+    Inventor/SoGroundPlane.cpp
     Inventor/SoAxisCrossOverlay.cpp
     Inventor/SoMouseWheelEvent.cpp
     Inventor/SoFCTransform.cpp
@@ -1141,6 +1149,7 @@ SET(Inventor_SRCS
     Inventor/SoFCBackgroundGradient.h
     Inventor/SoFCBoundingBox.h
     Inventor/SoNaviCube.h
+    Inventor/SoGroundPlane.h
     Inventor/SoAxisCrossOverlay.h
     Inventor/SoMouseWheelEvent.h
     Inventor/SoFCTransform.h

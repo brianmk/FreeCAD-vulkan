@@ -174,31 +174,69 @@
         </property>
        </widget>
       </item>
-      <item row="2" column="1">
-       <widget class="Gui::PrefSpinBox" name="prefCubeSize">
+       <item row="2" column="1">
+        <widget class="Gui::PrefSpinBox" name="prefCubeSize">
+         <property name="toolTip">
+          <string>Size of the navigation cube</string>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+         </property>
+         <property name="suffix">
+          <string notr="true"> px</string>
+         </property>
+         <property name="minimum">
+          <number>10</number>
+         </property>
+         <property name="maximum">
+          <number>1024</number>
+         </property>
+         <property name="singleStep">
+          <number>10</number>
+         </property>
+         <property name="value">
+          <number>132</number>
+         </property>
+         <property name="prefEntry" stdset="0">
+          <cstring>CubeSize</cstring>
+         </property>
+         <property name="prefPath" stdset="0">
+          <cstring>NaviCube</cstring>
+         </property>
+        </widget>
+       </item>
+      <item row="3" column="0">
+       <widget class="QLabel" name="naviScaleLabel">
+        <property name="text">
+         <string>Navigation cube scale</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="1">
+       <widget class="Gui::PrefDoubleSpinBox" name="prefNaviScale">
         <property name="toolTip">
-         <string>Size of the navigation cube</string>
+         <string>Relative size of the navigation cube (e.g. 1.5 = 150%)</string>
         </property>
-        <property name="alignment">
-         <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
-        </property>
-        <property name="suffix">
-         <string notr="true"> px</string>
+        <property name="decimals">
+         <number>1</number>
         </property>
         <property name="minimum">
-         <number>10</number>
+         <double>0.200000000000000</double>
         </property>
         <property name="maximum">
-         <number>1024</number>
+         <double>4.000000000000000</double>
         </property>
         <property name="singleStep">
-         <number>10</number>
+         <double>0.100000000000000</double>
         </property>
         <property name="value">
-         <number>132</number>
+         <double>1.000000000000000</double>
+        </property>
+        <property name="suffix">
+         <string notr="true">x</string>
         </property>
         <property name="prefEntry" stdset="0">
-         <cstring>CubeSize</cstring>
+         <cstring>NaviScale</cstring>
         </property>
         <property name="prefPath" stdset="0">
          <cstring>NaviCube</cstring>
@@ -246,14 +284,14 @@
         </property>
        </widget>
       </item>
-      <item row="3" column="0">
+      <item row="4" column="0">
        <widget class="QLabel" name="BaseColorLabel">
         <property name="text">
          <string>Color</string>
         </property>
        </widget>
       </item>
-      <item row="3" column="1">
+      <item row="4" column="1">
        <widget class="Gui::PrefColorButton" name="naviCubeBaseColor">
         <property name="toolTip">
          <string>Base color for all elements</string>

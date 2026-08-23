@@ -214,6 +214,7 @@ private:
     struct LabelNodes
     {
         SoSeparator* sep {nullptr};
+        SoSwitch* visSwitch {nullptr};
         SoMaterial* material {nullptr};
         SoTexture2* texture {nullptr};
         SoVertexProperty* vertexProperty {nullptr};
@@ -262,6 +263,7 @@ private:
         bool buttonDirty {true};
         bool labelDirty {true};
         bool axisDirty {true};
+        uint32_t faceVisMask {0};
         SbColor buttonsBaseRgb {0.0F, 0.0F, 0.0F};
         SbColor buttonsHiliteRgb {0.0F, 0.0F, 0.0F};
         SbColor buttonsOutlineRgb {0.0F, 0.0F, 0.0F};

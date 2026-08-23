@@ -36,8 +36,6 @@ class QPrinter;
 class QOpenGLWidget;
 class QStackedWidget;
 
-namespace SIM::Coin3D::Quarter { class QuarterVulkanWidget; }
-
 namespace Gui
 {
 
@@ -46,6 +44,7 @@ class View3DInventorViewer;
 class View3DPy;
 class View3DSettings;
 class NaviCubeSettings;
+class VulkanViewportAdapter;
 
 struct RayPickInfo
 {
@@ -162,15 +161,9 @@ public Q_SLOTS:
 
 protected Q_SLOTS:
     void stopAnimating();
-    /// Push the viewer-owned Vulkan options to the Vulkan widget.
-    void onVulkanSettingsChanged();
 
 private:
     void applySettings();
-    void syncVulkanViewer();
-    /// Push the viewer-owned Vulkan options to the Vulkan widget (no-op
-    /// without a Vulkan viewer).
-    void pushVulkanSettings();
 
 protected:
     void windowStateChanged(QWidget* view) override;
@@ -188,8 +181,7 @@ private:
     PyObject* _viewerPy;
     QTimer* stopSpinTimer;
     QStackedWidget* stack;
-    SIM::Coin3D::Quarter::QuarterVulkanWidget* _vulkanViewer = nullptr;
-    bool _initialVulkanFitDone = false;
+    VulkanViewportAdapter* _vulkanAdapter = nullptr;
     std::unique_ptr<View3DSettings> viewSettings;
     std::unique_ptr<NaviCubeSettings> naviSettings;
 

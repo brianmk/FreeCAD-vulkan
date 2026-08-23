@@ -27,6 +27,7 @@
 #include <set>
 
 #include <QApplication>
+#include <QElapsedTimer>
 
 #include <Base/VulkanBreadcrumbs.h>
 #include <App/Application.h>
@@ -916,7 +917,7 @@ int SelectionSingleton::setPreselect(
 )
 {
     if (!pDocName || !pObjectName) {
-        VK_BREADCRUMB("[VK-TRACE] SelectionSingleton::setPreselect invalid args doc=%s obj=%s\n",
+        VK_BREADCRUMB_LIMITED(20, "[VK-TRACE] SelectionSingleton::setPreselect invalid args doc=%s obj=%s\n",
                       pDocName ? pDocName : "(nil)", pObjectName ? pObjectName : "(nil)");
         rmvPreselect();  // Invalid request
         return 0;
@@ -927,12 +928,12 @@ int SelectionSingleton::setPreselect(
     }
 
     if (DocName == pDocName && FeatName == pObjectName && SubName == pSubName) {
-        VK_BREADCRUMB("[VK-TRACE] SelectionSingleton::setPreselect already-selected ret=-1 doc=%s sub=%s\n",
+        VK_BREADCRUMB_LIMITED(20, "[VK-TRACE] SelectionSingleton::setPreselect already-selected ret=-1 doc=%s sub=%s\n",
                       pDocName, pSubName);
         return -1;  // Already preselected
     }
 
-    VK_BREADCRUMB("[VK-TRACE] SelectionSingleton::setPreselect enter doc=%s obj=%s sub=%s\n",
+    VK_BREADCRUMB_LIMITED(20, "[VK-TRACE] SelectionSingleton::setPreselect enter doc=%s obj=%s sub=%s\n",
                   pDocName, pObjectName, pSubName);
     rmvPreselect();
 
@@ -1101,6 +1102,37 @@ void printPreselectionInfo(
     double precision
 )
 {
+    // Throttle the status-bar preselection message: rebuilding the unit
+    // translation + derived QString on EVERY mouse-move is the single most
+    // frequent allocation while dragging the cursor over geometry.  Coordinates
+    // barely change between events, so most of this work is recomputed
+    // identically each event.  The rate (Hz) is user-tunable via
+    // BaseApp/Preferences/View/PreselectionMessageRate (default 10, 0 = off).
+    static QElapsedTimer timer;
+    static qint64 lastMs = -1000;
+    static int lastRate = -1;
+    if (!timer.isValid()) {
+        timer.start();
+        lastMs = -1000;
+    }
+    const QString path = QStringLiteral("User parameter:BaseApp/Preferences/View");
+    const int rate = App::GetApplication()
+                         .GetParameterGroupByPath(qPrintable(path))
+                         ->GetInt("PreselectionMessageRate", 10);
+    if (rate != lastRate) {
+        lastRate = rate;
+        lastMs = -1000; // re-allow immediately after a rate change
+    }
+    if (rate <= 0) {
+        return; // throttling disabled
+    }
+    const qint64 elapsed = timer.elapsed();
+    const qint64 intervalMs = 1000 / rate;
+    if (lastMs >= 0 && (elapsed - lastMs) < intervalMs) {
+        return; // still inside the throttling window
+    }
+    lastMs = elapsed;
+
     if (getMainWindow()) {
         QString message
             = getPreselectionInfo(documentName, objectName, subElementName, x, y, z, precision);
@@ -1133,7 +1165,7 @@ void SelectionSingleton::setPreselectCoord(float x, float y, float z)
 
 void SelectionSingleton::rmvPreselect(bool signal)
 {
-    VK_BREADCRUMB("[VK-TRACE] SelectionSingleton::rmvPreselect signal=%d doc=%s sub=%s\n",
+    VK_BREADCRUMB_LIMITED(20, "[VK-TRACE] SelectionSingleton::rmvPreselect signal=%d doc=%s sub=%s\n",
                   signal ? 1 : 0, DocName.c_str(), SubName.c_str());
     if (DocName.empty()) {
         return;
@@ -1348,6 +1380,7 @@ bool SelectionSingleton::addSelection(
     }
 
     _SelList.push_back(temp);
+    _markSelIndexDirty();
     _SelStackForward.clear();
 
     if (clearPreselect) {
@@ -1582,6 +1615,7 @@ bool SelectionSingleton::addSelections(
         }
 
         _SelList.push_back(temp);
+        _markSelIndexDirty();
         _SelStackForward.clear();
 
         SelectionChanges Chng(
@@ -1758,6 +1792,7 @@ void SelectionSingleton::rmvSelection(
 
         // destroy the _SelObj item
         _SelList.erase(It);
+        _markSelIndexDirty();
     }
 
     // NOTE: It can happen that there are nested calls of rmvSelection()
@@ -1937,8 +1972,8 @@ void SelectionSingleton::setSelection(const char* pDocName, const std::vector<Ap
         touched = true;
         _SelList.push_back(temp);
     }
-
     if (touched) {
+        _markSelIndexDirty();
         _SelStackForward.clear();
         notify(SelectionChanges(SelectionChanges::SetSelection, pDocName));
         getMainWindow()->updateActions();
@@ -1975,6 +2010,9 @@ void SelectionSingleton::clearSelection(const char* pDocName, bool clearPreSelec
             else {
                 ++it;
             }
+        }
+        if (touched) {
+            _markSelIndexDirty();
         }
         if (!touched) {
             return;
@@ -2032,6 +2070,7 @@ void SelectionSingleton::clearCompleteSelection(bool clearPreSelect)
     }
 
     _SelList.clear();
+    _markSelIndexDirty();
 
     SelectionChanges Chng(SelectionChanges::ClrSelection);
 
@@ -2072,6 +2111,39 @@ bool SelectionSingleton::isSelected(
                &_SelList
            )
         > 0;
+}
+
+void SelectionSingleton::_markSelIndexDirty()
+{
+    _SelIndexDirty = true;
+}
+
+std::string SelectionSingleton::_selKey(const std::string& doc,
+                                        const std::string& feat,
+                                        const std::string& sub)
+{
+    // Doc, Feat and Sub can contain '#' or '.', but the delimiter is unique
+    // enough for the membership test (which always re-derives the same key
+    // from the same triple).  Using "\x1f" (unit separator) guarantees no
+    // collision with printable document/element names.
+    std::string key;
+    key.reserve(doc.size() + feat.size() + sub.size() + 3);
+    key += doc;
+    key += '\x1f';
+    key += feat;
+    key += '\x1f';
+    key += sub;
+    return key;
+}
+
+void SelectionSingleton::_rebuildSelIndex() const
+{
+    _SelIndex.clear();
+    _SelIndex.reserve(_SelList.size());
+    for (const auto& sel : _SelList) {
+        _SelIndex.insert(_selKey(sel.DocName, sel.FeatName, sel.SubName));
+    }
+    _SelIndexDirty = false;
 }
 
 int SelectionSingleton::checkSelection(
@@ -2158,6 +2230,21 @@ int SelectionSingleton::checkSelection(
         pSubName = "";
     }
 
+    // Fast path: for an exact (NoResolve) membership query against the live
+    // selection list, the hash index gives an O(1) answer instead of scanning
+    // the whole selection.  This is the hot path for bulk setSelection()/
+    // addSelection(), which would otherwise be O(N^2) over the growing list.
+    if (resolve == ResolveMode::NoResolve && selList == &_SelList) {
+        if (_SelIndexDirty) {
+            _rebuildSelIndex();
+        }
+        if (_SelIndex.count(
+                _selKey(pDocName, sel.FeatName, pSubName ? pSubName : ""))) {
+            return 1;
+        }
+        return 0;
+    }
+
     for (auto& s : *selList) {
         if (s.DocName == pDocName && s.FeatName == sel.FeatName) {
             if (s.SubName == pSubName) {
@@ -2234,6 +2321,7 @@ void SelectionSingleton::slotDeletedObject(const App::DocumentObject& Obj)
                 it->TypeName
             );
             _SelList.erase(it);
+            _markSelIndexDirty();
         }
     }
     if (!changes.empty()) {

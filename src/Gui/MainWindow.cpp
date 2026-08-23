@@ -51,6 +51,9 @@
 #include <QThread>
 #include <QTimer>
 #include <QToolBar>
+#include <QHBoxLayout>
+#include <QSlider>
+#include <QToolButton>
 #include <QUrlQuery>
 #include <QWhatsThis>
 #include <QWindow>
@@ -308,6 +311,96 @@ private:
 
 // -------------------------------------
 
+/// A status-bar widget that toggles the viewer ground-plane grid and lets the
+/// user dial its visibility with a transparency slider. It writes its state to
+/// the "View" preferences group, which View3DSettings observes, so every open
+/// 3D view updates live without this widget having to reach into the viewers
+/// (mirrors how ShowAxisCross / ShowNaviCube preferences drive the viewer).
+class GroundPlaneWidget: public QWidget, public ParameterGrp::ObserverType
+{
+public:
+    explicit GroundPlaneWidget(QWidget* parent)
+        : QWidget(parent)
+        , hGrp(App::GetApplication().GetParameterGroupByPath(
+            "User parameter:BaseApp/Preferences/View"))
+    {
+        setWindowTitle(qApp->translate("Gui::MainWindow", "Ground Plane Grid"));
+        // Visibility is owned and persisted by MainWindow's status-bar registry.
+
+        auto* layout = new QHBoxLayout(this);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(2);
+
+        auto* toggleButton = new QToolButton(this);
+        toggleButton->setIcon(BitmapFactory().pixmap("Std_Plane"));
+        toggleButton->setIconSize(QSize(16, 16));
+        toggleButton->setCheckable(true);
+        toggleButton->setAutoRaise(true);
+        //: Tooltip for the status bar button that toggles the ground plane grid
+        toggleButton->setToolTip(QObject::tr("Toggles the ground plane grid"));
+
+        m_opacitySlider = new QSlider(Qt::Horizontal, this);
+        m_opacitySlider->setRange(0, 100);
+        m_opacitySlider->setFixedWidth(90);
+        m_opacitySlider->setSingleStep(1);
+        m_opacitySlider->setPageStep(5);
+        //: Tooltip for the status bar slider that adjusts the ground plane opacity
+        m_opacitySlider->setToolTip(QObject::tr("Ground plane opacity"));
+
+        layout->addWidget(toggleButton);
+        layout->addWidget(m_opacitySlider);
+
+        connect(toggleButton, &QToolButton::toggled, this, [this](bool on) {
+            hGrp->SetBool("ShowGroundPlane", on);
+        });
+        connect(m_opacitySlider, &QSlider::valueChanged, this, [this](int value) {
+            hGrp->SetFloat("GroundPlaneOpacity", value / 100.0);
+        });
+        connect(m_opacitySlider, &QSlider::sliderReleased, this, &GroundPlaneWidget::syncFromPrefs);
+
+        hGrp->Attach(this);
+        syncFromPrefs();
+    }
+
+    ~GroundPlaneWidget() override
+    {
+        hGrp->Detach(this);
+    }
+
+    void OnChange(Base::Subject<const char*>& /*rCaller*/, const char* reason) override
+    {
+        if (strcmp(reason, "ShowGroundPlane") == 0 || strcmp(reason, "GroundPlaneOpacity") == 0) {
+            syncFromPrefs();
+        }
+    }
+
+    QSize sizeHint() const override
+    {
+        return minimumSizeHint();
+    }
+
+    QSize minimumSizeHint() const override
+    {
+        return QSize(112, 20);
+    }
+
+private:
+    void syncFromPrefs()
+    {
+        auto* toggleButton = findChild<QToolButton*>();
+        if (toggleButton) {
+            toggleButton->setChecked(hGrp->GetBool("ShowGroundPlane", false));
+        }
+        double opacity = hGrp->GetFloat("GroundPlaneOpacity", 0.15);
+        m_opacitySlider->setValue(static_cast<int>(opacity * 100.0));
+    }
+
+    ParameterGrp::handle hGrp;
+    QSlider* m_opacitySlider = nullptr;
+};
+
+// -------------------------------------
+
 /// One entry in the status-bar item registry owned by MainWindow.
 struct StatusBarItem
 {
@@ -532,6 +625,18 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
          .title = tr("Quick Measure"),
          .slot = StatusBarSlot::Right,
          .order = 400,
+         .persistentVisibility = true}
+    );
+
+    auto* groundPlaneWidget = new GroundPlaneWidget(statusBar());
+    addStatusBarItem(
+        groundPlaneWidget,
+        {.id = "groundPlaneWidget",
+         //: A context menu action used to show or hide the ground plane grid control
+         //: in the status bar
+         .title = tr("Ground Plane Grid"),
+         .slot = StatusBarSlot::Right,
+         .order = 300,
          .persistentVisibility = true}
     );
 

@@ -109,7 +109,8 @@ void SoBrepEdgeSet::GLRender(SoGLRenderAction* action)
     selCounter.checkRenderCache(state);
 
     SelContextPtr ctx2;
-    SelContextPtr ctx = Gui::SoFCSelectionRoot::getRenderContext<SelContext>(this, selContext, ctx2);
+    SelContextPtr ctx =
+        Gui::SoFCSelectionRoot::getRenderContext<SelContext>(this, selContext, ctx2);
     if (ctx2 && ctx2->selectionIndex.empty() && ctx2->colors.empty()) {
         return;
     }
@@ -276,7 +277,8 @@ void SoBrepEdgeSet::IRRender(SoIRRenderAction* action)
     VK_BREADCRUMB_LIMITED(30, "[VK-TRACE] SoBrepEdgeSet::IRRender this=%p\n", this);
 
     SelContextPtr ctx2;
-    SelContextPtr ctx = Gui::SoFCSelectionRoot::getRenderContext<SelContext>(this, selContext, ctx2);
+    SelContextPtr ctx =
+        Gui::SoFCSelectionRoot::getRenderContext<SelContext>(this, selContext, ctx2);
     copyIRRenderContexts(ctx, ctx2);
     VK_BREADCRUMB_LIMITED(30,
                           "[VK-TRACE] SoBrepEdgeSet::IRRender ctx=%p hlIdx=%d selIdx=%zu "
@@ -303,9 +305,12 @@ void SoBrepEdgeSet::IRRender(SoIRRenderAction* action)
         renderClarifySelectionIR(action,
                                  ctx,
                                  viewProvider,
-                                 &SoBrepEdgeSet::renderHighlightIR,
-                                 &SoIndexedLineSet::IRRender,
-                                 this);
+                                 [this](SoIRRenderAction* a, SelContextPtr c) {
+                                     this->renderHighlightIR(a, c);
+                                 },
+                                 [this](SoIRRenderAction* a) {
+                                     this->SoIndexedLineSet::IRRender(a);
+                                 });
         return;
     }
 
@@ -584,7 +589,8 @@ void SoBrepEdgeSet::doAction(SoAction* action)
         Gui::SoHighlightElementAction* hlaction = static_cast<Gui::SoHighlightElementAction*>(action);
         selCounter.checkAction(hlaction);
         VK_BREADCRUMB_LIMITED(30,
-                              "[VK-TRACE] SoBrepEdgeSet::doAction HL this=%p highlighted=%d detail=%p\n",
+                              "[VK-TRACE] SoBrepEdgeSet::doAction HL this=%p "
+                              "highlighted=%d detail=%p\n",
                               this, hlaction->isHighlighted() ? 1 : 0,
                               (const void*)hlaction->getElement());
         if (!hlaction->isHighlighted()) {

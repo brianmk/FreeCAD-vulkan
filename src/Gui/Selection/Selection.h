@@ -845,6 +845,19 @@ protected:
 
     std::list<_SelObj> _SelList;
 
+    // O(1) membership index over _SelList, keyed by "Doc#Feat.Sub".  Rebuilt
+    // lazily when _SelIndexDirty is set by any _SelList mutation (push_back /
+    // erase / clear), so checkSelection()/isSelected() avoid a linear scan of
+    // the whole selection on every query.  This turns bulk setSelection()/
+    // addSelection() from O(N^2) down to O(N).  Mutable because checkSelection()
+    // is const but rebuilds the cache on demand.
+    mutable std::unordered_set<std::string> _SelIndex;
+    mutable bool _SelIndexDirty {true};
+
+    void _markSelIndexDirty();
+    void _rebuildSelIndex() const;
+    static std::string _selKey(const std::string& doc, const std::string& feat, const std::string& sub);
+
     std::list<_SelObj> _PickedList;
     bool _needPickedList {false};
 

@@ -46,7 +46,9 @@ void SoAxisCrossOverlay::initClass()
 SoAxisCrossOverlay::SoAxisCrossOverlay()
 {
     SO_NODE_CONSTRUCTOR(SoAxisCrossOverlay);
-    SO_NODE_ADD_FIELD(sizeFraction, (15.0F));
+    // Default matches View3DInventorViewer::axiscrossSize (10%); the viewer
+    // re-syncs this field before the first render anyway.
+    SO_NODE_ADD_FIELD(sizeFraction, (10.0F));
     SO_NODE_ADD_FIELD(enabled, (TRUE));
 }
 

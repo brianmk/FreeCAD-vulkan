@@ -135,6 +135,7 @@
 #include "Inventor/SoAxisCrossOverlay.h"
 #include "Inventor/SoFCBackgroundGradient.h"
 #include "Inventor/SoFCBoundingBox.h"
+#include "Inventor/SoGroundPlane.h"
 #include "MainWindow.h"
 #include "Multisample.h"
 #include "NaviCube.h"
@@ -1484,6 +1485,9 @@ void View3DInventorViewer::initialize()
 
     this->axiscrossEnabled = true;
     this->axiscrossSize = 10;  // NOLINT
+    this->groundPlane = nullptr;
+    this->groundPlaneGroup = nullptr;
+    this->groundPlaneOpacity = 0.15F;
 }
 
 /// @cond DOXERR
@@ -2049,6 +2053,14 @@ void View3DInventorViewer::applyVulkanSettings()
 
     vulkanSettings_.pathTracing = hGrp->GetBool("VulkanPathTracing", false);
 
+    vulkanSettings_.pathTracingBounces =
+        std::clamp(static_cast<int>(hGrp->GetInt("VulkanPathTracingBounces", 4)),
+                   1, 16);
+    vulkanSettings_.pathTracingSettleFrames = std::clamp(
+        static_cast<int>(hGrp->GetInt("VulkanPathTracingSettle", 6)), 1, 120);
+    vulkanSettings_.pathTracingDenoise =
+        hGrp->GetBool("VulkanPathTracingDenoise", true);
+
     Q_EMIT vulkanSettingsChanged();
 }
 
@@ -2306,6 +2318,54 @@ void View3DInventorViewer::setAxisCross(bool on)
 bool View3DInventorViewer::hasAxisCross()
 {
     return axisGroup;
+}
+
+void View3DInventorViewer::setGroundPlaneOpacity(float opacity)
+{
+    // Stored as "opacity" (1 = opaque, 0 = invisible), the node exposes it as
+    // transparency (the inverse) so higher values make the grid fainter.
+    const float clamped = std::clamp(opacity, 0.0F, 1.0F);
+    groundPlaneOpacity = clamped;
+    if (groundPlane) {
+        groundPlane->transparency.setValue(1.0F - clamped);
+    }
+}
+
+void View3DInventorViewer::setGroundPlane(bool on)
+{
+    SoNode* scene = getSceneGraph();
+    auto sep = static_cast<SoSeparator*>(scene);  // NOLINT
+
+    if (on) {
+        if (!groundPlane) {
+            groundPlane = new SoGroundPlane;
+            groundPlane->ref();
+            groundPlane->transparency.setValue(1.0F - groundPlaneOpacity);
+            groundPlaneGroup = new SoSeparator;
+            groundPlaneGroup->ref();
+            groundPlaneGroup->setName("groundPlane");
+            groundPlaneGroup->addChild(groundPlane);
+
+            // Draw the grid behind the model geometry. viewerSceneRoot's
+            // children are [viewerLightingRoot, pcViewProviderRoot, ...], so
+            // index 1 places the plane just before the document content.
+            sep->insertChild(groundPlaneGroup, 1);
+        }
+    }
+    else {
+        if (groundPlane) {
+            sep->removeChild(groundPlaneGroup);
+            groundPlaneGroup->unref();
+            groundPlaneGroup = nullptr;
+            groundPlane->unref();
+            groundPlane = nullptr;
+        }
+    }
+}
+
+bool View3DInventorViewer::hasGroundPlane()
+{
+    return groundPlane;
 }
 
 void View3DInventorViewer::showRotationCenter(bool show)
@@ -3448,28 +3508,19 @@ void View3DInventorViewer::renderScene()
     SbVec2s size = vp.getViewportSizePixels();
     glViewport(origin[0], origin[1], size[0], size[1]);
 
-    // Locals are computed inside the guard so the per-frame overhead stays
-    // zero when tracing is off.
-    if (getenv("FC_VULKAN_BREADCRUMBS")) {
-        static bool logged = false;
-        if (!logged) {
-            logged = true;
-            SbViewVolume vv;
-            SoCamera* cam = this->getSoRenderManager()->getCamera();
-            if (cam) {
-                vv = cam->getViewVolume();
-            }
-            Base::vulkanBreadcrumb(
-                    "[VK-TRACE] renderScene glViewport=%dx%d glGLWidget=%dx%d aspect=%f "
-                    "near=%f far=%f depth=%f width=%f height=%f\n",
-                    size[0], size[1],
-                    this->getGLWidget() ? this->getGLWidget()->width() : -1,
-                    this->getGLWidget() ? this->getGLWidget()->height() : -1,
-                    vp.getViewportAspectRatio(), vv.getNearDist(),
-                    vv.getNearDist() + vv.getDepth(), vv.getDepth(),
-                    vv.getWidth(), vv.getHeight());
-        }
-    }
+    // The view-volume fields below are cheap to compute; the expensive part
+    // (file I/O) stays behind the macro's env check.
+    const SbViewVolume vv = this->getSoRenderManager()->getCamera()
+        ? this->getSoRenderManager()->getCamera()->getViewVolume()
+        : SbViewVolume();
+    VK_BREADCRUMB_ONCE("[VK-TRACE] renderScene glViewport=%dx%d glGLWidget=%dx%d "
+                       "aspect=%f near=%f far=%f depth=%f width=%f height=%f\n",
+                       size[0], size[1],
+                       this->getGLWidget() ? this->getGLWidget()->width() : -1,
+                       this->getGLWidget() ? this->getGLWidget()->height() : -1,
+                       vp.getViewportAspectRatio(), vv.getNearDist(),
+                       vv.getNearDist() + vv.getDepth(), vv.getDepth(),
+                       vv.getWidth(), vv.getHeight());
 
     const QColor col = this->backgroundColor();
     glClearColor(float(col.redF()), float(col.greenF()), float(col.blueF()), 0.0F);
@@ -4474,13 +4525,13 @@ bool View3DInventorViewer::getSceneBoundBox(SbBox3f& box) const
 
 void View3DInventorViewer::animatedViewAll(const SbBox3f& box, int steps, int ms)
 {
-    SoCamera* cam = this->getSoRenderManager()->getCamera();
-    if (!cam) {
+    SoCamera* cam0 = this->getSoRenderManager()->getCamera();
+    if (!cam0) {
         return;
     }
 
-    SbVec3f campos = cam->position.getValue();
-    SbRotation camrot = cam->orientation.getValue();
+    SbVec3f campos = cam0->position.getValue();
+    SbRotation camrot = cam0->orientation.getValue();
     SbViewportRegion vp = this->getSoRenderManager()->getViewportRegion();
 
     float aspectRatio = vp.getViewportAspectRatio();
@@ -4499,9 +4550,9 @@ void View3DInventorViewer::animatedViewAll(const SbBox3f& box, int steps, int ms
     float height = 0;
     float diff = 0;
 
-    if (cam->isOfType(SoOrthographicCamera::getClassTypeId())) {
+    if (cam0->isOfType(SoOrthographicCamera::getClassTypeId())) {
         isOrthographic = true;
-        height = static_cast<SoOrthographicCamera*>(cam)->height.getValue();  // NOLINT
+        height = static_cast<SoOrthographicCamera*>(cam0)->height.getValue();  // NOLINT
         if (aspectRatio < 1.0F) {
             diff = sphere.getRadius() * 2 - height * aspectRatio;
         }
@@ -4510,10 +4561,10 @@ void View3DInventorViewer::animatedViewAll(const SbBox3f& box, int steps, int ms
         }
         pos = (box.getCenter() - direction * sphere.getRadius());
     }
-    else if (cam->isOfType(SoPerspectiveCamera::getClassTypeId())) {
+    else if (cam0->isOfType(SoPerspectiveCamera::getClassTypeId())) {
         // NOLINTBEGIN
         float movelength = sphere.getRadius()
-            / float(tan(static_cast<SoPerspectiveCamera*>(cam)->heightAngle.getValue() / 2.0));
+            / float(tan(static_cast<SoPerspectiveCamera*>(cam0)->heightAngle.getValue() / 2.0));
         // NOLINTEND
         pos = box.getCenter() - direction * movelength;
     }
@@ -4524,6 +4575,17 @@ void View3DInventorViewer::animatedViewAll(const SbBox3f& box, int steps, int ms
     QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
 
     for (int i = 0; i < steps; i++) {
+        // The nested event loop below processes queued events, and a surface
+        // resize during it can swap/replace the camera node (FreeCAD's Vulkan
+        // viewport re-fits the camera on the first stable swapchain size).
+        // Writing through the snapshot pointer would then touch a
+        // dead field (SoField FLAG_ALIVE_PATTERN).  Re-read the camera each
+        // step and stop as soon as it is no longer the node we started with.
+        SoCamera* cam = this->getSoRenderManager()->getCamera();
+        if (cam != cam0) {
+            return;
+        }
+
         float par = float(i) / float(steps);
 
         if (isOrthographic) {

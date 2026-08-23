@@ -859,6 +859,17 @@ void QuarterVulkanWidget::ensureSharedInstance()
             sharedInstance->setLayers(
                 {QByteArrayLiteral("VK_LAYER_KHRONOS_validation")});
         }
+        // External memory interop with CUDA (for the RTX denoiser) needs the
+        // instance capability extensions in addition to the device one, so the
+        // FD export is usable.  Enabling them is free on 1.2+ and harmless if
+        // the loader/driver lacks them (Qt tolerates unsupported instance
+        // extensions in its setExtensions list).
+        sharedInstance->setExtensions({
+            QByteArrayLiteral("VK_KHR_external_memory_capabilities"),
+            QByteArrayLiteral("VK_KHR_external_memory"),
+            QByteArrayLiteral("VK_KHR_external_semaphore_capabilities"),
+            QByteArrayLiteral("VK_KHR_external_semaphore"),
+        });
         if (!sharedInstance->create()) {
             vkWarn("QuarterVulkanWidget: could not create instance with "
                    "validation layer (error %d), retrying without layers",
@@ -1056,7 +1067,11 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
         QByteArrayLiteral("VK_KHR_ray_tracing_pipeline"),
         QByteArrayLiteral("VK_KHR_ray_query"),
         QByteArrayLiteral("VK_KHR_deferred_host_operations"),
+        QByteArrayLiteral("VK_KHR_external_memory_fd"),
     });
+    vkLog("QuarterVulkanWidget: request device ext: "
+          "accel_structure, ray_tracing_pipeline, ray_query, "
+          "deferred_host_ops, external_memory_fd");
     // Enable the device features behind those extensions.  The modifier
     // receives VkPhysicalDeviceFeatures2 after Qt has populated it; chain
     // the RT feature structs onto pNext.

@@ -307,6 +307,16 @@ void View3DInventorPy::init_type()
         "check if the big axis-cross is on or off()"
     );
     add_varargs_method(
+        "setGroundPlane",
+        &View3DInventorPy::setGroundPlane,
+        "switch the ground plane grid on and off"
+    );
+    add_noargs_method(
+        "hasGroundPlane",
+        &View3DInventorPy::hasGroundPlane,
+        "check if the ground plane grid is on or off"
+    );
+    add_varargs_method(
         "addDraggerCallback",
         &View3DInventorPy::addDraggerCallback,
         "addDraggerCallback(SoDragger, String CallbackType, function)\n"
@@ -2486,6 +2496,22 @@ Py::Object View3DInventorPy::setAxisCross(const Py::Tuple& args)
 Py::Object View3DInventorPy::hasAxisCross()
 {
     SbBool ok = getView3DInventorPtr()->getViewer()->hasAxisCross();
+    return Py::Boolean(ok ? true : false);
+}
+
+Py::Object View3DInventorPy::setGroundPlane(const Py::Tuple& args)
+{
+    int ok;
+    if (!PyArg_ParseTuple(args.ptr(), "i", &ok)) {
+        throw Py::Exception();
+    }
+    getView3DInventorPtr()->getViewer()->setGroundPlane(ok != 0);
+    return Py::None();
+}
+
+Py::Object View3DInventorPy::hasGroundPlane()
+{
+    SbBool ok = getView3DInventorPtr()->getViewer()->hasGroundPlane();
     return Py::Boolean(ok ? true : false);
 }
 

@@ -97,7 +97,8 @@ void SoBrepPointSet::GLRender(SoGLRenderAction* action)
         return;
     }
     SelContextPtr ctx2;
-    SelContextPtr ctx = Gui::SoFCSelectionRoot::getRenderContext<SelContext>(this, selContext, ctx2);
+    SelContextPtr ctx =
+        Gui::SoFCSelectionRoot::getRenderContext<SelContext>(this, selContext, ctx2);
     if (ctx2 && ctx2->selectionIndex.empty()) {
         return;
     }
@@ -237,7 +238,8 @@ void SoBrepPointSet::IRRender(SoIRRenderAction* action)
     }
 
     SelContextPtr ctx2;
-    SelContextPtr ctx = Gui::SoFCSelectionRoot::getRenderContext<SelContext>(this, selContext, ctx2);
+    SelContextPtr ctx =
+        Gui::SoFCSelectionRoot::getRenderContext<SelContext>(this, selContext, ctx2);
     copyIRRenderContexts(ctx, ctx2);
     VK_BREADCRUMB_LIMITED(30,
                           "[VK-TRACE] SoBrepPointSet::IRRender ctx=%p hlIdx=%d selIdx=%zu "
@@ -260,9 +262,12 @@ void SoBrepPointSet::IRRender(SoIRRenderAction* action)
         renderClarifySelectionIR(action,
                                  ctx,
                                  viewProvider,
-                                 &SoBrepPointSet::renderHighlightIR,
-                                 &SoPointSet::IRRender,
-                                 this);
+                                 [this](SoIRRenderAction* a, SelContextPtr c) {
+                                     this->renderHighlightIR(a, c);
+                                 },
+                                 [this](SoIRRenderAction* a) {
+                                     this->SoPointSet::IRRender(a);
+                                 });
         return;
     }
     SelContextPtr globalCtx = selContext2
@@ -504,7 +509,8 @@ void SoBrepPointSet::doAction(SoAction* action)
         Gui::SoHighlightElementAction* hlaction = static_cast<Gui::SoHighlightElementAction*>(action);
         selCounter.checkAction(hlaction);
         VK_BREADCRUMB_LIMITED(30,
-                              "[VK-TRACE] SoBrepPointSet::doAction HL this=%p highlighted=%d detail=%p\n",
+                              "[VK-TRACE] SoBrepPointSet::doAction HL this=%p "
+                              "highlighted=%d detail=%p\n",
                               this, hlaction->isHighlighted() ? 1 : 0,
                               (const void*)hlaction->getElement());
         if (!hlaction->isHighlighted()) {

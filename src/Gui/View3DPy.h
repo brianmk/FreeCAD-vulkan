@@ -115,6 +115,8 @@ public:
     Py::Object setNavigationType(const Py::Tuple&);
     Py::Object setAxisCross(const Py::Tuple&);
     Py::Object hasAxisCross();
+    Py::Object setGroundPlane(const Py::Tuple&);
+    Py::Object hasGroundPlane();
     Py::Object addDraggerCallback(const Py::Tuple&);
     Py::Object removeDraggerCallback(const Py::Tuple&);
     Py::Object getViewProvidersOfType(const Py::Tuple&);
