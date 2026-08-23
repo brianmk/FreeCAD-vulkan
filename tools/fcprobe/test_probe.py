@@ -251,5 +251,74 @@ check("terminal error captured", any(
 check("terminal not a native crash", hangrep.session.get("exit_signal") is None)
 check("probe-die run actually ends fast", hangrep.verdict in ("FAIL", "ERROR"))
 
+# --- new: [VK-SET]/[OVL]/[PUSH]/[UBO] events + color-pixel counting ----
+evs = list(fp.iter_events([
+    "[VK-SET] pushSettings edges=1 points=0 edgeColor=(1.00,0.00,0.00,1.00)\n",
+    "[OVL] wireframe=1 points=0 fillMode=1 edgeColor=(1.00,0.00,0.00,1.00)\n",
+    "[PUSH] srcDiffuse=1 override=1 fillModeOverride=1\n",
+    "[UBO] lighting=1 material=1\n",
+]))
+check("parse VK-SET", any(e["source"] == "VK-SET" and e["fields"].get("edges") == "1"
+                          for e in evs))
+check("parse OVL/PUSH/UBO", {e["source"] for e in evs} >= {"OVL", "PUSH", "UBO"})
+vks = fp.extract_vksett(evs)
+check("extract_vksett", len(vks) == 1 and vks[0]["kind"] == "pushSettings")
+
+# tiny synthetic PNG -> count_color_pixels
+try:
+    from PIL import Image
+    png = "/tmp/opencode/_px.png"
+    im = Image.new("RGB", (10, 10), (0, 0, 0))
+    for y in range(3):
+        for x in range(4):
+            im.putpixel((x, y), (255, 0, 0))
+    im.save(png)
+    red = fp.count_color_pixels(png, (255, 0, 0))
+    check("count_color_pixels red", red == 12)
+    check("count_color_pixels black", fp.count_color_pixels(png, (0, 0, 0)) == 88)
+except ImportError:
+    check("count_color_pixels (PIL missing)", True)
+
+# --- Khronos validation handling (severity + per-VUID summary) ---
+vl = [
+    "The Vulkan spec states: each layout must be... (https://docs.vulkan.org/#VUID-VkImageMemoryBarrier-oldLayout-01197)\n",
+    "The Vulkan spec states: present image... (https://docs.vulkan.org/#VUID-VkPresentInfoKHR-pImageIndices-01430)\n",
+    "The Vulkan spec states: some barrier... (https://docs.vulkan.org/#VUID-VkImageMemoryBarrier-oldLayout-01197)\n",
+]
+vlev = list(fp.iter_events(vl))
+check("vuid as WARN (not INFO)", all(
+    e["fields"].get("level") == "WARN" for e in vlev if e.get("source") == "VK-VALIDATION"))
+vs = fp.validation_summary(vlev)
+check("validation_summary buckets", vs["VUID-VkImageMemoryBarrier-oldLayout-01197"]["count"] == 2)
+check("validation_summary present", vs.get("VUID-VkPresentInfoKHR-pImageIndices-01430", {}).get("count") == 1)
+
+# --- check_preferences (code-path + rendered-result assertion) ---
+import os as _os
+fdir = "/tmp/opencode/_pref_frames"
+_os.makedirs(fdir, exist_ok=True)
+from PIL import Image as _I
+_I.new("RGB", (8, 8), (200, 200, 200)).save(f"{fdir}/frame_1.png")   # baseline, no red
+_I.new("RGB", (8, 8), (200, 200, 200)).save(f"{fdir}/frame_2.png")
+redim = _I.new("RGB", (8, 8), (200, 200, 200))
+for x in range(3, 6):
+    for y in range(3, 6):
+        redim.putpixel((x, y), (255, 0, 0))
+redim.save(f"{fdir}/frame_3.png")                                    # edges on -> red
+evs2 = [
+    {"source": "VK-TRACE", "text": "View3DInventorViewer::applyVulkanSettings edges=0 points=0"},
+    {"source": "VK-TRACE", "text": "View3DInventorViewer::applyVulkanSettings edges=1 points=1"},
+    {"source": "HARNESS", "kind": "frame_phase", "fields": {"phase": "edges"}},
+]
+check("check_preferences PASS", fp.check_preferences(evs2, fdir, min_px=3) == [])
+# baseline frame exists (frame_1 has no red) and edges frame has red -> pass
+check("check_preferences baseline present", "no frame with 0 edge pixels" not in fp.check_preferences(evs2, fdir))
+# a run where applyVulkanSettings never saw edges=1 -> error
+errs = fp.check_preferences([{"source": "VK-TRACE", "text": "applyVulkanSettings edges=0 points=0"}], fdir)
+check("check_preferences missing edges=1", any("edges=1" in e for e in errs))
+# a run targeting a color that is never rendered -> error
+novis = fp.check_preferences(evs2, fdir, min_px=3, edge_rgb=(0, 255, 0))
+check("check_preferences detects missing render",
+      any("no frame renders edges" in e for e in novis))
+
 print("=== RESULT:", "PASS" if PASS else "FAIL", "===")
 sys.exit(0 if PASS else 1)

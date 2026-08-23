@@ -102,6 +102,14 @@ def parse_event(line: str) -> Optional[dict[str, Any]]:
             "fields": {},
             "text": text[len("[VKBE]") :].strip(),
         }
+    elif text.startswith("[VK-SET]"):
+        ev = _parse_tagged("VK-SET", text[len("[VK-SET]") :].strip(), set())
+    elif text.startswith("[OVL]"):
+        ev = _parse_tagged("OVL", text[len("[OVL]") :].strip(), set())
+    elif text.startswith("[PUSH]"):
+        ev = _parse_tagged("PUSH", text[len("[PUSH]") :].strip(), set())
+    elif text.startswith("[UBO]"):
+        ev = _parse_tagged("UBO", text[len("[UBO]") :].strip(), set())
     elif text.startswith("[HARNESS]"):
         ev = _parse_tagged("HARNESS", text[len("[HARNESS]") :].strip(), set())
     elif text.startswith("[VERDICT]"):
@@ -150,9 +158,39 @@ def _validation_fields(text: str) -> dict[str, str]:
         fields["level"] = "ERROR"
     elif "Warning" in text:
         fields["level"] = "WARN"
+    elif fields.get("vuid"):
+        # A cited VUID (e.g. the "The Vulkan spec states:" tail of a validation
+        # message) implies a spec violation even when the primary "Validation
+        # Error" line was not captured — surface it as a warning, not INFO.
+        fields["level"] = "WARN"
     else:
         fields["level"] = "INFO"
     return fields
+
+
+def validation_summary(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """Bucket validation diagnostic events by VUID code, returning per-VUID
+    counts (the Khronos layer emits one message per violation, so the same
+    VUID may repeat: here we aggregate instead of flooding the log)."""
+    from collections import defaultdict
+    sums: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {"count": 0, "levels": set(), "example": ""})
+    for ev in events:
+        f = ev.get("fields", {})
+        vuid = f.get("vuid", "(unknown)")
+        s = sums[vuid]
+        s["count"] += 1
+        s["levels"].add(f.get("level", "INFO"))
+        if not s["example"]:
+            s["example"] = ev.get("text", "")[:120]
+    result = {}
+    for vuid, s in sorted(sums.items(), key=lambda kv: -kv[1]["count"]):
+        result[vuid] = {
+            "count": s["count"],
+            "levels": sorted(s["levels"]),
+            "example": s["example"],
+        }
+    return result
 
 
 def extract_validation(lines: Iterable[str]) -> list[dict[str, Any]]:
@@ -217,6 +255,68 @@ def frame_hashes(frames_dir: str) -> dict[str, str]:
     import glob
     return {os.path.basename(p): file_sha256(p)
             for p in sorted(glob.glob(os.path.join(frames_dir, "*.png")))}
+
+
+def count_color_pixels(path: str, rgb: tuple[int, int, int], tol: int = 12) -> int:
+    """Count pixels within `tol` (max channel delta) of `rgb` in a PNG (RGB)."""
+    from PIL import Image
+    import numpy as np
+    a = np.asarray(Image.open(path).convert("RGB"), dtype=np.int32)
+    target = np.array(rgb, dtype=np.int32)
+    dist = np.abs(a - target).max(axis=2)
+    return int((dist <= tol).sum())
+
+
+def extract_vksett(events: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return the `[VK-SET] pushSettings ...` events (the settings-push record)."""
+    return [ev for ev in events if ev.get("source") == "VK-SET"]
+
+
+def _frame_num(path: str) -> int:
+    import re
+    m = re.search(r"(\d+)\.png", os.path.basename(path))
+    return int(m.group(1)) if m else 0
+
+
+def check_preferences(events: Iterable[dict[str, Any]],
+                      frames_dir: str,
+                      edge_rgb: tuple[int, int, int] = (255, 0, 0),
+                      tol: int = 12, min_px: int = 50,
+                      expected_edge_on: bool = True) -> list[str]:
+    """Assert the Vulkan display prefs were read AND rendered.
+
+    Code path: the ``applyVulkanSettings`` breadcrumb must have recorded the
+    edges/points transitions.  Render: with the overlay on, at least one frame
+    must contain enough ``edge_rgb`` pixels; with it off, some frame must have
+    none.  Returns a list of error strings (empty == PASS).
+    """
+    import glob
+    import os
+    errors: list[str] = []
+    evs = list(events)
+    traces = [ev.get("text", "") for ev in evs
+              if ev.get("source") == "VK-TRACE"
+              and "applyVulkanSettings" in ev.get("text", "")]
+    if not traces:
+        errors.append("no applyVulkanSettings breadcrumb (code path never ran)")
+    if expected_edge_on and not any("edges=1" in t for t in traces):
+        errors.append("applyVulkanSettings never recorded edges=1")
+    if any("edges=0" in t for t in traces) is False:
+        errors.append("applyVulkanSettings never recorded edges=0 (baseline)")
+
+    frames = sorted(glob.glob(os.path.join(frames_dir, "*.png")), key=_frame_num)
+    if not frames:
+        errors.append("no frame dumps to analyze")
+        return errors
+    counts = [count_color_pixels(f, edge_rgb, tol) for f in frames]
+    if expected_edge_on:
+        if max(counts) < min_px:
+            errors.append(
+                f"no frame renders edges in {edge_rgb}"
+                f" (max {max(counts)} px, need >= {min_px})")
+        if 0 not in counts:
+            errors.append("no frame with 0 edge pixels (overlay may be stuck on)")
+    return errors
 
 
 def image_metrics(a_path: str, b_path: str) -> dict[str, Any]:
@@ -759,6 +859,7 @@ def run_case(
     validation_events = extract_validation(lines)
     report.session["validation"] = validation
     report.session["validation_count"] = len(validation_events)
+    report.session["validation_summary"] = validation_summary(validation_events)
     for ev in validation_events:
         report.events.append(ev)
         level = ev.get("fields", {}).get("level", "INFO")
@@ -929,11 +1030,27 @@ def _cli(argv: List[str]) -> int:
             frame_mean_threshold=args.frame_mean_threshold,
             frame_big_threshold_px=args.frame_big_threshold_px,
         )
+        # -- self-passing regression: assert the Vulkan display prefs were
+        #    both read (applyVulkanSettings breadcrumb) and rendered (frames).
+        if args.check_preferences and hasattr(args, "edge_color"):
+            edge_rgb = tuple(int(x) for x in args.edge_color.split(","))
+            pferrs = check_preferences(
+                report.events,
+                os.path.join(report.artifact_dir, "frames"),
+                edge_rgb=edge_rgb, min_px=args.min_edge_px)
+            for e in pferrs:
+                report.add_error(e)
+            if pferrs:
+                report.mark("FAIL")
+                report.write()
         print(f"[RUN] artifact_dir={report.artifact_dir}")
         print(f"[RUN] verdict={report.verdict}")
         print(f"[RUN] drawlist_hash={report.session.get('drawlist_hash', '')[:16]}")
         print(f"[RUN] vkbe_count={report.session.get('vkbe_count')} "
               f"validation={report.session.get('validation_count')}")
+        for vuid, s in (report.session.get("validation_summary") or {}).items():
+            lv = ",".join(s.get("levels", []))
+            print(f"[RUN] VALIDATION {vuid} count={s['count']} level={lv}")
         for e in report.errors:
             print(f"[RUN] ERROR {e}")
         return 0 if report.verdict == "PASS" else 1
@@ -1002,6 +1119,9 @@ def _print_report(artifact_dir: str) -> None:
               f"vkbe_count={sess.get('vkbe_count')}")
     if sess.get("validation_count"):
         print(f"[report] validation_count={sess['validation_count']}")
+        for vuid, s in (sess.get("validation_summary") or {}).items():
+            print(f"[report]   VALIDATION {vuid} count={s['count']} "
+                  f"level={','.join(s['levels'])}")
     if "state" in sess:
         print(f"[report] state={json.dumps(sess['state'], separators=(',', ':'))}")
     if sess.get("frame_hashes"):
@@ -1065,6 +1185,24 @@ def _build_parser() -> Any:
         type=int,
         default=200,
         help="max pixels differing by >8 per frame before FAIL (default 200)",
+    )
+    run.add_argument(
+        "--check-preferences",
+        action="store_true",
+        help="assert Vulkan display prefs were read (applyVulkanSettings trace) "
+             "and rendered (edge-colored pixels) — a self-passing regression",
+    )
+    run.add_argument(
+        "--edge-color",
+        default="255,0,0",
+        metavar="R,G,B",
+        help="edge/overlay color to look for with --check-preferences (default 255,0,0)",
+    )
+    run.add_argument(
+        "--min-edge-px",
+        type=int,
+        default=50,
+        help="minimum edge-colored pixels for --check-preferences (default 50)",
     )
     rep = sub.add_parser("report", help="summarize an artifact dir's report.json")
     rep.add_argument("artifact_dir", help="path to an artifact directory (run bundle)")
@@ -1523,6 +1661,39 @@ class Session:
             [kind] + [f"{k}={v}" for k, v in fields.items()]
         )
         print(f"[HARNESS] {line}", flush=True)
+
+    def frame_phase(self, name: str) -> None:
+        """Mark a phase boundary so the host can correlate frame dumps to the
+        pref state at the time they were rendered (``[HARNESS] frame_phase``)."""
+        self.emit("frame_phase", phase=name)
+
+    def set_pref(self, group: str, key: str, value: Any, emit: bool = True) -> None:
+        """Set a FreeCAD parameter (group is a full path) and record it.
+
+        Writing to a parameter group fires the ParameterObserver, so View prefs
+        like ``VulkanShowEdges`` trigger ``View3DSettings::OnChange`` ->
+        ``applyVulkanSettings`` automatically.  Emits a ``[HARNESS] pref`` record.
+        """
+        import FreeCAD
+        hGrp = FreeCAD.ParamGet(group)
+        if isinstance(value, bool):
+            hGrp.SetBool(key, value)
+        elif isinstance(value, int):
+            # Colors are stored as Unsigned (0xAABBGGRR/0xRRGGBBAA); large
+            # values like opaque red (0xFF0000FF) exceed INT_MAX and must be
+            # written with SetUnsigned, matching the GetUnsigned read path.
+            if value >= 0 and value > 2 ** 31 - 1 and hasattr(hGrp, "SetUnsigned"):
+                hGrp.SetUnsigned(key, value)
+            else:
+                hGrp.SetInt(key, value)
+        elif isinstance(value, float):
+            hGrp.SetFloat(key, value)
+        elif isinstance(value, str):
+            hGrp.SetString(key, value)
+        else:
+            raise TypeError(f"set_pref: unsupported value type {type(value)!r}")
+        if emit:
+            self.emit("pref", group=group, key=key, value=f"{value}")
 
     def snapshot(self) -> dict[str, Any]:
         view = self.active_view()
