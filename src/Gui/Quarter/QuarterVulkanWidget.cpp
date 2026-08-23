@@ -189,10 +189,20 @@ public:
         QMutexLocker locker(&m_stateMutex);
         m_pathTracingSettleFrames = std::clamp(frames, 1, 120);
     }
+    void setPathTracingMaxSamples(int samples)
+    {
+        QMutexLocker locker(&m_stateMutex);
+        m_pathTracingMaxSamples = std::clamp(samples, 1, 4096);
+    }
     void setPathTracingDenoise(bool enabled)
     {
         QMutexLocker locker(&m_stateMutex);
         m_pathTracingDenoise = enabled;
+    }
+    void setPathTracingDenoiser(const std::string & denoiser)
+    {
+        QMutexLocker locker(&m_stateMutex);
+        m_pathTracingDenoiser = denoiser;
     }
     bool getPathTracingEnabled() const
     {
@@ -493,10 +503,21 @@ private:
                 static_cast<uint32_t>(m_pathTracingSettleFrames));
             m_appliedPathTracingSettleFrames = m_pathTracingSettleFrames;
         }
+        if (m_pathTracingMaxSamples != m_appliedPathTracingMaxSamples) {
+            m_manager.setPathTracingMaxSamples(
+                static_cast<uint32_t>(m_pathTracingMaxSamples));
+            m_appliedPathTracingMaxSamples = m_pathTracingMaxSamples;
+        }
         if (m_pathTracingDenoise != m_appliedPathTracingDenoise) {
             m_manager.setPathTracingDenoiseEnabled(m_pathTracingDenoise ? TRUE
                                                                         : FALSE);
             m_appliedPathTracingDenoise = m_pathTracingDenoise;
+        }
+        if (m_pathTracingDenoiser != m_appliedPathTracingDenoiser) {
+            m_manager.setPathTracingDenoiser(
+                m_pathTracingDenoiser.empty() ? nullptr
+                                              : m_pathTracingDenoiser.c_str());
+            m_appliedPathTracingDenoiser = m_pathTracingDenoiser;
         }
         if (m_pathTracingStart) {
             m_manager.setPathTracingStart(TRUE);
@@ -704,10 +725,14 @@ private:
     bool m_appliedPathTracingEnabled = false;
     int m_pathTracingBounces = 4;
     int m_pathTracingSettleFrames = 6;
+    int m_pathTracingMaxSamples = 256;
     bool m_pathTracingDenoise = true;
+    std::string m_pathTracingDenoiser;   // "" = default (env/backend)
     int m_appliedPathTracingBounces = 0;
     int m_appliedPathTracingSettleFrames = 0;
+    int m_appliedPathTracingMaxSamples = 0;
     bool m_appliedPathTracingDenoise = false;
+    std::string m_appliedPathTracingDenoiser;
     bool m_rayTracingActive = false;
     bool m_rtxBackendAvailable = false;
     bool m_rtxBackendProbed = false;
@@ -1504,12 +1529,30 @@ void QuarterVulkanWidget::setPathTracingSettleFrames(int frames)
     redraw();
 }
 
+void QuarterVulkanWidget::setPathTracingMaxSamples(int samples)
+{
+    if (!d->renderer) {
+        return;
+    }
+    d->renderer->setPathTracingMaxSamples(samples);
+    redraw();
+}
+
 void QuarterVulkanWidget::setPathTracingDenoise(bool enabled)
 {
     if (!d->renderer) {
         return;
     }
     d->renderer->setPathTracingDenoise(enabled);
+    redraw();
+}
+
+void QuarterVulkanWidget::setPathTracingDenoiser(const std::string & denoiser)
+{
+    if (!d->renderer) {
+        return;
+    }
+    d->renderer->setPathTracingDenoiser(denoiser);
     redraw();
 }
 

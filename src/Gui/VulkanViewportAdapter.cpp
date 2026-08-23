@@ -161,7 +161,11 @@ void VulkanViewportAdapter::pushSettings()
     _vulkanViewer->setPathTracingEnabled(settings.pathTracing);
     _vulkanViewer->setPathTracingBounces(settings.pathTracingBounces);
     _vulkanViewer->setPathTracingSettleFrames(settings.pathTracingSettleFrames);
+    _vulkanViewer->setPathTracingMaxSamples(settings.pathTracingMaxSamples);
     _vulkanViewer->setPathTracingDenoise(settings.pathTracingDenoise);
+    if (!settings.pathTracingDenoiser.empty()) {
+        _vulkanViewer->setPathTracingDenoiser(settings.pathTracingDenoiser);
+    }
     if (settings.pathTracing) {
         _vulkanViewer->setPathTracingStart(true);
     }

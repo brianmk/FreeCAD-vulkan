@@ -6,6 +6,7 @@
 
 #include <QSize>
 #include <QWidget>
+#include <string>
 
 #include <Inventor/SbColor4f.h>
 
@@ -251,6 +252,17 @@ public:
       to the ray-tracing backend.
     */
     void setPathTracingDenoise(bool enabled);
+
+    /*!
+      \brief Select the denoiser backend by name ("rtx", "oidn", "fsr",
+      "none"); an empty string uses the default (backend env / built-in)
+      choice.  Forwarded to the ray-tracing backend.
+    */
+    void setPathTracingDenoiser(const std::string & denoiser);
+
+    //! Accumulated-sample cap (1..4096) before the run auto-stops; forwarded
+    //! to the ray-tracing backend.
+    void setPathTracingMaxSamples(int samples);
 
 protected:
     bool eventFilter(QObject * watched, QEvent * event) override;

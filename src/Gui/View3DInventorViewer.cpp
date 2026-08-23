@@ -2058,8 +2058,19 @@ void View3DInventorViewer::applyVulkanSettings()
                    1, 16);
     vulkanSettings_.pathTracingSettleFrames = std::clamp(
         static_cast<int>(hGrp->GetInt("VulkanPathTracingSettle", 6)), 1, 120);
+    vulkanSettings_.pathTracingMaxSamples = std::clamp(
+        static_cast<int>(hGrp->GetInt("VulkanPathTracingMaxSamples", 256)),
+        1, 4096);
     vulkanSettings_.pathTracingDenoise =
         hGrp->GetBool("VulkanPathTracingDenoise", true);
+    // Denoiser backend, stored as the combo index (0=RTX, 1=OIDN, 2=FSR,
+    // 3=None); map to the backend name the RT renderer expects.
+    switch (hGrp->GetInt("VulkanPathTracingDenoiser", 0)) {
+        case 1: vulkanSettings_.pathTracingDenoiser = "oidn"; break;
+        case 2: vulkanSettings_.pathTracingDenoiser = "fsr"; break;
+        case 3: vulkanSettings_.pathTracingDenoiser = "none"; break;
+        default: vulkanSettings_.pathTracingDenoiser = "rtx"; break;
+    }
 
     Q_EMIT vulkanSettingsChanged();
 }

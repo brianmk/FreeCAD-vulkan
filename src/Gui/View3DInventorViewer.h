@@ -126,7 +126,10 @@ struct VulkanViewSettings
     // Path-tracing tuning (see the View preferences dialog).
     int pathTracingBounces = 4;
     int pathTracingSettleFrames = 6;
+    int pathTracingMaxSamples = 256;
     bool pathTracingDenoise = true;
+    // Denoiser backend name ("rtx", "oidn", "fsr", "none"); empty = default.
+    std::string pathTracingDenoiser;
 };
 
 /** GUI view into a 3D scene provided by View3DInventor

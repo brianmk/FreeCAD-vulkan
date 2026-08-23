@@ -115,7 +115,9 @@ void View3DSettings::applySettings()
     OnChange(*hGrp, "VulkanPathTracing");
     OnChange(*hGrp, "VulkanPathTracingBounces");
     OnChange(*hGrp, "VulkanPathTracingSettle");
+    OnChange(*hGrp, "VulkanPathTracingMaxSamples");
     OnChange(*hGrp, "VulkanPathTracingDenoise");
+    OnChange(*hGrp, "VulkanPathTracingDenoiser");
     OnChange(*hGrp, "PreselectionMessageRate");
 
     auto lightSourcesGrp = hGrp->GetGroup("LightSources");
@@ -541,7 +543,9 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
              || strcmp(Reason, "VulkanPathTracing") == 0
              || strcmp(Reason, "VulkanPathTracingBounces") == 0
              || strcmp(Reason, "VulkanPathTracingSettle") == 0
-             || strcmp(Reason, "VulkanPathTracingDenoise") == 0) {
+             || strcmp(Reason, "VulkanPathTracingMaxSamples") == 0
+             || strcmp(Reason, "VulkanPathTracingDenoise") == 0
+             || strcmp(Reason, "VulkanPathTracingDenoiser") == 0) {
         // Vulkan-only display options are owned by the viewers; each viewer
         // reloads them from the preferences and notifies its Vulkan viewport.
         for (auto _viewer : _viewers) {

@@ -694,6 +694,42 @@ bounding box size of the 3D object that is currently displayed.</string>
         </layout>
        </item>
        <item>
+        <layout class="QHBoxLayout" name="horizontalLayoutVulkanMaxSamples">
+         <item>
+          <widget class="QLabel" name="labelVulkanMaxSamples">
+           <property name="text">
+            <string>Max samples</string>
+           </property>
+           <property name="toolTip">
+            <string>Accumulated samples at which the progressive render auto-stops (1-4096, default 256).  Higher values converge further before stopping, at the cost of longer renders.</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="Gui::PrefSpinBox" name="SpinBox_VulkanMaxSamples">
+           <property name="toolTip">
+            <string>Accumulated samples at which the progressive render auto-stops (1-4096, default 256).  Higher values converge further before stopping, at the cost of longer renders.</string>
+           </property>
+           <property name="minimum">
+            <number>1</number>
+           </property>
+           <property name="maximum">
+            <number>4096</number>
+           </property>
+           <property name="value">
+            <number>256</number>
+           </property>
+           <property name="prefEntry" stdset="0">
+            <cstring>VulkanPathTracingMaxSamples</cstring>
+           </property>
+           <property name="prefPath" stdset="0">
+            <cstring>View</cstring>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
         <widget class="Gui::PrefCheckBox" name="CheckBox_VulkanDenoise">
          <property name="text">
           <string>Denoise path tracing</string>
@@ -708,6 +744,50 @@ bounding box size of the 3D object that is currently displayed.</string>
           <cstring>View</cstring>
          </property>
         </widget>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="horizontalLayoutVulkanDenoiser">
+         <item>
+          <widget class="QLabel" name="labelVulkanDenoiser">
+           <property name="text">
+            <string>Denoiser</string>
+           </property>
+           <property name="toolTip">
+            <string>Which machine-learning denoiser cleans the path-traced frames.  RTX (OptiX) runs on the GPU and is the fastest; OIDN runs on the CPU; FSR is only available in a build with the AMD FFX SDK.  None disables denoising and shows the raw accumulated radiance.</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="Gui::PrefComboBox" name="ComboBox_VulkanDenoiser">
+           <property name="prefEntry" stdset="0">
+            <cstring>VulkanPathTracingDenoiser</cstring>
+           </property>
+           <property name="prefPath" stdset="0">
+            <cstring>View</cstring>
+           </property>
+           <item>
+            <property name="text">
+             <string>RTX (OptiX, GPU)</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>OIDN (CPU)</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>FSR (AMD FFX)</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>None</string>
+            </property>
+           </item>
+          </widget>
+         </item>
+        </layout>
        </item>
        <item>
         <layout class="QHBoxLayout" name="horizontalLayoutPreselMsg">
