@@ -16,8 +16,6 @@
 #include <Inventor/nodes/SoNode.h>
 #include <Inventor/rendering/SoVulkanRenderManager.h>
 #include <Inventor/rendering/SoVulkanRenderTarget.h>
-#include <Inventor/sensors/SoFieldSensor.h>
-#include <Inventor/sensors/SoNodeSensor.h>
 
 #include <vulkan/vulkan.h>
 
@@ -235,62 +233,14 @@ public:
     }
 
     // Demand-driven redraws: the surface re-renders only when something
-    // changed.  Widget setters call redraw() from the GUI thread; camera
-    // navigation and scene-graph edits arrive through these sensors (the
-    // hidden GL viewer mutates the shared camera/scene without touching the
-    // Vulkan widget).  Sensor callbacks fire during scene-graph
-    // notification; QVulkanWindow::requestUpdate() is documented thread-safe.
-    static void sceneChangedCb(void * data, SoSensor *)
-    {
-        static_cast<QuarterVulkanRenderer *>(data)->requestFrame();
-    }
-    static void cameraChangedCb(void * data, SoSensor *)
-    {
-        static_cast<QuarterVulkanRenderer *>(data)->requestFrame();
-    }
-    void requestFrame()
-    {
-        if (m_window) {
-            m_window->requestUpdate();
-        }
-    }
-
-    // Attach/detach the redraw sensors when the managed scene or camera
-    // changes.  Idempotent: re-attaching the same node is skipped.
-    void attachSensors(SoNode * scene, SoCamera * camera)
-    {
-        if (scene != m_sensorScene) {
-            delete m_sceneSensor;
-            m_sceneSensor = nullptr;
-            m_sensorScene = scene;
-            if (scene) {
-                m_sceneSensor = new SoNodeSensor(sceneChangedCb, this);
-                m_sceneSensor->attach(scene);
-            }
-        }
-        if (camera != m_sensorCamera) {
-            for (SoFieldSensor * sensor : m_cameraSensors) {
-                delete sensor;
-            }
-            m_cameraSensors.clear();
-            m_sensorCamera = camera;
-            if (camera) {
-                static const char * const fields[] = {
-                    "position", "orientation", "aspectRatio", "nearDistance",
-                    "farDistance", "focalDistance", "viewportMapping",
-                    "heightAngle", "height"};
-                for (const char * name : fields) {
-                    SoField * field = camera->getField(SbName(name));
-                    if (!field) {
-                        continue;
-                    }
-                    auto * sensor = new SoFieldSensor(cameraChangedCb, this);
-                    sensor->attach(field);
-                    m_cameraSensors.push_back(sensor);
-                }
-            }
-        }
-    }
+    // changed.  Widget setters call redraw() from the GUI thread, and
+    // camera/scene changes arrive through VulkanViewportAdapter::syncViewer
+    // (FreeCAD routes every document update through Application::onUpdate()
+    // and every camera swap through View3DInventorViewer::cameraChanged;
+    // both end in the adapter's redraw()).  The Vulkan widget deliberately
+    // owns no Coin sensors: the hidden GL viewer's render loop never runs,
+    // so Coin's sensor delay queue is never processed and freshly attached
+    // sensors never activate.
 
     void preInitResources() override {}
 
@@ -393,15 +343,6 @@ public:
         vkLog("releaseResources: shutting down backend");
         m_manager.shutdown();
         m_initialized = false;
-        // Drop the redraw sensors: the scene/camera may outlive the window.
-        delete m_sceneSensor;
-        m_sceneSensor = nullptr;
-        m_sensorScene = nullptr;
-        for (SoFieldSensor * sensor : m_cameraSensors) {
-            delete sensor;
-        }
-        m_cameraSensors.clear();
-        m_sensorCamera = nullptr;
     }
 
     void physicalDeviceLost() override
@@ -417,10 +358,6 @@ public:
     void startNextFrame() override
     {
         const FrameState frame = snapshotFrameState();
-
-        // Keep the redraw sensors in sync with the scene/camera the renderer
-        // is about to consume.
-        this->attachSensors(frame.scene, frame.camera);
 
         if (!m_initialized || !frame.scene) {
             if (!m_initialized) {
@@ -774,12 +711,6 @@ private:
     bool m_rayTracingActive = false;
     bool m_rtxBackendAvailable = false;
     bool m_rtxBackendProbed = false;
-    // Redraw sensors (see attachSensors()): owned by the renderer, deleted
-    // on releaseResources()/destruction; coin sensors detach on deletion.
-    SoNodeSensor * m_sceneSensor = nullptr;
-    SoNode * m_sensorScene = nullptr;
-    std::vector<SoFieldSensor *> m_cameraSensors;
-    SoCamera * m_sensorCamera = nullptr;
     // Guards the frame-state members below, which are written from the
     // widget API (and redraw sensors) and snapshotted by startNextFrame().
     // Qt 6 runs both on the GUI thread, so the lock documents the snapshot

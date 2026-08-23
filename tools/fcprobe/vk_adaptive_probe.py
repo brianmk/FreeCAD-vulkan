@@ -34,7 +34,7 @@ VIEW = "User parameter:BaseApp/Preferences/View"
 
 
 def log(msg):
-    print("ADAPTIVE " + msg, flush=True)
+    print("ADAPTIVE " + msg, file=sys.stderr)
 
 
 s = Session(name="adaptive")

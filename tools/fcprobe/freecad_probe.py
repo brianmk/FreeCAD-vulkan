@@ -23,6 +23,7 @@ host Python too (for the parsers and report writer, which are pure Python).
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -959,6 +960,17 @@ def run_case(
         if report.verdict not in ("ERROR", "TIMEOUT"):
             report.mark("FAIL")
 
+    # -- host-side probe checks (script-adjacent .check.py) ----------------
+    # A probe can ship assertions that run on the host after the process
+    # exits: they parse the captured stdout ([RTDBG] counters, phase
+    # markers) and the collected frame dumps.  Any added error fails the
+    # run.
+    check_mod = load_check_module(script)
+    if check_mod is not None:
+        report.session["check_module"] = os.path.basename(
+            os.path.splitext(script)[0] + ".check.py")
+        _run_check_module(check_mod, lines, report)
+
     report.write()
     return report
 
@@ -1027,6 +1039,41 @@ def extract_verdict(lines: Iterable[str]) -> str:
         if m:
             return m.group(1)
     return ""
+
+
+def load_check_module(script: str):
+    """Import the host-side check module paired with a probe script.
+
+    A probe's assertions live in ``<script stem>.check.py`` next to the
+    script.  The module must define ``check(lines, report)``: ``lines`` is the
+    full stdout of the FreeCAD process and ``report`` is the RunReport (use
+    ``report.add_error(...)`` to fail the run; session data such as
+    ``report.session["env_overrides"]`` is available for control runs).
+    Returns the module, or None when no check module exists.
+    """
+    base = os.path.splitext(script)[0] + ".check.py"
+    if not os.path.isfile(base):
+        return None
+    spec = importlib.util.spec_from_file_location("probe_check", base)
+    if spec is None or spec.loader is None:
+        return None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    if not hasattr(mod, "check"):
+        return None
+    return mod
+
+
+def _run_check_module(check_mod, lines, report) -> None:
+    """Run a probe's host-side check and fold its errors into the report."""
+    before = len(report.errors)
+    try:
+        check_mod.check(lines, report)
+    except Exception as exc:  # a broken check must fail the run loudly
+        report.add_error("check module error: %s", exc)
+    if len(report.errors) > before and report.verdict not in ("ERROR", "TIMEOUT"):
+        report.mark("FAIL")
 
 
 def _cli(argv: List[str]) -> int:
@@ -1116,7 +1163,88 @@ def _cli(argv: List[str]) -> int:
         print(f"[SOAK] total={result['total_runs']} crashes={result['crashes']} "
               f"ok={result['ok']}")
         return 0 if result["ok"] else 1
+    if args.command == "check":
+        return _cli_check(args)
+    if args.command == "suite":
+        return _cli_suite(args)
     return 2
+
+
+def _cli_check(args: Any) -> int:
+    """Re-run a probe's host-side check against an existing artifact bundle."""
+    artifact_dir = args.artifact_dir
+    report_path = os.path.join(artifact_dir, "report.json")
+    if not os.path.exists(report_path):
+        print(f"[check] no report.json in {artifact_dir}")
+        return 2
+    with open(report_path, encoding="utf-8") as f:
+        data = json.load(f)
+    script = data.get("session", {}).get("script")
+    if not script or not os.path.isfile(script):
+        print(f"[check] session script not found: {script}")
+        return 2
+    check_mod = load_check_module(script)
+    if check_mod is None:
+        print(f"[check] no .check.py next to {script}")
+        return 2
+    stdout_path = os.path.join(artifact_dir, "stdout.log")
+    if not os.path.exists(stdout_path):
+        print(f"[check] no stdout.log in {artifact_dir}")
+        return 2
+    with open(stdout_path, encoding="utf-8", errors="replace") as f:
+        lines = f.read().splitlines()
+    report = RunReport(name=data.get("name", "check"), artifact_dir=artifact_dir)
+    report.session.update(data.get("session", {}))
+    _run_check_module(check_mod, lines, report)
+    # RunReport defaults to FAIL; a check that added no errors passes.
+    if report.verdict == "FAIL" and not report.errors:
+        report.mark("PASS")
+    print(f"[check] artifact={artifact_dir}")
+    print(f"[check] verdict={report.verdict}")
+    for e in report.errors:
+        print(f"[check] ERROR {e}")
+    return 0 if report.verdict == "PASS" else 1
+
+
+def _cli_suite(args: Any) -> int:
+    """Run every case in a suite manifest and summarize the verdicts."""
+    manifest_path = args.manifest or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "vk_suite.json")
+    if not os.path.isfile(manifest_path):
+        print(f"[suite] no manifest at {manifest_path}")
+        return 2
+    with open(manifest_path, encoding="utf-8") as f:
+        manifest = json.load(f)
+    base_dir = os.path.dirname(os.path.abspath(manifest_path))
+    failed = 0
+    for i, case in enumerate(manifest.get("cases", []), start=1):
+        script = case["script"]
+        if not os.path.isabs(script):
+            script = os.path.join(base_dir, script)
+        env = dict(case.get("env") or {})
+        allow = list(case.get("allow_vuid") or [])
+        timeout = int(case.get("timeout", args.timeout))
+        print(f"[SUITE] {i}/{len(manifest['cases'])} {case.get('name', script)}")
+        try:
+            report = run_case(
+                script=script,
+                env_overrides=env,
+                out_dir=args.out,
+                timeout=timeout,
+                report_name=case.get("name"),
+                allow_vuid=allow,
+            )
+        except Exception as exc:  # a crashed runner must not abort the suite
+            print(f"[SUITE] RUNNER ERROR {exc}")
+            failed += 1
+            continue
+        print(f"[SUITE]   verdict={report.verdict}")
+        for e in report.errors:
+            print(f"[SUITE]   ERROR {e}")
+        if report.verdict != "PASS":
+            failed += 1
+    print(f"[SUITE] {len(manifest['cases'])} cases, {failed} failed")
+    return 1 if failed else 0
 
 
 def _cli_report(args: Any) -> int:
@@ -1273,6 +1401,19 @@ def _build_parser() -> Any:
                       help="enable the Khronos Vulkan validation layer")
     soak.add_argument("--env", action="append", default=[], metavar="K=V",
                       help="extra environment variable, repeatable")
+
+    chk = sub.add_parser("check", help="re-run a probe's .check.py against an artifact dir")
+    chk.add_argument("artifact_dir", help="path to a run bundle (report.json)")
+    chk.add_argument("--verbose", action="store_true",
+                     help="print matching evidence lines alongside failures")
+
+    suite = sub.add_parser("suite", help="run the Vulkan regression suite manifest")
+    suite.add_argument("--manifest", default=None,
+                       help="path to a suite JSON (default: vk_suite.json next to "
+                            "this tool)")
+    suite.add_argument("--out", default="/tmp/opencode/runs", help="artifact parent dir")
+    suite.add_argument("--timeout", type=int, default=300,
+                       help="default seconds per case (cases may override)")
     return p
 
 

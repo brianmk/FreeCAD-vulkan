@@ -31,7 +31,7 @@ VIEW = "User parameter:BaseApp/Preferences/View"
 
 
 def log(msg):
-    print("BLAS " + msg, flush=True)
+    print("BLAS " + msg, file=sys.stderr)
 
 
 s = Session(name="blas")
