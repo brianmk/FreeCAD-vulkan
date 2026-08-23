@@ -2029,7 +2029,13 @@ bool Document::saveToFile(const char* filename) const
         writer.setLevel(compression);
         writer.putNextEntry("Document.xml");
 
-        if (hGrp->GetBool("SaveBinaryBrep", false)) {
+        // Binary BRep (.bin) is dramatically faster to deserialize than the
+        // ASCII 'CASCADE Topology' .brp text format (several seconds on a
+        // large document), so it is the default.  The extension is
+        // auto-detected on restore, so existing ASCII documents still load.
+        // Disable only if non-FreeCAD consumers need to read the raw shape
+        // files from the archive.
+        if (hGrp->GetBool("SaveBinaryBrep", true)) {
             writer.setMode("BinaryBrep");
         }
 
