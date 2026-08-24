@@ -245,6 +245,13 @@ public:
     void GLRender(SoGLRenderAction* action) override;
     void GLRenderInPath(SoGLRenderAction* action) override;
 
+    //! Render the highlighted geometry as a screen overlay (SO_RENDERPASS_
+    //! OVERLAY) so it composites on TOP of a ray-traced frame.  This keeps the
+    //! selection/preselection highlight off the traced image: it is skipped by
+    //! the path tracer (which only traces opaque commands) and drawn by the
+    //! raster overlay pass, so it never re-traces or re-denoses the scene.
+    void IRRender(SoIRRenderAction* action) override;
+
     void getBoundingBox(SoGetBoundingBoxAction* action) override;
 
 protected:

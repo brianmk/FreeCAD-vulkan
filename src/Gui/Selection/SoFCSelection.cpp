@@ -32,6 +32,8 @@
 #ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/actions/SoIRRenderAction.h>
 #endif
+#include <Inventor/rendering/SoRenderIR.h>
+#include <Inventor/elements/SoViewportRegionElement.h>
 #include <Inventor/details/SoFaceDetail.h>
 #include <Inventor/details/SoLineDetail.h>
 #include <Inventor/elements/SoLazyElement.h>
@@ -682,8 +684,37 @@ void SoFCSelection::IRRender(SoIRRenderAction* action)
                           ctx ? ctx->selectionIndex.size() : (size_t)-1);
 
     if (this->setOverrideIR(action, ctx)) {
+        // A selection/preselection override is applied to the geometry the
+        // shape emits below (a recolor of the opaque command).  When the
+        // Vulkan ray-tracing backend is active, that recolor would be part of
+        // the traced image and force a re-trace/re-denoise on every hover.
+        // Instead, promote the just-recorded geometry to the OVERLAY pass: the
+        // path tracer skips OVERLAY commands, so the highlight is drawn as a
+        // separate raster layer on top of the traced surface without restarting
+        // the accumulation/denoiser.
+        SoDrawList& list = action->getMutableDrawList();
+        const int firstCommand = list.getNumCommands();
         inherited::IRRender(action);
         state->pop();
+        // Scope the overlay to the whole viewport so the overlay backend draws
+        // it (it ignores unscissored overlays) and it composites over the
+        // traced image.
+        SoState* s = action->getState();
+        SbViewportRegion vp = SoViewportRegionElement::get(s);
+        const short vx = std::max(0, (int)vp.getViewportOriginPixels()[0]);
+        const short vy = std::max(0, (int)vp.getViewportOriginPixels()[1]);
+        const short vw = std::max(1, (int)vp.getViewportSizePixels()[0]);
+        const short vh = std::max(1, (int)vp.getViewportSizePixels()[1]);
+        const int count = list.getNumCommands();
+        for (int i = firstCommand; i < count; ++i) {
+            SoRenderCommand& cmd = list.getCommand(i);
+            cmd.pass = SO_RENDERPASS_OVERLAY;
+            cmd.state.raster.scissorEnabled = TRUE;
+            cmd.state.raster.scissorX = vx;
+            cmd.state.raster.scissorY = vy;
+            cmd.state.raster.scissorWidth = vw;
+            cmd.state.raster.scissorHeight = vh;
+        }
     }
     else {
         inherited::IRRender(action);

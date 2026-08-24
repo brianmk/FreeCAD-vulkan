@@ -36,6 +36,8 @@
 #ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/actions/SoIRRenderAction.h>
 #endif
+#include <Inventor/rendering/SoRenderIR.h>
+#include <Inventor/elements/SoViewportRegionElement.h>
 #include <Inventor/actions/SoWriteAction.h>
 #include <Inventor/bundles/SoMaterialBundle.h>
 #include <Inventor/details/SoFaceDetail.h>
@@ -2218,6 +2220,10 @@ void SoFCSelectionRoot::renderPrivateIR(SoIRRenderAction* action)
 
 bool SoFCSelectionRoot::_renderPrivateIR(SoIRRenderAction* action)
 {
+    // Record the command range emitted for this node so a selection/highlight
+    // override can promote the recorded geometry to the overlay pass.
+    SoDrawList& list = action->getMutableDrawList();
+    const int fcmd = list.getNumCommands();
     auto ctx2 = std::static_pointer_cast<SelContext>(
         getNodeContext2(SelStack, this, SelContext::merge)
     );
@@ -2302,6 +2308,31 @@ bool SoFCSelectionRoot::_renderPrivateIR(SoIRRenderAction* action)
         SelColorStack.pop_back();
         if (style != SoFCSelectionRoot::Box) {
             state->pop();
+        }
+    }
+
+    // When a selection or highlight override was active, the geometry just
+    // recorded belongs to a selected/highlighted object.  In the Vulkan
+    // ray-tracing backend that geometry would otherwise be part of the traced
+    // image and force a re-trace/re-denoise on every hover.  Promote it to the
+    // OVERLAY pass so the path tracer skips it and the raster overlay pass
+    // draws it as a layer on top of the traced surface, without restarting the
+    // accumulation/denoiser.
+    if ((selPushed || hlPushed) && list.getNumCommands() > fcmd) {
+        const int count = list.getNumCommands();
+        SbViewportRegion vp = SoViewportRegionElement::get(state);
+        const short vx = std::max(0, (int)vp.getViewportOriginPixels()[0]);
+        const short vy = std::max(0, (int)vp.getViewportOriginPixels()[1]);
+        const short vw = std::max(1, (int)vp.getViewportSizePixels()[0]);
+        const short vh = std::max(1, (int)vp.getViewportSizePixels()[1]);
+        for (int i = fcmd; i < count; ++i) {
+            SoRenderCommand& cmd = list.getCommand(i);
+            cmd.pass = SO_RENDERPASS_OVERLAY;
+            cmd.state.raster.scissorEnabled = TRUE;
+            cmd.state.raster.scissorX = vx;
+            cmd.state.raster.scissorY = vy;
+            cmd.state.raster.scissorWidth = vw;
+            cmd.state.raster.scissorHeight = vh;
         }
     }
 
@@ -2881,6 +2912,54 @@ void SoFCPathAnnotation::GLRenderBelowPath(SoGLRenderAction* action)
 void SoFCPathAnnotation::GLRenderInPath(SoGLRenderAction* action)
 {
     GLRenderBelowPath(action);
+}
+
+void SoFCPathAnnotation::IRRender(SoIRRenderAction* action)
+{
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    if (!path || !path->getLength()) {
+        return;
+    }
+    SoState* state = action->getState();
+    if (!state) {
+        return;
+    }
+
+    // Record the highlighted shape using the scene camera matrices (so the
+    // highlight lands on the correct world-space face), then promote the
+    // recorded commands to the overlay pass.  The overlay pass is drawn by
+    // the raster backend on top of the path-traced image: the path tracer
+    // skips SO_RENDERPASS_OVERLAY, so the highlight never re-traces or
+    // re-denoses the scene, and it appears as a distinct layer above the
+    // traced surface.  The scissor is scoped to the current viewport so the
+    // overlay backend accepts the command (it skips unscissored overlays).
+    SoDrawList& list = action->getMutableDrawList();
+    const int firstCommand = list.getNumCommands();
+
+    state->push();
+
+    SbViewportRegion vp = SoViewportRegionElement::get(state);
+    const short vx = std::max(0, (int)vp.getViewportOriginPixels()[0]);
+    const short vy = std::max(0, (int)vp.getViewportOriginPixels()[1]);
+    const short vw = std::max(1, (int)vp.getViewportSizePixels()[0]);
+    const short vh = std::max(1, (int)vp.getViewportSizePixels()[1]);
+
+    inherited::IRRender(action);
+
+    const int count = list.getNumCommands();
+    for (int i = firstCommand; i < count; ++i) {
+        SoRenderCommand& cmd = list.getCommand(i);
+        cmd.pass = SO_RENDERPASS_OVERLAY;
+        cmd.state.raster.scissorEnabled = TRUE;
+        cmd.state.raster.scissorX = vx;
+        cmd.state.raster.scissorY = vy;
+        cmd.state.raster.scissorWidth = vw;
+        cmd.state.raster.scissorHeight = vh;
+    }
+    state->pop();
+#else
+    inherited::IRRender(action);
+#endif
 }
 
 void SoFCPathAnnotation::setDetail(SoDetail* d)
