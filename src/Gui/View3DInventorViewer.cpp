@@ -1543,6 +1543,13 @@ void View3DInventorViewer::onSelectionChanged(const SelectionChanges& reason)
         SoFCSelectionAction selectionAction(Reason);
         selectionAction.apply(pcViewProviderRoot);
     }
+
+    // A selection/preselection change only mutates the shared scene graph
+    // (colour override on the picked face).  The Vulkan viewport owns no Coin
+    // sensors, so it would not re-render on its own; ask the adapter for a
+    // frame so the highlight is shown even after path tracing converged and
+    // the continuous refine loop went idle.
+    Q_EMIT selectionChanged();
 }
 /// @endcond
 

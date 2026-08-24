@@ -649,6 +649,13 @@ Q_SIGNALS:
     //! Emitted after applyVulkanSettings() reloaded the Vulkan options from
     //! the preferences.
     void vulkanSettingsChanged();
+    //! Emitted after the document selection/preselection context changed
+    //! (a face was selected/preselected/cleared).  The Vulkan viewport is
+    //! display-only and owns no Coin sensors, so a pure scene-graph colour
+    //! mutation is not enough to schedule a frame; this lets the adapter
+    //! request a redraw so the highlight appears even after path tracing
+    //! has converged and the continuous refine loop has gone idle.
+    void selectionChanged();
 
 protected:
     static GLenum getInternalTextureFormat();

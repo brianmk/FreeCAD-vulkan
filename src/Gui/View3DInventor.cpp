@@ -170,6 +170,16 @@ View3DInventor::View3DInventor(
         // wiring (scene/camera state, input forwarding, cursor mirroring,
         // viewport sizing).
         _vulkanAdapter = new VulkanViewportAdapter(stack, _viewer, useRayTracing, this);
+        // A selection/preselection change mutates the shared scene graph but
+        // never reaches the display-only Vulkan widget on its own (it owns no
+        // Coin sensors).  Ask the adapter to redraw so the highlight shows up
+        // even after the path tracer has converged and gone idle.
+        connect(_viewer, &View3DInventorViewer::selectionChanged,
+                _vulkanAdapter, [this] {
+                    if (_vulkanAdapter) {
+                        _vulkanAdapter->redraw();
+                    }
+                });
     }
 #endif
 

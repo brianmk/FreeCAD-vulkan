@@ -51,6 +51,11 @@ public:
     /// Push the viewer-owned Vulkan display options to the Vulkan widget.
     void pushSettings();
 
+    /// Request a frame from the Vulkan widget (no-op without one).  Used to
+    /// surface scene-graph mutations -- e.g. selection/preselection highlight
+    /// -- that do not go through a full syncViewer().
+    void redraw();
+
     void setPathTracingEnabled(bool enabled);
     void setPathTracingStart(bool start);
     bool isPathTracingEnabled() const;

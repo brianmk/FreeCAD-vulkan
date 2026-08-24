@@ -196,6 +196,15 @@ void VulkanViewportAdapter::pushSettings()
 #endif
 }
 
+void VulkanViewportAdapter::redraw()
+{
+#ifdef FREECAD_USE_VULKAN
+    if (_vulkanViewer) {
+        _vulkanViewer->redraw();
+    }
+#endif
+}
+
 void VulkanViewportAdapter::setPathTracingEnabled(bool enabled)
 {
 #ifdef FREECAD_USE_VULKAN
