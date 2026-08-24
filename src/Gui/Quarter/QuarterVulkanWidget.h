@@ -269,6 +269,7 @@ protected:
 
 private:
     void ensureSharedInstance();
+    void releaseSharedInstance();
     void selectPhysicalDevice();
     bool deviceSupportsRayTracing(VkPhysicalDevice device);
     void configureDeviceFeatures(bool rayTracing);

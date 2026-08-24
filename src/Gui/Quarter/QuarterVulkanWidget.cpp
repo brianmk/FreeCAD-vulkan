@@ -796,6 +796,19 @@ private:
     QuarterVulkanRenderer * m_renderer;
 };
 
+// Process-wide shared QVulkanInstance (Qt intends a single app-wide instance;
+// the app's N 3D views all use it).  Owned here so a view's destructor can
+// release it and reset the pointer; if the pointer were left dangling a later
+// view (e.g. close a document then reopen it, which destroys and re-creates
+// the view) would reuse a freed instance and crash inside
+// selectPhysicalDevice()/vkEnumeratePhysicalDevices().
+struct SharedVulkanInstance {
+    QMutex mutex;
+    QVulkanInstance * instance = nullptr;
+    int refs = 0;
+};
+static SharedVulkanInstance g_sharedVulkanInstance;
+
 } // namespace
 
 class SIM::Coin3D::Quarter::QuarterVulkanWidgetPrivate
@@ -865,23 +878,23 @@ QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent, bool rayTracing)
 
 // One QVulkanInstance is shared across every 3D view (Qt intends a single
 // app-wide instance; N views no longer allocate N instances).  Refcounted
-// so the last widget tears it down.
+// so the last widget tears it down.  Tearing it down resets the shared
+// pointer to nullptr so the next widget (e.g. closing a document and
+// reopening it, which destroys and re-creates the view) allocates a fresh
+// instance instead of reusing a freed one.
 void QuarterVulkanWidget::ensureSharedInstance()
 {
-    static QMutex instanceMutex;
-    static QVulkanInstance * sharedInstance = nullptr;
-    static int sharedInstanceRefs = 0;
-    QMutexLocker locker(&instanceMutex);
-    if (!sharedInstance) {
-        sharedInstance = new QVulkanInstance;
+    QMutexLocker locker(&g_sharedVulkanInstance.mutex);
+    if (!g_sharedVulkanInstance.instance) {
+        g_sharedVulkanInstance.instance = new QVulkanInstance;
         // Ray tracing requires Vulkan 1.2+ (acceleration-structure and
         // ray-tracing-pipeline APIs are core-adjacent KHR extensions
         // promoted to 1.2); advertise 1.2 so the device can expose them.
-        sharedInstance->setApiVersion(QVersionNumber(1, 2, 0));
+        g_sharedVulkanInstance.instance->setApiVersion(QVersionNumber(1, 2, 0));
         // The validation layer is opt-in (FC_VULKAN_VALIDATION): it costs
         // real CPU per draw and must not ship enabled by default.
         if (Base::envFlagEnabled("FC_VULKAN_VALIDATION")) {
-            sharedInstance->setLayers(
+            g_sharedVulkanInstance.instance->setLayers(
                 {QByteArrayLiteral("VK_LAYER_KHRONOS_validation")});
         }
         // External memory interop with CUDA (for the RTX denoiser) needs the
@@ -889,29 +902,32 @@ void QuarterVulkanWidget::ensureSharedInstance()
         // FD export is usable.  Enabling them is free on 1.2+ and harmless if
         // the loader/driver lacks them (Qt tolerates unsupported instance
         // extensions in its setExtensions list).
-        sharedInstance->setExtensions({
+        g_sharedVulkanInstance.instance->setExtensions({
             QByteArrayLiteral("VK_KHR_external_memory_capabilities"),
             QByteArrayLiteral("VK_KHR_external_memory"),
             QByteArrayLiteral("VK_KHR_external_semaphore_capabilities"),
             QByteArrayLiteral("VK_KHR_external_semaphore"),
         });
-        if (!sharedInstance->create()) {
+        if (!g_sharedVulkanInstance.instance->create()) {
             vkWarn("QuarterVulkanWidget: could not create instance with "
                    "validation layer (error %d), retrying without layers",
-                   static_cast<int>(sharedInstance->errorCode()));
-            sharedInstance->setLayers({});
-            sharedInstance->create();
+                   static_cast<int>(
+                       g_sharedVulkanInstance.instance->errorCode()));
+            g_sharedVulkanInstance.instance->setLayers({});
+            g_sharedVulkanInstance.instance->create();
         }
 
-        if (sharedInstance->isValid()) {
-            const QVersionNumber api = sharedInstance->supportedApiVersion();
+        if (g_sharedVulkanInstance.instance->isValid()) {
+            const QVersionNumber api =
+                g_sharedVulkanInstance.instance->supportedApiVersion();
             vkLog("QuarterVulkanWidget: instance created (Vulkan %d.%d.%d)",
                   api.majorVersion(), api.minorVersion(), api.microVersion());
-            const auto layers = sharedInstance->layers();
+            const auto layers = g_sharedVulkanInstance.instance->layers();
             for (const QByteArray & l : layers) {
                 vkLog("  enabled layer: %s", l.constData());
             }
-            const auto extensions = sharedInstance->extensions();
+            const auto extensions =
+                g_sharedVulkanInstance.instance->extensions();
             for (const QByteArray & e : extensions) {
                 vkLog("  enabled extension: %s", e.constData());
             }
@@ -919,13 +935,26 @@ void QuarterVulkanWidget::ensureSharedInstance()
         else {
             vkErr("QuarterVulkanWidget: Vulkan instance creation FAILED "
                   "(error %d)",
-                  static_cast<int>(sharedInstance->errorCode()));
+                  static_cast<int>(
+                      g_sharedVulkanInstance.instance->errorCode()));
         }
     }
-    ++sharedInstanceRefs;
-    d->instance = sharedInstance;
-    d->instanceRefs = &sharedInstanceRefs;
-    d->instanceMutex = &instanceMutex;
+    ++g_sharedVulkanInstance.refs;
+    d->instance = g_sharedVulkanInstance.instance;
+    d->instanceRefs = &g_sharedVulkanInstance.refs;
+    d->instanceMutex = &g_sharedVulkanInstance.mutex;
+}
+
+// Drop a widget's reference on the shared instance; the last widget destroys
+// the instance AND resets the shared pointer, so a later view creates a fresh
+// one.
+void QuarterVulkanWidget::releaseSharedInstance()
+{
+    QMutexLocker locker(&g_sharedVulkanInstance.mutex);
+    if (--g_sharedVulkanInstance.refs == 0) {
+        delete g_sharedVulkanInstance.instance;
+        g_sharedVulkanInstance.instance = nullptr;
+    }
 }
 
 // Select the physical device and force QVulkanWindow to use it.
@@ -1181,13 +1210,9 @@ QuarterVulkanWidget::~QuarterVulkanWidget()
     d->vulkanWindow = nullptr;
     d->renderer = nullptr;
     // QVulkanWindow::setVulkanInstance() does not take ownership; release
-    // our reference on the shared instance (the last widget destroys it).
-    if (d->instanceMutex && d->instanceRefs) {
-        QMutexLocker locker(d->instanceMutex);
-        if (--(*d->instanceRefs) == 0) {
-            delete d->instance;
-        }
-    }
+    // our reference on the shared instance (the last widget destroys it and
+    // resets the shared pointer so a later view creates a fresh instance).
+    this->releaseSharedInstance();
     d->instance = nullptr;
     delete d;
 }
