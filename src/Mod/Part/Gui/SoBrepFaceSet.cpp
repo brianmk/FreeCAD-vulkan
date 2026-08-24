@@ -899,7 +899,17 @@ void SoBrepFaceSet::IRRender(SoIRRenderAction* action)
     // hiding are baked into the base pass; when the current binding cannot
     // be expressed, selection/highlight fall back to explicit overlay
     // passes below.
-    const bool pushed = this->overrideMaterialBindingCommon(state, ctx, ctx2);
+    //
+    // On the Vulkan (IR) path a live per-face hover highlight must NOT be
+    // baked into the base pass: baking re-splits the base OPAQUE geometry
+    // (one command becomes three), which changes the ray-traced draw list and
+    // forces a re-trace/re-denoise on every hover.  Instead render the base
+    // once, unhighlighted, and emit the highlighted face as a separate
+    // OVERLAY command (renderHighlightIR -> renderOverlayFaces) that the path
+    // tracer skips, keeping the OPAQUE command set stable.
+    const bool bakeLiveHighlight = hasContextHighlight;
+    const bool pushed = !bakeLiveHighlight
+        && this->overrideMaterialBindingCommon(state, ctx, ctx2);
     inherited::IRRender(action);
     if (pushed) {
         state->pop();

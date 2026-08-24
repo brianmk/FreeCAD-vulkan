@@ -267,6 +267,22 @@ public:
 protected:
     bool eventFilter(QObject * watched, QEvent * event) override;
 
+    /*!
+      \brief Debug-only synthetic mouse injector (FC_VULKAN_INJECT_PY).
+
+      When the FC_VULKAN_INJECT_PY environment variable names a file, this
+      widget polls it on a timer and, for every "type x y" line it has not
+      yet consumed, posts a genuine platform mouse event
+      (QWindowSystemInterface::handleMouseEvent) to the embedded QVulkanWindow.
+      This is the only injection path that reaches the real event filter:
+      QCoreApplication::sendEvent() to a QWindowContainer is swallowed by the
+      container and never forwarded to the embedded window.  A per-poll
+      consumed-line counter lets a probe append new events and have them picked
+      up on the next poll.  Not compiled out: it is a zero-cost, debug-only
+      hook (see the breadcrumb-instrumentation skill).
+    */
+    void pollInjectFile();
+
 private:
     void ensureSharedInstance();
     void releaseSharedInstance();
@@ -276,6 +292,7 @@ private:
     void logSupportedSampleCounts();
 
     QuarterVulkanWidgetPrivate * d;
+    QTimer * injectTimer = nullptr;
 };
 
 } // namespace Quarter

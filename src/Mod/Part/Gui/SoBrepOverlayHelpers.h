@@ -26,10 +26,15 @@
 #include <Inventor/elements/SoPolygonOffsetElement.h>
 #include <Inventor/elements/SoShapeStyleElement.h>
 #include <Inventor/elements/SoTextureEnabledElement.h>
+#include <Inventor/elements/SoViewportRegionElement.h>
 #include <Inventor/misc/SoState.h>
 #include <Inventor/nodes/SoIndexedFaceSet.h>
 #include <Inventor/nodes/SoIndexedLineSet.h>
 #include <Inventor/nodes/SoIndexedPointSet.h>
+#include <Inventor/rendering/SoRenderIR.h>
+#include <Inventor/SbViewportRegion.h>
+
+#include <type_traits>
 
 namespace PartGui
 {
@@ -345,6 +350,14 @@ static void renderOverlayFaces(
     auto state = action->getState();
     state->push();
 
+    // Record the first draw-command index so that, on the IR (Vulkan) path,
+    // the recorded overlay commands can be promoted to the OVERLAY pass below.
+    constexpr bool isIR = std::is_same_v<Action, SoIRRenderAction>;
+    int firstCommand = -1;
+    if constexpr (isIR) {
+        firstCommand = action->getMutableDrawList().getNumCommands();
+    }
+
     applyOverlayPrimitiveState(state, faceSet);
 
     if (onTop) {
@@ -365,6 +378,32 @@ static void renderOverlayFaces(
 
     faceSet->coordIndex.setValues(0, static_cast<int32_t>(coordIndex.size()), coordIndex.data());
     renderOverlayNode(faceSet, action);
+
+    // The IR path records the highlight/selection face as a plain opaque draw
+    // command, so it lands inside the path-traced (OPAQUE) set and a hover
+    // would change the geometry fingerprint -> accumulation+denoiser restart.
+    // Promote the just-recorded commands to the OVERLAY pass, which the path
+    // tracer skips, so the highlight is a separate raster layer on top of the
+    // traced surface without re-tracing/re-denoising.
+    if constexpr (isIR) {
+        SoDrawList& list = action->getMutableDrawList();
+        const int endCommand = list.getNumCommands();
+        SoState* s = action->getState();
+        SbViewportRegion vp = SoViewportRegionElement::get(s);
+        const short vx = std::max(0, (int)vp.getViewportOriginPixels()[0]);
+        const short vy = std::max(0, (int)vp.getViewportOriginPixels()[1]);
+        const short vw = std::max(1, (int)vp.getViewportSizePixels()[0]);
+        const short vh = std::max(1, (int)vp.getViewportSizePixels()[1]);
+        for (int i = firstCommand; i < endCommand; ++i) {
+            SoRenderCommand& cmd = list.getCommand(i);
+            cmd.pass = SO_RENDERPASS_OVERLAY;
+            cmd.state.raster.scissorEnabled = TRUE;
+            cmd.state.raster.scissorX = vx;
+            cmd.state.raster.scissorY = vy;
+            cmd.state.raster.scissorWidth = vw;
+            cmd.state.raster.scissorHeight = vh;
+        }
+    }
 
     state->pop();
 }

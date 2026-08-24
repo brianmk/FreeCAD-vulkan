@@ -27,12 +27,15 @@
 
 #include <QApplication>
 #include <QEvent>
+#include <QFile>
 #include <QKeyEvent>
 #include <QMutex>
 #include <QMouseEvent>
 #include <QPointer>
 #include <QStringList>
+#include <QTimer>
 #include <QWheelEvent>
+#include <QtGui/6.11.2/QtGui/qpa/qwindowsysteminterface.h>
 
 #include <cstdarg>
 #include <algorithm>
@@ -841,6 +844,10 @@ public:
     // resize (cached DPR 1.0 -> 1.25), which rescales the pick point 1/dpr
     // relative to the device-pixel viewport region and drifts off-center.
     QMetaObject::Connection eventForwardDprConn;
+
+    // Debug-only synthetic mouse injector state (see pollInjectFile()).
+    QString injectPath;
+    int injectConsumed = 0;
 };
 
 QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent, bool rayTracing)
@@ -874,6 +881,20 @@ QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent, bool rayTracing)
     // picking and other viewport interaction keep working.
     d->container->installEventFilter(this);
     d->window->installEventFilter(this);
+
+    // Debug-only synthetic mouse injector.  A QWindowContainer swallows
+    // QCoreApplication::sendEvent() input, so the only way a test probe can
+    // drive the real event filter is a genuine platform event posted to the
+    // embedded window.  Enabling this is zero-cost unless the env var names a
+    // file to poll (see pollInjectFile()).
+    if (const char * injectPath = ::getenv("FC_VULKAN_INJECT_PY")) {
+        d->injectPath = injectPath;
+        injectTimer = new QTimer(this);
+        injectTimer->setInterval(10);
+        QObject::connect(injectTimer, &QTimer::timeout, this,
+                         &QuarterVulkanWidget::pollInjectFile);
+        injectTimer->start();
+    }
 }
 
 // One QVulkanInstance is shared across every 3D view (Qt intends a single
@@ -1325,6 +1346,63 @@ void QuarterVulkanWidget::setEventForwardTarget(QWidget * target,
     }
 }
 
+void QuarterVulkanWidget::pollInjectFile()
+{
+    if (d->injectPath.isEmpty() || !d->window) {
+        return;
+    }
+    QFile f(d->injectPath);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return;
+    }
+    const QByteArray bytes = f.readAll();
+    f.close();
+    if (bytes.isEmpty()) {
+        return;
+    }
+    const QList<QByteArray> lines = bytes.split('\n');
+    if (d->injectConsumed >= lines.size()) {
+        // Nothing new: notice a trailing blank line so a subsequent append
+        // (the probe re-writes the file) re-triggers a read next poll.
+        if (lines.size() == 1 && lines[0].isEmpty()) {
+            d->injectConsumed = 0;
+        }
+        return;
+    }
+    for (int i = d->injectConsumed; i < lines.size(); ++i) {
+        const QList<QByteArray> tok = lines[i].trimmed().split(' ');
+        if (tok.size() < 3) {
+            continue;
+        }
+        const QEvent::Type type = [&tok]() {
+            const QByteArray & t = tok[0];
+            if (t == "move") return QEvent::MouseMove;
+            if (t == "press") return QEvent::MouseButtonPress;
+            if (t == "release") return QEvent::MouseButtonRelease;
+            return QEvent::None;
+        }();
+        if (type == QEvent::None) {
+            continue;
+        }
+        const QPointF local(tok[1].toDouble(), tok[2].toDouble());
+        const QPointF global = d->container->mapToGlobal(
+            QPoint(int(local.x()), int(local.y())));
+        Qt::MouseButton btn = Qt::NoButton;
+        Qt::MouseButtons state = Qt::NoButton;
+        if (type == QEvent::MouseButtonPress) {
+            btn = Qt::LeftButton;
+            state = Qt::LeftButton;
+        }
+        else if (type == QEvent::MouseButtonRelease) {
+            btn = Qt::LeftButton;
+        }
+        QWindowSystemInterface::handleMouseEvent<QWindowSystemInterface::SynchronousDelivery>(
+            d->window, local, QPointF(global.x(), global.y()), state, btn,
+            type);
+        d->injectConsumed = i + 1;
+    }
+}
+
 bool QuarterVulkanWidget::eventFilter(QObject * watched, QEvent * event)
 {
     Q_UNUSED(watched);
@@ -1363,7 +1441,21 @@ bool QuarterVulkanWidget::eventFilter(QObject * watched, QEvent * event)
     // too early towards the origin).  The target's ratio is captured
     // explicitly by setEventForwardTarget() rather than sniffed from the
     // target's type at event time.
-    const qreal dstDpr = d->eventForwardDpr;
+    //
+    // The value captured at setEventForwardTarget() is captured at startup,
+    // when the hidden GL viewer's cached devicePixelRatio() is still 1.0
+    // (it only updates when the widget is actually resized).  The
+    // devicePixelRatioChanged connection should re-sync it, but a hidden,
+    // non-current stack-page widget never reliably emits that signal (no
+    // paint/resize that Qt would route through updateDevicePixelRatio()).
+    // So re-read the forward target's cached ratio live: it is the exact
+    // value the GL EventFilter uses, so the divisor stays in lock-step with
+    // the GL side's own conversion.  Fall back to the stored value for
+    // non-QuarterWidget targets (which have no cached ratio to read).
+    qreal dstDpr = d->eventForwardDpr;
+    if (auto * qw = qobject_cast<QuarterWidget *>(d->forwardTarget.data())) {
+        dstDpr = qw->devicePixelRatio();
+    }
     const qreal dprScale = d->container->devicePixelRatioF() / dstDpr;
 
     switch (event->type()) {
