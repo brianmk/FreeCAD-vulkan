@@ -44,6 +44,18 @@ class View3DInventorViewer;
 class View3DPy;
 class View3DSettings;
 class NaviCubeSettings;
+
+/// Ray-traced view render mode for a 3D view.
+/// 0 = Interactive (raster), 1 = Wireframe (raster), 2 = Ambient Occlusion
+/// (single-sample ray preview), 3 = Ray Tracing (accumulating path tracer).
+/// Mirrored by the status-bar selector in the main window; each view keeps
+/// its own mode.
+enum class ViewRenderMode : int {
+    Interactive = 0,
+    Wireframe,
+    AmbientOcclusion,
+    RayTracing,
+};
 class VulkanViewportAdapter;
 
 struct RayPickInfo
@@ -159,6 +171,23 @@ public Q_SLOTS:
     /// Whether a progressive path-tracing accumulation is running.
     bool isPathTracingActive() const;
 
+    /// Ray-traced view render mode (see Gui::ViewRenderMode).  Mirrored by
+    /// the status-bar selector in the main window; each view keeps its own.
+    ViewRenderMode getRenderMode() const;
+    void setRenderMode(ViewRenderMode mode);
+
+    /// Ordinal of the Vulkan viewport's last presented frame (see
+    /// QuarterVulkanWidget::getRenderFrameCount).  0 when this view has no
+    /// Vulkan viewport.  Probe phase markers and frame dumps key off it so
+    /// the checker can correlate records independent of stream ordering.
+    uint32_t getVulkanFrameCount() const;
+
+    /// Force a single Vulkan frame even when the viewport is converged-idle.
+    /// Scripted probes call this after a scene/camera edit so the harness's
+    /// doc.recompute()/updateGui() (which bypasses Application::onUpdate)
+    /// still produces a render.  No-op without a Vulkan viewport.
+    void requestVulkanRender();
+
 protected Q_SLOTS:
     void stopAnimating();
 
@@ -184,6 +213,7 @@ private:
     VulkanViewportAdapter* _vulkanAdapter = nullptr;
     std::unique_ptr<View3DSettings> viewSettings;
     std::unique_ptr<NaviCubeSettings> naviSettings;
+    ViewRenderMode _renderMode = ViewRenderMode::Interactive;
 
     // friends
     friend class View3DPy;

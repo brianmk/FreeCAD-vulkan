@@ -195,8 +195,8 @@ void VulkanViewportAdapter::pushSettings()
     }
 #endif
 }
-
-void VulkanViewportAdapter::redraw()
+void
+VulkanViewportAdapter::redraw()
 {
 #ifdef FREECAD_USE_VULKAN
     if (_vulkanViewer) {
@@ -227,6 +227,29 @@ void VulkanViewportAdapter::setPathTracingStart(bool start)
 #endif
 }
 
+void VulkanViewportAdapter::setViewMode(int mode)
+{
+#ifdef FREECAD_USE_VULKAN
+    if (_vulkanViewer) {
+        _vulkanViewer->setViewMode(
+            static_cast<SIM::Coin3D::Quarter::QuarterVulkanWidget::RtxViewMode>(mode));
+    }
+#else
+    Q_UNUSED(mode);
+#endif
+}
+
+int VulkanViewportAdapter::getViewMode() const
+{
+#ifdef FREECAD_USE_VULKAN
+    return _vulkanViewer
+        ? static_cast<int>(_vulkanViewer->getViewMode())
+        : 0;
+#else
+    return 0;
+#endif
+}
+
 bool VulkanViewportAdapter::isPathTracingEnabled() const
 {
 #ifdef FREECAD_USE_VULKAN
@@ -242,6 +265,33 @@ bool VulkanViewportAdapter::isPathTracingActive() const
     return _vulkanViewer && _vulkanViewer->getPathTracingActive();
 #else
     return false;
+#endif
+}
+
+uint32_t VulkanViewportAdapter::getRenderFrameCount() const
+{
+#ifdef FREECAD_USE_VULKAN
+    return _vulkanViewer ? _vulkanViewer->getRenderFrameCount() : 0;
+#else
+    return 0;
+#endif
+}
+
+void VulkanViewportAdapter::requestVulkanRender()
+{
+#ifdef FREECAD_USE_VULKAN
+    if (_vulkanViewer) {
+        // Push the current scene/camera (the probe's orbit/edit mutated the
+        // GL viewer's camera node or the document, which the Vulkan widget
+        // does not observe on its own) and then force exactly one frame, even
+        // when the viewport is converged-idle.  Only the adapter owns both the
+        // GL viewer (source of truth) and the Vulkan widget, so the sync must
+        // happen here, not in the widget.
+        syncViewer();
+        _vulkanViewer->redraw();
+    }
+#else
+    // no-op
 #endif
 }
 

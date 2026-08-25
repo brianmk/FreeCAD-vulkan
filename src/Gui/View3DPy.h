@@ -81,6 +81,8 @@ public:
     Py::Object isPathTracingEnabled();
     Py::Object startPathTracing();
     Py::Object isPathTracingActive();
+    Py::Object getVulkanFrameCount();
+    Py::Object requestVulkanRender();
     Py::Object getCamera();
     Py::Object getViewDirection();
     Py::Object getUpDirection();

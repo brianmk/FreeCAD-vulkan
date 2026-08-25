@@ -170,6 +170,15 @@ View3DInventor::View3DInventor(
         // wiring (scene/camera state, input forwarding, cursor mirroring,
         // viewport sizing).
         _vulkanAdapter = new VulkanViewportAdapter(stack, _viewer, useRayTracing, this);
+        // Reopen consistency: if the persisted VulkanPathTracing pref enabled
+        // the path tracer, the view should come back in the Ray Tracing mode
+        // (matching setPathTracingEnabled persisting that flag).  The status-
+        // bar selector then reflects whatever the user last chose.
+        if (App::GetApplication()
+                .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
+                ->GetBool("VulkanPathTracing", false)) {
+            _renderMode = ViewRenderMode::RayTracing;
+        }
         // A selection/preselection change mutates the shared scene graph but
         // never reaches the display-only Vulkan widget on its own (it owns no
         // Coin sensors).  Ask the adapter to redraw so the highlight shows up
@@ -304,6 +313,12 @@ void View3DInventor::setPathTracingEnabled(bool enabled)
     if (_vulkanAdapter) {
         _vulkanAdapter->setPathTracingEnabled(enabled);
     }
+    // Persist the choice as the VulkanPathTracing preference so it survives a
+    // view reopen (the Vulkan settings are read from it on construction).
+    if (auto grp = App::GetApplication().GetParameterGroupByPath(
+            "User parameter:BaseApp/Preferences/View")) {
+        grp->SetBool("VulkanPathTracing", enabled);
+    }
 }
 
 void View3DInventor::setPathTracingStart(bool start)
@@ -323,6 +338,82 @@ bool View3DInventor::isPathTracingActive() const
     return _vulkanAdapter && _vulkanAdapter->isPathTracingActive();
 }
 
+uint32_t View3DInventor::getVulkanFrameCount() const
+{
+    return _vulkanAdapter ? _vulkanAdapter->getRenderFrameCount() : 0;
+}
+
+void View3DInventor::requestVulkanRender()
+{
+    if (_vulkanAdapter) {
+        _vulkanAdapter->requestVulkanRender();
+    }
+}
+
+Gui::ViewRenderMode View3DInventor::getRenderMode() const
+{
+    return _renderMode;
+}
+
+void View3DInventor::setRenderMode(ViewRenderMode mode)
+{
+    if (_renderMode == mode) {
+        return;
+    }
+    _renderMode = mode;
+#ifdef FREECAD_USE_VULKAN
+    switch (mode) {
+        case ViewRenderMode::Interactive:
+        case ViewRenderMode::Wireframe:
+            // Raster modes: path tracing is off.  The wireframe view style is
+            // set on the GL viewer (the Vulkan widget mirrors the scene graph,
+            // and the raster Vulkan backend renders it with the same draw
+            // style, so the wireframe override propagates through it).
+            if (_vulkanAdapter) {
+                _vulkanAdapter->setPathTracingEnabled(false);
+            }
+            break;
+        case ViewRenderMode::AmbientOcclusion:
+            // Realtime single-sample ray AO: enable the RT backend (so the
+            // ray-query compute tracer renders) but never accumulate.  The
+            // view-mode value selects the AO shader path on the backend.
+            if (_vulkanAdapter) {
+                _vulkanAdapter->setPathTracingEnabled(true);
+                _vulkanAdapter->setViewMode(1);  // widget AmbientOcclusion
+                _vulkanAdapter->setPathTracingStart(false);
+            }
+            break;
+        case ViewRenderMode::RayTracing:
+            // Full accumulating path tracer.
+            if (_vulkanAdapter) {
+                _vulkanAdapter->setPathTracingEnabled(true);
+                _vulkanAdapter->setViewMode(2);  // widget PathTracing
+                _vulkanAdapter->setPathTracingStart(true);
+            }
+            break;
+    }
+#else
+    (void)mode;
+#endif
+    // Raster draw-style override for the Interactive vs Wireframe modes.
+    if (_viewer) {
+        switch (mode) {
+            case ViewRenderMode::Interactive:
+                _viewer->setOverrideMode("As Is");
+                break;
+            case ViewRenderMode::Wireframe:
+                _viewer->setOverrideMode("Wireframe");
+                break;
+            case ViewRenderMode::AmbientOcclusion:
+            case ViewRenderMode::RayTracing:
+                break;  // ray tracer ignores the raster draw style
+        }
+    }
+    if (_vulkanAdapter) {
+        _vulkanAdapter->redraw();
+    }
+}
+
 void View3DInventor::onRename(Gui::Document* pDoc)
 {
     SoSFString name;
@@ -339,7 +430,17 @@ void View3DInventor::onUpdate()
     update();
     _viewer->redraw();
     if (_vulkanAdapter) {
+        // The Vulkan viewport is display-only and owns no Coin sensors, so a
+        // scene edit never schedules a frame on its own (only selection and
+        // API-driven redraws do).  Ask it to redraw so the edited scene is
+        // reflected even after the path tracer has converged and gone idle;
+        // otherwise keep-alive/BLAS-overlay updates are dropped until the user
+        // touches the view.  syncViewer() pushes the (possibly changed) scene
+        // graph and camera; the redraw() then requests exactly one boundary
+        // frame, which the render loop otherwise suppresses when refining is
+        // false (converged-idle).
         _vulkanAdapter->syncViewer();
+        _vulkanAdapter->redraw();
     }
 }
 

@@ -389,6 +389,14 @@ private Q_SLOTS:
      */
     void onWindowActivated(QMdiSubWindow*);
     /**
+     * Applies the status-bar view rendering mode combo to the active 3D view.
+     */
+    void onViewModeComboChanged(int index);
+    /**
+     * Re-synchronises the status-bar view mode combo to the active view's mode.
+     */
+    void syncViewModeCombo();
+    /**
      * Close tab at position index.
      */
     void tabCloseRequested(int index);

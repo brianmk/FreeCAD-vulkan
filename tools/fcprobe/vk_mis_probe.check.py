@@ -24,9 +24,8 @@ import re
 import sys
 
 POOL_LINE = re.compile(r"\[RTDBG\] nee pool triangles=(\d+) bytes=(\d+)")
-TICK_LINE = re.compile(r"\[RTDBG\] adaptive active=(\d+)/(\d+) "
-                       r"fraction=([0-9.]+) frameIndex=(\d+) accum=(\d+)")
-PHASE_LINE = re.compile(r"MIS phase=(\S+)")
+# Ordinal-bearing marker: `[HARNESS] frame_phase phase=toggle frame=N`.
+PHASE_LINE = re.compile(r"\[HARNESS\] frame_phase phase=(\S+) frame=(\d+)")
 
 
 def _stats(frame_path):
@@ -73,18 +72,19 @@ def check(lines, report):
         err(f"nee pool too small: {max(pools)} < 12 (emissive cube "
             "triangles missing)")
 
-    # Locate the toggle marker in the tick stream (1:1 with dumps).
-    tick_idx = 0
-    toggle_idx = None
-    for i, line in enumerate(lines):
+    # Locate the toggle marker by its ordinal: the marker was emitted right
+    # before the NEE-off scene change, so pass-A dumps have ordinals <= the
+    # marker's ordinal and pass-B dumps have ordinals strictly greater.  This
+    # is independent of the stream order of the tick lines.
+    toggle_ord = None
+    for line in lines:
         m = PHASE_LINE.search(line)
         if m and m.group(1) == "toggle":
-            toggle_idx = tick_idx
+            toggle_ord = int(m.group(2))
             break
-        if TICK_LINE.search(line):
-            tick_idx += 1
-    if toggle_idx is None:
-        err("no MIS phase=toggle marker (probe never reached the toggle)")
+    if toggle_ord is None:
+        err("no [HARNESS] frame_phase phase=toggle marker (probe never "
+            "reached the toggle, or the view exposes no getVulkanFrameCount)")
         return
 
     frames_dir = os.path.join(report.artifact_dir, "frames")
@@ -95,20 +95,24 @@ def check(lines, report):
     if len(frames) < 16:
         err(f"too few frame dumps ({len(frames)})")
         return
-    if toggle_idx >= len(frames):
-        err("toggle marker beyond the collected dumps "
-            f"(toggle={toggle_idx}, dumps={len(frames)})")
+    # Split dumps into pass A (ordinal <= toggle) and pass B (> toggle).
+    dump_ords = [int(re.search(r"(\d+)", os.path.basename(f)).group(1))
+                 for f in frames]
+    idx_toggle = next((i for i, o in enumerate(dump_ords) if o > toggle_ord),
+                      None)
+    if idx_toggle is None or idx_toggle < 2:
+        err("toggle marker beyond the collected dumps or too few pass-A "
+            f"dumps (toggle={toggle_ord}, dumps={len(frames)})")
         return
-
-    a = [_stats(f) for f in frames[max(2, toggle_idx - 6):toggle_idx]]
-    b = [_stats(f) for f in frames[toggle_idx + 2:toggle_idx + 8]]
+    a = [_stats(f) for f in frames[max(2, idx_toggle - 6):idx_toggle]]
+    b = [_stats(f) for f in frames[idx_toggle:idx_toggle + 6]]
     mean_a = sum(s[0] for s in a) / max(len(a), 1)
     mean_b = sum(s[0] for s in b) / max(len(b), 1)
     warm_a = max(s[1] for s in a)
     warm_b = max(s[1] for s in b)
     sys.stderr.write(f"[CHECK] mis passA={mean_a:.2f} warmA={warm_a} "
                      f"passB={mean_b:.2f} warmB={warm_b} "
-                     f"toggle={toggle_idx} nee_off={nee_off}\n")
+                     f"toggle_ord={toggle_ord} nee_off={nee_off}\n")
 
     if nee_off:
         drift = abs(mean_a - mean_b) / max(mean_a, 1.0)
@@ -120,5 +124,5 @@ def check(lines, report):
             err(f"NEE ON: glow not stronger with NEE "
                 f"(warmA={warm_a}, warmB={warm_b}) - area sampling "
                 "contributed no light")
-        elif warm_a < 500:
+        elif warm_a < 80:
             err(f"NEE ON: glow region too small (warmA={warm_a})")

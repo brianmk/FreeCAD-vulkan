@@ -153,12 +153,13 @@ public:
     //! Record the copy of the presented color image into the staging buffer
     //! inside \a cb (no-op when disabled, outside the dump window, or
     //! without a staging buffer).
-    void recordFrameCopy(VkCommandBuffer cb, int swapchainIndex, const QSize & size)
+    void recordFrameCopy(VkCommandBuffer cb, int swapchainIndex, const QSize & size, quint64 frameOrdinal)
     {
         if (!m_enabled || m_buffer == VK_NULL_HANDLE) {
             return;
         }
         m_frameCount++;
+        m_frameOrdinal = frameOrdinal;
         if (m_frameCount < m_dumpStart || m_frameCount >= m_dumpEnd) {
             return;
         }
@@ -237,16 +238,20 @@ public:
                              * m_bytesPerPixel,
                          m_qimageFormat);
         const QString path =
-            QStringLiteral("/tmp/vk_frame_%1.png").arg(m_dumpCount);
+            QStringLiteral("/tmp/vk_frame_%1.png").arg(m_frameOrdinal);
         if (!img.isNull() && img.save(path)) {
-            Base::Console().log("[Vulkan] frame dump %d: %dx%d -> %s\n",
-                                m_dumpCount, img.width(), img.height(),
+            Base::Console().log("[Vulkan] frame dump %d (ordinal %llu): "
+                                "%dx%d -> %s\n",
+                                m_dumpCount,
+                                static_cast<unsigned long long>(m_frameOrdinal),
+                                img.width(), img.height(),
                                 qPrintable(path));
         }
         else {
-            Base::Console().error("[Vulkan] frame dump %d: image save "
-                                  "failed\n",
-                                  m_dumpCount);
+            Base::Console().error("[Vulkan] frame dump %d (ordinal %llu): "
+                                  "image save failed\n",
+                                  m_dumpCount,
+                                  static_cast<unsigned long long>(m_frameOrdinal));
         }
         vkdf->vkUnmapMemory(m_window->device(), m_memory);
     }
@@ -285,6 +290,7 @@ private:
     QImage::Format m_qimageFormat = QImage::Format_ARGB32;
     int m_dumpCount = 0;
     int m_frameCount = 0;
+    quint64 m_frameOrdinal = 0;
 };
 
 } // namespace Detail

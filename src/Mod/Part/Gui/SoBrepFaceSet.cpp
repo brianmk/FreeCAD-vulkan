@@ -900,31 +900,63 @@ void SoBrepFaceSet::IRRender(SoIRRenderAction* action)
     // be expressed, selection/highlight fall back to explicit overlay
     // passes below.
     //
-    // On the Vulkan (IR) path a live per-face hover highlight must NOT be
-    // baked into the base pass: baking re-splits the base OPAQUE geometry
-    // (one command becomes three), which changes the ray-traced draw list and
-    // forces a re-trace/re-denoise on every hover.  Instead render the base
-    // once, unhighlighted, and emit the highlighted face as a separate
-    // OVERLAY command (renderHighlightIR -> renderOverlayFaces) that the path
-    // tracer skips, keeping the OPAQUE command set stable.
-    const bool bakeLiveHighlight = hasContextHighlight;
-    const bool pushed = !bakeLiveHighlight
-        && this->overrideMaterialBindingCommon(state, ctx, ctx2);
+    // On the Vulkan (IR) path neither the live per-face hover highlight nor the
+    // committed selection may be baked into the base OPAQUE pass: baking the
+    // highlight re-splits the base OPAQUE geometry (one command becomes
+    // three), and baking the selection toggles the base between its raw form
+    // and the selection-remapped form (two commands vs one).  Both change the
+    // ray-traced draw list, which the geometry cache sees as a scene change
+    // and forces a re-trace/re-denoise on every hover and selection change.
+    // Instead emit the base once with its natural materials and emit the
+    // highlighted/selected faces as separate OVERLAY commands
+    // (renderHighlightIR/renderSelectionIR -> renderOverlayFaces) that the
+    // path tracer skips.
+    //
+    // The base must stay byte-identical across hover and selection toggles.
+    // So always run the remap, but with the live highlight AND the primary
+    // selection stripped from the base context so neither is ever baked into
+    // the traced command set; they are emitted as overlays below regardless
+    // of whether the remap ran.  The secondary context (ctx2) and the base
+    // per-part color remap are preserved untouched.
+    const bool hasLiveSelection = ctx && !ctx->selectionIndex.empty();
+    SelContextPtr baseCtx = ctx;
+    if (hasContextHighlight || hasLiveSelection) {
+        baseCtx = std::dynamic_pointer_cast<SelContext>(ctx->copy());
+        // copy() returns a context that must itself be a SelContext (it is a
+        // SelContextPtr that was shallow-copied then down-cast).  Guard anyway:
+        // a null result would dereference below, and any future context
+        // subclass that copy() does not preserve would otherwise crash here.
+        // In that (impossible) case fall back to the original context so the
+        // base still renders correctly rather than faulting.
+        if (!baseCtx) {
+            baseCtx = ctx;
+        }
+        else {
+            baseCtx->highlightIndex = -1;
+            baseCtx->selectionIndex.clear();
+        }
+    }
+    const bool pushed = this->overrideMaterialBindingCommon(state, baseCtx, ctx2);
     inherited::IRRender(action);
     if (pushed) {
         state->pop();
     }
 
+    // The primary selection and the live highlight are always separate OVERLAY
+    // commands so the traced OPAQUE pass stays stable across selection and
+    // hover toggles; they are drawn regardless of whether the base remap ran.
+    // The secondary-context (ctx2) selection overlay stays behind the
+    // '(pushed == false)' guard to preserve its partial-render/baked behavior.
     if (!pushed) {
         if (ctx2 && !hasSecondaryColors && !ctx2->selectionIndex.empty()) {
             renderSelectionIR(action, ctx2);
         }
-        if (ctx && !ctx->selectionIndex.empty()) {
-            renderSelectionIR(action, ctx);
-        }
-        if (ctx) {
-            renderHighlightIR(action, ctx);
-        }
+    }
+    if (ctx && !ctx->selectionIndex.empty()) {
+        renderSelectionIR(action, ctx);
+    }
+    if (ctx) {
+        renderHighlightIR(action, ctx);
     }
 
     // Optional overlay rendering for deterministic tests (and programmatic

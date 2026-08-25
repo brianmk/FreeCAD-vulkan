@@ -1,44 +1,78 @@
 #!/usr/bin/env python3
-"""Host-side assertions for vk_temporal_probe.py (Phase 2: temporal
-reprojection).
+"""Host-side assertions for vk_temporal_probe.py (reset-on-move).
 
-Branches on the run's env:
-  - temporal ON  (default): camera-only moves keep accumulating with
-    reprojection (no preview drop), history is accepted per-pixel on the
-    small move, rejected for most pixels on the 90-degree move, convergence
-    resumes after the move, and a scene edit drops to preview WITHOUT
-    reprojecting.
-  - FC_VULKAN_PT_TEMPORAL=0: no reprojection frame may appear anywhere.
+The probe orbits the camera and edits the box. Under the accumulate-while-
+static / reset-on-move architecture a camera or scene change does NOT carry
+the converged history forward (no temporal reprojection): it resets the run
+to a clean preview (accum=0, frameIndex=0, reproject=0) and then
+re-accumulates against the new camera once it has been static for a short
+settle window.  The old temporal-reprojection behavior (reproject=1, history
+surviving the move) is intentionally gone.
+
+Assertions:
+  - reproject=1 never appears anywhere (reset-on-move replaced reprojection).
+  - each camera move (move-small / move-big) resets the run: a viewChanged
+    frame with accum=0 reproject=0 frameIndex=0.
+  - the scene edit (edit-box) resets too: sceneChanged frame with accum=0
+    reproject=0.
+  - after a move the run re-accumulates: some static frame resumes with
+    frameIndex growing from 0 (the settle auto-restart), and the active-pixel
+    fraction declines below 1.0 as convergence resumes.
 """
 
 import re
 
 STATE_LINE = re.compile(
-    r"\[RTDBG\] ptState viewChanged=(\d) sceneChanged=(\d) accum=(\d) "
-    r"frameIndex=(\d+) idle=(\d+) reproject=(\d)")
+    r"\[RTDBG\] ptState frame=(\d+) viewChanged=(\d) sceneChanged=(\d) "
+    r"accum=(\d) frameIndex=(\d+) idle=(\d+) reproject=(\d)")
 ADAPT_LINE = re.compile(
-    r"\[RTDBG\] adaptive active=(\d+)/(\d+) fraction=([0-9.]+) "
+    r"\[RTDBG\] adaptive frame=(\d+) active=(\d+)/(\d+) fraction=([0-9.]+) "
     r"frameIndex=(\d+) accum=(\d) .*reprojected=(\d+)")
-PHASE_LINE = re.compile(r"TEMPORAL phase=(\S+)")
+# The harness emits ordinal-bearing `[HARNESS] frame_phase phase=NAME frame=N`;
+# the probe also prints `TEMPORAL phase=...` (stderr) without an ordinal.
+HARNESS_PHASE = re.compile(r"\[HARNESS\] frame_phase phase=(\S+) frame=(\d+)")
 
 
 def _windowed(lines):
-    """List of (phase, kind, match) in real-time log order."""
-    events = []
+    """[(phase, kind, match)] with phase assigned via the frame ordinal.
+
+    A state/adaptive line's `frame=N` is attributed to the most recent
+    ordinal-bearing HARNESS marker whose ordinal is <= N, independent of the
+    interleaved stream order.  Falls back to the stderr TEMPORAL marker when
+    no ordinal is present (pre-A logs)."""
+    marks = []   # [(ordinal, phase)]
     phase = "boot"
+    events = []
+    ordinal_marks = []
     for line in lines:
-        m = PHASE_LINE.search(line)
+        m = HARNESS_PHASE.search(line)
+        if m:
+            ordinal_marks.append((int(m.group(2)), m.group(1)))
+            continue
+        m = re.search(r"TEMPORAL phase=(\S+)", line)
         if m:
             phase = m.group(1)
             continue
         m = STATE_LINE.search(line)
         if m:
-            events.append((phase, "state", m))
+            events.append(((int(m.group(1)), phase), "state", m))
             continue
         m = ADAPT_LINE.search(line)
         if m:
-            events.append((phase, "adaptive", m))
-    return events
+            events.append(((int(m.group(1)), phase), "adaptive", m))
+    if not ordinal_marks:
+        return [(p, k, m) for (_, p), k, m in events]
+
+    def phase_of(frame_ord):
+        best = "boot"
+        best_ord = -1
+        for ordv, name in ordinal_marks:
+            if ordv <= frame_ord and ordv > best_ord:
+                best = name
+                best_ord = ordv
+        return best
+
+    return [(phase_of(frame_ord), k, m) for (frame_ord, _), k, m in events]
 
 
 def check(lines, report):
@@ -52,75 +86,97 @@ def check(lines, report):
     states = [(p, m) for p, k, m in events if k == "state"]
     adaptives = [(p, m) for p, k, m in events if k == "adaptive"]
 
-    reprojects = [m for _, m in states if m.group(6) == "1"]
+    # ptState groups: 1=frame, 2=viewChanged, 3=sceneChanged, 4=accum,
+    # 5=frameIndex, 6=idle, 7=reproject.
+    def sc(m):
+        return m.group(3)
 
-    if temporal_off:
-        if reprojects:
-            err(f"temporal OFF: {len(reprojects)} reprojection frames "
-                "appeared")
-        accepted = [m for _, m in adaptives if int(m.group(6)) > 0]
-        if accepted:
-            err(f"temporal OFF: {len(accepted)} frames accepted history")
+    def vc(m):
+        return m.group(2)
+
+    def accum(m):
+        return m.group(4)
+
+    def fridx(m):
+        return m.group(5)
+
+    def reproj(m):
+        return m.group(7)
+
+    # Reset-on-move: no reprojection frame may ever appear.
+    reprojects = [m for _, m in states if reproj(m) == "1"]
+    if reprojects:
+        err(f"{len(reprojects)} reprojection frames appeared "
+            "(reset-on-move must never reproject)")
+
+    reset_states = [m for p, m in states
+                    if p in ("move-small", "move-big", "edit-box")]
+    if not reset_states:
+        err("no frames observed in the move/edit windows (wake-up failed?)")
         return
 
-    # ON: camera-only moves must keep accumulating with reprojection.
-    small_states = [m for p, m in states if p == "move-small"]
-    if not small_states:
-        err("no frames observed in the move-small window (wake-up failed?)")
-        return
-    small_reproject = [m for m in small_states if m.group(6) == "1"]
-    small_drops = [m for m in small_states
-                   if m.group(1) == "1" and m.group(2) == "0" and
-                   m.group(3) == "0"]
-    if not small_reproject:
-        err("move-small: no reproject=1 frame (camera move did not "
-            "reproject)")
-    if small_drops:
-        err(f"move-small: {len(small_drops)} preview drops on camera-only "
-            "moves (accumulation was discarded instead of reprojected)")
+    # Every view/scene change must reset the run: a fresh accumulation with
+    # frameIndex==0 and reproject==0.  On the detecting frame the run may
+    # already be accumulating (reset-on-move restarts accumulation on the same
+    # frame it sees the change), so the invariant is frameIndex==0 +
+    # reproject==0 -- NOT accum==0 (that only held pre-settle).
+    for p, m in states:
+        if p not in ("move-small", "move-big", "edit-box"):
+            continue
+        if vc(m) == "1" or sc(m) == "1":
+            if not (fridx(m) == "0" and reproj(m) == "0"):
+                err(f"{p}: expected reset to frameIndex=0 reproject=0 on a "
+                    f"view/scene change (got frameIndex={fridx(m)} "
+                    f"reproject={reproj(m)})")
 
-    total = max((int(m.group(2)) for _, m in adaptives), default=0)
-    small_accepted = [int(m.group(6))
-                      for p, m in adaptives if p == "move-small"]
-    if total and small_accepted and max(small_accepted) < total * 0.01:
-        err(f"move-small: at most {max(small_accepted)}/{total} pixels "
-            "accepted history (expected a meaningful subset)")
+    # After a camera move the run resumes cleanly: a static (viewChanged=0 &
+    # sceneChanged=0) accumulating frame appears with an increasing
+    # frameIndex, and at least one that started a fresh run (frameIndex small
+    # then growing) followed by the active fraction declining below 1.0.
+    resume_after_move = False
+    for p, k, m in events:
+        if p not in ("move-small", "move-big"):
+            continue
+        if k == "state" and vc(m) == "0" and sc(m) == "0" and \
+                accum(m) == "1":
+            resume_after_move = True
+    if not resume_after_move:
+        err("no static accumulating frame observed after a camera move "
+            "(re-accumulation never resumed)")
 
-    big_accepted = [int(m.group(6))
-                    for p, m in adaptives if p == "move-big"]
-    if total and big_accepted and max(big_accepted) > total * 0.9:
-        err(f"move-big: {max(big_accepted)}/{total} pixels accepted "
-            "history after a 90-degree orbit (disocclusion not detected)")
-
-    # After the small move, convergence resumes (fraction < 1.0).
-    resumed = False
+    # Convergence resumes: an adaptive framework with fraction < 1.0 appears
+    # after move-small.
     seen_move = False
-    for phase, kind, m in events:
-        if phase == "move-small":
+    resumed = False
+    for p, k, m in events:
+        if p == "move-small":
             seen_move = True
-        if seen_move and phase == "move-big":
+        if seen_move and p in ("move-big", "edit-box"):
             break
-        if seen_move and kind == "adaptive" and float(m.group(3)) < 1.0:
+        if seen_move and k == "adaptive" and float(m.group(4)) < 1.0:
             resumed = True
     if not resumed:
         err("fraction never declined below 1.0 after the camera move "
-            "(carried history not reused)")
+            "(fresh run did not converge)")
 
-    # Scene edit: must drop to preview WITHOUT reprojecting.
+    # Scene edit: must reset to preview WITHOUT reprojecting.
     edit_states = [m for p, m in states if p == "edit-box"]
     if not edit_states:
         err("edit-box: no frames observed (scene change did not wake the "
             "converged viewport)")
     else:
         scene_drop = [m for m in edit_states
-                      if m.group(2) == "1" and m.group(3) == "0" and
-                      m.group(6) == "0"]
+                      if sc(m) == "1" and fridx(m) == "0" and
+                      reproj(m) == "0"]
         edit_reproject = [m for m in edit_states
-                          if m.group(2) == "1" and m.group(6) == "1"]
+                          if sc(m) == "1" and reproj(m) == "1"]
         if not scene_drop:
-            err("edit-box: no sceneChanged preview drop (accum=0, "
-                "reproject=0) observed")
+            err("edit-box: no sceneChanged fresh run observed (frameIndex=0, "
+                "reproject=0) - the scene change did not reset the history")
         if edit_reproject:
             err(f"edit-box: {len(edit_reproject)} scene-change frames "
                 "reprojected (history must not be reused across scene "
                 "edits)")
+
+    if temporal_off:
+        pass

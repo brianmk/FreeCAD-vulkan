@@ -180,22 +180,32 @@ public:
     */
     bool isRayTracingActive() const;
 
+    //! Ordinal of the last presented frame (1-based; 0 before the first
+    //! render).  The same value is written into that frame's
+    //! SoRenderParams::frame, and the RT backend prints it in its [RTDBG]
+    //! blas/ptState lines.  Probe phase markers and frame dumps key off it
+    //! so the checker can correlate records independent of stream order.
+    uint32_t getRenderFrameCount() const;
+
     /*!
       \brief Whether hardware ray tracing is available on this device.
 
-      Independent of the live raster/RT toggle: TRUE when the RTX backend
-      initialized (the device advertises VK_KHR_acceleration_structure /
-      VK_KHR_ray_tracing_pipeline / VK_KHR_ray_query and the widget enabled
-      them).  When FALSE, path tracing can never run here.
+      This is a device capability: TRUE when the physical device advertises
+      VK_KHR_acceleration_structure / VK_KHR_ray_tracing_pipeline /
+      VK_KHR_ray_query (determined at construction by the device probe),
+      independent of whether the RTX backend has been built yet.  A view opened
+      in raster mode on an RT-capable device therefore still reports TRUE here;
+      the backend is only built lazily the first time path tracing is toggled
+      on.  When FALSE, path tracing can never run here.
     */
     bool isRayTracingAvailable() const;
 
     /*!
-      \brief Whether availability has been determined (initResources ran).
+      \brief Whether availability has been determined.
 
-      False before the renderer first initialized the Vulkan backend; a
-      caller must not warn about missing hardware ray tracing until this
-      returns TRUE.
+      True once the renderer has probed the device (or run initResources()); a
+      caller must not warn about missing hardware ray tracing until this returns
+      TRUE.  Independent of whether path tracing is or was ever requested.
     */
     bool isRayTracingProbed() const;
 
@@ -211,6 +221,18 @@ public:
 
     //! True when path tracing is enabled (see setPathTracingEnabled()).
     bool getPathTracingEnabled() const;
+
+    /*!
+      \brief Ray-traced view mode (AO preview vs full path tracing).
+
+      ModeAmbientOcclusion runs the single-sample real-time AO preview;
+      ModePathTrace is the accumulating multi-bounce path tracer.
+      ModeOff leaves the backend in its current state (raster is driven by
+      setPathTracingEnabled(false)).
+    */
+    enum class RtxViewMode { Interactive = 0, AmbientOcclusion, PathTracing };
+    void setViewMode(RtxViewMode mode);
+    RtxViewMode getViewMode() const;
 
     /*!
       \brief Start flag for progressive path-tracing refinement.

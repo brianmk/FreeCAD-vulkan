@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Host-side assertions for vk_blas_probe.py (Phase 7: BLAS refit/reuse).
 
-Parses the real-time interleaved stderr stream (the probe's phase markers
-print to stderr, so `BLAS phase=...` and `[RTDBG] blas ...` lines are in
-true chronological order) and the collected frame dumps.
+The probe's phase markers (`[HARNESS] frame_phase phase=NAME frame=N`) and the
+backend's `[RTDBG] blas frame=F built=/refit=/reused=/cache=` lines both carry
+the SAME monotonic presented-frame ordinal (N/F).  So a blas line is attributed
+to a phase by matching its ordinal against the phase markers' ordinals -- NOT by
+relying on the interleaved stream order.  Frame dumps are named
+`/tmp/vk_frame_<ordinal>.png`, so they correlate to a blas line by the ordinal
+too.
 
 Checks:
   - per-phase BLAS counters (refit on width edit, reuse on transform,
@@ -17,35 +21,52 @@ import os
 import re
 import sys
 
-BLAS_LINE = re.compile(r"\[RTDBG\] blas built=(\d+) refit=(\d+) reused=(\d+) "
-                       r"cache=(\d+)")
-PHASE_LINE = re.compile(r"BLAS phase=(\S+)")
+BLAS_LINE = re.compile(
+    r"\[RTDBG\] blas frame=(\d+) built=(\d+) refit=(\d+) reused=(\d+) "
+    r"cache=(\d+)")
+# The probe prints `BLAS phase=...` (stderr) and the harness prints
+# `[HARNESS] frame_phase phase=... frame=<ordinal>` (stdout); both land in
+# stdout.log.  The ordinal-bearing marker is the HARNESS one.
+PHASE_LINE = re.compile(
+    r"\[HARNESS\] frame_phase phase=(\S+) frame=(\d+)")
+# Fallback for runs whose markers carry no ordinal (pre-A output): keep the
+# plain stderr marker so the check can still produce a useful error.
+PHASE_NOFRAME = re.compile(r"BLAS phase=(\S+)")
 
 
 def _blas_events(lines):
-    """(line_index, (built, refit, reused, cache), phase) in log order."""
+    """[(frame_ordinal, (built, refit, reused, cache))] in log order."""
     events = []
-    phase = "boot"
-    for i, line in enumerate(lines):
-        m = PHASE_LINE.search(line)
-        if m:
-            phase = m.group(1)
-            continue
+    for line in lines:
         m = BLAS_LINE.search(line)
         if m:
-            events.append((i, tuple(int(g) for g in m.groups()), phase))
+            ev = tuple(int(g) for g in m.groups())
+            events.append((ev[0], (ev[1], ev[2], ev[3], ev[4])))
     return events
 
 
-def _phase_windows(lines):
-    """Map phase name -> (start_line, end_line) from the stderr markers."""
-    marks = [(i, m.group(1)) for i, line in enumerate(lines)
-             for m in [PHASE_LINE.search(line)] if m]
-    windows = {}
-    for idx, (i, name) in enumerate(marks):
-        end = marks[idx + 1][0] if idx + 1 < len(marks) else None
-        windows[name] = (i, end)
-    return windows
+def _phase_markers(lines):
+    """[(frame_ordinal, name)] for every ordinal-bearing phase marker."""
+    marks = []
+    for line in lines:
+        m = PHASE_LINE.search(line)
+        if m:
+            marks.append((int(m.group(2)), m.group(1)))
+    return marks
+
+
+def _phase_of(marks, frame_ord):
+    """Attribute a frame ordinal to the most recent marker whose ordinal is
+    <= it.  Markers are emitted right BEFORE a phase's action, so a phase's
+    frames have ordinals strictly greater than its marker and <= the next
+    marker's ordinal.  Frames before the first marker are 'boot'."""
+    best = "boot"
+    best_ord = -1
+    for ordv, name in marks:
+        if ordv <= frame_ord and ordv > best_ord:
+            best = name
+            best_ord = ordv
+    return best
 
 
 def _check(events, name, pred, what):
@@ -59,82 +80,92 @@ def check(lines, report):
     def fail(msg):
         report.add_error(msg)
 
-    events = _blas_events(lines)
-    if not events:
+    raw_events = _blas_events(lines)
+    if not raw_events:
         fail("no [RTDBG] blas lines found (renderer never ran?)")
         return
-    windows = _phase_windows(lines)
+    marks = _phase_markers(lines)
+    if not marks:
+        fail("no ordinal-bearing [HARNESS] frame_phase markers found "
+             "(probe did not call frame_phase, or the view exposes no "
+             "getVulkanFrameCount)")
+        return
+
+    # Attach a phase to each blas event by ordinal.
+    events = [(ordv, counts, _phase_of(marks, ordv))
+              for ordv, counts in raw_events]
 
     # -- per-phase counters ------------------------------------------------
     for name in ("refit-box", "reuse-transform", "build-cylinder",
                  "add-identical-box"):
-        if name not in windows:
+        if name not in [n for _, n in marks]:
             fail(f"phase {name}: missing marker in log")
-            continue
-    phase_events = {name: [e for e in events if e[2] == name]
-                    for name in windows}
+    refit_marker_ord = next((ordv for ordv, n in marks if n == "refit-box"),
+                            None)
 
-    # The width edit's refit frame can render up to a step after its
-    # marker (the marker prints before the frames of its step), so search
-    # from the refit marker to the end of the log: the run contains exactly
-    # one position-only edit, so any refit frame after the marker is it.
-    refit_marker = windows.get("refit-box", (None, None))[0]
-    if refit_marker is None or not any(
-            i > refit_marker and c[1] >= 1 and c[0] == 0
-            for i, c, _ in events):
-        fail("no refit>=1 built==0 frame after the refit-box marker "
+    # The refit (width edit) is the only position-only edit with
+    # refit>=1 built==0, so search that phase's window by ordinal.
+    if refit_marker_ord is None or not any(
+            e[2] == "refit-box" and e[1][1] >= 1 and e[1][0] == 0
+            for e in events):
+        fail("no refit>=1 built==0 frame in the refit-box window "
              "(in-place width edit never refit)")
     for msg in _check(events, "reuse-transform",
                       lambda c: c[2] >= 1 and c[1] == 0 and c[0] == 0,
                       "reused>=1 refit==0 built==0 (transform-only move)"):
         fail(msg)
     for msg in _check(events, "build-cylinder",
-                      lambda c: c[0] >= 1 and c[3] >= 3,
-                      "built>=1 cache>=3 (new geometry)"):
+                      lambda c: c[0] >= 1 and c[3] >= 2,
+                      "built>=1 cache>=2 (new cylinder geometry)"):
         fail(msg)
-    # Re-adding identical content must not rebuild the existing entries:
-    # only the newly inserted command (Box2) may build.
-    bad = [e for e in phase_events.get("add-identical-box", [])
-           if e[1][0] > 1]
+    # After the identical Box2 is added, the cache must hold all three
+    # geometries (Box + Cyl + Box2).  The cylinder's own build frame reports
+    # cache==2 (Box2 arrives later), so the >=3 check is done here rather
+    # than on the cylinder-build frame.
+    if not any(e[2] == "add-identical-box" and e[1][3] >= 3
+               for e in events):
+        fail("add-identical-box: cache never reached >=3 "
+             "(Box + Cyl + Box2 not all cached)")
+    bad = [e for e in events if e[2] == "add-identical-box" and e[1][0] > 1]
     if bad:
         fail(f"add-identical-box: {len(bad)} frames rebuilt more than one "
              "BLAS (content re-key failed)")
-    if not any(e[1][2] >= 2
-               for e in phase_events.get("add-identical-box", [])):
+    if not any(e[2] == "add-identical-box" and e[1][2] >= 2
+               for e in events):
         fail("add-identical-box: no frame reused>=2 (existing BLASes lost)")
 
-    # -- refit pixel correctness -------------------------------------------
-    frames_dir = os.path.join(report.artifact_dir, "frames")
-    frames = sorted(glob.glob(os.path.join(frames_dir, "*.png")),
+    # -- refit pixel correctness ------------------------------------------
+    # The refit-box marker was emitted immediately before the width edit, so
+    # the frame right before the edit is the last dump with an ordinal <= the
+    # marker's ordinal; the first frame after is the first dump with a
+    # strictly greater ordinal.
+    frames = sorted(glob.glob(os.path.join(report.artifact_dir, "frames",
+                                           "*.png")),
                     key=lambda p: int(re.search(r"(\d+)", os.path.basename(p))
                                       .group(1)))
     if not frames:
         fail("refit pixel check: no frame dumps collected")
         return
-    refit_start = windows.get("refit-box", (None, None))[0]
-    if refit_start is None:
+    if refit_marker_ord is None:
         return
-    pre_idx = None
-    post_idx = None
-    for ordinal, (i, counts, phase) in enumerate(events):
-        if i < refit_start:
-            pre_idx = ordinal
-        if i > refit_start and post_idx is None:
-            post_idx = ordinal
-    if pre_idx is None or post_idx is None:
-        fail("refit pixel check: could not find frames around the edit")
-        return
-    if post_idx >= len(frames) or pre_idx >= len(frames):
-        fail("refit pixel check: dump/blas-line count mismatch "
-             f"(dumps={len(frames)}, need {post_idx})")
+    pre = None
+    post = None
+    for p in frames:
+        n = int(re.search(r"(\d+)", os.path.basename(p)).group(1))
+        if n <= refit_marker_ord:
+            pre = p
+        elif post is None:
+            post = p
+    if pre is None or post is None:
+        fail("refit pixel check: could not find frame dumps around the edit")
         return
     try:
         from PIL import Image
     except ImportError:
         fail("refit pixel check: PIL not available")
         return
-    a = Image.open(frames[pre_idx]).convert("RGB")
-    b = Image.open(frames[post_idx]).convert("RGB")
+    a = Image.open(pre).convert("RGB")
+    b = Image.open(post).convert("RGB")
     if a.size != b.size:
         fail("refit pixel check: frame sizes differ")
         return

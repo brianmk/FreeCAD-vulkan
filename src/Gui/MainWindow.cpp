@@ -27,6 +27,7 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QCloseEvent>
+#include <QComboBox>
 #include <QContextMenuEvent>
 #include <QDesktopServices>
 #include <QDockWidget>
@@ -47,6 +48,7 @@
 #include <QScreen>
 #include <QSettings>
 #include <QSignalMapper>
+#include <QSignalBlocker>
 #include <QStatusBar>
 #include <QThread>
 #include <QTimer>
@@ -423,6 +425,7 @@ struct MainWindowP
     StatusBarLabel* actionLabel;
     InputHintWidget* hintLabel;
     QLabel* rightSideLabel;
+    QComboBox* viewModeCombo = nullptr;
     std::vector<StatusBarItem> statusBarItems;
     ParameterGrp::handle hStatusBar;
     QTimer* actionTimer;
@@ -628,6 +631,34 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
          .persistentVisibility = true}
     );
 
+    // View render-mode selector ("Interactive", "Wireframe", "Ambient
+    // Occlusion", "Ray Tracing").  Lives in the main window status bar, LEFT
+    // of the ground-plane grid control (order 250 < 300), and drives the
+    // ACTIVE 3D view's mode (each view keeps its own).  Re-populated and
+    // re-synchronised whenever the active view changes.
+    d->viewModeCombo = new QComboBox(statusBar());
+    d->viewModeCombo->setObjectName(QStringLiteral("ViewRenderingMode"));
+    //: Status-bar view render-mode entry: classic raster viewport
+    d->viewModeCombo->addItem(tr("Interactive"));
+    //: Status-bar view render-mode entry: raster wireframe draw style
+    d->viewModeCombo->addItem(tr("Wireframe"));
+    //: Status-bar view render-mode entry: single-sample ray ambient occlusion
+    d->viewModeCombo->addItem(tr("Ambient Occlusion"));
+    //: Status-bar view render-mode entry: accumulating ray path tracer
+    d->viewModeCombo->addItem(tr("Ray Tracing"));
+    addStatusBarItem(
+        d->viewModeCombo,
+        {.id = "viewModeCombo",
+         //: A context menu action used to show or hide the view rendering mode
+         //: selector in the status bar
+         .title = tr("View Rendering Mode"),
+         .slot = StatusBarSlot::Right,
+         .order = 250,
+         .persistentVisibility = true}
+    );
+    connect(d->viewModeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, &MainWindow::onViewModeComboChanged);
+
     auto* groundPlaneWidget = new GroundPlaneWidget(statusBar());
     addStatusBarItem(
         groundPlaneWidget,
@@ -639,7 +670,6 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
          .order = 300,
          .persistentVisibility = true}
     );
-
     auto* toggleBottomPanelsButton = new QToolButton(statusBar());
     toggleBottomPanelsButton->setIconSize(QSize(16, 16));
     toggleBottomPanelsButton->setIcon(BitmapFactory().pixmap("Std_ToggleBottomPanels"));
@@ -1703,6 +1733,10 @@ void MainWindow::setActiveWindow(MDIView* view)
     d->activeView = view;
     Application::Instance->viewActivated(view);
 
+    // Keep the status-bar view rendering mode selector in step with the newly
+    // active view (each view owns its own render mode).
+    syncViewModeCombo();
+
     // activate/remember workbench by tab (if enabled)
 
     const ParameterGrp::handle hGrp = App::GetApplication().GetParameterGroupByPath(
@@ -1738,6 +1772,32 @@ void MainWindow::onWindowActivated(QMdiSubWindow* mdi)
 
     auto view = dynamic_cast<MDIView*>(mdi->widget());
     setActiveWindow(view);
+}
+
+void MainWindow::syncViewModeCombo()
+{
+    if (!d->viewModeCombo) {
+        return;
+    }
+    // Reflect the active 3D view's render mode.  Views other than 3D views
+    // have no mode; show a neutral state (Interactive) for them.
+    View3DInventor* view = dynamic_cast<View3DInventor*>(d->activeView.data());
+    const Gui::ViewRenderMode mode =
+        view ? view->getRenderMode() : Gui::ViewRenderMode::Interactive;
+    QSignalBlocker blocker(d->viewModeCombo);
+    d->viewModeCombo->setCurrentIndex(static_cast<int>(mode));
+}
+
+void MainWindow::onViewModeComboChanged(int index)
+{
+    if (index < 0) {
+        return;
+    }
+    View3DInventor* view = dynamic_cast<View3DInventor*>(d->activeView.data());
+    if (!view) {
+        return;
+    }
+    view->setRenderMode(static_cast<Gui::ViewRenderMode>(index));
 }
 
 void MainWindow::onWindowsMenuAboutToShow()

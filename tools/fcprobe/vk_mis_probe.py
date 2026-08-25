@@ -96,18 +96,34 @@ def step():
         s.frame_phase("setup")
         log("phase=setup (path tracing on, analytic lights off)")
     elif k == 12:
-        # Runtime toggle: the backend re-reads the env per frame, and the
-        # camera nudge restarts accumulation (viewChanged) so pass B is a
-        # fresh run without NEE.  Pass A and B then differ only by the
-        # emissive-area contribution.
+        # Runtime toggle: the backend re-reads the env per frame.  Pass A must
+        # be followed by a clean pass B without NEE so the two differ only by
+        # the emissive-area contribution.  A camera nudge alone does not
+        # restart the accumulation: the Vulkan backend owns its own synced
+        # camera and never sees the node edit, so pass B would never render
+        # (converged-idle viewport under the reset-on-move architecture).
+        # Instead, change the scene graph (scale the emissive cube) which
+        # updateGeometryCache detects as a scene change, and wake the GUI so
+        # the reset -> re-accumulate of pass B renders frames into the dump
+        # window.  The scale delta is tiny so the geometry stays effectively
+        # identical for the pixel comparison.
+        s.frame_phase("toggle")
+        log("phase=toggle (NEE off, scene change restarts pass B)")
         os.environ["FC_VULKAN_PT_NEE"] = "0"
         os.environ["FC_VULKAN_PT_MIS"] = "0"
-        view = FreeCADGui.ActiveDocument.ActiveView
-        cam = view.getCameraNode()
-        p = cam.position.getValue()
-        cam.position.setValue(p[0] + 0.05, p[1], p[2])
-        s.frame_phase("toggle")
-        log("phase=toggle (NEE off, accumulation restarted)")
+        doc = FreeCAD.getDocument("Mis")
+        cube = doc.getObject("Emissive")
+        # A tiny placement nudge is detected by updateGeometryCache as a
+        # scene change (the BLAS instance transform changed): this resets the
+        # accumulation so pass B is a fresh NEE-off run, without moving the
+        # cube (and its glow) out of the comparison window.
+        cube.Placement = FreeCAD.Placement(FreeCAD.Vector(0.0, 0.0, 0.001),
+                                           FreeCAD.Rotation())
+        doc.recompute()
+        FreeCADGui.updateGui()
+        s.vulkan_render()
+    elif k == 16:
+        FreeCADGui.updateGui()
     elif k == 24:
         log("snapshot + finish")
         s.snapshot()

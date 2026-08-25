@@ -155,6 +155,22 @@ void View3DInventorPy::init_type()
         "isPathTracingActive() -> bool: whether a progressive accumulation "
         "is running"
     );
+    add_noargs_method(
+        "getVulkanFrameCount",
+        &View3DInventorPy::getVulkanFrameCount,
+        "getVulkanFrameCount() -> int: ordinal of the Vulkan viewport's last "
+        "presented frame (0 when no Vulkan viewport).  The same ordinal "
+        "appears in the [RTDBG] blas/ptState lines and in the frame dump "
+        "file names, so probe phase markers can correlate on one key."
+    );
+    add_noargs_method(
+        "requestVulkanRender",
+        &View3DInventorPy::requestVulkanRender,
+        "requestVulkanRender(): force a single Vulkan frame even when the "
+        "viewport is converged-idle.  Scripted probes call this after a "
+        "scene/camera edit so the harness's doc.recompute()/updateGui() "
+        "(which bypasses Application::onUpdate) still produces a render."
+    );
     add_noargs_method("getCamera", &View3DInventorPy::getCamera, "getCamera()");
     add_noargs_method("getCameraNode", &View3DInventorPy::getCameraNode, "getCameraNode()");
     add_noargs_method(
@@ -1395,6 +1411,18 @@ Py::Object View3DInventorPy::startPathTracing()
 Py::Object View3DInventorPy::isPathTracingActive()
 {
     return Py::Boolean(getView3DInventorPtr()->isPathTracingActive());
+}
+
+Py::Object View3DInventorPy::getVulkanFrameCount()
+{
+    return Py::Long(static_cast<unsigned long>(
+        getView3DInventorPtr()->getVulkanFrameCount()));
+}
+
+Py::Object View3DInventorPy::requestVulkanRender()
+{
+    getView3DInventorPtr()->requestVulkanRender();
+    return Py::None();
 }
 
 Py::Object View3DInventorPy::dumpNode(const Py::Tuple& args)

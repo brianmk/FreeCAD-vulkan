@@ -60,6 +60,24 @@ public:
     void setPathTracingStart(bool start);
     bool isPathTracingEnabled() const;
     bool isPathTracingActive() const;
+    /// Set the ray-traced view mode (0 = Interactive/raster, 1 = Ambient
+    /// Occlusion, 2 = Path Tracing).  Mirrors QuarterVulkanWidget::setViewMode.
+    void setViewMode(int mode);
+    /// Current ray-traced view mode (see setViewMode).
+    int getViewMode() const;
+
+    /// Ordinal of the last presented frame (see
+    /// QuarterVulkanWidget::getRenderFrameCount).  0 when there is no Vulkan
+    /// widget yet.  Exposed so scripts/probes can key frame dumps and backend
+    /// traces (which carry the same ordinal) to a single monotonic value.
+    uint32_t getRenderFrameCount() const;
+
+    /// Force a single Vulkan frame regardless of whether the viewport is
+    /// converged-idle.  Used by scripted probes after a scene/camera edit:
+    /// the demand-driven widget only re-renders on redraw() or refining, and
+    /// the harness's doc.recompute()/updateGui() bypasses the normal
+    /// Application::onUpdate() route that would otherwise request one.
+    void requestVulkanRender();
 
 private:
     void onSurfaceSizeChanged(const QSize& surfaceSize);

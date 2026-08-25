@@ -218,6 +218,17 @@ public:
         return m_pathTracingActive;
     }
 
+    void setViewMode(int mode)
+    {
+        QMutexLocker locker(&m_stateMutex);
+        m_viewMode = mode;
+    }
+    int getViewMode() const
+    {
+        QMutexLocker locker(&m_stateMutex);
+        return m_viewMode;
+    }
+
     // Ray-tracing status mirrored from the manager (which only re-evaluates
     // device support during frame setup) so callers can query the cached
     // value from anywhere.
@@ -227,22 +238,49 @@ public:
         return m_rayTracingActive;
     }
 
-    // Whether the RTX backend actually initialized (device support), which
-    // is independent of the live raster/RT toggle.  When false, path tracing
-    // can never run on this device.
+    //! Ordinal of the last presented frame (see SoVulkanRenderManager::
+    //! getRenderFrameCount).  The same value is copied into that frame's
+    //! SoRenderParams::frame, so [RTDBG] lines and frame dumps can be
+    //! correlated to this ordinal by the probe/checker layer.
+    uint32_t getRenderFrameCount() const
+    {
+        return m_manager.getRenderFrameCount();
+    }
+
+    // Whether the RTX backend actually initialized (the device supports
+    // hardware ray tracing and it came up).  Two distinct concepts are kept
+    // separate: device support (m_rtxBackendAvailable) is a capability the
+    // device advertises and is knowable before/without building the backend;
+    // m_rtxBackendBuilt is whether the backend actually came up (so the
+    // raster-only path never pays for building it until path tracing is
+    // on).  When availability is false, path tracing can never run on this
+    // device.
     bool getRayTracingAvailable() const
     {
         QMutexLocker locker(&m_stateMutex);
         return m_rtxBackendAvailable;
     }
 
-    // True once initResources() has run and m_rtxBackendAvailable is known
-    // (before that, availability cannot be judged; the adapter must not
-    // warn about "no hardware ray tracing" on an unprobed renderer).
+    // True once initResources() has run: device support is settled and
+    // availability can be judged.  Before that the adapter must not warn about
+    // "no hardware ray tracing" on an unprobed renderer.  This is independent
+    // of whether path tracing was actually requested.
     bool getRayTracingProbed() const
     {
         QMutexLocker locker(&m_stateMutex);
         return m_rtxBackendProbed;
+    }
+
+    // Device ray-tracing capability is determined by the physical-device probe
+    // in the widget (selectPhysicalDevice/configureDeviceFeatures) and pushed
+    // here, so getRayTracingAvailable() reflects hardware support even before
+    // the RTX backend has been built (path tracing off at startup).  It is the
+    // source of truth the adapter uses to decide whether a path-tracing
+    // request can ever succeed.
+    void setRayTracingDeviceSupported(bool supported)
+    {
+        QMutexLocker locker(&m_stateMutex);
+        m_rtxBackendAvailable = supported;
     }
 
     // Demand-driven redraws: the surface re-renders only when something
@@ -278,22 +316,30 @@ public:
         if (props) {
             context.apiVersion = props->apiVersion;
         }
-        // Always request the ray-tracing backend BEFORE initialize(): the
-        // manager only attempts the RTX backend when it was requested.  It is
-        // requested unconditionally (not just when the view was constructed
-        // for ray tracing) so the backend is available for live raster <->
-        // path-tracing toggling; initialize() brings it up best-effort and
-        // falls back to the raster backend when the device lacks it.
-        m_manager.setRayTracing(TRUE);
+        // Request the ray-tracing backend BEFORE initialize() only when path
+        // tracing is (or will be) used.  Bringing it up unconditionally
+        // rebuilds the whole RT stack (acceleration structures + RT
+        // pipelines) on EVERY window reset -- QVulkanWindow tears down and
+        // re-creates the backend on Expose/Hide/Resize/Move events -- which
+        // is the dominant cost when the user orbits in the raster-only
+        // path.  When a view opens with path tracing off, we build only the
+        // raster backend; ensureRayTracing() brings the RT backend up lazily
+        // the first time path tracing is toggled on, with no re-open needed.
+        m_manager.setRayTracing(m_pathTracingEnabled ? TRUE : FALSE);
         m_initialized = m_manager.initialize(&context);
-        // Independent of the toggle flag: whether the RTX backend actually
-        // came up (device support).  Used by the adapter to decide whether a
-        // path-tracing request can ever succeed on this device.
-        m_rtxBackendAvailable = m_manager.getRayTracingBackend() ? true : false;
+        // Whether the RTX backend actually built during this initialize().
+        // This is NOT device support: when path tracing was off at startup the
+        // RT backend is skipped, so this is false even on an RT-capable one.
+        // Device capability lives in m_rtxBackendAvailable (set by the device
+        // probe in setRayTracingDeviceSupported).
+        m_rtxBackendBuilt = m_manager.getRayTracingBackend() ? true : false;
+        // availability is now settled: initResources ran.  Distinct from any
+        // path-tracing request.
         m_rtxBackendProbed = true;
         VK_BREADCRUMB("[VK-TRACE] QuarterVulkanRenderer::initResources "
-                      "rtxBackendAvailable=%d\n",
-                      m_rtxBackendAvailable ? 1 : 0);
+                      "pathTracing=%d rtxBuilt=%d\n",
+                      m_pathTracingEnabled ? 1 : 0,
+                      m_rtxBackendBuilt ? 1 : 0);
         if (m_initialized) {
             // Mirror the GL viewer (QuarterWidget sets
             // SoRenderManager::VARIABLE_NEAR_PLANE): re-fit the camera
@@ -302,23 +348,20 @@ public:
             // hidden GL viewer never renders, so its own auto-clipping would
             // never run.
             m_manager.setAutoClipping(SoVulkanRenderManager::VARIABLE_NEAR_PLANE);
-            if (m_rtxBackendAvailable) {
-                vkLog("initResources: ray tracing backend available");
+            if (m_rtxBackendBuilt) {
+                vkLog("initResources: ray tracing backend built (device "
+                      "support=%d)",
+                      m_rtxBackendAvailable ? 1 : 0);
             }
             else {
-                vkLog("initResources: ray tracing backend unavailable; "
-                      "using raster Vulkan backend");
+                vkLog("initResources: ray tracing backend not built "
+                      "(device support=%d); using raster Vulkan backend",
+                      m_rtxBackendAvailable ? 1 : 0);
             }
             vkLog("initResources: backend initialized OK");
         }
         else {
             vkErr("initResources: backend initialize FAILED");
-        }
-        // Establish the live mode from the current path-tracing preference so
-        // a view opened in raster mode does not start doing single-sample RT
-        // work until the user actually turns path tracing on.
-        if (m_rtxBackendAvailable) {
-            m_manager.setRayTracing(m_pathTracingEnabled ? TRUE : FALSE);
         }
     }
 
@@ -361,11 +404,42 @@ public:
     void physicalDeviceLost() override
     {
         vkErr("physicalDeviceLost: VK_ERROR_DEVICE_LOST");
+        this->dropToRaster("physical device lost");
     }
 
     void logicalDeviceLost() override
     {
         vkErr("logicalDeviceLost: VK_ERROR_DEVICE_LOST");
+        this->dropToRaster("logical device lost");
+    }
+
+    // Hard fall-back to the raster backend (Autodesk-style): when the device is
+    // lost -- commonly an NVIDIA TDR timeout while a path-traced sample takes
+    // too long -- any further path-tracing request would be futile and would
+    // busy-loop the renderer against a dead device.  Drop the request so the
+    // next initResources() (after Qt recreates the swapchain) comes up raster
+    // only, and the adapter's availability check reports the true state.  The
+    // device-lost callbacks fire outside startNextFrame()'s frame loop, so we
+    // mutate the request state under the accepted lock.
+    void dropToRaster(const char * reason)
+    {
+        QMutexLocker locker(&m_stateMutex);
+        m_pathTracingEnabled = false;
+        m_appliedPathTracingEnabled = false;
+        m_rtxBackendBuilt = false;
+        m_rayTracingActive = false;
+        // Reset the manager side too, not just our request state, so it is not
+        // left believing ray tracing is still live if Qt does not recreate the
+        // swapchain after the loss.  setRayTracing(FALSE) is a pure request-flag
+        // set and is always safe; disable path tracing on the RTX backend only
+        // when it is actually live so we do not trip setPathTracingEnabled()'s
+        // "backend not initialized" warning.
+        m_manager.setRayTracing(FALSE);
+        if (m_manager.getRayTracingActive()) {
+            m_manager.setPathTracingEnabled(FALSE);
+        }
+        vkWarn("path tracing disabled after %s; falling back to the raster "
+               "Vulkan backend.", reason);
     }
 
     void startNextFrame() override
@@ -406,8 +480,13 @@ public:
 
         // Env-gated frame dump (see Detail::VulkanFrameDumper): copy the
         // swapchain color image into a staging buffer inside the same command
-        // buffer, then read it back after submission and write a PNG.
-        m_dumper.recordFrameCopy(cb, index, size);
+        // buffer, then read it back after submission and write a PNG.  The
+        // PNG is named by the manager's per-frame ordinal -- the SAME ordinal
+        // the RT backend prints in its [RTDBG] blas/ptState lines -- so a
+        // frame dump can be correlated to the backend trace that produced it
+        // even when the two arrive out of order.
+        m_dumper.recordFrameCopy(cb, index, size,
+                                 m_manager.getRenderFrameCount());
 
         m_window->frameReady();
 
@@ -452,6 +531,19 @@ private:
         bool pathTracingDenoise = true;
     };
 
+    // Apply a path-tracing setting to the manager only when it changed since
+    // the last frame, and record it as applied.  Manager access is kept at
+    // frame setup (see snapshotFrameState()); this just removes the repeated
+    // diff-and-apply ceremony around the many scalar path-tracing settings.
+    template <typename T, typename Setter>
+    void applyPathTracingSetting(const T& value, T& applied, Setter&& setter)
+    {
+        if (value != applied) {
+            setter(value);
+            applied = value;
+        }
+    }
+
     // Qt 6 invokes startNextFrame() on the GUI thread, like every other
     // access to these state members; the setters and redraw sensors run on
     // the same thread.  Snapshot everything under the mutex and use the
@@ -482,45 +574,69 @@ private:
         // latch if path tracing is not yet enabled (setPathTracingStart
         // ignores requests while ptEnabled is false).
         if (m_pathTracingEnabled != m_appliedPathTracingEnabled) {
-            // Live backend switch: path tracing ON selects the RTX backend,
-            // OFF returns to the raster backend.  The RTX backend was
-            // initialized up front (when the device supports it), so this is
-            // a cheap per-frame dispatch flag flip, no re-initialization.
+            // Live backend switch as ONE cohesive manager call: requestRayTracing()
+            // sets the dispatch request, lazily builds the RTX backend when it
+            // was skipped at startup (so the raster-only path never pays for
+            // it and a runtime toggle needs no window re-initialization), and
+            // enables/disables path tracing.  requestRayTracing() returns the
+            // effective active state, which the hard-fallback path below uses.
             VK_BREADCRUMB("[VK-TRACE] QuarterVulkanRenderer::startNextFrame "
-                          "rtBackendToggle=%d\n",
-                          m_pathTracingEnabled ? 1 : 0);
-            if (m_rtxBackendAvailable) {
-                m_manager.setRayTracing(m_pathTracingEnabled ? TRUE : FALSE);
+                          "rtBackendToggle=%d rtxBuilt=%d\n",
+                          m_pathTracingEnabled ? 1 : 0,
+                          m_rtxBackendBuilt ? 1 : 0);
+            const bool rtActive = m_manager.requestRayTracing(
+                m_pathTracingEnabled ? TRUE : FALSE);
+            m_rtxBackendBuilt = rtActive;
+            if (m_pathTracingEnabled && !rtActive) {
+                // Hard fallback: the request asked for path tracing but the
+                // RTX backend could not be brought up (device lacks ray
+                // tracing, or the lazy build failed).  Do not keep requesting
+                // it every frame; drop the request, revert to raster, and let
+                // the adapter warn.  This mirrors Autodesk's fallback from GPU
+                // ray tracing back to the Realistic viewport.
+                m_pathTracingEnabled = false;
+                m_appliedPathTracingEnabled = false;
+                // Keep this frame's snapshot in agreement with the request we
+                // just dropped so the refining gate below does not keep the
+                // surface spinning on a dead trace path.
+                frame.pathTracingEnabled = false;
+                vkWarn("requestRayTracing: path tracing requested but the "
+                       "ray-tracing backend is unavailable; falling back to "
+                       "the raster Vulkan backend.");
             }
-            m_manager.setPathTracingEnabled(m_pathTracingEnabled ? TRUE
-                                                                 : FALSE);
-            m_appliedPathTracingEnabled = m_pathTracingEnabled;
+            else {
+                m_appliedPathTracingEnabled = m_pathTracingEnabled;
+            }
         }
-        if (m_pathTracingBounces != m_appliedPathTracingBounces) {
-            m_manager.setPathTracingBounces(
-                static_cast<uint32_t>(m_pathTracingBounces));
-            m_appliedPathTracingBounces = m_pathTracingBounces;
-        }
-        if (m_pathTracingSettleFrames != m_appliedPathTracingSettleFrames) {
-            m_manager.setPathTracingSettleFrames(
-                static_cast<uint32_t>(m_pathTracingSettleFrames));
-            m_appliedPathTracingSettleFrames = m_pathTracingSettleFrames;
-        }
-        if (m_pathTracingMaxSamples != m_appliedPathTracingMaxSamples) {
-            m_manager.setPathTracingMaxSamples(
-                static_cast<uint32_t>(m_pathTracingMaxSamples));
-            m_appliedPathTracingMaxSamples = m_pathTracingMaxSamples;
-        }
-        if (m_pathTracingDenoise != m_appliedPathTracingDenoise) {
-            m_manager.setPathTracingDenoiseEnabled(m_pathTracingDenoise ? TRUE
-                                                                        : FALSE);
-            m_appliedPathTracingDenoise = m_pathTracingDenoise;
-        }
-        if (m_pathTracingDenoiser != m_appliedPathTracingDenoiser) {
-            m_manager.setPathTracingDenoiser(
-                m_pathTracingDenoiser.empty() ? nullptr
-                                              : m_pathTracingDenoiser.c_str());
-            m_appliedPathTracingDenoiser = m_pathTracingDenoiser;
+        applyPathTracingSetting(m_pathTracingBounces, m_appliedPathTracingBounces,
+            [this](int v) {
+                m_manager.setPathTracingBounces(static_cast<uint32_t>(v));
+            });
+        applyPathTracingSetting(m_pathTracingSettleFrames, m_appliedPathTracingSettleFrames,
+            [this](int v) {
+                m_manager.setPathTracingSettleFrames(static_cast<uint32_t>(v));
+            });
+        applyPathTracingSetting(m_pathTracingMaxSamples, m_appliedPathTracingMaxSamples,
+            [this](int v) {
+                m_manager.setPathTracingMaxSamples(static_cast<uint32_t>(v));
+            });
+        applyPathTracingSetting(m_pathTracingDenoise, m_appliedPathTracingDenoise,
+            [this](bool v) {
+                m_manager.setPathTracingDenoiseEnabled(v ? TRUE : FALSE);
+            });
+        applyPathTracingSetting(m_pathTracingDenoiser, m_appliedPathTracingDenoiser,
+            [this](const std::string& v) {
+                m_manager.setPathTracingDenoiser(v.empty() ? nullptr : v.c_str());
+            });
+        // Apply the ray-traced view mode (Interactive/AO/PathTracing) when it
+        // changed, so the manager (and the shader's u_state.y) picks AO vs
+        // multi-bounce.  The RT backend must be initialized first; the enable
+        // toggle above builds it lazily when path tracing was requested.
+        if (m_viewMode != m_appliedViewMode) {
+            if (m_rtxBackendBuilt) {
+                m_manager.setViewMode(m_viewMode);
+            }
+            m_appliedViewMode = m_viewMode;
         }
         if (m_pathTracingStart) {
             m_manager.setPathTracingStart(TRUE);
@@ -725,6 +841,12 @@ private:
     bool m_pathTracingStart = false;
     bool m_pathTracingActive = false;
     bool m_pathTracingRefining = false;
+    // Ray-traced view mode: Interactive (raster/off), AmbientOcclusion
+    // (single-sample AO preview) or PathTracing (accumulating).  Stage from
+    // the widget API and apply to the manager each frame, like the other
+    // path-tracing settings.
+    int m_viewMode = 0;   // 0=Interactive 1=AmbientOcclusion 2=PathTracing
+    int m_appliedViewMode = -1;   // mirror so a change is seen exactly once
     bool m_appliedPathTracingEnabled = false;
     int m_pathTracingBounces = 4;
     int m_pathTracingSettleFrames = 6;
@@ -737,7 +859,21 @@ private:
     bool m_appliedPathTracingDenoise = false;
     std::string m_appliedPathTracingDenoiser;
     bool m_rayTracingActive = false;
+    // Device ray-tracing capability (does the physical device advertise the
+    // KHR extension set?), known from the device probe regardless of whether
+    // the backend is built.  This is what getRayTracingAvailable() reports and
+    // what the adapter uses to decide whether a path-tracing request can ever
+    // succeed on this GP.
     bool m_rtxBackendAvailable = false;
+    // Whether the RTX backend is actually built and active right now.  Kept
+    // distinct from device capability: a raster-first view (path tracing off)
+    // never builds the RT backend, yet an RT-capable device reports
+    // m_rtxBackendAvailable = true while m_rtxBackendBuilt = false.  The toggle
+    // uses this to know whether a path-tracing request took effect.
+    bool m_rtxBackendBuilt = false;
+    // True once the renderer has determined availability (the device probe ran
+    // or initResources() completed); before that the adapter must not warn
+    // about missing hardware ray tracing.
     bool m_rtxBackendProbed = false;
     // Guards the frame-state members below, which are written from the
     // widget API (and redraw sensors) and snapshotted by startNextFrame().
@@ -1118,6 +1254,16 @@ bool QuarterVulkanWidget::deviceSupportsRayTracing(VkPhysicalDevice device)
 // reopen.  The construction `rayTracing` flag only influences the log below.
 void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
 {
+    // Tell the renderer whether the selected device advertises the
+    // ray-tracing extension set, so isRayTracingAvailable() reflects hardware
+    // capability (not whether the backend has been built yet).  This must run
+    // before the first initResources() so an RT-capable device opened in
+    // raster mode does not report "unavailable".
+    if (d->renderer) {
+        d->renderer->setRayTracingDeviceSupported(
+            d->vulkanWindow->rtRayTracingAvailable);
+    }
+
     // The probe selected the physical device and recorded whether it
     // advertises the ray-tracing extension set; requesting extensions a
     // device does not support would fail device creation.
@@ -1576,6 +1722,14 @@ bool QuarterVulkanWidget::isRayTracingActive() const
     return d->renderer->getRayTracingActive();
 }
 
+uint32_t QuarterVulkanWidget::getRenderFrameCount() const
+{
+    if (!d->renderer) {
+        return 0;
+    }
+    return d->renderer->getRenderFrameCount();
+}
+
 bool QuarterVulkanWidget::isRayTracingAvailable() const
 {
     if (!d->renderer) {
@@ -1609,6 +1763,25 @@ bool QuarterVulkanWidget::getPathTracingEnabled() const
         return false;
     }
     return d->renderer->getPathTracingEnabled();
+}
+
+void QuarterVulkanWidget::setViewMode(RtxViewMode mode)
+{
+    if (!d->renderer) {
+        return;
+    }
+    VK_BREADCRUMB("[VK-TRACE] QuarterVulkanWidget::setViewMode mode=%d\n",
+                  static_cast<int>(mode));
+    d->renderer->setViewMode(static_cast<int>(mode));
+    redraw();
+}
+
+QuarterVulkanWidget::RtxViewMode QuarterVulkanWidget::getViewMode() const
+{
+    if (!d->renderer) {
+        return RtxViewMode::Interactive;
+    }
+    return static_cast<RtxViewMode>(d->renderer->getViewMode());
 }
 
 void QuarterVulkanWidget::setPathTracingStart(bool start)

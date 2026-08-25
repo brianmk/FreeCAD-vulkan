@@ -1471,8 +1471,35 @@ class Session:
         else:
             self.width = self.height = 0
 
+    def _relocate_viewport(self) -> None:
+        """Re-locate the 3D viewport container now that a document/view exists.
+
+        find_viewport() runs at Session construction, before a probe creates
+        its document, so the viewport container (which lives inside the MDI
+        sub-window's QStackedWidget) does not exist yet and self.container is
+        None / zero-sized.  Probes then build scenery in a deferred step, after
+        which the container exists and gains a real size.  Refresh the cached
+        container and its dimensions lazily so snapshot()/input see the live
+        viewport instead of the stale construction-time (0x0) one.
+        """
+        win, container, stack = self.find_viewport()
+        if container is not None and container is not self.container:
+            self.win, self.container, self.stack = win, container, stack
+        if self.container is not None:
+            self.dpr = self.container.devicePixelRatioF()
+            self.width = self.container.width()
+            self.height = self.container.height()
+            self.available = True
+
     def find_viewport(self) -> tuple[Any, Any, Any]:
-        """Locate the 3D viewport container.  Returns (window, container, stack)."""
+        """Locate the 3D viewport container.  Returns (window, container, stack).
+
+        The embedding probes drive the GUI headlessly; left alone the main
+        window stays hidden and defaults to a tiny (or zero) geometry, so the
+        viewport container is never given a real size and the renderer never
+        produces a draw list.  Show and size the main window first (a no-op for
+        a window that is already shown and sized), then locate the container.
+        """
         QW = self._QtWidgets
         win = QW.QApplication.activeWindow()
         if win is None:
@@ -1481,7 +1508,27 @@ class Session:
                     win = t
                     break
         if win is None:
+            # No active/visible main window yet (the GUI may still be bringing
+            # it up).  Fall back to the first top-level QMainWindow even if it
+            # is not yet visible, so we can show/size it below.
+            for t in QW.QApplication.topLevelWidgets():
+                if isinstance(t, QW.QMainWindow):
+                    win = t
+                    break
+        if win is None:
             return None, None, None
+        # Ensure the window is shown and has a non-trivial size so the embedded
+        # viewport container reports real width/height.
+        if not win.isVisible():
+            win.show()
+        win.raise_()
+        win.activateWindow()
+        QW.QApplication.processEvents()
+        # If the window is still zero-sized (freshly shown before layout),
+        # request a concrete geometry and let the layout settle.
+        if win.width() < 64 or win.height() < 64:
+            win.resize(1100, 750)
+            QW.QApplication.processEvents()
         mdi = win.findChild(QW.QMdiArea)
         if mdi is None:
             return None, None, None
@@ -1512,6 +1559,21 @@ class Session:
         except Exception:
             return None
 
+    def vulkan_render(self) -> None:
+        """Sync the current scene/camera into the Vulkan viewport and force a
+        single frame, even when the viewport has converged and gone idle.
+
+        The demand-driven widget re-renders on redraw()/refining, but the
+        harness's doc.recompute()/updateGui() and camera-node edits bypass the
+        normal Application::onUpdate() route, so a converged viewport would
+        otherwise never produce a frame.  The probe calls this after each
+        scripted scene/camera change so the reset-on-move / denoise-at-target
+        state machine actually runs and emits its [RTDBG] lines into the log."""
+        try:
+            self.active_view().requestVulkanRender()
+        except Exception:
+            pass
+
     # -- synthetic input ---------------------------------------------------
     def send_mouse(self, etype: Any, pos: Any, btn: Any, btns: Any) -> None:
         if not self.available:
@@ -1519,7 +1581,10 @@ class Session:
         QtCore = self._QtCore
         QtGui = self._QtGui
         QW = self._QtWidgets
+        self._relocate_viewport()
         container = self.container
+        if container is None:
+            return
         # Deliver to the widget actually under the point; without
         # setMouseTracking(True) on the target synthetic moves are dropped.
         target = container.childAt(pos) or container
@@ -1837,8 +1902,19 @@ class Session:
 
     def frame_phase(self, name: str) -> None:
         """Mark a phase boundary so the host can correlate frame dumps to the
-        pref state at the time they were rendered (``[HARNESS] frame_phase``)."""
-        self.emit("frame_phase", phase=name)
+        pref state at the time they were rendered (``[HARNESS] frame_phase``).
+
+        Also stamps the Vulkan viewport's current presented-frame ordinal, so
+        the hosting checker can attribute [RTDBG] lines and frame dumps (which
+        carry the SAME ordinal) to the phase by matching on the ordinal instead
+        of relying on interleaved stream order."""
+        self._relocate_viewport()
+        frame = 0
+        try:
+            frame = int(self.active_view().getVulkanFrameCount())
+        except Exception:
+            frame = 0
+        self.emit("frame_phase", phase=name, frame=frame)
 
     def set_pref(self, group: str, key: str, value: Any, emit: bool = True) -> None:
         """Set a FreeCAD parameter (group is a full path) and record it.
@@ -1870,6 +1946,10 @@ class Session:
 
     def snapshot(self) -> dict[str, Any]:
         view = self.active_view()
+        # The viewport may only exist (and have a real size) after the probe
+        # built its scenery; refresh the cached container so the reported size
+        # reflects the live viewport rather than the construction-time 0x0 one.
+        self._relocate_viewport()
         state: dict[str, Any] = {
             "viewport": {
                 "w": self.width,

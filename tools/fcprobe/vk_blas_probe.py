@@ -57,47 +57,56 @@ def step():
         box.Width = 10
         box.Height = 10
         doc.recompute()
+        FreeCADGui.updateGui()
         view = FreeCADGui.ActiveDocument.ActiveView
         view.viewTop()
         view.fitAll()
         s.frame_phase("build-box")
         log("phase=build-box")
     elif k == 3:
+        s.frame_phase("refit-box")
+        log("phase=refit-box")
         doc = FreeCAD.getDocument("Blas")
         box = doc.getObject("Box")
         box.Width = 20  # same vertex/index counts, moved vertices -> refit
         doc.recompute()
-        s.frame_phase("refit-box")
-        log("phase=refit-box")
+        FreeCADGui.updateGui()
+        s.vulkan_render()
     elif k == 5:
+        s.frame_phase("reuse-transform")
+        log("phase=reuse-transform")
         doc = FreeCAD.getDocument("Blas")
         box = doc.getObject("Box")
         # Object-space vertices unchanged; only the instance transform moves.
         box.Placement = FreeCAD.Placement(FreeCAD.Vector(0, 0, 5),
                                           FreeCAD.Rotation())
         doc.recompute()
-        s.frame_phase("reuse-transform")
-        log("phase=reuse-transform")
+        FreeCADGui.updateGui()
+        s.vulkan_render()
     elif k == 7:
+        s.frame_phase("build-cylinder")
+        log("phase=build-cylinder")
         doc = FreeCAD.getDocument("Blas")
         cyl = doc.addObject("Part::Cylinder", "Cyl")
         cyl.Radius = 3
         cyl.Height = 8
         doc.recompute()
-        s.frame_phase("build-cylinder")
-        log("phase=build-cylinder")
+        FreeCADGui.updateGui()
+        s.vulkan_render()
     elif k == 9:
         # Identical content to Box: the draw-list storage reallocates when an
         # object is added, so the box's command pointer changes; the cache
         # must re-key by content hash instead of rebuilding every BLAS.
+        s.frame_phase("add-identical-box")
+        log("phase=add-identical-box")
         doc = FreeCAD.getDocument("Blas")
         box2 = doc.addObject("Part::Box", "Box2")
         box2.Length = 10
         box2.Width = 20
         box2.Height = 10
         doc.recompute()
-        s.frame_phase("add-identical-box")
-        log("phase=add-identical-box")
+        FreeCADGui.updateGui()
+        s.vulkan_render()
     elif k == 11:
         log("snapshot + finish")
         s.snapshot()

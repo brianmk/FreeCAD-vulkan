@@ -2278,8 +2278,17 @@ void setCategoryFilterRules()
 
 bool isSuppressedQtWarning(const QMessageLogContext& context, const QString& msg)
 {
-    return context.category && strcmp(context.category, "qt.text.font.db") == 0
-        && msg.startsWith(QStringLiteral("OpenType support missing for "));
+    if (context.category && strcmp(context.category, "qt.text.font.db") == 0
+        && msg.startsWith(QStringLiteral("OpenType support missing for "))) {
+        return true;
+    }
+    // Qt's QWindow::setTransientParent() warns when a popup/menu/tooltip is
+    // anchored on a widget that has a native QWidgetWindow that is not itself a
+    // top-level window (e.g. an embedded 3D view, dock widget, or ribbon).  Qt
+    // simply ignores the transient-parent hint and continues, so this is
+    // benign.  It is emitted right when a context menu pops up over the
+    // viewport or a UI bar.
+    return msg.contains(QStringLiteral("must be a top level window."));
 }
 }  // namespace
 

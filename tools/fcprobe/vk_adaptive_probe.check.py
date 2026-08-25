@@ -13,21 +13,24 @@ Branches on the run's env:
 import re
 
 STATE_LINE = re.compile(
-    r"\[RTDBG\] ptState viewChanged=(\d) sceneChanged=(\d) accum=(\d) "
-    r"frameIndex=(\d+) idle=(\d+) reproject=(\d)")
+    r"\[RTDBG\] ptState frame=(\d+) viewChanged=(\d) sceneChanged=(\d) "
+    r"accum=(\d) frameIndex=(\d+) idle=(\d+) reproject=(\d)")
 ADAPT_LINE = re.compile(
-    r"\[RTDBG\] adaptive active=(\d+)/(\d+) fraction=([0-9.]+) "
+    r"\[RTDBG\] adaptive frame=(\d+) active=(\d+)/(\d+) fraction=([0-9.]+) "
     r"frameIndex=(\d+) accum=(\d)")
 
 
 def _states(lines):
-    return [(m, int(m.group(3)), int(m.group(4)), int(m.group(5)))
+    # groups: 1=frame, 2=viewChanged, 3=sceneChanged, 4=accum, 5=frameIndex,
+    # 6=idle, 7=reproject.
+    return [(m, int(m.group(4)), int(m.group(5)), int(m.group(6)))
             for line in lines for m in [STATE_LINE.search(line)] if m]
 
 
 def _adaptives(lines):
-    return [(m, int(m.group(1)), int(m.group(2)), float(m.group(3)),
-             int(m.group(4)), int(m.group(5)))
+    # groups: 1=frame, 2=active, 3=total, 4=fraction, 5=frameIndex, 6=accum.
+    return [(m, int(m.group(2)), int(m.group(3)), float(m.group(4)),
+             int(m.group(5)), int(m.group(6)))
             for line in lines for m in [ADAPT_LINE.search(line)] if m]
 
 

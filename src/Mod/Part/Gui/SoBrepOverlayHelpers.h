@@ -366,8 +366,15 @@ static void renderOverlayFaces(
         SoLazyElement::setTransparencyType(state, SoGLRenderAction::BLEND);
     }
     else {
+        // Coplanar-with-base selection/highlight overlay.  The base is drawn
+        // at exactly the same depth as this overlay command, so the polygon
+        // offset must pull the overlay unmistakably toward the camera or the
+        // base z-fights through at the face boundary (a dark margin along the
+        // edges of the selected/highlighted face).  A tiny factor/unit offset
+        // is not enough: use a real slope factor (so grazing-angle silhouette
+        // edges win too) plus a few depth units.
         SoPolygonOffsetElement::set(
-            state, faceSet, -0.00001f, -1.0f, SoPolygonOffsetElement::FILLED, TRUE
+            state, faceSet, -2.0f, -4.0f, SoPolygonOffsetElement::FILLED, TRUE
         );
         applyOverlayDepthState(state, OverlayDepthMode::RespectDepth);
     }

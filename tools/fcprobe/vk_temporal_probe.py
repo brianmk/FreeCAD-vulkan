@@ -86,22 +86,25 @@ def step():
             s.frame_phase("setup")
             log("phase=setup (static accumulation)")
         elif k == 7:
-            orbit(8)
             s.frame_phase("move-small")
             log("phase=move-small (8 deg orbit)")
+            orbit(8)
+            s.vulkan_render()
         elif k == 13:
-            orbit(90)
             s.frame_phase("move-big")
             log("phase=move-big (90 deg orbit)")
+            orbit(90)
+            s.vulkan_render()
         elif k == 17:
             # Scene change (not a camera move): the history must NOT be
             # reprojected - the view drops to preview and restarts fresh.
+            s.frame_phase("edit-box")
+            log("phase=edit-box (scene change)")
             doc = FreeCAD.getDocument("Temporal")
             box = doc.getObject("Box")
             box.Height = 14
             doc.recompute()
-            s.frame_phase("edit-box")
-            log("phase=edit-box (scene change)")
+            s.vulkan_render()
         elif k == 22:
             log("snapshot + finish")
             s.snapshot()
