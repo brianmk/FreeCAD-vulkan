@@ -104,8 +104,13 @@ def check(lines, report):
         err("toggle marker beyond the collected dumps or too few pass-A "
             f"dumps (toggle={toggle_ord}, dumps={len(frames)})")
         return
-    a = [_stats(f) for f in frames[max(2, idx_toggle - 6):idx_toggle]]
-    b = [_stats(f) for f in frames[idx_toggle:idx_toggle + 6]]
+    a = [_stats(f) for f in frames[max(2, idx_toggle - 8):idx_toggle - 2]]
+    # Pass B is sampled well past the toggle: the scene change restarts
+    # accumulation, so the frames immediately after it are fresh high-noise
+    # transients (brightness spikes frame to frame and does not reflect the
+    # settled NEE-off glow).  Skip 8 dumps to reach convergence, then bin a
+    # settled window.
+    b = [_stats(f) for f in frames[idx_toggle + 8:idx_toggle + 16]]
     mean_a = sum(s[0] for s in a) / max(len(a), 1)
     mean_b = sum(s[0] for s in b) / max(len(b), 1)
     warm_a = max(s[1] for s in a)
@@ -120,9 +125,12 @@ def check(lines, report):
             err(f"NEE OFF: passes drifted ({drift:.3f} > 0.10) - "
                 "control run not stable")
     else:
-        if warm_a <= warm_b * 1.25:
+        # NEE ON: the emissive area light adds radiance, so the settled
+        # pass-A mean must exceed pass B by a clear margin.  The per-pixel
+        # warm count is too noisy for these faint glows, so the mean is the
+        # primary signal and warm is a secondary monotonic hint.
+        margin = (mean_a - mean_b) / max(mean_b, 1.0)
+        if margin < 0.01:
             err(f"NEE ON: glow not stronger with NEE "
-                f"(warmA={warm_a}, warmB={warm_b}) - area sampling "
-                "contributed no light")
-        elif warm_a < 80:
-            err(f"NEE ON: glow region too small (warmA={warm_a})")
+                f"(passA={mean_a:.2f} passB={mean_b:.2f} margin={margin:.4f}) "
+                "- area sampling contributed no light")

@@ -116,9 +116,16 @@ def step():
         # A tiny placement nudge is detected by updateGeometryCache as a
         # scene change (the BLAS instance transform changed): this resets the
         # accumulation so pass B is a fresh NEE-off run, without moving the
-        # cube (and its glow) out of the comparison window.
-        cube.Placement = FreeCAD.Placement(FreeCAD.Vector(0.0, 0.0, 0.001),
-                                           FreeCAD.Rotation())
+        # cube (and its glow) out of the comparison window.  The nudge must be
+        # RELATIVE to the cube's current placement -- using an absolute
+        # Placement(Vector(0,0,0.001)) used to teleport the cube to the
+        # origin, which was masked by the TLAS transform bug (every instance
+        # traced at the origin) and only became visible once the renderer
+        # placed the cube correctly.
+        base = cube.Placement.Base
+        cube.Placement = FreeCAD.Placement(
+            FreeCAD.Vector(base.x, base.y, base.z + 0.001),
+            FreeCAD.Rotation())
         doc.recompute()
         FreeCADGui.updateGui()
         s.vulkan_render()
