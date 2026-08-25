@@ -406,6 +406,15 @@ private Q_SLOTS:
      */
     void syncEnvMapCombo();
     /**
+     * Applies the status-bar edge-overlay toggle to the active 3D view.
+     */
+    void onEdgeOverlayToggled(bool checked);
+    /**
+     * Re-synchronises the status-bar edge-overlay button to the active view's
+     * current edge-hidden state.
+     */
+    void syncEdgeOverlayButton();
+    /**
      * Close tab at position index.
      */
     void tabCloseRequested(int index);

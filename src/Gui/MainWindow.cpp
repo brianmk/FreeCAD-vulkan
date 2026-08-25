@@ -427,6 +427,7 @@ struct MainWindowP
     QLabel* rightSideLabel;
     QComboBox* viewModeCombo = nullptr;
     QComboBox* envMapCombo = nullptr;
+    QToolButton* edgeOverlayButton = nullptr;
     std::vector<StatusBarItem> statusBarItems;
     ParameterGrp::handle hStatusBar;
     QTimer* actionTimer;
@@ -688,6 +689,28 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
     );
     connect(d->envMapCombo, qOverload<int>(&QComboBox::currentIndexChanged),
             this, &MainWindow::onEnvMapComboChanged);
+
+    // Toggle for the black BRep edge overlay drawn on top of objects in the
+    // Vulkan viewport (the "edges" display option).  Lives next to the
+    // environment selector; its checked state mirrors the active view.
+    d->edgeOverlayButton = new QToolButton(statusBar());
+    d->edgeOverlayButton->setObjectName(QStringLiteral("EdgeOverlayButton"));
+    d->edgeOverlayButton->setCheckable(true);
+    d->edgeOverlayButton->setAutoRaise(true);
+    d->edgeOverlayButton->setIcon(BitmapFactory().iconFromTheme("DrawStyleFlatLines"));
+    d->edgeOverlayButton->setToolTip(tr("Toggle the object edge overlay"));
+    addStatusBarItem(
+        d->edgeOverlayButton,
+        {.id = "edgeOverlayButton",
+         //: A context menu action used to show or hide the edge overlay toggle
+         //: in the status bar
+         .title = tr("Edge Overlay"),
+         .slot = StatusBarSlot::Right,
+         .order = 253,
+         .persistentVisibility = true}
+    );
+    connect(d->edgeOverlayButton, &QToolButton::toggled,
+            this, &MainWindow::onEdgeOverlayToggled);
 
     auto* groundPlaneWidget = new GroundPlaneWidget(statusBar());
     addStatusBarItem(
@@ -1767,6 +1790,7 @@ void MainWindow::setActiveWindow(MDIView* view)
     // active view (each view owns its own render mode).
     syncViewModeCombo();
     syncEnvMapCombo();
+    syncEdgeOverlayButton();
 
     // activate/remember workbench by tab (if enabled)
 
@@ -1852,6 +1876,27 @@ void MainWindow::onEnvMapComboChanged(int index)
         return;
     }
     view->setEnvMap(index - 1);
+}
+
+void MainWindow::onEdgeOverlayToggled(bool checked)
+{
+    View3DInventor* view = dynamic_cast<View3DInventor*>(d->activeView.data());
+    if (!view) {
+        return;
+    }
+    view->setShowEdges(checked);
+}
+
+void MainWindow::syncEdgeOverlayButton()
+{
+    if (!d->edgeOverlayButton) {
+        return;
+    }
+    // Checked state mirrors the active view's edge-overlay visibility.
+    View3DInventor* vecView = dynamic_cast<View3DInventor*>(d->activeView.data());
+    const bool showEdges = vecView ? vecView->getShowEdges() : false;
+    QSignalBlocker blocker(d->edgeOverlayButton);
+    d->edgeOverlayButton->setChecked(showEdges);
 }
 
 void MainWindow::onWindowsMenuAboutToShow()

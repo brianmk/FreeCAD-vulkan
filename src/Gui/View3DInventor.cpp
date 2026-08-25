@@ -458,6 +458,28 @@ void View3DInventor::setEnvMap(int index)
     }
 }
 
+bool View3DInventor::getShowEdges() const
+{
+    return _viewer && _viewer->getVulkanViewSettings().showEdges;
+}
+
+void View3DInventor::setShowEdges(bool enabled)
+{
+    if (getShowEdges() == enabled) {
+        return;
+    }
+    // The edge overlay is driven by the VulkanShowEdges preference; update the
+    // preference then reload the settings so the viewer emits
+    // vulkanSettingsChanged(), which the adapter re-pushes to the renderer.
+    if (auto grp = App::GetApplication().GetParameterGroupByPath(
+            "User parameter:BaseApp/Preferences/View")) {
+        grp->SetBool("VulkanShowEdges", enabled);
+    }
+    if (_viewer) {
+        _viewer->applyVulkanSettings();
+    }
+}
+
 void View3DInventor::onRename(Gui::Document* pDoc)
 {
     SoSFString name;

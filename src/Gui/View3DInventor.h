@@ -183,6 +183,12 @@ public Q_SLOTS:
     int getEnvMap() const;
     void setEnvMap(int index);
 
+    /// Whether the black edge overlay (BRep edges) is drawn on top of objects
+    /// in the Vulkan viewport.  Backed by the VulkanShowEdges preference and
+    /// mirrored by the status-bar edge-overlay button.
+    bool getShowEdges() const;
+    void setShowEdges(bool enabled);
+
     /// Ordinal of the Vulkan viewport's last presented frame (see
     /// QuarterVulkanWidget::getRenderFrameCount).  0 when this view has no
     /// Vulkan viewport.  Probe phase markers and frame dumps key off it so
