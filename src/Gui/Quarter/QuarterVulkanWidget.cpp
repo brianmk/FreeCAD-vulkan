@@ -229,6 +229,17 @@ public:
         return m_viewMode;
     }
 
+    void setEnvMap(int index)
+    {
+        QMutexLocker locker(&m_stateMutex);
+        m_envMap = index;
+    }
+    int getEnvMap() const
+    {
+        QMutexLocker locker(&m_stateMutex);
+        return m_envMap;
+    }
+
     // Ray-tracing status mirrored from the manager (which only re-evaluates
     // device support during frame setup) so callers can query the cached
     // value from anywhere.
@@ -638,6 +649,15 @@ private:
             }
             m_appliedViewMode = m_viewMode;
         }
+        // Environment "cubemap" preset: apply to the manager when it changed,
+        // so the environment-lit view (and the path-tracer sky) use the
+        // selected sky instead of the viewport gradient.
+        if (m_envMap != m_appliedEnvMap) {
+            if (m_rtxBackendBuilt) {
+                m_manager.setEnvMap(m_envMap);
+            }
+            m_appliedEnvMap = m_envMap;
+        }
         if (m_pathTracingStart) {
             m_manager.setPathTracingStart(TRUE);
             m_pathTracingStart = false;
@@ -847,6 +867,11 @@ private:
     // path-tracing settings.
     int m_viewMode = 0;   // 0=Interactive 1=AmbientOcclusion 2=PathTracing
     int m_appliedViewMode = -1;   // mirror so a change is seen exactly once
+    // "Cubemap" environment preset (see setEnvMap); staged from the widget
+    // API and applied to the manager each frame like the view mode.  -1 =
+    // use the viewport background gradient.
+    int m_envMap = -1;
+    int m_appliedEnvMap = -1;
     bool m_appliedPathTracingEnabled = false;
     int m_pathTracingBounces = 4;
     int m_pathTracingSettleFrames = 6;
@@ -1782,6 +1807,35 @@ QuarterVulkanWidget::RtxViewMode QuarterVulkanWidget::getViewMode() const
         return RtxViewMode::Interactive;
     }
     return static_cast<RtxViewMode>(d->renderer->getViewMode());
+}
+
+void QuarterVulkanWidget::setEnvMap(int index)
+{
+    if (!d->renderer) {
+        return;
+    }
+    VK_BREADCRUMB("[VK-TRACE] QuarterVulkanWidget::setEnvMap index=%d\n",
+                  index);
+    d->renderer->setEnvMap(index);
+    redraw();
+}
+
+int QuarterVulkanWidget::getEnvMap() const
+{
+    if (!d->renderer) {
+        return -1;
+    }
+    return d->renderer->getEnvMap();
+}
+
+int QuarterVulkanWidget::getEnvMapCount()
+{
+    return SoVulkanRenderManager::getEnvMapCount();
+}
+
+const char * QuarterVulkanWidget::getEnvMapName(int index)
+{
+    return SoVulkanRenderManager::getEnvMapName(index);
 }
 
 void QuarterVulkanWidget::setPathTracingStart(bool start)

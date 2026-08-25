@@ -250,6 +250,26 @@ int VulkanViewportAdapter::getViewMode() const
 #endif
 }
 
+void VulkanViewportAdapter::setEnvMap(int index)
+{
+#ifdef FREECAD_USE_VULKAN
+    if (_vulkanViewer) {
+        _vulkanViewer->setEnvMap(index);
+    }
+#else
+    Q_UNUSED(index);
+#endif
+}
+
+int VulkanViewportAdapter::getEnvMap() const
+{
+#ifdef FREECAD_USE_VULKAN
+    return _vulkanViewer ? _vulkanViewer->getEnvMap() : -1;
+#else
+    return -1;
+#endif
+}
+
 bool VulkanViewportAdapter::isPathTracingEnabled() const
 {
 #ifdef FREECAD_USE_VULKAN

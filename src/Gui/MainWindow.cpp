@@ -426,6 +426,7 @@ struct MainWindowP
     InputHintWidget* hintLabel;
     QLabel* rightSideLabel;
     QComboBox* viewModeCombo = nullptr;
+    QComboBox* envMapCombo = nullptr;
     std::vector<StatusBarItem> statusBarItems;
     ParameterGrp::handle hStatusBar;
     QTimer* actionTimer;
@@ -660,6 +661,33 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
     );
     connect(d->viewModeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
             this, &MainWindow::onViewModeComboChanged);
+
+    // "Cubemap" environment selector, shown next to the view render mode.
+    // Same per-view state model as the mode selector.  Index 0 = viewport
+    // background gradient (-1); the rest mirror the backend preset table.
+    d->envMapCombo = new QComboBox(statusBar());
+    d->envMapCombo->setObjectName(QStringLiteral("ViewEnvironmentMode"));
+    d->envMapCombo->addItem(tr("Viewport Background"));
+    //: Status-bar environment selector entry: procedural daylight cubemap
+    d->envMapCombo->addItem(tr("Daylight"));
+    //: Status-bar environment selector entry: procedural sunset cubemap
+    d->envMapCombo->addItem(tr("Sunset"));
+    //: Status-bar environment selector entry: procedural overcast cubemap
+    d->envMapCombo->addItem(tr("Overcast"));
+    //: Status-bar environment selector entry: procedural neutral cubemap
+    d->envMapCombo->addItem(tr("Neutral Studio"));
+    //: Status-bar environment selector entry: procedural night cubemap
+    d->envMapCombo->addItem(tr("Night"));
+    addStatusBarItem(
+        d->envMapCombo,
+        {.id = "envMapCombo",
+         //: A context menu action used to show or hide the environment mode
+         //: selector in the status bar
+         .title = tr("Environment"), .slot = StatusBarSlot::Right,
+         .order = 252}
+    );
+    connect(d->envMapCombo, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, &MainWindow::onEnvMapComboChanged);
 
     auto* groundPlaneWidget = new GroundPlaneWidget(statusBar());
     addStatusBarItem(
@@ -1738,6 +1766,7 @@ void MainWindow::setActiveWindow(MDIView* view)
     // Keep the status-bar view rendering mode selector in step with the newly
     // active view (each view owns its own render mode).
     syncViewModeCombo();
+    syncEnvMapCombo();
 
     // activate/remember workbench by tab (if enabled)
 
@@ -1800,6 +1829,29 @@ void MainWindow::onViewModeComboChanged(int index)
         return;
     }
     view->setRenderMode(static_cast<Gui::ViewRenderMode>(index));
+}
+
+void MainWindow::syncEnvMapCombo()
+{
+    if (!d->envMapCombo) {
+        return;
+    }
+    // Reflect the active 3D view's environment preset.  Combo index 0 =
+    // viewport background (backend envMap -1), so index = envMap + 1.
+    View3DInventor* view = dynamic_cast<View3DInventor*>(d->activeView.data());
+    const int envMap = view ? view->getEnvMap() : -1;
+    QSignalBlocker blocker(d->envMapCombo);
+    d->envMapCombo->setCurrentIndex(envMap + 1);
+}
+
+void MainWindow::onEnvMapComboChanged(int index)
+{
+    // combo index 0 = viewport background (backend -1).
+    View3DInventor* view = dynamic_cast<View3DInventor*>(d->activeView.data());
+    if (!view) {
+        return;
+    }
+    view->setEnvMap(index - 1);
 }
 
 void MainWindow::onWindowsMenuAboutToShow()

@@ -179,6 +179,16 @@ View3DInventor::View3DInventor(
                 ->GetBool("VulkanPathTracing", false)) {
             _renderMode = ViewRenderMode::RayTracing;
         }
+        // Reopen consistency for the environment/cubemap preset: restore the
+        // persisted choice (-1 = viewport background gradient) and push it to
+        // the adapter so the sky matches what the user last selected.
+        const int persistedEnvMap = App::GetApplication()
+            .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
+            ->GetInt("VulkanEnvironmentMap", -1);
+        _envMap = persistedEnvMap;
+        if (_envMap >= 0 && _vulkanAdapter) {
+            _vulkanAdapter->setEnvMap(_envMap);
+        }
         // A selection/preselection change mutates the shared scene graph but
         // never reaches the display-only Vulkan widget on its own (it owns no
         // Coin sensors).  Ask the adapter to redraw so the highlight shows up
@@ -422,6 +432,29 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
     }
     if (_vulkanAdapter) {
         _vulkanAdapter->redraw();
+    }
+}
+
+int View3DInventor::getEnvMap() const
+{
+    return _envMap;
+}
+
+void View3DInventor::setEnvMap(int index)
+{
+    if (_envMap == index) {
+        return;
+    }
+    _envMap = index;
+    if (_vulkanAdapter) {
+        _vulkanAdapter->setEnvMap(index);
+        _vulkanAdapter->redraw();
+    }
+    // Persist the choice as the VulkanEnvironmentMap preference so it survives
+    // a view reopen (see the reopen-consistency init in the constructor).
+    if (auto grp = App::GetApplication().GetParameterGroupByPath(
+            "User parameter:BaseApp/Preferences/View")) {
+        grp->SetInt("VulkanEnvironmentMap", index);
     }
 }
 

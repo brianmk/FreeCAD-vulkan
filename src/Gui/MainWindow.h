@@ -391,11 +391,20 @@ private Q_SLOTS:
     /**
      * Applies the status-bar view rendering mode combo to the active 3D view.
      */
-    void onViewModeComboChanged(int index);
+   void onViewModeComboChanged(int index);
     /**
      * Re-synchronises the status-bar view mode combo to the active view's mode.
      */
     void syncViewModeCombo();
+    /**
+     * Applies the status-bar environment combo to the active 3D view.
+     */
+    void onEnvMapComboChanged(int index);
+    /**
+     * Re-synchronises the status-bar environment combo to the active view's
+     * environment preset (index+1: 0 = "Viewport Background").
+     */
+    void syncEnvMapCombo();
     /**
      * Close tab at position index.
      */

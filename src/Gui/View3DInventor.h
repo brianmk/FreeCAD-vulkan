@@ -177,6 +177,12 @@ public Q_SLOTS:
     ViewRenderMode getRenderMode() const;
     void setRenderMode(ViewRenderMode mode);
 
+    /// "Cubemap" environment preset (-1 = viewport background gradient).
+    /// Mirrored by the status-bar environment selector; each view keeps its
+    /// own.  Only meaningful while the Vulkan viewport / RT backend is active.
+    int getEnvMap() const;
+    void setEnvMap(int index);
+
     /// Ordinal of the Vulkan viewport's last presented frame (see
     /// QuarterVulkanWidget::getRenderFrameCount).  0 when this view has no
     /// Vulkan viewport.  Probe phase markers and frame dumps key off it so
@@ -215,6 +221,7 @@ private:
     std::unique_ptr<View3DSettings> viewSettings;
     std::unique_ptr<NaviCubeSettings> naviSettings;
     ViewRenderMode _renderMode = ViewRenderMode::Interactive;
+    int _envMap = -1;   // cubemap environment preset (-1 = viewport gradient)
 
     // friends
     friend class View3DPy;

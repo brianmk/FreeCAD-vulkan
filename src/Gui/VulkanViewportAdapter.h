@@ -65,6 +65,11 @@ public:
     void setViewMode(int mode);
     /// Current ray-traced view mode (see setViewMode).
     int getViewMode() const;
+    /// Set the "cubemap" environment preset (-1 = viewport background).
+    /// Mirrors QuarterVulkanWidget::setEnvMap.
+    void setEnvMap(int index);
+    /// Current environment/cubemap preset index (see setEnvMap).
+    int getEnvMap() const;
 
     /// Ordinal of the last presented frame (see
     /// QuarterVulkanWidget::getRenderFrameCount).  0 when there is no Vulkan

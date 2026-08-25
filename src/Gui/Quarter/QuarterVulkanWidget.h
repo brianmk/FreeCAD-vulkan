@@ -235,6 +235,18 @@ public:
     RtxViewMode getViewMode() const;
 
     /*!
+      \brief Select the "cubemap" environment preset (-1 = viewport
+      background gradient); see SoVulkanRenderManager::setEnvMap.
+    */
+    void setEnvMap(int index);
+    //! Current environment/cubemap preset index.
+    int getEnvMap() const;
+    //! Number of available environment presets.
+    static int getEnvMapCount();
+    //! Name of an environment preset index.
+    static const char * getEnvMapName(int index);
+
+    /*!
       \brief Start flag for progressive path-tracing refinement.
 
       Raising the flag starts a fresh progressive accumulation (one jittered
