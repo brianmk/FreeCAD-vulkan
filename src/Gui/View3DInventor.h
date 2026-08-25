@@ -55,6 +55,7 @@ enum class ViewRenderMode : int {
     Wireframe,
     AmbientOcclusion,
     RayTracing,
+    Environment,
 };
 class VulkanViewportAdapter;
 

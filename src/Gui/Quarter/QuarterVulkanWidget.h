@@ -230,7 +230,7 @@ public:
       ModeOff leaves the backend in its current state (raster is driven by
       setPathTracingEnabled(false)).
     */
-    enum class RtxViewMode { Interactive = 0, AmbientOcclusion, PathTracing };
+    enum class RtxViewMode { Interactive = 0, AmbientOcclusion, PathTracing, Environment };
     void setViewMode(RtxViewMode mode);
     RtxViewMode getViewMode() const;
 

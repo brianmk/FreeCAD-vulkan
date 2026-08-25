@@ -646,6 +646,8 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
     d->viewModeCombo->addItem(tr("Ambient Occlusion"));
     //: Status-bar view render-mode entry: accumulating ray path tracer
     d->viewModeCombo->addItem(tr("Ray Tracing"));
+    //: Status-bar view render-mode entry: single-sample environment/IBL preview
+    d->viewModeCombo->addItem(tr("Environment"));
     addStatusBarItem(
         d->viewModeCombo,
         {.id = "viewModeCombo",

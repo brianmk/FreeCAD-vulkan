@@ -391,6 +391,16 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
                 _vulkanAdapter->setPathTracingStart(true);
             }
             break;
+        case ViewRenderMode::Environment:
+            // Realtime single-sample procedural IBL preview: enable the RT
+            // backend but never accumulate (like AO).  The view-mode value
+            // selects the environment shader path on the backend.
+            if (_vulkanAdapter) {
+                _vulkanAdapter->setPathTracingEnabled(true);
+                _vulkanAdapter->setViewMode(3);  // widget Environment
+                _vulkanAdapter->setPathTracingStart(false);
+            }
+            break;
     }
 #else
     (void)mode;
@@ -406,6 +416,7 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
                 break;
             case ViewRenderMode::AmbientOcclusion:
             case ViewRenderMode::RayTracing:
+            case ViewRenderMode::Environment:
                 break;  // ray tracer ignores the raster draw style
         }
     }
