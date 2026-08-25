@@ -675,10 +675,18 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
     d->envMapCombo->addItem(tr("Sunset"));
     //: Status-bar environment selector entry: procedural overcast cubemap
     d->envMapCombo->addItem(tr("Overcast"));
-    //: Status-bar environment selector entry: procedural neutral cubemap
+    //: Status-bar environment selector entry: procedural neutral studio cubemap
     d->envMapCombo->addItem(tr("Neutral Studio"));
     //: Status-bar environment selector entry: procedural night cubemap
     d->envMapCombo->addItem(tr("Night"));
+    //: Status-bar environment selector entry: wooden desk room cubemap
+    d->envMapCombo->addItem(tr("Desk"));
+    //: Status-bar environment selector entry: wooden table room cubemap
+    d->envMapCombo->addItem(tr("Table"));
+    //: Status-bar environment selector entry: bright white lab room cubemap
+    d->envMapCombo->addItem(tr("White Lab"));
+    //: Status-bar environment selector entry: pure white background cubemap
+    d->envMapCombo->addItem(tr("White Background"));
     addStatusBarItem(
         d->envMapCombo,
         {.id = "envMapCombo",
