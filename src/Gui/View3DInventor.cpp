@@ -409,6 +409,7 @@ void View3DInventor::requestVulkanRender()
     }
 }
 
+#ifdef FREECAD_USE_VULKAN
 Gui::ViewRenderMode View3DInventor::getRenderMode() const
 {
     return _renderMode;
@@ -553,7 +554,9 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
     // (e.g. the raster fallback when hardware ray tracing is unavailable).
     Q_EMIT renderModeChanged(static_cast<int>(_renderMode));
 }
+#endif // FREECAD_USE_VULKAN
 
+#ifdef FREECAD_USE_VULKAN
 int View3DInventor::getEnvMap() const
 {
     return _envMap;
@@ -606,6 +609,7 @@ void View3DInventor::setShowEdges(bool enabled)
         _viewer->applyVulkanSettings();
     }
 }
+#endif // FREECAD_USE_VULKAN
 
 void View3DInventor::onRename(Gui::Document* pDoc)
 {

@@ -53,6 +53,7 @@ class NaviCubeSettings;
 /// IBL preview).  Mirrored by the status-bar selector in the main window; each
 /// view keeps its own mode.  The two "Interactive" raster modes never enable
 /// path tracing, ray tracing, the denoiser or the edge/point overlays.
+#ifdef FREECAD_USE_VULKAN
 enum class ViewRenderMode : int {
     RasterCoin = 0,     // Interactive (raster Coin): classic Coin/GL raster
     RasterVulkan = 1,   // Interactive (raster Vulkan): Vulkan raster viewport
@@ -61,6 +62,7 @@ enum class ViewRenderMode : int {
     RayTracing = 4,
     Environment = 5,
 };
+#endif
 class VulkanViewportAdapter;
 
 struct RayPickInfo
@@ -154,10 +156,12 @@ public:
     bool containsViewProvider(const ViewProvider*) const override;
 
 Q_SIGNALS:
+#ifdef FREECAD_USE_VULKAN
     /// Emitted whenever the effective render mode changes (including after a
     /// ray-traced mode is auto-fallen-back to raster when the hardware lacks
     /// ray tracing).  The status bar re-synchronises the render-mode selector.
     void renderModeChanged(int mode);
+#endif
 
 public Q_SLOTS:
     /// override the cursor in this view
@@ -182,11 +186,14 @@ public Q_SLOTS:
     /// Whether a progressive path-tracing accumulation is running.
     bool isPathTracingActive() const;
 
+#ifdef FREECAD_USE_VULKAN
     /// Ray-traced view render mode (see Gui::ViewRenderMode).  Mirrored by
     /// the status-bar selector in the main window; each view keeps its own.
     ViewRenderMode getRenderMode() const;
     void setRenderMode(ViewRenderMode mode);
+#endif
 
+#ifdef FREECAD_USE_VULKAN
     /// "Cubemap" environment preset (-1 = viewport background gradient).
     /// Mirrored by the status-bar environment selector; each view keeps its
     /// own.  Only meaningful while the Vulkan viewport / RT backend is active.
@@ -198,6 +205,7 @@ public Q_SLOTS:
     /// mirrored by the status-bar edge-overlay button.
     bool getShowEdges() const;
     void setShowEdges(bool enabled);
+#endif
 
     /// Ordinal of the Vulkan viewport's last presented frame (see
     /// QuarterVulkanWidget::getRenderFrameCount).  0 when this view has no
@@ -236,11 +244,13 @@ private:
     VulkanViewportAdapter* _vulkanAdapter = nullptr;
     std::unique_ptr<View3DSettings> viewSettings;
     std::unique_ptr<NaviCubeSettings> naviSettings;
+#ifdef FREECAD_USE_VULKAN
     ViewRenderMode _renderMode = ViewRenderMode::RasterCoin;
     //! One-shot guard so the "ray tracing unsupported on this device" warning
     //! is logged only per transition instead of spamming every frame/emit.
     bool _rayTracingUnavailableWarned = false;
     int _envMap = -1;   // cubemap environment preset (-1 = viewport gradient)
+#endif
 
     // friends
     friend class View3DPy;

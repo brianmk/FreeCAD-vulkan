@@ -425,9 +425,11 @@ struct MainWindowP
     StatusBarLabel* actionLabel;
     InputHintWidget* hintLabel;
     QLabel* rightSideLabel;
+#ifdef FREECAD_USE_VULKAN
     QComboBox* viewModeCombo = nullptr;
     QComboBox* envMapCombo = nullptr;
     QToolButton* edgeOverlayButton = nullptr;
+#endif
     std::vector<StatusBarItem> statusBarItems;
     ParameterGrp::handle hStatusBar;
     QTimer* actionTimer;
@@ -633,6 +635,7 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
          .persistentVisibility = true}
     );
 
+#ifdef FREECAD_USE_VULKAN
     // View render-mode selector ("Interactive (raster Coin)", "Interactive
     // (raster Vulkan)", "Wireframe", "Ambient Occlusion", "Ray Tracing",
     // "Environment").  Lives in the main window status bar, LEFT of the
@@ -726,6 +729,7 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
     );
     connect(d->edgeOverlayButton, &QToolButton::toggled,
             this, &MainWindow::onEdgeOverlayToggled);
+#endif // FREECAD_USE_VULKAN
 
     auto* groundPlaneWidget = new GroundPlaneWidget(statusBar());
     addStatusBarItem(
@@ -1652,10 +1656,12 @@ void MainWindow::addWindow(MDIView* view)
     // The render mode can auto-fall-back to raster when the hardware lacks ray
     // tracing; keep the status-bar selector (and edge-overlay button) in step.
     if (const auto* v3 = qobject_cast<View3DInventor*>(view)) {
+#ifdef FREECAD_USE_VULKAN
         connect(v3, &View3DInventor::renderModeChanged,
                 this, &MainWindow::syncViewModeCombo);
         connect(v3, &View3DInventor::renderModeChanged,
                 this, &MainWindow::syncEdgeOverlayButton);
+#endif
     }
 
     // listen to the incoming events of the view
@@ -1689,10 +1695,12 @@ void MainWindow::removeWindow(Gui::MDIView* view, bool close)
     disconnect(view, &MDIView::message, this, &MainWindow::showMessage);
     disconnect(this, &MainWindow::windowStateChanged, view, &MDIView::windowStateChanged);
     if (const auto* v3 = qobject_cast<View3DInventor*>(view)) {
+#ifdef FREECAD_USE_VULKAN
         disconnect(v3, &View3DInventor::renderModeChanged,
                    this, &MainWindow::syncViewModeCombo);
         disconnect(v3, &View3DInventor::renderModeChanged,
                    this, &MainWindow::syncEdgeOverlayButton);
+#endif
     }
 
     view->removeEventFilter(this);
@@ -1817,9 +1825,11 @@ void MainWindow::setActiveWindow(MDIView* view)
 
     // Keep the status-bar view rendering mode selector in step with the newly
     // active view (each view owns its own render mode).
+#ifdef FREECAD_USE_VULKAN
     syncViewModeCombo();
     syncEnvMapCombo();
     syncEdgeOverlayButton();
+#endif
 
     // activate/remember workbench by tab (if enabled)
 
@@ -1858,6 +1868,7 @@ void MainWindow::onWindowActivated(QMdiSubWindow* mdi)
     setActiveWindow(view);
 }
 
+#ifdef FREECAD_USE_VULKAN
 void MainWindow::syncViewModeCombo()
 {
     if (!d->viewModeCombo) {
@@ -1927,6 +1938,7 @@ void MainWindow::syncEdgeOverlayButton()
     QSignalBlocker blocker(d->edgeOverlayButton);
     d->edgeOverlayButton->setChecked(showEdges);
 }
+#endif // FREECAD_USE_VULKAN
 
 void MainWindow::onWindowsMenuAboutToShow()
 {
