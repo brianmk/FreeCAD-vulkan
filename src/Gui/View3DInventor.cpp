@@ -170,14 +170,23 @@ View3DInventor::View3DInventor(
         // wiring (scene/camera state, input forwarding, cursor mirroring,
         // viewport sizing).
         _vulkanAdapter = new VulkanViewportAdapter(stack, _viewer, useRayTracing, this);
-        // Reopen consistency: if the persisted VulkanPathTracing pref enabled
-        // the path tracer, the view should come back in the Ray Tracing mode
-        // (matching setPathTracingEnabled persisting that flag).  The status-
-        // bar selector then reflects whatever the user last chose.
-        if (App::GetApplication()
-                .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
-                ->GetBool("VulkanPathTracing", false)) {
-            _renderMode = ViewRenderMode::RayTracing;
+        // Reopen consistency: restore the persisted render mode so the status-
+        // bar selector (and the Vulkan backend) reflect whatever the user last
+        // chose.  Fall back to the older VulkanPathTracing flag (which enabled
+        // full path tracing) for configurations that predate the mode pref.
+        auto viewGrp = App::GetApplication().GetParameterGroupByPath(
+            "User parameter:BaseApp/Preferences/View");
+        const int persistedRenderMode = viewGrp->GetInt(
+            "VulkanRenderMode",
+            viewGrp->GetBool("VulkanPathTracing", false)
+                ? static_cast<int>(ViewRenderMode::RayTracing)
+                : -1);
+        if (persistedRenderMode >= 0
+            && persistedRenderMode <= static_cast<int>(ViewRenderMode::Environment)) {
+            // setRenderMode short-circuits when the mode is already the
+            // default (RasterCoin), which is exactly the state a fresh view
+            // starts in, so no-op restores are free.
+            setRenderMode(static_cast<ViewRenderMode>(persistedRenderMode));
         }
         // Reopen consistency for the environment/cubemap preset: restore the
         // persisted choice (-1 = viewport background gradient) and push it to
@@ -383,16 +392,32 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
         return;
     }
     _renderMode = mode;
+    const bool raster = mode == ViewRenderMode::RasterCoin
+        || mode == ViewRenderMode::Interactive
+        || mode == ViewRenderMode::Wireframe;
 #ifdef FREECAD_USE_VULKAN
+    if (_vulkanAdapter) {
+        // Tell the adapter whether a ray-traced mode is active so its
+        // pref-driven pushSettings() cannot re-enable path tracing, the
+        // denoiser or the edge/point overlays while the viewport is in a
+        // raster mode.  This is the authoritative gate the buggy path lacked:
+        // previously only path tracing was switched here, and edges/points/
+        // denoise leaked back in when preferences were re-pushed.
+        _vulkanAdapter->setRasterOnly(raster);
+    }
     switch (mode) {
+        case ViewRenderMode::RasterCoin:
         case ViewRenderMode::Interactive:
         case ViewRenderMode::Wireframe:
-            // Raster modes: path tracing is off.  The wireframe view style is
-            // set on the GL viewer (the Vulkan widget mirrors the scene graph,
-            // and the raster Vulkan backend renders it with the same draw
-            // style, so the wireframe override propagates through it).
+            // Raster modes: force path tracing, ray tracing, the denoiser and
+            // the edge/point overlays off so the viewport is pure raster.  The
+            // wireframe view style is set on the GL viewer (the Vulkan widget
+            // mirrors the scene graph, and the raster Vulkan backend renders
+            // it with the same draw style, so the wireframe override
+            // propagates through it).
             if (_vulkanAdapter) {
                 _vulkanAdapter->setPathTracingEnabled(false);
+                _vulkanAdapter->setViewMode(0);  // widget RtxViewMode::Interactive
             }
             break;
         case ViewRenderMode::AmbientOcclusion:
@@ -424,12 +449,11 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
             }
             break;
     }
-#else
-    (void)mode;
 #endif
     // Raster draw-style override for the Interactive vs Wireframe modes.
     if (_viewer) {
         switch (mode) {
+            case ViewRenderMode::RasterCoin:
             case ViewRenderMode::Interactive:
                 _viewer->setOverrideMode("As Is");
                 break;
@@ -442,6 +466,28 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
                 break;  // ray tracer ignores the raster draw style
         }
     }
+#ifdef FREECAD_USE_VULKAN
+    // Persist the mode (and the mode-coupled flags) so the view reopens in the
+    // same state and the pref-driven pushSettings() stays consistent with the
+    // viewport: switching to a raster mode records that the edge/point overlays
+    // and path tracing are off, while the ray-traced modes record path tracing
+    // on.  The runtime render state itself is gated by _rasterOnly above.
+    if (auto grp = App::GetApplication().GetParameterGroupByPath(
+            "User parameter:BaseApp/Preferences/View")) {
+        grp->SetInt("VulkanRenderMode", static_cast<int>(mode));
+        grp->SetBool("VulkanPathTracing", !raster);
+        if (raster) {
+            grp->SetBool("VulkanShowEdges", false);
+            grp->SetBool("VulkanShowPoints", false);
+        }
+        // Refresh the in-memory Vulkan settings so getShowEdges()/the status
+        // bar mirror the updated preferences (setRasterOnly has already gated
+        // the renderer, so the redundant re-push is idempotent).
+        if (_viewer) {
+            _viewer->applyVulkanSettings();
+        }
+    }
+#endif
     if (_vulkanAdapter) {
         _vulkanAdapter->redraw();
     }
@@ -472,6 +518,14 @@ void View3DInventor::setEnvMap(int index)
 
 bool View3DInventor::getShowEdges() const
 {
+    // The raster modes never render the edge overlay, regardless of the
+    // persisted preference; report the effective state so the status-bar
+    // toggle mirrors what is actually drawn.
+    if (_renderMode == ViewRenderMode::RasterCoin
+        || _renderMode == ViewRenderMode::Interactive
+        || _renderMode == ViewRenderMode::Wireframe) {
+        return false;
+    }
     return _viewer && _viewer->getVulkanViewSettings().showEdges;
 }
 

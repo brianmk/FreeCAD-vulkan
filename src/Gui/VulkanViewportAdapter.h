@@ -60,6 +60,12 @@ public:
     void setPathTracingStart(bool start);
     bool isPathTracingEnabled() const;
     bool isPathTracingActive() const;
+    /// Mark whether the view is in a raster (non ray-traced) render mode.
+    /// While set, pushSettings() forces path tracing, ray tracing, the
+    /// denoiser and the edge/point overlays off regardless of the persisted
+    /// preferences.  Re-pushes the settings immediately.  Starts true (a fresh
+    /// view defaults to the raster mode).
+    void setRasterOnly(bool rasterOnly);
     /// Set the ray-traced view mode (0 = Interactive/raster, 1 = Ambient
     /// Occlusion, 2 = Path Tracing).  Mirrors QuarterVulkanWidget::setViewMode.
     void setViewMode(int mode);
@@ -92,6 +98,11 @@ private:
     SIM::Coin3D::Quarter::QuarterVulkanWidget* _vulkanViewer = nullptr;
     bool _initialVulkanFitDone = false;
     bool _pathTracingRtMismatchWarned = false;
+    // True while the view is in a raster render mode (the two "Interactive"
+    // raster modes and Wireframe).  In a raster mode pushSettings() must never
+    // enable path tracing / ray tracing / the denoiser / the edge & point
+    // overlays, even when the persisted preferences ask for them.
+    bool _rasterOnly = true;
 };
 
 }  // namespace Gui

@@ -147,6 +147,21 @@ void VulkanViewportAdapter::syncViewer()
 #endif
 }
 
+void VulkanViewportAdapter::setRasterOnly(bool rasterOnly)
+{
+#ifdef FREECAD_USE_VULKAN
+    if (_rasterOnly == rasterOnly) {
+        return;
+    }
+    _rasterOnly = rasterOnly;
+    // Re-push so the gated render state takes effect immediately; the mode
+    // switch in View3DInventor::setRenderMode requests a new frame afterwards.
+    pushSettings();
+#else
+    Q_UNUSED(rasterOnly);
+#endif
+}
+
 void VulkanViewportAdapter::pushSettings()
 {
 #ifdef FREECAD_USE_VULKAN
@@ -154,36 +169,47 @@ void VulkanViewportAdapter::pushSettings()
         return;
     }
     const VulkanViewSettings& settings = _viewer->getVulkanViewSettings();
+    // In a raster render mode the viewport must never enable path tracing, ray
+    // tracing, the denoiser or the edge/point overlays, even when the
+    // persisted preferences asked for them.  The render mode (owned by
+    // View3DInventor) is the authority; the preferences only drive the scalar
+    // tuning and the mode restored on reopen.  This is the gate that was
+    // missing, which let edges/path-tracing leak back into Interactive.
+    const bool raster = _rasterOnly;
     if (Base::envFlagEnabled("FC_VULKAN_BACKEND_DEBUG")) {
-        Base::Console().message("[VK-SET] pushSettings edges=%d points=%d "
+        const bool effEdges = raster ? false : settings.showEdges;
+        const bool effPoints = raster ? false : settings.showPoints;
+        const bool effDenoise = raster ? false : settings.pathTracingDenoise;
+        Base::Console().message("[VK-SET] pushSettings raster=%d edges=%d points=%d "
                                 "edgeColor=(%.2f,%.2f,%.2f,%.2f) pt=%d "
-                                "bounces=%d settle=%d denoise=%d\n",
+                                "bounces=%d settle=%d denoise=%d "
+                                "(prefEdges=%d prefPoints=%d)\n",
+                                raster ? 1 : 0, effEdges ? 1 : 0,
+                                effPoints ? 1 : 0,
+                                settings.edgeColor[0], settings.edgeColor[1],
+                                settings.edgeColor[2], settings.edgeColor[3],
+                                !raster ? 1 : 0,
+                                settings.pathTracingBounces,
+                                settings.pathTracingSettleFrames,
+                                effDenoise ? 1 : 0,
                                 settings.showEdges ? 1 : 0,
-                            settings.showPoints ? 1 : 0,
-                            settings.edgeColor[0], settings.edgeColor[1],
-                            settings.edgeColor[2], settings.edgeColor[3],
-                            settings.pathTracing ? 1 : 0,
-                            settings.pathTracingBounces,
-                            settings.pathTracingSettleFrames,
-                            settings.pathTracingDenoise ? 1 : 0);
+                                settings.showPoints ? 1 : 0);
     }
-    _vulkanViewer->setWireframeOverlay(settings.showEdges);
-    _vulkanViewer->setPointsOverlay(settings.showPoints);
+    _vulkanViewer->setWireframeOverlay(raster ? false : settings.showEdges);
+    _vulkanViewer->setPointsOverlay(raster ? false : settings.showPoints);
     _vulkanViewer->setEdgeColor(settings.edgeColor);
 
-    // Path tracing toggle + tuning (start flag: enabling kicks off a
-    // progressive render; camera moves reset to the live preview until the
-    // camera settles, then the accumulation auto-restarts).
-    _vulkanViewer->setPathTracingEnabled(settings.pathTracing);
+    // Path tracing toggle + tuning.  Enable only in a ray-traced mode; the
+    // start latch (kicking off a progressive render) is raised by the mode
+    // switch, not here -- camera moves reset to the live preview until the
+    // camera settles, then the accumulation auto-restarts.
+    _vulkanViewer->setPathTracingEnabled(!raster);
     _vulkanViewer->setPathTracingBounces(settings.pathTracingBounces);
     _vulkanViewer->setPathTracingSettleFrames(settings.pathTracingSettleFrames);
     _vulkanViewer->setPathTracingMaxSamples(settings.pathTracingMaxSamples);
-    _vulkanViewer->setPathTracingDenoise(settings.pathTracingDenoise);
+    _vulkanViewer->setPathTracingDenoise(raster ? false : settings.pathTracingDenoise);
     if (!settings.pathTracingDenoiser.empty()) {
         _vulkanViewer->setPathTracingDenoiser(settings.pathTracingDenoiser);
-    }
-    if (settings.pathTracing) {
-        _vulkanViewer->setPathTracingStart(true);
     }
     // The RTX backend is always brought up when the device supports it
     // (independent of UseVulkanRayTracing), so path tracing can be toggled
@@ -195,7 +221,7 @@ void VulkanViewportAdapter::pushSettings()
     // on isRayTracingProbed(): before the renderer's first initResources()
     // availability is unknown and must not produce a spurious warning.
     const bool rtUnavailable =
-        settings.pathTracing && _vulkanViewer->isRayTracingProbed() &&
+        !raster && _vulkanViewer->isRayTracingProbed() &&
         !_vulkanViewer->isRayTracingAvailable();
     if (rtUnavailable && !_pathTracingRtMismatchWarned) {
         Base::Console().warning(

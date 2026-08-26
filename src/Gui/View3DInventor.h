@@ -46,16 +46,20 @@ class View3DSettings;
 class NaviCubeSettings;
 
 /// Ray-traced view render mode for a 3D view.
-/// 0 = Interactive (raster), 1 = Wireframe (raster), 2 = Ambient Occlusion
-/// (single-sample ray preview), 3 = Ray Tracing (accumulating path tracer).
-/// Mirrored by the status-bar selector in the main window; each view keeps
-/// its own mode.
+/// 0 = Interactive (raster Coin) -- the default raster rendering, no ray
+/// tracing; 1 = Interactive (raster Vulkan) -- Vulkan raster viewport;
+/// 2 = Wireframe (raster); 3 = Ambient Occlusion (single-sample ray preview);
+/// 4 = Ray Tracing (accumulating path tracer); 5 = Environment (single-sample
+/// IBL preview).  Mirrored by the status-bar selector in the main window; each
+/// view keeps its own mode.  The two "Interactive" raster modes never enable
+/// path tracing, ray tracing, the denoiser or the edge/point overlays.
 enum class ViewRenderMode : int {
-    Interactive = 0,
-    Wireframe,
-    AmbientOcclusion,
-    RayTracing,
-    Environment,
+    RasterCoin = 0,  // Interactive (raster Coin): default raster rendering
+    Interactive = 1, // Interactive (raster Vulkan): Vulkan raster viewport
+    Wireframe = 2,
+    AmbientOcclusion = 3,
+    RayTracing = 4,
+    Environment = 5,
 };
 class VulkanViewportAdapter;
 
@@ -226,7 +230,7 @@ private:
     VulkanViewportAdapter* _vulkanAdapter = nullptr;
     std::unique_ptr<View3DSettings> viewSettings;
     std::unique_ptr<NaviCubeSettings> naviSettings;
-    ViewRenderMode _renderMode = ViewRenderMode::Interactive;
+    ViewRenderMode _renderMode = ViewRenderMode::RasterCoin;
     int _envMap = -1;   // cubemap environment preset (-1 = viewport gradient)
 
     // friends
