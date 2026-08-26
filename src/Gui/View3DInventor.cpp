@@ -199,6 +199,18 @@ View3DInventor::View3DInventor(
                         _vulkanAdapter->redraw();
                     }
                 });
+        // A navigation camera move (rotate/pan/zoom) mutates the shared camera
+        // node but, once the path tracer has converged, the continuous refine
+        // loop is idle (no per-frame sensors on the display-only Vulkan
+        // widget).  Without this the view would freeze on the last converged
+        // frame; cameraMoved() asks the adapter for one frame so the backend
+        // sees reset-on-move and resumes accumulation on the new view.
+        connect(_viewer, &View3DInventorViewer::cameraMoved,
+                _vulkanAdapter, [this] {
+                    if (_vulkanAdapter) {
+                        _vulkanAdapter->redraw();
+                    }
+                });
     }
 #endif
 

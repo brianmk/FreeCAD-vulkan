@@ -509,9 +509,17 @@ public:
     // converged image: while accumulating AND during the short post-move
     // settle window in which the backend counts idle frames before
     // auto-restarting (m_pathTracingRefining).  Once converged the flag goes
-    // false and the surface can go idle.  Every other state change requests
-    // its own update: widget setters call redraw(), and camera/scene-graph
-    // mutations trigger the field/node sensors attached in attachSensors().
+    // false and the surface can go idle.
+    //
+    // The surface is display-only and owns no Coin sensors, so every other
+    // change must arrive as an explicit wake:
+    //   - widget setters call redraw();
+    //   - the VulkanViewportAdapter requests a frame on:
+    //       - document update        (onUpdate),
+    //       - selection/preselection (selectionChanged),
+    //       - camera-node swap       (cameraChanged),
+    //       - camera-pose navigation (cameraMoved).
+    //
     // Without the refining gate the Vulkan surface used to busy-loop
     // requestUpdate() at full swapchain rate.
     if (frame.pathTracingEnabled && m_pathTracingRefining) {

@@ -3713,20 +3713,29 @@ bool View3DInventorViewer::processSoEvent(const SoEvent* ev)
 {
     ZoneScoped;
 
+    // Snapshot the camera pose before the event so a navigation/event that
+    // rotates, pans or zooms (which mutates the shared camera node in place)
+    // can be detected afterwards.  The display-only Vulkan widget owns no Coin
+    // sensors and, once the path tracer has converged, runs no continuous
+    // refine loop, so without this a camera move would never re-render:
+    // emit cameraMoved() below so the adapter can request one frame, which the
+    // backend's camera-version check then sees as a reset-on-move.
+    SoCamera* cam = getCamera();
+    const SbVec3f camPosBefore = cam ? cam->position.getValue() : SbVec3f();
+    const SbRotation camOriBefore = cam ? cam->orientation.getValue() : SbRotation();
+
+    bool result = false;
     if (naviCubeEnabled && naviCube->processSoEvent(ev)) {
         return true;
     }
     if (isRedirectedToSceneGraph()) {
-        bool processed = inherited::processSoEvent(ev);
+        result = inherited::processSoEvent(ev);
 
-        if (!processed) {
-            processed = navigation->processEvent(ev);
+        if (!result) {
+            result = navigation->processEvent(ev);
         }
-
-        return processed;
     }
-
-    if (ev->getTypeId().isDerivedFrom(SoKeyboardEvent::getClassTypeId())) {
+    else if (ev->getTypeId().isDerivedFrom(SoKeyboardEvent::getClassTypeId())) {
         // filter out 'Q' and 'ESC' keys
         const auto ke = static_cast<const SoKeyboardEvent*>(ev);  // NOLINT
 
@@ -3735,11 +3744,20 @@ bool View3DInventorViewer::processSoEvent(const SoEvent* ev)
             case SoKeyboardEvent::Q:  // ignore 'Q' keys (to prevent app from being closed)
                 return inherited::processSoEvent(ev);
             default:
+                result = navigation->processEvent(ev);
                 break;
         }
     }
+    else {
+        result = navigation->processEvent(ev);
+    }
 
-    return navigation->processEvent(ev);
+    if (cam && cam == getCamera()
+        && (cam->position.getValue() != camPosBefore
+            || cam->orientation.getValue() != camOriBefore)) {
+        Q_EMIT cameraMoved();
+    }
+    return result;
 }
 
 bool View3DInventorViewer::processSoEventBase(const SoEvent* const ev)
@@ -4392,11 +4410,14 @@ bool View3DInventorViewer::applyCameraState(const SoCamera& sourceCamera)
         }
 
         const auto& sourcePerspective = static_cast<const SoPerspectiveCamera&>(sourceCamera);
+        targetPerspective->viewportMapping = sourcePerspective.viewportMapping;
         targetPerspective->position = sourcePerspective.position;
         targetPerspective->orientation = sourcePerspective.orientation;
         targetPerspective->nearDistance = sourcePerspective.nearDistance;
         targetPerspective->farDistance = sourcePerspective.farDistance;
         targetPerspective->focalDistance = sourcePerspective.focalDistance;
+        targetPerspective->heightAngle = sourcePerspective.heightAngle;
+        targetPerspective->aspectRatio = sourcePerspective.aspectRatio;
     }
     else if (targetCamera->getTypeId() == SoOrthographicCamera::getClassTypeId()) {
         auto* targetOrthographic = static_cast<SoOrthographicCamera*>(targetCamera);

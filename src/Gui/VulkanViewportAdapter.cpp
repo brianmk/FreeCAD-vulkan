@@ -50,13 +50,29 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
     syncViewer();
     // The viewer replaces its camera node whenever the projection type
     // changes (menu toggle, Python setCameraType, camera restore on
-    // document load).  Re-sync the Vulkan widget immediately so its
-    // render manager never keeps referencing the orphaned old camera:
-    // a stale camera makes the auto-clipping update the wrong node's
-    // near/far planes while the rendered view uses the new node, whose
-    // planes stay at their defaults and cull everything beyond 10 units.
+    // document load).  The Vulkan render manager re-resolves the camera
+    // from the scene-graph authority every frame (refreshActiveCamera /
+    // resolveActiveCamera), so a full re-sync of the (unchanged) scene,
+    // overlays, background and settings is not needed here.  Only re-point
+    // the widget's camera member, re-orient the axis cross to the new node,
+    // and request one frame; a stale camera would otherwise make the
+    // auto-clipping update the wrong node's near/far planes while the view
+    // used the new node.  syncViewer() (which also pushes the scene) is
+    // left for real scene churn via onUpdate()/requestVulkanRender().
     connect(_viewer, &View3DInventorViewer::cameraChanged,
-            this, [this] { syncViewer(); });
+            this, [this] {
+                if (!_vulkanViewer || !_viewer) {
+                    return;
+                }
+                SoRenderManager* rm = _viewer->getSoRenderManager();
+                if (!rm) {
+                    return;
+                }
+                _vulkanViewer->setCamera(rm->getCamera());
+                _viewer->updateAxisCrossNodes();
+                _vulkanViewer->setDecorationSceneGraph(_viewer->getAxisCrossOverlay());
+                _vulkanViewer->redraw();
+            });
     // The viewer owns the Vulkan display options; re-apply them to the
     // Vulkan widget whenever preferences change.
     connect(_viewer, &View3DInventorViewer::vulkanSettingsChanged,

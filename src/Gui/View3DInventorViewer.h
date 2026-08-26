@@ -646,6 +646,14 @@ public:
 
 Q_SIGNALS:
     void cameraChanged();
+    //! Emitted when navigation mutated the active camera pose (rotate/pan/
+    //! zoom) in place, i.e. without replacing the camera node.  The
+    //! display-only Vulkan viewport owns no Coin sensors and goes converged-
+    //! idle once the path tracer finishes, so it would not otherwise re-render
+    //! on a camera move; this lets the adapter request a frame so the moved
+    //! camera is shown (the backend then sees it as a reset-on-move and
+    //! restarts the accumulation).
+    void cameraMoved();
     //! Emitted after applyVulkanSettings() reloaded the Vulkan options from
     //! the preferences.
     void vulkanSettingsChanged();
