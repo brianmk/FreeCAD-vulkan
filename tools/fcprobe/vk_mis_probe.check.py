@@ -111,8 +111,12 @@ def check(lines, report):
     # settled NEE-off glow).  Skip 8 dumps to reach convergence, then bin a
     # settled window.
     b = [_stats(f) for f in frames[idx_toggle + 8:idx_toggle + 16]]
-    mean_a = sum(s[0] for s in a) / max(len(a), 1)
-    mean_b = sum(s[0] for s in b) / max(len(b), 1)
+    if not a or not b:
+        err("not enough frame dumps in the pass A or pass B window "
+            f"(toggle={toggle_ord}, passA={len(a)}, passB={len(b)})")
+        return
+    mean_a = sum(s[0] for s in a) / len(a)
+    mean_b = sum(s[0] for s in b) / len(b)
     warm_a = max(s[1] for s in a)
     warm_b = max(s[1] for s in b)
     sys.stderr.write(f"[CHECK] mis passA={mean_a:.2f} warmA={warm_a} "
