@@ -54,8 +54,8 @@ class NaviCubeSettings;
 /// view keeps its own mode.  The two "Interactive" raster modes never enable
 /// path tracing, ray tracing, the denoiser or the edge/point overlays.
 enum class ViewRenderMode : int {
-    RasterCoin = 0,  // Interactive (raster Coin): default raster rendering
-    Interactive = 1, // Interactive (raster Vulkan): Vulkan raster viewport
+    RasterCoin = 0,     // Interactive (raster Coin): classic Coin/GL raster
+    RasterVulkan = 1,   // Interactive (raster Vulkan): Vulkan raster viewport
     Wireframe = 2,
     AmbientOcclusion = 3,
     RayTracing = 4,
@@ -153,6 +153,12 @@ public:
     }
     bool containsViewProvider(const ViewProvider*) const override;
 
+Q_SIGNALS:
+    /// Emitted whenever the effective render mode changes (including after a
+    /// ray-traced mode is auto-fallen-back to raster when the hardware lacks
+    /// ray tracing).  The status bar re-synchronises the render-mode selector.
+    void renderModeChanged(int mode);
+
 public Q_SLOTS:
     /// override the cursor in this view
     void setOverrideCursor(const QCursor&) override;
@@ -231,6 +237,9 @@ private:
     std::unique_ptr<View3DSettings> viewSettings;
     std::unique_ptr<NaviCubeSettings> naviSettings;
     ViewRenderMode _renderMode = ViewRenderMode::RasterCoin;
+    //! One-shot guard so the "ray tracing unsupported on this device" warning
+    //! is logged only per transition instead of spamming every frame/emit.
+    bool _rayTracingUnavailableWarned = false;
     int _envMap = -1;   // cubemap environment preset (-1 = viewport gradient)
 
     // friends

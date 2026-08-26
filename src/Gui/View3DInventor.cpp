@@ -171,9 +171,12 @@ View3DInventor::View3DInventor(
         // viewport sizing).
         _vulkanAdapter = new VulkanViewportAdapter(stack, _viewer, useRayTracing, this);
         // Reopen consistency: restore the persisted render mode so the status-
-        // bar selector (and the Vulkan backend) reflect whatever the user last
-        // chose.  Fall back to the older VulkanPathTracing flag (which enabled
-        // full path tracing) for configurations that predate the mode pref.
+        // bar selector (and the backend) reflect whatever the user last chose.
+        // Fall back to the older VulkanPathTracing flag (which enabled full
+        // path tracing) for configurations that predate the mode pref.  When
+        // nothing is persisted a Vulkan-enabled view opens on the Vulkan raster
+        // viewport (the adapter already brought it up); the classic Coin/GL
+        // renderer is the opt-in raster mode.
         auto viewGrp = App::GetApplication().GetParameterGroupByPath(
             "User parameter:BaseApp/Preferences/View");
         const int persistedRenderMode = viewGrp->GetInt(
@@ -181,13 +184,14 @@ View3DInventor::View3DInventor(
             viewGrp->GetBool("VulkanPathTracing", false)
                 ? static_cast<int>(ViewRenderMode::RayTracing)
                 : -1);
+        ViewRenderMode initialMode = ViewRenderMode::RasterVulkan;
         if (persistedRenderMode >= 0
             && persistedRenderMode <= static_cast<int>(ViewRenderMode::Environment)) {
-            // setRenderMode short-circuits when the mode is already the
-            // default (RasterCoin), which is exactly the state a fresh view
-            // starts in, so no-op restores are free.
-            setRenderMode(static_cast<ViewRenderMode>(persistedRenderMode));
+            initialMode = static_cast<ViewRenderMode>(persistedRenderMode);
         }
+        // setRenderMode applies the visible viewport backend too, so even a
+        // no-op-feeling restore correctly picks the Coin/GL vs Vulkan surface.
+        setRenderMode(initialMode);
         // Reopen consistency for the environment/cubemap preset: restore the
         // persisted choice (-1 = viewport background gradient) and push it to
         // the adapter so the sky matches what the user last selected.
@@ -220,6 +224,30 @@ View3DInventor::View3DInventor(
                         _vulkanAdapter->redraw();
                     }
                 });
+        // Feature detection: if a ray-traced mode was chosen but the ray-tracing
+        // backend turns out to be unavailable on this hardware (the device may
+        // advertise the extensions yet fail to build the backend, e.g. on a
+        // device below Vulkan 1.2), drop back to the Vulkan raster viewport.
+        // Queued: the signal is emitted while the Vulkan renderer holds its
+        // state mutex inside snapshotFrameState, and setRenderMode() calls
+        // widget setters that lock it again -- running synchronously would
+        // deadlock the GUI thread.
+        connect(_vulkanAdapter, &VulkanViewportAdapter::rayTracingUnavailable,
+                this, [this] {
+                    if (_renderMode != ViewRenderMode::RayTracing
+                        && _renderMode != ViewRenderMode::AmbientOcclusion
+                        && _renderMode != ViewRenderMode::Environment) {
+                        return;
+                    }
+                    if (!_rayTracingUnavailableWarned) {
+                        _rayTracingUnavailableWarned = true;
+                        Base::Console().warning(
+                            "Hardware ray tracing is unavailable on this "
+                            "device; using the raster viewport instead.\n");
+                    }
+                    setRenderMode(ViewRenderMode::RasterVulkan);
+                },
+                Qt::QueuedConnection);
     }
 #endif
 
@@ -388,15 +416,45 @@ Gui::ViewRenderMode View3DInventor::getRenderMode() const
 
 void View3DInventor::setRenderMode(ViewRenderMode mode)
 {
-    if (_renderMode == mode) {
-        return;
+    // No early return: the compose function is idempotent, and the initial
+    // mode must also select the visible viewport backend even when the mode
+    // equals the constructor default (a fresh Vulkan view opens on the Vulkan
+    // raster surface, but a RasterCoin view must flip back to the Coin/GL
+    // viewer).
+#ifdef FREECAD_USE_VULKAN
+    // Feature detection: a ray-traced mode cannot run when the device lacks the
+    // ray-tracing extension set (VK_KHR_acceleration_structure /
+    // ray_tracing_pipeline / ray_query), so fall back to the Vulkan raster
+    // viewport and warn once instead of silently rendering raster under a
+    // ray-traced label.  isRayTracingAvailable() is only trustworthy after the
+    // renderer has probed the device, hence the isRayTracingProbed() gate.
+    const bool rayTraced = mode == ViewRenderMode::AmbientOcclusion
+        || mode == ViewRenderMode::RayTracing
+        || mode == ViewRenderMode::Environment;
+    if (rayTraced && _vulkanAdapter && _vulkanAdapter->isRayTracingProbed()
+        && !_vulkanAdapter->isRayTracingAvailable()) {
+        if (!_rayTracingUnavailableWarned) {
+            _rayTracingUnavailableWarned = true;
+            Base::Console().warning(
+                "This device does not support hardware ray tracing "
+                "(VK_KHR_acceleration_structure / VK_KHR_ray_tracing_pipeline / "
+                "VK_KHR_ray_query is not advertised), so the selected ray-"
+                "traced render mode is disabled and the view is rendered with "
+                "the raster Vulkan backend.\n");
+        }
+        mode = ViewRenderMode::RasterVulkan;
     }
+#endif
     _renderMode = mode;
     const bool raster = mode == ViewRenderMode::RasterCoin
-        || mode == ViewRenderMode::Interactive
+        || mode == ViewRenderMode::RasterVulkan
         || mode == ViewRenderMode::Wireframe;
 #ifdef FREECAD_USE_VULKAN
     if (_vulkanAdapter) {
+        // Pick the renderer backend for the raster modes: RasterCoin renders
+        // through the classic Coin/OpenGL viewer, everything else through the
+        // Vulkan raster viewport (Wireframe/AO/RT/Env are Vulkan render modes).
+        _vulkanAdapter->useVulkanViewport(mode != ViewRenderMode::RasterCoin);
         // Tell the adapter whether a ray-traced mode is active so its
         // pref-driven pushSettings() cannot re-enable path tracing, the
         // denoiser or the edge/point overlays while the viewport is in a
@@ -407,7 +465,7 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
     }
     switch (mode) {
         case ViewRenderMode::RasterCoin:
-        case ViewRenderMode::Interactive:
+        case ViewRenderMode::RasterVulkan:
         case ViewRenderMode::Wireframe:
             // Raster modes: force path tracing, ray tracing, the denoiser and
             // the edge/point overlays off so the viewport is pure raster.  The
@@ -454,7 +512,7 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
     if (_viewer) {
         switch (mode) {
             case ViewRenderMode::RasterCoin:
-            case ViewRenderMode::Interactive:
+            case ViewRenderMode::RasterVulkan:
                 _viewer->setOverrideMode("As Is");
                 break;
             case ViewRenderMode::Wireframe:
@@ -491,6 +549,9 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
     if (_vulkanAdapter) {
         _vulkanAdapter->redraw();
     }
+    // Let the status-bar render-mode selector reflect the *effective* mode
+    // (e.g. the raster fallback when hardware ray tracing is unavailable).
+    Q_EMIT renderModeChanged(static_cast<int>(_renderMode));
 }
 
 int View3DInventor::getEnvMap() const
@@ -522,7 +583,7 @@ bool View3DInventor::getShowEdges() const
     // persisted preference; report the effective state so the status-bar
     // toggle mirrors what is actually drawn.
     if (_renderMode == ViewRenderMode::RasterCoin
-        || _renderMode == ViewRenderMode::Interactive
+        || _renderMode == ViewRenderMode::RasterVulkan
         || _renderMode == ViewRenderMode::Wireframe) {
         return false;
     }

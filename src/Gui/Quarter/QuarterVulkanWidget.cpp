@@ -622,6 +622,15 @@ private:
                 vkWarn("requestRayTracing: path tracing requested but the "
                        "ray-tracing backend is unavailable; falling back to "
                        "the raster Vulkan backend.");
+                // Feature detection: tell the owner the ray tracer cannot run
+                // here so it can revert to a raster render mode (the hardware
+                // may advertise the extensions but still fail to build the
+                // backend, e.g. on a device below Vulkan 1.2).  Emitted through
+                // the owner on a QUEUED connection (same pattern as
+                // notifySurfaceSize) since this runs inside snapshotFrameState
+                // while the state mutex is held; the slot must not run inline.
+                QMetaObject::invokeMethod(m_owner, "rayTracingUnavailable",
+                                          Qt::QueuedConnection);
             }
             else {
                 m_appliedPathTracingEnabled = m_pathTracingEnabled;

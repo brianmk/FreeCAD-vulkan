@@ -53,6 +53,12 @@ Q_SIGNALS:
     //! Delivered on the GUI thread.
     void surfaceSizeChanged(const QSize & size);
 
+    //! Emitted when a path-tracing request is dropped because the ray-tracing
+    //! backend could not be brought up on this device (e.g. the device is not
+    //! Vulkan 1.2+ or lacks the ray-tracing extension set).  Fired once per
+    //! request transition; the owner should fall back to the raster viewport.
+    void rayTracingUnavailable();
+
 public:
     void setSceneGraph(SoNode * root);
     SoNode * getSceneGraph() const;

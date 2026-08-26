@@ -102,6 +102,11 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
     connect(_vulkanViewer,
             &SIM::Coin3D::Quarter::QuarterVulkanWidget::surfaceSizeChanged,
             this, &VulkanViewportAdapter::onSurfaceSizeChanged);
+    // Relay a ray-tracing-unavailable drop so the view can fall back to a
+    // raster render mode (feature detection for non path-tracing hardware).
+    connect(_vulkanViewer,
+            &SIM::Coin3D::Quarter::QuarterVulkanWidget::rayTracingUnavailable,
+            this, &VulkanViewportAdapter::rayTracingUnavailable);
 #else
     Q_UNUSED(stack);
     Q_UNUSED(viewer);
@@ -159,6 +164,55 @@ void VulkanViewportAdapter::setRasterOnly(bool rasterOnly)
     pushSettings();
 #else
     Q_UNUSED(rasterOnly);
+#endif
+}
+
+bool VulkanViewportAdapter::isRayTracingAvailable() const
+{
+#ifdef FREECAD_USE_VULKAN
+    return _vulkanViewer && _vulkanViewer->isRayTracingAvailable();
+#else
+    return false;
+#endif
+}
+
+bool VulkanViewportAdapter::isRayTracingProbed() const
+{
+#ifdef FREECAD_USE_VULKAN
+    return _vulkanViewer && _vulkanViewer->isRayTracingProbed();
+#else
+    return false;
+#endif
+}
+
+void VulkanViewportAdapter::useVulkanViewport(bool vulkan)
+{
+#ifdef FREECAD_USE_VULKAN
+    if (!_vulkanViewer || !_viewer) {
+        return;
+    }
+    auto* host = qobject_cast<QStackedWidget*>(_vulkanViewer->parentWidget());
+    if (!host) {
+        return;
+    }
+    QWidget* target = vulkan ? static_cast<QWidget*>(_vulkanViewer)
+                             : _viewer->getWidget();
+    if (host->currentWidget() == target) {
+        return;
+    }
+    // The GL viewer drives navigation/picking and is the scene-graph authority;
+    // before the Vulkan surface is shown again, push its current
+    // scene/camera/background back in so the switch does not leave a stale
+    // frame on top.
+    if (vulkan) {
+        syncViewer();
+    }
+    host->setCurrentWidget(target);
+    if (vulkan) {
+        _vulkanViewer->redraw();
+    }
+#else
+    Q_UNUSED(vulkan);
 #endif
 }
 
