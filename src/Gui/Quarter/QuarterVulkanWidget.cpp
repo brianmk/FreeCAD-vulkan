@@ -3,6 +3,7 @@
 // SPDX-FileNotice: Part of the FreeCAD project.
 
 #include "QuarterVulkanWidget.h"
+#include "devices/InputDevice.h"
 #include "QuarterWidget.h"
 #include "VulkanFrameDumper.h"
 #include <Base/VulkanBreadcrumbs.h>
@@ -197,11 +198,6 @@ public:
         QMutexLocker locker(&m_stateMutex);
         m_pathTracingMaxSamples = std::clamp(samples, 1, 4096);
     }
-    void setPathTracingDenoise(bool enabled)
-    {
-        QMutexLocker locker(&m_stateMutex);
-        m_pathTracingDenoise = enabled;
-    }
     void setPathTracingDenoiser(const std::string & denoiser)
     {
         QMutexLocker locker(&m_stateMutex);
@@ -347,6 +343,14 @@ public:
         // availability is now settled: initResources ran.  Distinct from any
         // path-tracing request.
         m_rtxBackendProbed = true;
+        // A freshly (re)initialized RTX engine starts from its own defaults
+        // (ptDenoise is ON, see SoRTXRenderBackend::ptDenoise), and a prior
+        // frame may have marked the denoise/bounce settings "applied" while the
+        // backend was not yet initialized (the manager logged "setting
+        // ignored").  Re-apply the user's path-tracing settings once the next
+        // frame runs against a built backend, so a startup window-reset (or
+        // raster-only open) never leaves the denoiser leaked on.
+        m_reapplyPathTracingSettings = m_rtxBackendBuilt;
         VK_BREADCRUMB("[VK-TRACE] QuarterVulkanRenderer::initResources "
                       "pathTracing=%d rtxBuilt=%d\n",
                       m_pathTracingEnabled ? 1 : 0,
@@ -554,10 +558,16 @@ private:
     // the last frame, and record it as applied.  Manager access is kept at
     // frame setup (see snapshotFrameState()); this just removes the repeated
     // diff-and-apply ceremony around the many scalar path-tracing settings.
+    // When `force` is true the setting is pushed unconditionally (even when it
+    // already matches `applied`): used right after a fresh RTX engine is
+    // created, since a newly built engine starts from its own defaults (e.g.
+    // ptDenoise is ON) and any setting that the manager previously "ignored"
+    // (not-initialized) was marked applied without reaching the engine.
     template <typename T, typename Setter>
-    void applyPathTracingSetting(const T& value, T& applied, Setter&& setter)
+    void applyPathTracingSetting(const T& value, T& applied, Setter&& setter,
+                                 bool force = false)
     {
-        if (value != applied) {
+        if (force || value != applied) {
             setter(value);
             applied = value;
         }
@@ -573,6 +583,9 @@ private:
     {
         FrameState frame;
         QMutexLocker locker(&m_stateMutex);
+        // Whether the RTX backend was up entering this frame; the toggle block
+        // below may build it lazily (raster -> path-tracing) or leave it alone.
+        const bool rtxBefore = m_rtxBackendBuilt;
         frame.scene = m_scene;
         frame.overlayScene = m_overlayScene;
         frame.decorationScene = m_decorationScene;
@@ -587,7 +600,6 @@ private:
         frame.pathTracingEnabled = m_pathTracingEnabled;
         frame.pathTracingBounces = m_pathTracingBounces;
         frame.pathTracingSettleFrames = m_pathTracingSettleFrames;
-        frame.pathTracingDenoise = m_pathTracingDenoise;
 
         // Enable before raising the start latch: the RT backend drops the
         // latch if path tracing is not yet enabled (setPathTracingStart
@@ -636,26 +648,45 @@ private:
                 m_appliedPathTracingEnabled = m_pathTracingEnabled;
             }
         }
+        // A fresh RTX engine -- lazily built just above, or re-created by the
+        // window-init reset flagged in initResources() -- starts from its own
+        // defaults (ptDenoise is ON), so re-push every path-tracing setting
+        // exactly once.  Guard on m_rtxBackendBuilt so a raster-only view (no
+        // RT backend) never spams the "not initialized" manager warnings.
+        const bool reapplyPT = m_rtxBackendBuilt
+            && (m_reapplyPathTracingSettings || !rtxBefore);
+        m_reapplyPathTracingSettings = false;
         applyPathTracingSetting(m_pathTracingBounces, m_appliedPathTracingBounces,
             [this](int v) {
                 m_manager.setPathTracingBounces(static_cast<uint32_t>(v));
-            });
+            },
+            reapplyPT);
         applyPathTracingSetting(m_pathTracingSettleFrames, m_appliedPathTracingSettleFrames,
             [this](int v) {
                 m_manager.setPathTracingSettleFrames(static_cast<uint32_t>(v));
-            });
+            },
+            reapplyPT);
         applyPathTracingSetting(m_pathTracingMaxSamples, m_appliedPathTracingMaxSamples,
             [this](int v) {
                 m_manager.setPathTracingMaxSamples(static_cast<uint32_t>(v));
-            });
-        applyPathTracingSetting(m_pathTracingDenoise, m_appliedPathTracingDenoise,
+            },
+            reapplyPT);
+        // Denoising is required for path tracing, so it always runs when the
+        // path tracer is active -- it is not an independent toggle the user
+        // must remember to flip.  The Denoiser selector (below) only picks the
+        // filter; "None" disables the filter and shows raw radiance.
+        const bool effDenoise = m_pathTracingEnabled;
+        frame.pathTracingDenoise = effDenoise;
+        applyPathTracingSetting(effDenoise, m_appliedPathTracingDenoise,
             [this](bool v) {
                 m_manager.setPathTracingDenoiseEnabled(v ? TRUE : FALSE);
-            });
+            },
+            reapplyPT);
         applyPathTracingSetting(m_pathTracingDenoiser, m_appliedPathTracingDenoiser,
             [this](const std::string& v) {
                 m_manager.setPathTracingDenoiser(v.empty() ? nullptr : v.c_str());
-            });
+            },
+            reapplyPT);
         // Apply the ray-traced view mode (Interactive/AO/PathTracing) when it
         // changed, so the manager (and the shader's u_state.y) picks AO vs
         // multi-bounce.  The RT backend must be initialized first; the enable
@@ -719,6 +750,12 @@ private:
                              static_cast<short>(size.width()),
                              static_cast<short>(size.height()));
         m_manager.setViewportRegion(vp);
+        // The swapchain is in device pixels; record the widget's device-pixel
+        // ratio so the render backend scales logical SoDrawStyle line widths
+        // / point sizes correctly (see SoVulkanRenderBackend).  Without it the
+        // ratio stayed 1.0 and overlay strokes (NaviCube edges/axes/service
+        // dots) rendered 1/dpr too thin on a fractional-scaling display.
+        m_manager.setDevicePixelRatio(static_cast<float>(m_owner->devicePixelRatioF()));
         m_manager.setBackgroundColor(frame.background);
         VK_BREADCRUMB_ONCE("[VK-TRACE] startNextFrame: setBackgroundGradient "
                            "enabled=%d top=(%.3f,%.3f,%.3f) bottom=(%.3f,%.3f,%.3f)\n",
@@ -893,13 +930,24 @@ private:
     int m_pathTracingBounces = 4;
     int m_pathTracingSettleFrames = 6;
     int m_pathTracingMaxSamples = 256;
-    bool m_pathTracingDenoise = true;
     std::string m_pathTracingDenoiser;   // "" = default (env/backend)
     int m_appliedPathTracingBounces = 0;
     int m_appliedPathTracingSettleFrames = 0;
     int m_appliedPathTracingMaxSamples = 0;
-    bool m_appliedPathTracingDenoise = false;
+    // The denoiser baseline must reflect the backend's REAL initial state, which
+    // is ON (SoRTXRenderBackend::ptDenoise defaults to TRUE every engine create).
+    // Initializing it to false made applyPathTracingSetting(false, false,
+    // ...) a no-op, so a fresh view ("denoiser off", the raster default, or an
+    // RT view with the denoiser disabled) never pushed ptDenoise to FALSE and
+    // the backend kept its default-on.  With the baseline TRUE the FIRST frame
+    // always pushes the requested (usually off) state once.
+    bool m_appliedPathTracingDenoise = true;
     std::string m_appliedPathTracingDenoiser;
+    // Set when the RTX engine was (re)created (initResources()/lazy build) so
+    // the next frame re-pushes every path-tracing setting to the fresh engine
+    // instead of trusting the stale "applied" baselines.  Consumed once per
+    // frame by snapshotFrameState().
+    bool m_reapplyPathTracingSettings = false;
     bool m_rayTracingActive = false;
     // Device ray-tracing capability (does the physical device advertise the
     // KHR extension set?), known from the device probe regardless of whether
@@ -1012,16 +1060,6 @@ public:
     // Auto-nulled when the forwarded widget is destroyed, so the event
     // filter below can never dereference a dangling pointer.
     QPointer<QWidget> forwardTarget;
-    // Device pixel ratio the forward target uses to convert event positions
-    // (set explicitly by setEventForwardTarget; the GL viewer's cached value
-    // may differ from devicePixelRatioF()).
-    qreal eventForwardDpr = 1.0;
-    // Tracks the forward target's devicePixelRatioChanged() so the forwarding
-    // divisor stays in sync with the ratio the GL EventFilter actually uses to
-    // convert positions.  A snapshot taken once goes stale after the first GL
-    // resize (cached DPR 1.0 -> 1.25), which rescales the pick point 1/dpr
-    // relative to the device-pixel viewport region and drifts off-center.
-    QMetaObject::Connection eventForwardDprConn;
 
     // Debug-only synthetic mouse injector state (see pollInjectFile()).
     QString injectPath;
@@ -1513,25 +1551,13 @@ void QuarterVulkanWidget::setEdgeColor(const SbColor4f & color)
 void QuarterVulkanWidget::setEventForwardTarget(QWidget * target,
                                                 qreal targetDevicePixelRatio)
 {
+    // The per-event scale is derived from both widgets' *live* device pixel
+    // ratios by InputDevice::crossWidgetPositionScale(); the ratio argument
+    // is kept only for API compatibility.  targetDevicePixelRatio is unused:
+    // reading a stale snapshot here is exactly what caused the forwarded pick
+    // point to be rescaled by 1/dpr on fractional-scaling displays.
+    Q_UNUSED(targetDevicePixelRatio);
     d->forwardTarget = target;
-    d->eventForwardDpr = targetDevicePixelRatio >= 0.0
-        ? targetDevicePixelRatio
-        : (target ? target->devicePixelRatioF() : 1.0);
-    if (d->eventForwardDprConn) {
-        QObject::disconnect(d->eventForwardDprConn);
-        d->eventForwardDprConn = {};
-    }
-    // The forwarded-event divisor must match the ratio the forward target's
-    // EventFilter uses (QuarterWidget::devicePixelRatio(), a cached value that
-    // updates on resize).  If we capture it once at construction it goes stale
-    // after the GL viewer's first real resize (1.0 -> 1.25): the pre-scale
-    // divides by 1.0 while the GL side later multiplies by 1.25, double-scaling
-    // the pick point and drifting off-center.  Follow the target's live DPR.
-    if (auto * quarter = qobject_cast<QuarterWidget *>(target)) {
-        d->eventForwardDprConn = QObject::connect(
-            quarter, &QuarterWidget::devicePixelRatioChanged, this,
-            [this](qreal dpr) { d->eventForwardDpr = dpr; });
-    }
 }
 
 void QuarterVulkanWidget::pollInjectFile()
@@ -1619,32 +1645,19 @@ bool QuarterVulkanWidget::eventFilter(QObject * watched, QEvent * event)
                       gl->devicePixelRatioF());
     }
 
-    // Only forward input events.  The Vulkan container reports its device
-    // pixel ratio (the system scale factor, e.g. 1.25) while the hidden GL
-    // viewer is sized in raw device pixels and converts event positions
-    // with QuarterWidget::devicePixelRatio() (a cached value, 1.0 here).
-    // Positions must therefore be rescaled by srcDpr/dstDpr before
-    // forwarding, otherwise picking interprets logical pixels against a
-    // device-pixel viewport region (hover/preselection would trigger 1/dpr
-    // too early towards the origin).  The target's ratio is captured
-    // explicitly by setEventForwardTarget() rather than sniffed from the
-    // target's type at event time.
-    //
-    // The value captured at setEventForwardTarget() is captured at startup,
-    // when the hidden GL viewer's cached devicePixelRatio() is still 1.0
-    // (it only updates when the widget is actually resized).  The
-    // devicePixelRatioChanged connection should re-sync it, but a hidden,
-    // non-current stack-page widget never reliably emits that signal (no
-    // paint/resize that Qt would route through updateDevicePixelRatio()).
-    // So re-read the forward target's cached ratio live: it is the exact
-    // value the GL EventFilter uses, so the divisor stays in lock-step with
-    // the GL side's own conversion.  Fall back to the stored value for
-    // non-QuarterWidget targets (which have no cached ratio to read).
-    qreal dstDpr = d->eventForwardDpr;
-    if (auto * qw = qobject_cast<QuarterWidget *>(d->forwardTarget.data())) {
-        dstDpr = qw->devicePixelRatio();
-    }
-    const qreal dprScale = d->container->devicePixelRatioF() / dstDpr;
+    // Forward input events from the visible Vulkan container to the hidden
+    // OpenGL viewer (set via setEventForwardTarget()).  The two widgets share
+    // the same window/screen and therefore the same (possibly fractional)
+    // system device pixel ratio, so the container-to-viewer position scale is
+    // exactly 1.0 on any OS (Windows 100-200%, macOS Retina 2.0, Linux 1.25,
+    // ...): the position passes through unscaled and the GL side applies its
+    // own live ratio in InputDevice::toDevicePixelPosition().  The scale is
+    // taken from the *live* devicePixelRatioF() of both widgets (single source
+    // of truth), never a cached/pre-rounded ratio, so fractional scales cannot
+    // rescaled the forwarded point by 1/dpr and drift hovering/picking off
+    // center towards the origin.
+    const qreal dprScale = InputDevice::crossWidgetPositionScale(
+        d->container, d->forwardTarget.data());
 
     switch (event->type()) {
     case QEvent::MouseButtonPress:
@@ -1896,15 +1909,6 @@ void QuarterVulkanWidget::setPathTracingMaxSamples(int samples)
         return;
     }
     d->renderer->setPathTracingMaxSamples(samples);
-    redraw();
-}
-
-void QuarterVulkanWidget::setPathTracingDenoise(bool enabled)
-{
-    if (!d->renderer) {
-        return;
-    }
-    d->renderer->setPathTracingDenoise(enabled);
     redraw();
 }
 

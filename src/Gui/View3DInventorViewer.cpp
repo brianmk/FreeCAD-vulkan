@@ -1326,6 +1326,13 @@ void View3DInventorViewer::init()
         this,
         &View3DInventorViewer::createStandardCursors
     );
+    connect(this, &View3DInventorViewer::cameraChanged, this, &View3DInventorViewer::updatePickRadius);
+    connect(
+        this,
+        &View3DInventorViewer::devicePixelRatioChanged,
+        this,
+        &View3DInventorViewer::updatePickRadius
+    );
 
     naviCube = new NaviCube(this);
     ParameterGrp::handle hViewGrp = App::GetApplication().GetParameterGroupByPath(
@@ -1335,6 +1342,15 @@ void View3DInventorViewer::init()
     syncNaviCubeVisibility();
 
     updateColors();
+}
+
+void View3DInventorViewer::updatePickRadius()
+{
+    if (auto* evm = getSoEventManager()) {
+        if (auto* hea = evm->getHandleEventAction()) {
+            hea->setPickRadius(getPickRadius());
+        }
+    }
 }
 
 View3DInventorViewer::~View3DInventorViewer()
@@ -2048,6 +2064,12 @@ void View3DInventorViewer::applyVulkanSettings()
                   hGrp->GetBool("VulkanShowEdges", false) ? 1 : 0,
                   hGrp->GetBool("VulkanShowPoints", false) ? 1 : 0);
 
+    // Render mode and environment preset: this is the single loader that
+    // seeds the canonical VulkanViewSettings, so every consumer (the raster
+    // gate, the status-bar selector, the backend push) reads the same value.
+    vulkanSettings_.renderMode = hGrp->GetInt("VulkanRenderMode", 1);
+    vulkanSettings_.envMap = hGrp->GetInt("VulkanEnvironmentMap", -1);
+
     vulkanSettings_.showEdges = hGrp->GetBool("VulkanShowEdges", false);
     vulkanSettings_.showPoints = hGrp->GetBool("VulkanShowPoints", false);
 
@@ -2068,8 +2090,6 @@ void View3DInventorViewer::applyVulkanSettings()
     vulkanSettings_.pathTracingMaxSamples = std::clamp(
         static_cast<int>(hGrp->GetInt("VulkanPathTracingMaxSamples", 256)),
         1, 4096);
-    vulkanSettings_.pathTracingDenoise =
-        hGrp->GetBool("VulkanPathTracingDenoise", true);
     // Denoiser backend, stored as the combo index (0=RTX, 1=OIDN, 2=FSR,
     // 3=None); map to the backend name the RT renderer expects.
     switch (hGrp->GetInt("VulkanPathTracingDenoiser", 0)) {

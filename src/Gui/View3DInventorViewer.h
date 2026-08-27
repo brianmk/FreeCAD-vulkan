@@ -112,13 +112,32 @@ class SoGroundPlane;
 class SoShapeScale;
 class ViewerEventFilter;
 
-/** Vulkan-only display options owned by the 3D viewer.
- *  They mirror the OpenGL view preferences (draw style, vertex visibility)
- *  but are only honored by the Vulkan backend.  View3DInventorViewer keeps
- *  the canonical instance and refreshes it from the user preferences.
+/** Vulkan view render settings -- the single source of truth for the viewport.
+ *
+ *  This is the canonical in-memory blob for every Vulkan render option: the
+ *  render mode (raster Coin / raster Vulkan / wireframe / AO / path tracing /
+ *  environment), the cubemap environment preset, and the display + path-tracing
+ *  tuning.  View3DInventorViewer loads it from the user preferences in
+ *  applyVulkanSettings() (emitting vulkanSettingsChanged), and
+ *  VulkanViewportAdapter::pushSettings() is the single applier that reads it to
+ *  drive the backends.  Consumers must read the mode / raster gate from here,
+ *  never from a second copy.
  */
 struct VulkanViewSettings
 {
+    // Render mode: Gui::ViewRenderMode as int (0 RasterCoin, 1 RasterVulkan,
+    // 2 Wireframe, 3 AmbientOcclusion, 4 RayTracing, 5 Environment).
+    // Defaults to the Vulkan raster viewport.
+    int renderMode = 1;
+    // Cubemap environment preset index (-1 = viewport gradient/background).
+    int envMap = -1;
+
+    // True when the mode is a pure-raster mode (RasterCoin/RasterVulkan/
+    // Wireframe).  The raster gate derived here tells the backends to keep
+    // path tracing, ray tracing, the denoiser and the edge/point overlays
+    // off regardless of any persisted tuning.
+    bool rasterOnly() const { return renderMode >= 0 && renderMode <= 2; }
+
     bool showEdges = false;
     bool showPoints = false;
     SbColor4f edgeColor = SbColor4f(0.05f, 0.05f, 0.05f, 1.0f);
@@ -127,8 +146,9 @@ struct VulkanViewSettings
     int pathTracingBounces = 4;
     int pathTracingSettleFrames = 6;
     int pathTracingMaxSamples = 256;
-    bool pathTracingDenoise = true;
     // Denoiser backend name ("rtx", "oidn", "fsr", "none"); empty = default.
+    // Denoising itself is required for path tracing and is enabled automatically
+    // by the renderer; only the filter is configurable.
     std::string pathTracingDenoiser;
 };
 
@@ -818,6 +838,9 @@ private:
 
 private Q_SLOTS:
     void updateFPSLabel();
+    //! Recompute the effective pick radius (resolution + zoom) and push it into
+    //! the Coin event manager so hover/preselection stays zoom-compensated.
+    void updatePickRadius();
 
     // friends
     friend class NavigationStyle;

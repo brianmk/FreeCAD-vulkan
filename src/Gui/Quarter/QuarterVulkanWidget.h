@@ -285,18 +285,10 @@ public:
     void setPathTracingSettleFrames(int frames);
 
     /*!
-      \brief Enable/disable the edge-stopping denoise pass.
-
-      When disabled the raw accumulated radiance is shown, making the
-      Monte-Carlo noise of the early accumulation frames visible.  Forwarded
-      to the ray-tracing backend.
-    */
-    void setPathTracingDenoise(bool enabled);
-
-    /*!
       \brief Select the denoiser backend by name ("rtx", "oidn", "fsr",
       "none"); an empty string uses the default (backend env / built-in)
-      choice.  Forwarded to the ray-tracing backend.
+      choice.  Forwarded to the ray-tracing backend.  Denoising itself is
+      required for path tracing and is enabled automatically by the renderer.
     */
     void setPathTracingDenoiser(const std::string & denoiser);
 

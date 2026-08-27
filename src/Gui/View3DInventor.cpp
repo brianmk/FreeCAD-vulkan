@@ -456,13 +456,12 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
         // through the classic Coin/OpenGL viewer, everything else through the
         // Vulkan raster viewport (Wireframe/AO/RT/Env are Vulkan render modes).
         _vulkanAdapter->useVulkanViewport(mode != ViewRenderMode::RasterCoin);
-        // Tell the adapter whether a ray-traced mode is active so its
-        // pref-driven pushSettings() cannot re-enable path tracing, the
-        // denoiser or the edge/point overlays while the viewport is in a
-        // raster mode.  This is the authoritative gate the buggy path lacked:
-        // previously only path tracing was switched here, and edges/points/
-        // denoise leaked back in when preferences were re-pushed.
-        _vulkanAdapter->setRasterOnly(raster);
+        // The raster gate is not passed to the adapter anymore: it is derived
+        // from the single-source VulkanViewSettings in pushSettings() via
+        // settings.rasterOnly(), which is seeded below by applyVulkanSettings()
+        // after the mode is persisted.  This keeps the gate in one place so
+        // re-pushed preferences can never re-enable path tracing, the denoiser
+        // or the edge/point overlays while the viewport is in a raster mode.
     }
     switch (mode) {
         case ViewRenderMode::RasterCoin:
@@ -530,18 +529,28 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
     // same state and the pref-driven pushSettings() stays consistent with the
     // viewport: switching to a raster mode records that the edge/point overlays
     // and path tracing are off, while the ray-traced modes record path tracing
-    // on.  The runtime render state itself is gated by _rasterOnly above.
+    // on.  The runtime render state itself is gated in pushSettings() by
+    // VulkanViewSettings::rasterOnly(), seeded once the mode below is persisted.
     if (auto grp = App::GetApplication().GetParameterGroupByPath(
             "User parameter:BaseApp/Preferences/View")) {
+        // Write a complete, deterministic preference set for every mode so a
+        // reopened view (or a later mode switch) never inherits a leftover from
+        // a prior mode/session -- this is what caused a view to open with the
+        // edge overlay still enabled.  A raster mode is the pure
+        // raster viewport: path tracing, ray tracing and the edge/point
+        // overlays are all off.  A ray-traced mode keeps path tracing on and
+        // honors the user's own edge/point choices (denoising is required for
+        // path tracing and is enabled automatically).
+        const bool userEdges = grp->GetBool("VulkanShowEdges", false);
+        const bool userPoints = grp->GetBool("VulkanShowPoints", false);
         grp->SetInt("VulkanRenderMode", static_cast<int>(mode));
         grp->SetBool("VulkanPathTracing", !raster);
-        if (raster) {
-            grp->SetBool("VulkanShowEdges", false);
-            grp->SetBool("VulkanShowPoints", false);
-        }
+        grp->SetBool("VulkanShowEdges", raster ? false : userEdges);
+        grp->SetBool("VulkanShowPoints", raster ? false : userPoints);
         // Refresh the in-memory Vulkan settings so getShowEdges()/the status
-        // bar mirror the updated preferences (setRasterOnly has already gated
-        // the renderer, so the redundant re-push is idempotent).
+        // bar mirror the updated preferences; this seeds the canonical
+        // VulkanViewSettings (including renderMode) so pushSettings() derives
+        // the raster gate from the single source.
         if (_viewer) {
             _viewer->applyVulkanSettings();
         }
@@ -568,15 +577,19 @@ void View3DInventor::setEnvMap(int index)
         return;
     }
     _envMap = index;
-    if (_vulkanAdapter) {
-        _vulkanAdapter->setEnvMap(index);
-        _vulkanAdapter->redraw();
-    }
     // Persist the choice as the VulkanEnvironmentMap preference so it survives
-    // a view reopen (see the reopen-consistency init in the constructor).
+    // a view reopen (see the reopen-consistency init in the constructor), then
+    // reload the single-source settings: applyVulkanSettings() now seeds
+    // VulkanViewSettings::envMap, and the vulkanSettingsChanged -> pushSettings
+    // chain applies it to the renderer (the adapter's setEnvMap + redraw are
+    // handled there, so the choice is applied through the same funnel as every
+    // other setting).
     if (auto grp = App::GetApplication().GetParameterGroupByPath(
             "User parameter:BaseApp/Preferences/View")) {
         grp->SetInt("VulkanEnvironmentMap", index);
+    }
+    if (_viewer) {
+        _viewer->applyVulkanSettings();
     }
 }
 
@@ -584,10 +597,9 @@ bool View3DInventor::getShowEdges() const
 {
     // The raster modes never render the edge overlay, regardless of the
     // persisted preference; report the effective state so the status-bar
-    // toggle mirrors what is actually drawn.
-    if (_renderMode == ViewRenderMode::RasterCoin
-        || _renderMode == ViewRenderMode::RasterVulkan
-        || _renderMode == ViewRenderMode::Wireframe) {
+    // toggle mirrors what is actually drawn.  The gate comes from the
+    // single-source settings struct, not a second copy of the mode.
+    if (_viewer && _viewer->getVulkanViewSettings().rasterOnly()) {
         return false;
     }
     return _viewer && _viewer->getVulkanViewSettings().showEdges;

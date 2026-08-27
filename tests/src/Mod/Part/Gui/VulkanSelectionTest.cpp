@@ -230,6 +230,49 @@ Gui::SoFCSelectionRoot* makeEdgeScene(PartGui::SoBrepEdgeSet*& edgeOut)
     return root;
 }
 
+// Two independent line segments (edge 0 and edge 1) so a highlight and a
+// selection on DIFFERENT edges can coexist.
+Gui::SoFCSelectionRoot* makeTwoEdgeScene(PartGui::SoBrepEdgeSet*& edgeOut)
+{
+    auto* root = new Gui::SoFCSelectionRoot;
+    root->ref();
+
+    auto* coords = new SoCoordinate3;
+    coords->point.set1Value(0, SbVec3f(0.0F, 0.0F, 0.0F));
+    coords->point.set1Value(1, SbVec3f(1.0F, 0.0F, 0.0F));
+    coords->point.set1Value(2, SbVec3f(0.0F, 1.0F, 0.0F));
+    coords->point.set1Value(3, SbVec3f(1.0F, 1.0F, 0.0F));
+
+    auto* edge = new PartGui::SoBrepEdgeSet;
+    edgeOut = edge;
+    // Two sections: {0,1,-1} and {2,3,-1} => line index 0 and 1.
+    static const int32_t kCoordIndex[] = {0, 1, -1, 2, 3, -1};
+    edge->coordIndex.setValues(0, 6, kCoordIndex);
+
+    root->addChild(coords);
+    root->addChild(edge);
+    return root;
+}
+
+void selectEdge(Gui::SoFCSelectionRoot* root, PartGui::SoBrepEdgeSet* edge, int lineIndex)
+{
+    Gui::SoSelectionElementAction action(Gui::SoSelectionElementAction::Append);
+    action.setColor(SbColor(kSelectionR, kSelectionG, kSelectionB));
+
+    auto* detail = new SoLineDetail;
+    detail->setLineIndex(lineIndex);
+    action.setElement(detail);
+
+    auto* path = new SoTempPath(2);
+    path->ref();
+    path->append(root);
+    path->append(edge);
+    action.apply(path);
+    path->unref();
+
+    delete detail;
+}
+
 Gui::SoFCSelectionRoot* makePointScene(PartGui::SoBrepPointSet*& pointOut)
 {
     auto* root = new Gui::SoFCSelectionRoot;
@@ -307,6 +350,62 @@ TEST_F(VulkanPartSelectionTest, highlightedEdgeRecordsOverlayCommandInIR)
 
     root->unref();
     EXPECT_TRUE(found) << "no IR draw command carried the edge-highlight emissive color";
+}
+
+// Regression for "hover-highlight another edge while one edge is selected".
+// GL renders both the hovered-edge highlight and the selected-edge selection.
+// This checks the IR draw list carries BOTH the selection color and the
+// highlight color when they target DIFFERENT edges of the same edge set.
+TEST_F(VulkanPartSelectionTest, bothSelectedAndHoveredEdgesRecordBothColorsInIR)
+{
+    PartGui::SoBrepEdgeSet* edge = nullptr;
+    Gui::SoFCSelectionRoot* root = makeTwoEdgeScene(edge);
+    ASSERT_NE(edge, nullptr);
+
+    // Select edge 0 (committed) and hover edge 1 (preselect) at the same time.
+    selectEdge(root, edge, 0);
+
+    // Hover edge 1 (different from the selected edge 0): mirror preselect.
+    {
+        Gui::SoHighlightElementAction action;
+        action.setHighlighted(true);
+        action.setColor(SbColor(kHighlightR, kHighlightG, kHighlightB));
+        auto* detail = new SoLineDetail;
+        detail->setLineIndex(1);
+        action.setElement(detail);
+        auto* path = new SoTempPath(2);
+        path->ref();
+        path->append(root);
+        path->append(edge);
+        action.apply(path);
+        path->unref();
+        delete detail;
+    }
+
+    SbViewportRegion vp(512, 512);
+    SoIRRenderAction action(vp);
+    action.apply(root);
+
+    const SoDrawList& list = action.getDrawList();
+    ASSERT_GT(list.getNumCommands(), 0);
+
+    bool selFound = false;
+    bool hlFound = false;
+    for (int i = 0; i < list.getNumCommands(); ++i) {
+        const SoRenderCommand& cmd = list.getCommand(i);
+        if (hasEmissive(cmd, kSelectionR, kSelectionG, kSelectionB)
+            || hasDiffuse(cmd, kSelectionR, kSelectionG, kSelectionB)) {
+            selFound = true;
+        }
+        if (hasEmissive(cmd, kHighlightR, kHighlightG, kHighlightB)
+            || hasDiffuse(cmd, kHighlightR, kHighlightG, kHighlightB)) {
+            hlFound = true;
+        }
+    }
+
+    root->unref();
+    EXPECT_TRUE(selFound) << "no IR command carried the selected-edge color";
+    EXPECT_TRUE(hlFound) << "no IR command carried the hovered-edge highlight color";
 }
 
 TEST_F(VulkanPartSelectionTest, highlightedPointRecordsOverlayCommandInIR)

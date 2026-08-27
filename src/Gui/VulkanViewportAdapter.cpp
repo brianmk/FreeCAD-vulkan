@@ -80,17 +80,11 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
     stack->setCurrentWidget(_vulkanViewer);
     // The Vulkan widget is display-only; relay its viewport input events
     // to the (hidden) OpenGL viewer so navigation and picking still work.
-    // Pass the ratio the GL side itself uses when converting event
-    // positions (QuarterWidget caches devicePixelRatio(); that cached value
-    // is what the relay must match, not devicePixelRatioF()), so the widget
-    // does not have to guess it from the target's type at event time.
-    qreal glDpr = _viewer->getWidget()->devicePixelRatioF();
-    if (const auto * quarter = qobject_cast<
-            const SIM::Coin3D::Quarter::QuarterWidget *>(
-                _viewer->getWidget())) {
-        glDpr = quarter->devicePixelRatio();
-    }
-    _vulkanViewer->setEventForwardTarget(_viewer->getWidget(), glDpr);
+    // The container<->viewer coordinate scale is derived live from both
+    // widgets' devicePixelRatioF() by InputDevice::crossWidgetPositionScale()
+    // at event time (single source of truth, portable across 1.25/1.5/2.0
+    // display scales); the ratio argument is unused, so pass the default.
+    _vulkanViewer->setEventForwardTarget(_viewer->getWidget(), -1.0);
     // Navigation and picking run on the hidden OpenGL viewer, so cursor
     // shape changes land on its widget.  Mirror them onto the visible
     // Vulkan container (see eventFilter) and pick up the initial state.
@@ -152,21 +146,6 @@ void VulkanViewportAdapter::syncViewer()
 #endif
 }
 
-void VulkanViewportAdapter::setRasterOnly(bool rasterOnly)
-{
-#ifdef FREECAD_USE_VULKAN
-    if (_rasterOnly == rasterOnly) {
-        return;
-    }
-    _rasterOnly = rasterOnly;
-    // Re-push so the gated render state takes effect immediately; the mode
-    // switch in View3DInventor::setRenderMode requests a new frame afterwards.
-    pushSettings();
-#else
-    Q_UNUSED(rasterOnly);
-#endif
-}
-
 bool VulkanViewportAdapter::isRayTracingAvailable() const
 {
 #ifdef FREECAD_USE_VULKAN
@@ -223,20 +202,19 @@ void VulkanViewportAdapter::pushSettings()
         return;
     }
     const VulkanViewSettings& settings = _viewer->getVulkanViewSettings();
-    // In a raster render mode the viewport must never enable path tracing, ray
-    // tracing, the denoiser or the edge/point overlays, even when the
-    // persisted preferences asked for them.  The render mode (owned by
-    // View3DInventor) is the authority; the preferences only drive the scalar
-    // tuning and the mode restored on reopen.  This is the gate that was
-    // missing, which let edges/path-tracing leak back into Interactive.
-    const bool raster = _rasterOnly;
+    // The raster gate is DERIVED here from the single-source settings
+    // struct (VulkanViewSettings::rasterOnly()), not passed in separately.
+    // In a raster render mode the viewport must never enable path tracing,
+    // ray tracing, the denoiser or the edge/point overlays, even when the
+    // persisted preferences asked for them -- the mode is the authority and
+    // this gate keeps edges/path-tracing from leaking back into Interactive.
+    const bool raster = settings.rasterOnly();
     if (Base::envFlagEnabled("FC_VULKAN_BACKEND_DEBUG")) {
         const bool effEdges = raster ? false : settings.showEdges;
         const bool effPoints = raster ? false : settings.showPoints;
-        const bool effDenoise = raster ? false : settings.pathTracingDenoise;
         Base::Console().message("[VK-SET] pushSettings raster=%d edges=%d points=%d "
                                 "edgeColor=(%.2f,%.2f,%.2f,%.2f) pt=%d "
-                                "bounces=%d settle=%d denoise=%d "
+                                "bounces=%d settle=%d "
                                 "(prefEdges=%d prefPoints=%d)\n",
                                 raster ? 1 : 0, effEdges ? 1 : 0,
                                 effPoints ? 1 : 0,
@@ -245,13 +223,14 @@ void VulkanViewportAdapter::pushSettings()
                                 !raster ? 1 : 0,
                                 settings.pathTracingBounces,
                                 settings.pathTracingSettleFrames,
-                                effDenoise ? 1 : 0,
                                 settings.showEdges ? 1 : 0,
                                 settings.showPoints ? 1 : 0);
     }
     _vulkanViewer->setWireframeOverlay(raster ? false : settings.showEdges);
     _vulkanViewer->setPointsOverlay(raster ? false : settings.showPoints);
     _vulkanViewer->setEdgeColor(settings.edgeColor);
+    // Cubemap environment preset (from the canonical settings struct).
+    _vulkanViewer->setEnvMap(settings.envMap);
 
     // Path tracing toggle + tuning.  Enable only in a ray-traced mode; the
     // start latch (kicking off a progressive render) is raised by the mode
@@ -261,7 +240,8 @@ void VulkanViewportAdapter::pushSettings()
     _vulkanViewer->setPathTracingBounces(settings.pathTracingBounces);
     _vulkanViewer->setPathTracingSettleFrames(settings.pathTracingSettleFrames);
     _vulkanViewer->setPathTracingMaxSamples(settings.pathTracingMaxSamples);
-    _vulkanViewer->setPathTracingDenoise(raster ? false : settings.pathTracingDenoise);
+    // Denoising is required for path tracing and is enabled automatically by
+    // the renderer; only the denoiser filter is selectable here.
     if (!settings.pathTracingDenoiser.empty()) {
         _vulkanViewer->setPathTracingDenoiser(settings.pathTracingDenoiser);
     }
@@ -460,6 +440,16 @@ void VulkanViewportAdapter::onSurfaceSizeChanged(const QSize& surfaceSize)
     SbViewportRegion vp(static_cast<short>(pw), static_cast<short>(ph));
     _viewer->getSoRenderManager()->setViewportRegion(vp);
     _viewer->getSoEventManager()->setViewportRegion(vp);
+
+    // The viewport region is in device pixels (dpr * logical), so tell the
+    // render manager the real device-pixel ratio.  This propagates to the
+    // CoSoDevicePixelRatioElement and the render backend's params
+    // (.devicePixelRatio), which the GL and Vulkan backends use to scale
+    // logical SoDrawStyle line widths / point sizes into device pixels.
+    // Without it the ratio stayed 1.0, so on a fractional-scaling display
+    // (e.g. 1.25) lines and points rendered 1/dpr too thin and, for the
+    // NaviCube overlay, its edge/axis strokes and dots drifted off the cube.
+    _viewer->getSoRenderManager()->setDevicePixelRatio(static_cast<float>(dpr));
 
     // NOTE: Do NOT write the surface aspect into the shared camera's
     // aspectRatio field.  SoOrthographicCamera::getViewVolume() (and

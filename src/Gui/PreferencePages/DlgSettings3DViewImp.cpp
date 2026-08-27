@@ -82,7 +82,6 @@ void DlgSettings3DViewImp::saveSettings()
     ui->SpinBox_VulkanBounces->onSave();
     ui->SpinBox_VulkanSettle->onSave();
     ui->SpinBox_VulkanMaxSamples->onSave();
-    ui->CheckBox_VulkanDenoise->onSave();
     ui->ComboBox_VulkanDenoiser->onSave();
     ui->VulkanEdgeColor->onSave();
 }
@@ -112,7 +111,6 @@ void DlgSettings3DViewImp::loadSettings()
     ui->SpinBox_VulkanBounces->onRestore();
     ui->SpinBox_VulkanSettle->onRestore();
     ui->SpinBox_VulkanMaxSamples->onRestore();
-    ui->CheckBox_VulkanDenoise->onRestore();
     ui->ComboBox_VulkanDenoiser->onRestore();
     ui->VulkanEdgeColor->onRestore();
 
