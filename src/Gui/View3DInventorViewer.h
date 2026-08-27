@@ -35,6 +35,7 @@
 
 #include <Inventor/SbRotation.h>
 #include <Inventor/SbTime.h>
+#include <Inventor/SbColor4f.h>
 #include <Inventor/nodes/SoEnvironment.h>
 #include <Inventor/nodes/SoEventCallback.h>
 #include <Inventor/nodes/SoRotation.h>
@@ -107,8 +108,49 @@ class SoFCUnifiedSelection;
 class Document;
 class GLGraphicsItem;
 class RubberbandOverlay;
+class SoGroundPlane;
 class SoShapeScale;
 class ViewerEventFilter;
+
+/** Vulkan view render settings -- the single source of truth for the viewport.
+ *
+ *  This is the canonical in-memory blob for every Vulkan render option: the
+ *  render mode (raster Coin / raster Vulkan / wireframe / AO / path tracing /
+ *  environment), the cubemap environment preset, and the display + path-tracing
+ *  tuning.  View3DInventorViewer loads it from the user preferences in
+ *  applyVulkanSettings() (emitting vulkanSettingsChanged), and
+ *  VulkanViewportAdapter::pushSettings() is the single applier that reads it to
+ *  drive the backends.  Consumers must read the mode / raster gate from here,
+ *  never from a second copy.
+ */
+struct VulkanViewSettings
+{
+    // Render mode: Gui::ViewRenderMode as int (0 RasterCoin, 1 RasterVulkan,
+    // 2 Wireframe, 3 AmbientOcclusion, 4 RayTracing, 5 Environment).
+    // Defaults to the Vulkan raster viewport.
+    int renderMode = 1;
+    // Cubemap environment preset index (-1 = viewport gradient/background).
+    int envMap = -1;
+
+    // True when the mode is a pure-raster mode (RasterCoin/RasterVulkan/
+    // Wireframe).  The raster gate derived here tells the backends to keep
+    // path tracing, ray tracing, the denoiser and the edge/point overlays
+    // off regardless of any persisted tuning.
+    bool rasterOnly() const { return renderMode >= 0 && renderMode <= 2; }
+
+    bool showEdges = false;
+    bool showPoints = false;
+    SbColor4f edgeColor = SbColor4f(0.05f, 0.05f, 0.05f, 1.0f);
+    bool pathTracing = false;
+    // Path-tracing tuning (see the View preferences dialog).
+    int pathTracingBounces = 4;
+    int pathTracingSettleFrames = 6;
+    int pathTracingMaxSamples = 256;
+    // Denoiser backend name ("rtx", "oidn", "fsr", "none"); empty = default.
+    // Denoising itself is required for path tracing and is enabled automatically
+    // by the renderer; only the filter is configurable.
+    std::string pathTracingDenoiser;
+};
 
 /** GUI view into a 3D scene provided by View3DInventor
  *
@@ -427,6 +469,13 @@ public:
     /** Returns the 2d coordinates on the viewport to the given 3d point. */
     SbVec2s getPointOnViewport(const SbVec3f&) const;
 
+    /** Returns the per-axis scale between viewport-region pixels and widget
+     * pixels (region size / widget size).  The hidden GL viewer's viewport
+     * region may be sized in device pixels (Vulkan mode) or logical pixels
+     * (classic GL mode); dividing region-space coordinates by this scale
+     * yields widget-space coordinates in both cases. */
+    SbVec2f viewportPixelScale() const;
+
     /** Converts Inventor coordinates into Qt coordinates.
      * The conversion takes the device pixel ratio into account.
      */
@@ -547,6 +596,7 @@ public:
 
     void setGradientBackground(Background);
     Background getGradientBackground() const;
+    void getGradientBackgroundColor(SbColor& fromColor, SbColor& toColor) const;
     void setGradientBackgroundColor(const SbColor& fromColor, const SbColor& toColor);
     void setGradientBackgroundColor(
         const SbColor& fromColor,
@@ -559,6 +609,10 @@ public:
     void setAxisCross(bool on);
     bool hasAxisCross();
 
+    void setGroundPlane(bool on);
+    bool hasGroundPlane();
+    void setGroundPlaneOpacity(float opacity);
+
     void showRotationCenter(bool show);
     void changeRotationCenterPosition(const SbVec3f& newCenter);
 
@@ -567,6 +621,17 @@ public:
     bool isEnabledNaviCube() const;
     void setNaviCubeCorner(int);
     NaviCube* getNaviCube() const;
+    //! The annotation group holding the nav cube coin node (empty when hidden).
+    SoAnnotation* getNaviCubeAnnotation() const;
+    //! The axis cross overlay container for the IR (Vulkan) render path:
+    //! a SoAxisCrossOverlay scoping the shared axis/letter graphs to the
+    //! bottom-right corner viewport in the overlay render pass.
+    SoNode* getAxisCrossOverlay();
+    //! Refresh the axis cross overlay nodes (transforms, colors, letters)
+    //! without issuing any GL rendering; called by drawAxisCross() and by
+    //! the Vulkan viewport sync so the hidden GL viewer's frame loop is not
+    //! required for the IR render path.
+    void updateAxisCrossNodes();
     void setEnabledVBO(bool on);
     bool isEnabledVBO() const;
     void setRenderCache(int);
@@ -588,8 +653,37 @@ public:
     bool getSceneBoundBox(SbBox3f& box) const;
     bool getSceneBoundBox(Base::BoundBox3d& box) const;
 
+    //! Vulkan-only display options owned by the viewer.  They mirror the
+    //! OpenGL equivalents (draw style, vertex visibility) but only the
+    //! Vulkan backend honors them.  Read them with getVulkanViewSettings();
+    //! applyVulkanSettings() reloads them from the preferences and emits
+    //! vulkanSettingsChanged().
+    const VulkanViewSettings& getVulkanViewSettings() const
+    {
+        return vulkanSettings_;
+    }
+    void applyVulkanSettings();
+
 Q_SIGNALS:
     void cameraChanged();
+    //! Emitted when navigation mutated the active camera pose (rotate/pan/
+    //! zoom) in place, i.e. without replacing the camera node.  The
+    //! display-only Vulkan viewport owns no Coin sensors and goes converged-
+    //! idle once the path tracer finishes, so it would not otherwise re-render
+    //! on a camera move; this lets the adapter request a frame so the moved
+    //! camera is shown (the backend then sees it as a reset-on-move and
+    //! restarts the accumulation).
+    void cameraMoved();
+    //! Emitted after applyVulkanSettings() reloaded the Vulkan options from
+    //! the preferences.
+    void vulkanSettingsChanged();
+    //! Emitted after the document selection/preselection context changed
+    //! (a face was selected/preselected/cleared).  The Vulkan viewport is
+    //! display-only and owns no Coin sensors, so a pure scene-graph colour
+    //! mutation is not enough to schedule a frame; this lets the adapter
+    //! request a redraw so the highlight appears even after path tracing
+    //! has converged and the continuous refine loop has gone idle.
+    void selectionChanged();
 
 protected:
     static GLenum getInternalTextureFormat();
@@ -654,6 +748,7 @@ private:
     std::list<GLGraphicsItem*> graphicsItems;
     std::unique_ptr<RubberbandOverlay> rubberbandOverlayRenderer;
     ViewProvider* editViewProvider;
+    VulkanViewSettings vulkanSettings_;
     SoFCBackgroundGradient* pcBackGround;
     SoSeparator* backgroundroot;
     SoSeparator* foregroundroot;
@@ -698,6 +793,11 @@ private:
     SoShapeScale* axisCross;
     SoGroup* axisGroup;
 
+    // ground plane grid on the world XY plane (Z=0)
+    SoSeparator* groundPlaneGroup;
+    SoGroundPlane* groundPlane;
+    float groundPlaneOpacity;
+
     SoGroup* rotationCenterGroup;
 
     // stuff needed to draw the fps counter
@@ -738,6 +838,9 @@ private:
 
 private Q_SLOTS:
     void updateFPSLabel();
+    //! Recompute the effective pick radius (resolution + zoom) and push it into
+    //! the Coin event manager so hover/preselection stays zoom-compensated.
+    void updatePickRadius();
 
     // friends
     friend class NavigationStyle;

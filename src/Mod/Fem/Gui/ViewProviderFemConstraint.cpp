@@ -264,7 +264,7 @@ void ViewProviderFemConstraint::transformExtraSymbol() const
 
 
 // OvG: Visibility automation show parts and hide meshes on activation of a constraint
-std::string ViewProviderFemConstraint::gethideMeshShowPartStr(const std::string showConstr)
+std::string ViewProviderFemConstraint::gethideMeshShowPartStr(const std::string& showConstr)
 {
     return "for amesh in App.activeDocument().Objects:\n\
     if \""

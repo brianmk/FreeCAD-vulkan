@@ -121,3 +121,16 @@ TEST_F(PropertyFileIncludedTest, acceptsPlainBasename)
     std::ranges::replace(transientDir, '\\', '/');
     EXPECT_EQ(std::string(_property->getValue()), transientDir + "/PartShape.brp");
 }
+
+TEST(PropertyFileTest, SetAndGetFilter)
+{
+    App::PropertyFile prop;
+    EXPECT_EQ(prop.getFilter(), "");
+
+    prop.setFilter("Images (*.png *.jpg)");
+    EXPECT_EQ(prop.getFilter(), "Images (*.png *.jpg)");
+
+    // Re-setting overwrites the previous value.
+    prop.setFilter(std::string("Other (*.dat)"));
+    EXPECT_EQ(prop.getFilter(), "Other (*.dat)");
+}

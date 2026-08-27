@@ -68,7 +68,7 @@ public:
     // changes all links of obj to a origin to point to this groups origin
     void relinkToOrigin(App::DocumentObject* obj);
 
-    std::vector<DocumentObject*> addObjects(std::vector<DocumentObject*> obj) override;
+    std::vector<DocumentObject*> addObjects(const std::vector<DocumentObject*>& obj) override;
     bool hasObject(const DocumentObject* obj, bool recursive = false) const override;
 
     bool extensionGetSubObject(DocumentObject*& ret,

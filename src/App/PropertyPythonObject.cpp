@@ -483,31 +483,42 @@ void PropertyPythonObject::Restore(Base::XMLReader& reader)
             if (reader.hasAttribute("module") && reader.hasAttribute("class")) {
                 std::string moduleName = reader.getAttribute<const char*>("module");
                 if (!isAllowedModule(moduleName)) {
-                    Base::Console().warning(
-                        "PropertyPythonObject::Restore: blocked import of module '%s' during"
-                        " document restore. Only modules from FreeCAD or installed addons"
-                        " are permitted.\n",
+                    // The module is not from FreeCAD or an installed addon, or
+                    // is not available in this installation.  We must NOT import
+                    // it (importing arbitrary module code is the vulnerability
+                    // this guard exists to prevent) and we must NOT throw: a
+                    // Python exception here prints a noisy traceback for what is
+                    // a recoverable, expected case (e.g. opening a doc that
+                    // references a workbench that is not installed).  Log once
+                    // and continue with the property empty.
+                    Base::Console().message(
+                        "PropertyPythonObject::Restore: module '%s' is not "
+                        "available or not permitted; the object property is "
+                        "left empty.\n",
                         moduleName.c_str());
-                    throw Py::ImportError("module not permitted: " + moduleName);
-                }
-                Py::Module mod(PyImport_ImportModule(moduleName.c_str()), true);
-                if (mod.isNull()) {
-                    throw Py::Exception();
-                }
-                std::string className = reader.getAttribute<const char*>("class");
-                PyObject* cls = mod.getAttr(className).ptr();
-                if (!cls) {
-                    std::stringstream s;
-                    s << "Module " << moduleName << " has no class " << className;
-                    throw Py::AttributeError(s.str());
-                }
-                if (PyType_Check(cls)) {
-                    this->object = PyType_GenericAlloc((PyTypeObject*)cls, 0);
+                    this->object = Py::None();
+                    load_failed = true;
                 }
                 else {
-                    throw Py::TypeError("neither class nor type object");
+                    Py::Module mod(PyImport_ImportModule(moduleName.c_str()), true);
+                    if (mod.isNull()) {
+                        throw Py::Exception();
+                    }
+                    std::string className = reader.getAttribute<const char*>("class");
+                    PyObject* cls = mod.getAttr(className).ptr();
+                    if (!cls) {
+                        std::stringstream s;
+                        s << "Module " << moduleName << " has no class " << className;
+                        throw Py::AttributeError(s.str());
+                    }
+                    if (PyType_Check(cls)) {
+                        this->object = PyType_GenericAlloc((PyTypeObject*)cls, 0);
+                    }
+                    else {
+                        throw Py::TypeError("neither class nor type object");
+                    }
+                    load_json = true;
                 }
-                load_json = true;
             }
             else if (reader.hasAttribute("json")) {
                 load_json = true;

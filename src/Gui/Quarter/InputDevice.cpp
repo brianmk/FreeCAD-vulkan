@@ -36,11 +36,15 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 
 #include <QInputEvent>
 #include <QPointF>
+#include <QWidget>
 #include <Inventor/events/SoEvents.h>
+
+#include <Base/VulkanBreadcrumbs.h>
 
 #include "devices/InputDevice.h"
 
@@ -71,12 +75,31 @@ InputDevice::toDevicePixelPosition(
   int ypos = static_cast<int>(
       std::lround((logicalWindowSize[1] - logicalPosition.y() - 1.0) * devicePixelRatio));
 
+  // Pure conversion helper; no logging here.  The (constant) dpr/window ->
+  // device mapping is traced once by the eventFilter caller in EventFilter.cpp.
+
   constexpr int ShortMin = std::numeric_limits<short>::min();
   constexpr int ShortMax = std::numeric_limits<short>::max();
   xpos = std::clamp(xpos, ShortMin, ShortMax);
   ypos = std::clamp(ypos, ShortMin, ShortMax);
 
   return SbVec2s(static_cast<short>(xpos), static_cast<short>(ypos));
+}
+
+qreal
+InputDevice::crossWidgetPositionScale(const QWidget * src, const QWidget * dst)
+{
+  // Live device pixel ratios only: both widgets derive from the same system
+  // scale (Windows 100-200%, macOS Retina 2.0, Linux/X11 fractional 1.25, ...),
+  // so src/dst is 1.0 whenever both share a window/screen.  Never use a cached
+  // or pre-rounded ratio here -- on a fractional scale that would rescaled the
+  // forwarded position by 1/dpr and drift picking off-center.
+  qreal srcDpr = src ? src->devicePixelRatioF() : 1.0;
+  qreal dstDpr = dst ? dst->devicePixelRatioF() : 1.0;
+  if (qFuzzyIsNull(dstDpr)) {
+    dstDpr = 1.0;
+  }
+  return srcDpr / dstDpr;
 }
 
 /*!

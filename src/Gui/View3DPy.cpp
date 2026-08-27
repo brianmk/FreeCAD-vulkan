@@ -130,6 +130,47 @@ void View3DInventorPy::init_type()
     add_varargs_method("dumpNode", &View3DInventorPy::dumpNode, "dumpNode(node)");
     add_varargs_method("saveImage", &View3DInventorPy::saveImage, "saveImage()");
     add_varargs_method("saveVectorGraphic", &View3DInventorPy::saveVectorGraphic, "saveVectorGraphic()");
+    add_varargs_method(
+        "setPathTracingEnabled",
+        &View3DInventorPy::setPathTracingEnabled,
+        "setPathTracingEnabled(enabled): enable/disable path tracing on the "
+        "Vulkan viewport (no-op without a Vulkan ray-tracing viewer). "
+        "Enabling starts a progressive multi-bounce render."
+    );
+    add_noargs_method(
+        "isPathTracingEnabled",
+        &View3DInventorPy::isPathTracingEnabled,
+        "isPathTracingEnabled() -> bool: whether path tracing is enabled"
+    );
+    add_noargs_method(
+        "startPathTracing",
+        &View3DInventorPy::startPathTracing,
+        "startPathTracing(): start flag for a fresh progressive path-traced "
+        "render (one jittered sample per frame with denoising).  Camera "
+        "moves or scene changes drop back to a single-sample preview."
+    );
+    add_noargs_method(
+        "isPathTracingActive",
+        &View3DInventorPy::isPathTracingActive,
+        "isPathTracingActive() -> bool: whether a progressive accumulation "
+        "is running"
+    );
+    add_noargs_method(
+        "getVulkanFrameCount",
+        &View3DInventorPy::getVulkanFrameCount,
+        "getVulkanFrameCount() -> int: ordinal of the Vulkan viewport's last "
+        "presented frame (0 when no Vulkan viewport).  The same ordinal "
+        "appears in the [RTDBG] blas/ptState lines and in the frame dump "
+        "file names, so probe phase markers can correlate on one key."
+    );
+    add_noargs_method(
+        "requestVulkanRender",
+        &View3DInventorPy::requestVulkanRender,
+        "requestVulkanRender(): force a single Vulkan frame even when the "
+        "viewport is converged-idle.  Scripted probes call this after a "
+        "scene/camera edit so the harness's doc.recompute()/updateGui() "
+        "(which bypasses Application::onUpdate) still produces a render."
+    );
     add_noargs_method("getCamera", &View3DInventorPy::getCamera, "getCamera()");
     add_noargs_method("getCameraNode", &View3DInventorPy::getCameraNode, "getCameraNode()");
     add_noargs_method(
@@ -280,6 +321,16 @@ void View3DInventorPy::init_type()
         "hasAxisCross",
         &View3DInventorPy::hasAxisCross,
         "check if the big axis-cross is on or off()"
+    );
+    add_varargs_method(
+        "setGroundPlane",
+        &View3DInventorPy::setGroundPlane,
+        "switch the ground plane grid on and off"
+    );
+    add_noargs_method(
+        "hasGroundPlane",
+        &View3DInventorPy::hasGroundPlane,
+        "check if the ground plane grid is on or off"
     );
     add_varargs_method(
         "addDraggerCallback",
@@ -1334,6 +1385,44 @@ Py::Object View3DInventorPy::dump(const Py::Tuple& args)
     catch (...) {
         throw Py::RuntimeError("Unknown C++ exception");
     }
+}
+
+Py::Object View3DInventorPy::setPathTracingEnabled(const Py::Tuple& args)
+{
+    PyObject* enabled = Py_False;
+    if (!PyArg_ParseTuple(args.ptr(), "|O!", &PyBool_Type, &enabled)) {
+        throw Py::Exception();
+    }
+    getView3DInventorPtr()->setPathTracingEnabled(Base::asBoolean(enabled));
+    return Py::None();
+}
+
+Py::Object View3DInventorPy::isPathTracingEnabled()
+{
+    return Py::Boolean(getView3DInventorPtr()->isPathTracingEnabled());
+}
+
+Py::Object View3DInventorPy::startPathTracing()
+{
+    getView3DInventorPtr()->setPathTracingStart(true);
+    return Py::None();
+}
+
+Py::Object View3DInventorPy::isPathTracingActive()
+{
+    return Py::Boolean(getView3DInventorPtr()->isPathTracingActive());
+}
+
+Py::Object View3DInventorPy::getVulkanFrameCount()
+{
+    return Py::Long(static_cast<unsigned long>(
+        getView3DInventorPtr()->getVulkanFrameCount()));
+}
+
+Py::Object View3DInventorPy::requestVulkanRender()
+{
+    getView3DInventorPtr()->requestVulkanRender();
+    return Py::None();
 }
 
 Py::Object View3DInventorPy::dumpNode(const Py::Tuple& args)
@@ -2435,6 +2524,22 @@ Py::Object View3DInventorPy::setAxisCross(const Py::Tuple& args)
 Py::Object View3DInventorPy::hasAxisCross()
 {
     SbBool ok = getView3DInventorPtr()->getViewer()->hasAxisCross();
+    return Py::Boolean(ok ? true : false);
+}
+
+Py::Object View3DInventorPy::setGroundPlane(const Py::Tuple& args)
+{
+    int ok;
+    if (!PyArg_ParseTuple(args.ptr(), "i", &ok)) {
+        throw Py::Exception();
+    }
+    getView3DInventorPtr()->getViewer()->setGroundPlane(ok != 0);
+    return Py::None();
+}
+
+Py::Object View3DInventorPy::hasGroundPlane()
+{
+    SbBool ok = getView3DInventorPtr()->getViewer()->hasGroundPlane();
     return Py::Boolean(ok ? true : false);
 }
 

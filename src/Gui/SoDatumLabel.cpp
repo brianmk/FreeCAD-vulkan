@@ -33,9 +33,13 @@
 #include <Inventor/SbVec2f.h>
 #include <Inventor/SoPrimitiveVertex.h>
 #include <Inventor/actions/SoGLRenderAction.h>
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+#include <Inventor/actions/SoIRRenderAction.h>
+#endif
 #include <Inventor/elements/SoFocalDistanceElement.h>
 #include <Inventor/elements/SoModelMatrixElement.h>
 #include <Inventor/elements/SoLazyElement.h>
+#include <Inventor/elements/SoShapeStyleElement.h>
 #include <Inventor/elements/SoTextureQualityElement.h>
 #include <Inventor/elements/SoViewportRegionElement.h>
 #include <Inventor/elements/SoViewVolumeElement.h>
@@ -1698,6 +1702,57 @@ void SoDatumLabel::GLRender(SoGLRenderAction* action)
 
     state->pop();
 }
+
+// Retained/IR (Vulkan) equivalent of GLRender(): records the internal label
+// scene (lines, arrow triangles and the texture-mapped text quad) into the
+// SoIRRenderAction draw list.  The inherited SoShape::IRRender() would only
+// record the generatePrimitives() geometry, without the text.
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+void SoDatumLabel::IRRender(SoIRRenderAction* action)
+{
+    if (!action) {
+        return;
+    }
+
+    SoState* state = action->getState();
+    if (!state) {
+        return;
+    }
+
+    // Mirror the shape-style gates of SoShape::IRRender() (which this
+    // override replaces): invisible shapes record nothing, and the
+    // bounding-box draw style records only the label's bounding box.
+    const SoShapeStyleElement* shapestyle = SoShapeStyleElement::get(state);
+    const unsigned int shapestyleflags = shapestyle->getFlags();
+    if (shapestyleflags & SoShapeStyleElement::INVISIBLE) {
+        return;
+    }
+    if (shapestyleflags & SoShapeStyleElement::BBOXCMPLX) {
+        inherited::IRRender(action);
+        return;
+    }
+
+    state->push();
+    // Override inherited cull-face state, like GLRender(), so a flipped
+    // parent cannot cull the whole label before its two-sided geometry is
+    // recorded.
+    SoLazyElement::setBackfaceCulling(state, FALSE);
+
+    const bool hasText = prepareRenderScene(state);
+
+    if (hasText) {
+        // Avoid mipmaps for crisper annotation text while retaining linear filtering.
+        SoTextureQualityElement::set(state, this, 0.49F);
+        SoLazyElement::setTransparencyType(state, static_cast<int32_t>(SoGLRenderAction::BLEND));
+    }
+
+    if (m_Root) {
+        m_Root->IRRender(action);
+    }
+
+    state->pop();
+}
+#endif
 
 bool SoDatumLabel::hasDatumText() const
 {

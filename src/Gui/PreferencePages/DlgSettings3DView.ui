@@ -589,6 +589,311 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
     </widget>
    </item>
    <item>
+    <widget class="QGroupBox" name="groupBoxVulkan">
+     <property name="title">
+      <string>Vulkan rendering (experimental)</string>
+     </property>
+     <property name="toolTip">
+      <string>These options affect only the Vulkan viewport renderer and are ignored by the standard OpenGL renderer.  Requires a FreeCAD build with FREECAD_USE_VULKAN and the UseVulkanRenderer preference enabled.</string>
+     </property>
+     <layout class="QVBoxLayout" name="verticalLayoutVulkan">
+      <item>
+       <widget class="Gui::PrefCheckBox" name="CheckBox_UseVulkanRenderer">
+        <property name="text">
+         <string>Render 3D views with Vulkan</string>
+        </property>
+        <property name="toolTip">
+         <string>Use the experimental Coin Vulkan render backend for new 3D views instead of the standard OpenGL renderer.  Requires a FreeCAD build with FREECAD_USE_VULKAN and a Vulkan-capable GPU.  Existing 3D views are not affected until the document is reopened.</string>
+        </property>
+        <property name="prefEntry" stdset="0">
+         <cstring>UseVulkanRenderer</cstring>
+        </property>
+        <property name="prefPath" stdset="0">
+         <cstring>View</cstring>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="Gui::PrefCheckBox" name="CheckBox_UseVulkanRayTracing">
+        <property name="text">
+         <string>Enable hardware ray tracing in the Vulkan renderer</string>
+        </property>
+        <property name="toolTip">
+         <string>Build ray-tracing acceleration structures in the Vulkan renderer so the path tracer and the ray-tracing display pass can run.  Requires the Vulkan renderer (see above) and a ray-tracing capable GPU.</string>
+        </property>
+        <property name="prefEntry" stdset="0">
+         <cstring>UseVulkanRayTracing</cstring>
+        </property>
+        <property name="prefPath" stdset="0">
+         <cstring>View</cstring>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="Gui::PrefCheckBox" name="CheckBox_VulkanShowEdges">
+        <property name="text">
+         <string>Show edges (wireframe overlay)</string>
+        </property>
+        <property name="prefEntry" stdset="0">
+         <cstring>VulkanShowEdges</cstring>
+        </property>
+        <property name="prefPath" stdset="0">
+         <cstring>View</cstring>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="Gui::PrefCheckBox" name="CheckBox_VulkanShowPoints">
+        <property name="text">
+         <string>Show vertices (point overlay)</string>
+        </property>
+        <property name="prefEntry" stdset="0">
+         <cstring>VulkanShowPoints</cstring>
+        </property>
+        <property name="prefPath" stdset="0">
+         <cstring>View</cstring>
+        </property>
+       </widget>
+      </item>
+       <item>
+        <widget class="Gui::PrefCheckBox" name="CheckBox_VulkanPathTracing">
+         <property name="text">
+          <string>Path tracing (global illumination)</string>
+         </property>
+         <property name="toolTip">
+          <string>Render with the Vulkan ray-tracing path tracer: multi-bounce global illumination with shadow rays, progressive accumulation and edge-stopping denoising.  Enabling starts a progressive render; camera moves drop back to a live preview and the accumulation auto-restarts once the camera settles.  Requires UseVulkanRenderer and UseVulkanRayTracing and a ray-tracing capable GPU.  Also available from Python as startPathTracing() on the view.</string>
+         </property>
+         <property name="prefEntry" stdset="0">
+          <cstring>VulkanPathTracing</cstring>
+         </property>
+         <property name="prefPath" stdset="0">
+          <cstring>View</cstring>
+         </property>
+        </widget>
+        </item>
+        <item>
+         <widget class="QGroupBox" name="groupBoxPathTracingSettings">
+          <property name="title">
+           <string>Path tracing settings</string>
+          </property>
+          <layout class="QVBoxLayout" name="verticalLayoutPathTracingSettings">
+           <item>
+            <layout class="QHBoxLayout" name="horizontalLayoutVulkanBounces">
+          <item>
+           <widget class="QLabel" name="labelVulkanBounces">
+           <property name="text">
+            <string>Path tracing bounces</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="Gui::PrefSpinBox" name="SpinBox_VulkanBounces">
+           <property name="toolTip">
+            <string>Maximum number of path-tracing bounces (1-16).  Higher values add more indirect-light transport (colored light bleeding between surfaces) at the cost of noisier early frames and slower previews.</string>
+           </property>
+           <property name="minimum">
+            <number>1</number>
+           </property>
+           <property name="maximum">
+            <number>16</number>
+           </property>
+           <property name="value">
+            <number>4</number>
+           </property>
+           <property name="prefEntry" stdset="0">
+            <cstring>VulkanPathTracingBounces</cstring>
+           </property>
+           <property name="prefPath" stdset="0">
+            <cstring>View</cstring>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="horizontalLayoutVulkanSettle">
+         <item>
+          <widget class="QLabel" name="labelVulkanSettle">
+           <property name="text">
+            <string>Refine after camera idle (frames)</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="Gui::PrefSpinBox" name="SpinBox_VulkanSettle">
+           <property name="toolTip">
+            <string>After a camera or scene change the path tracer drops to a fast single-sample live preview.  Once the camera stays static for this many frames (1-120) a fresh progressive accumulation restarts automatically and refines the image to a converged result.</string>
+           </property>
+           <property name="minimum">
+            <number>1</number>
+           </property>
+           <property name="maximum">
+            <number>120</number>
+           </property>
+           <property name="value">
+            <number>6</number>
+           </property>
+           <property name="prefEntry" stdset="0">
+            <cstring>VulkanPathTracingSettle</cstring>
+           </property>
+           <property name="prefPath" stdset="0">
+            <cstring>View</cstring>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="horizontalLayoutVulkanMaxSamples">
+         <item>
+          <widget class="QLabel" name="labelVulkanMaxSamples">
+           <property name="text">
+            <string>Max samples</string>
+           </property>
+           <property name="toolTip">
+            <string>Accumulated samples at which the progressive render auto-stops (1-4096, default 256).  Higher values converge further before stopping, at the cost of longer renders.</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="Gui::PrefSpinBox" name="SpinBox_VulkanMaxSamples">
+           <property name="toolTip">
+            <string>Accumulated samples at which the progressive render auto-stops (1-4096, default 256).  Higher values converge further before stopping, at the cost of longer renders.</string>
+           </property>
+           <property name="minimum">
+            <number>1</number>
+           </property>
+           <property name="maximum">
+            <number>4096</number>
+           </property>
+           <property name="value">
+            <number>256</number>
+           </property>
+           <property name="prefEntry" stdset="0">
+            <cstring>VulkanPathTracingMaxSamples</cstring>
+           </property>
+           <property name="prefPath" stdset="0">
+            <cstring>View</cstring>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+           <item>
+            <layout class="QHBoxLayout" name="horizontalLayoutVulkanDenoiser">
+          <item>
+           <widget class="QLabel" name="labelVulkanDenoiser">
+           <property name="text">
+            <string>Denoiser</string>
+           </property>
+           <property name="toolTip">
+            <string>Which machine-learning denoiser cleans the path-traced frames.  RTX (OptiX) runs on the GPU and is the fastest; OIDN runs on the CPU; FSR is only available in a build with the AMD FFX SDK.  None disables denoising and shows the raw accumulated radiance.</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="Gui::PrefComboBox" name="ComboBox_VulkanDenoiser">
+           <property name="prefEntry" stdset="0">
+            <cstring>VulkanPathTracingDenoiser</cstring>
+           </property>
+           <property name="prefPath" stdset="0">
+            <cstring>View</cstring>
+           </property>
+           <item>
+            <property name="text">
+             <string>RTX (OptiX, GPU)</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>OIDN (CPU)</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>FSR (AMD FFX)</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>None</string>
+            </property>
+           </item>
+          </widget>
+         </item>
+         </layout>
+        </item>
+           </layout>
+          </widget>
+         </item>
+        <item>
+         <layout class="QHBoxLayout" name="horizontalLayoutPreselMsg">
+        <item>
+         <widget class="QLabel" name="labelPreselMsg">
+          <property name="text">
+           <string>Preselection message rate</string>
+          </property>
+          <property name="toolTip">
+           <string>How many times per second the status bar updates the coordinates of a preselected object while the cursor moves over the model.  Higher values feel more responsive but rebuild the position string more often.  Set to 0 to disable the live coordinate readout (valuable on very large models).</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="Gui::PrefSpinBox" name="SpinBox_PreselMsg">
+          <property name="prefEntry" stdset="0">
+           <cstring>PreselectionMessageRate</cstring>
+          </property>
+          <property name="prefPath" stdset="0">
+           <cstring>View</cstring>
+          </property>
+          <property name="minimum">
+           <number>0</number>
+          </property>
+          <property name="maximum">
+           <number>120</number>
+          </property>
+          <property name="value">
+           <number>10</number>
+          </property>
+          <property name="suffix">
+           <string> Hz</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item>
+        <layout class="QHBoxLayout" name="horizontalLayoutVulkanEdge">
+        <item>
+         <widget class="QLabel" name="labelVulkanEdgeColor">
+          <property name="text">
+           <string>Edge color</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="Gui::PrefColorButton" name="VulkanEdgeColor">
+          <property name="color">
+           <color>
+            <red>5</red>
+            <green>5</green>
+            <blue>5</blue>
+           </color>
+          </property>
+          <property name="prefEntry" stdset="0">
+           <cstring>VulkanEdgeColor</cstring>
+          </property>
+          <property name="prefPath" stdset="0">
+           <cstring>View</cstring>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
     <widget class="QGroupBox" name="groupBoxCamera">
      <property name="title">
       <string>Camera Type</string>

@@ -112,8 +112,8 @@ public:
 
     bool extensionGetSubObjects(std::vector<std::string>& ret, int reason) const override;
 
-    std::vector<DocumentObject*> addObjects(std::vector<DocumentObject*> obj) override;
-    std::vector<DocumentObject*> removeObjects(std::vector<DocumentObject*> obj) override;
+    std::vector<DocumentObject*> addObjects(const std::vector<DocumentObject*>& obj) override;
+    std::vector<DocumentObject*> removeObjects(const std::vector<DocumentObject*>& obj) override;
 
     /// Collects all links that are relevant for the coordinate system, meaning all recursive links
     /// to obj and from obj excluding expressions and stopping the recursion at other

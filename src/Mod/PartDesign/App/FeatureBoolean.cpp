@@ -89,7 +89,7 @@ std::vector<App::DocumentObject*> Boolean::addObject(App::DocumentObject* object
     return addObjects({object});
 }
 
-std::vector<App::DocumentObject*> Boolean::addObjects(std::vector<App::DocumentObject*> objects)
+std::vector<App::DocumentObject*> Boolean::addObjects(const std::vector<App::DocumentObject*>& objects)
 {
     auto tools = Group.getValues();
     std::vector<App::DocumentObject*> added;
@@ -108,7 +108,7 @@ std::vector<App::DocumentObject*> Boolean::addObjects(std::vector<App::DocumentO
     return added;
 }
 
-std::vector<App::DocumentObject*> Boolean::setObjects(std::vector<App::DocumentObject*> objects)
+std::vector<App::DocumentObject*> Boolean::setObjects(const std::vector<App::DocumentObject*>& objects)
 {
     std::vector<App::DocumentObject*> tools;
     std::vector<App::DocumentObject*> added;
@@ -132,7 +132,7 @@ std::vector<App::DocumentObject*> Boolean::removeObject(App::DocumentObject* obj
     return removeObjects({object});
 }
 
-std::vector<App::DocumentObject*> Boolean::removeObjects(std::vector<App::DocumentObject*> objects)
+std::vector<App::DocumentObject*> Boolean::removeObjects(const std::vector<App::DocumentObject*>& objects)
 {
     auto tools = Group.getValues();
     std::vector<App::DocumentObject*> removed;

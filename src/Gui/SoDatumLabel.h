@@ -43,6 +43,7 @@ class SoBaseColor;
 class SoDepthBuffer;
 class SoDrawStyle;
 class SoFaceSet;
+class SoIRRenderAction;
 class SoLineSet;
 class SoSeparator;
 class SoLightModel;
@@ -110,6 +111,9 @@ public:
 protected:
     ~SoDatumLabel() override;
     void GLRender(SoGLRenderAction* action) override;
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    void IRRender(SoIRRenderAction* action) override;
+#endif
     void computeBBox(SoAction*, SbBox3f& box, SbVec3f& center) override;
     void generatePrimitives(SoAction* action) override;
     void notify(SoNotList* l) override;

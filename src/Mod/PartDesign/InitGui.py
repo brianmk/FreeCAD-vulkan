@@ -61,11 +61,13 @@ class PartDesignWorkbench(Workbench):
 
         from PartDesign.InvoluteGearFeature import CommandInvoluteGear
 
-        Gui.addCommand("PartDesign_InvoluteGear", CommandInvoluteGear())
+        if not Gui.listCommands().count("PartDesign_InvoluteGear"):
+            Gui.addCommand("PartDesign_InvoluteGear", CommandInvoluteGear())
 
         from PartDesign.SprocketFeature import CommandSprocket
 
-        FreeCADGui.addCommand("PartDesign_Sprocket", CommandSprocket())
+        if not Gui.listCommands().count("PartDesign_Sprocket"):
+            FreeCADGui.addCommand("PartDesign_Sprocket", CommandSprocket())
 
     def GetClassName(self):
         return "PartDesignGui::Workbench"

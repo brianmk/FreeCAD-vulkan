@@ -59,10 +59,10 @@ public:
     void updatePreviewShape() override;
     short mustExecute() const override;
     std::vector<App::DocumentObject*> addObject(App::DocumentObject* object) override;
-    std::vector<App::DocumentObject*> addObjects(std::vector<App::DocumentObject*> objects) override;
-    std::vector<App::DocumentObject*> setObjects(std::vector<App::DocumentObject*> objects) override;
+    std::vector<App::DocumentObject*> addObjects(const std::vector<App::DocumentObject*>& objects) override;
+    std::vector<App::DocumentObject*> setObjects(const std::vector<App::DocumentObject*>& objects) override;
     std::vector<App::DocumentObject*> removeObject(App::DocumentObject* object) override;
-    std::vector<App::DocumentObject*> removeObjects(std::vector<App::DocumentObject*> objects) override;
+    std::vector<App::DocumentObject*> removeObjects(const std::vector<App::DocumentObject*>& objects) override;
     bool hasObject(const App::DocumentObject* object, bool recursive = false) const override;
     /// returns the type name of the view provider
     const char* getViewProviderName() const override

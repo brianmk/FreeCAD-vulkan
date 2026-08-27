@@ -23,6 +23,7 @@
 
 #include <FCConfig.h>
 
+#include <cmath>
 #include <numbers>
 
 #include <Base/Console.h>
@@ -165,7 +166,7 @@ void SIM::Coin3D::Quarter::SoQTQuarterAdaptor::init()
     m_inseekmode = false;
     m_storedcamera = nullptr;
     m_viewingflag = false;
-    pickRadius = 5.0;
+    pickRadius = 8.0;
 
     m_seeksensor = new SoTimerSensor(SoQTQuarterAdaptor::seeksensorCB, (void*)this);
     getSoEventManager()->setNavigationState(SoEventManager::NO_NAVIGATION);
@@ -230,6 +231,19 @@ void SIM::Coin3D::Quarter::SoQTQuarterAdaptor::setCameraType(SoType type)
     else {
         convertPerspective2Ortho(dynamic_cast<SoPerspectiveCamera*>(currentcam),
                                  dynamic_cast<SoOrthographicCamera*>(newcamera));
+    }
+
+    // Keep the old camera's clipping planes as the starting point for the
+    // new node.  The old node holds the most recently auto-clipped near/far
+    // values; leaving the new camera at its defaults (near=1, far=10) culls
+    // the whole scene for every frame until the next auto-clipping pass
+    // runs -- which never happens on the Vulkan path, where the hidden GL
+    // viewer never renders.  The distances are measured along the view axis
+    // and stay valid across the projection-type change; the render manager
+    // re-fits them on the next frame anyway.
+    if (currentcam) {
+        newcamera->nearDistance = currentcam->nearDistance.getValue();
+        newcamera->farDistance = currentcam->farDistance.getValue();
     }
 
     getSoRenderManager()->setCamera(newcamera);
@@ -393,13 +407,70 @@ bool SIM::Coin3D::Quarter::SoQTQuarterAdaptor::isSeekValuePercentage() const
 void SIM::Coin3D::Quarter::SoQTQuarterAdaptor::setPickRadius(float pickRadius)
 {
     this->pickRadius = pickRadius;
+    // Re-anchor the zoom reference to the current camera state so the base
+    // pick radius is calibrated for the view it is applied in.
+    this->m_referenceWorldPerPixel = 0.0F;
     SoEventManager* evm = this->getSoEventManager();
     if (evm){
         SoHandleEventAction* hea = evm->getHandleEventAction();
         if (hea){
-            hea->setPickRadius(pickRadius);
+            hea->setPickRadius(this->getPickRadius());
         }
     }
+}
+
+void SIM::Coin3D::Quarter::SoQTQuarterAdaptor::setPickRadiusScale(float pickRadiusScale)
+{
+    this->pickRadiusScale = pickRadiusScale;
+    SoEventManager* evm = this->getSoEventManager();
+    if (evm){
+        SoHandleEventAction* hea = evm->getHandleEventAction();
+        if (hea){
+            hea->setPickRadius(this->getPickRadius());
+        }
+    }
+}
+
+float SIM::Coin3D::Quarter::SoQTQuarterAdaptor::worldPerPixel() const
+{
+    SoCamera* cam = getCamera();
+    if (!cam) {
+        return 0.0F;
+    }
+    const SbViewportRegion& vp = getViewportRegion();
+    const float deviceH = static_cast<float>(vp.getViewportSizePixels()[1]);
+    const qreal dpr = qMax(1.0, this->devicePixelRatio());
+    const float logicalH = deviceH / static_cast<float>(dpr);
+    if (logicalH <= 0.0F) {
+        return 0.0F;
+    }
+    if (cam->isOfType(SoOrthographicCamera::getClassTypeId())) {
+        auto* orthographic = static_cast<SoOrthographicCamera*>(cam);
+        return orthographic->height.getValue() / logicalH;
+    }
+    auto* perspective = static_cast<SoPerspectiveCamera*>(cam);
+    const float worldHeight = 2.0F * perspective->focalDistance.getValue()
+        * static_cast<float>(std::tan(perspective->heightAngle.getValue() / 2.0));  // NOLINT
+    return worldHeight / logicalH;
+}
+
+float SIM::Coin3D::Quarter::SoQTQuarterAdaptor::zoomFactor() const
+{
+    const float wpp = worldPerPixel();
+    if (wpp <= 0.0F) {
+        return 1.0F;
+    }
+    if (m_referenceWorldPerPixel <= 0.0F) {
+        // First evaluation after anchoring: calibrate to the current zoom and
+        // report no compensation yet.
+        const_cast<SoQTQuarterAdaptor*>(this)->m_referenceWorldPerPixel = wpp;
+        return 1.0F;
+    }
+    // As the camera zooms in, worldPerPixel shrinks, so this ratio grows and
+    // the pick radius covers the same world-space size -> easier to hit when
+    // zoomed in.  Clamp to 1.0 so zooming OUT never makes picking harder than
+    // the calibrated base radius.
+    return std::max(1.0F, m_referenceWorldPerPixel / wpp);
 }
 
 bool SIM::Coin3D::Quarter::SoQTQuarterAdaptor::seekToPoint(const SbVec2s& screenpos)

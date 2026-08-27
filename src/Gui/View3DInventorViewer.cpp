@@ -23,6 +23,8 @@
 
 #include <FCConfig.h>
 
+#include <Base/VulkanBreadcrumbs.h>
+
 #include <algorithm>
 #include <cmath>
 
@@ -130,8 +132,10 @@
 #include "GLPainter.h"
 #include "RubberbandOverlay.h"
 #include "Inventor/SoAxisCrossKit.h"
+#include "Inventor/SoAxisCrossOverlay.h"
 #include "Inventor/SoFCBackgroundGradient.h"
 #include "Inventor/SoFCBoundingBox.h"
+#include "Inventor/SoGroundPlane.h"
 #include "MainWindow.h"
 #include "Multisample.h"
 #include "NaviCube.h"
@@ -139,7 +143,9 @@
 #include "Navigation/GestureNavigationStyle.h"
 #include "Navigation/SiemensNXNavigationStyle.h"
 #include "Selection.h"
-#include "SoDevicePixelRatioElement.h"
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+#include <Inventor/elements/SoDevicePixelRatioElement.h>
+#endif
 #include "SoFCDB.h"
 #include "SoFCInteractiveElement.h"
 #include "SoFCOffscreenRenderer.h"
@@ -592,6 +598,11 @@ struct OverlayAxisCrossState
     Letter yLetter;
     Letter zLetter;
 
+    // Container handed to the IR (Vulkan) render path; children are the
+    // shared GL-updated axis/letter graphs, and the node itself scopes them
+    // to the corner viewport and the overlay render pass.
+    Gui::SoAxisCrossOverlay* overlayNode {nullptr};
+
     void ensureCreated()
     {
         if (axisRoot) {
@@ -724,6 +735,11 @@ struct OverlayAxisCrossState
         lettersRoot->addChild(xLetter.root);
         lettersRoot->addChild(yLetter.root);
         lettersRoot->addChild(zLetter.root);
+
+        overlayNode = new Gui::SoAxisCrossOverlay;
+        overlayNode->ref();
+        overlayNode->addChild(axisRoot);
+        overlayNode->addChild(lettersRoot);
     }
 };
 
@@ -1310,6 +1326,13 @@ void View3DInventorViewer::init()
         this,
         &View3DInventorViewer::createStandardCursors
     );
+    connect(this, &View3DInventorViewer::cameraChanged, this, &View3DInventorViewer::updatePickRadius);
+    connect(
+        this,
+        &View3DInventorViewer::devicePixelRatioChanged,
+        this,
+        &View3DInventorViewer::updatePickRadius
+    );
 
     naviCube = new NaviCube(this);
     ParameterGrp::handle hViewGrp = App::GetApplication().GetParameterGroupByPath(
@@ -1319,6 +1342,15 @@ void View3DInventorViewer::init()
     syncNaviCubeVisibility();
 
     updateColors();
+}
+
+void View3DInventorViewer::updatePickRadius()
+{
+    if (auto* evm = getSoEventManager()) {
+        if (auto* hea = evm->getHandleEventAction()) {
+            hea->setPickRadius(getPickRadius());
+        }
+    }
 }
 
 View3DInventorViewer::~View3DInventorViewer()
@@ -1469,6 +1501,9 @@ void View3DInventorViewer::initialize()
 
     this->axiscrossEnabled = true;
     this->axiscrossSize = 10;  // NOLINT
+    this->groundPlane = nullptr;
+    this->groundPlaneGroup = nullptr;
+    this->groundPlaneOpacity = 0.15F;
 }
 
 /// @cond DOXERR
@@ -1524,6 +1559,13 @@ void View3DInventorViewer::onSelectionChanged(const SelectionChanges& reason)
         SoFCSelectionAction selectionAction(Reason);
         selectionAction.apply(pcViewProviderRoot);
     }
+
+    // A selection/preselection change only mutates the shared scene graph
+    // (colour override on the picked face).  The Vulkan viewport owns no Coin
+    // sensors, so it would not re-render on its own; ask the adapter for a
+    // frame so the highlight is shown even after path tracing converged and
+    // the continuous refine loop went idle.
+    Q_EMIT selectionChanged();
 }
 /// @endcond
 
@@ -2004,6 +2046,62 @@ View3DInventorViewer::Background View3DInventorViewer::getGradientBackground() c
     return Background::RadialGradient;
 }
 
+void View3DInventorViewer::getGradientBackgroundColor(SbColor& fromColor, SbColor& toColor) const
+{
+    fromColor = pcBackGround->fromColor.getValue();
+    toColor = pcBackGround->toColor.getValue();
+}
+
+void View3DInventorViewer::applyVulkanSettings()
+{
+    auto hGrp = App::GetApplication().GetParameterGroupByPath(
+        "User parameter:BaseApp/Preferences/View");
+    if (!hGrp) {
+        return;
+    }
+
+    VK_BREADCRUMB("[VK-TRACE] View3DInventorViewer::applyVulkanSettings edges=%d points=%d\n",
+                  hGrp->GetBool("VulkanShowEdges", false) ? 1 : 0,
+                  hGrp->GetBool("VulkanShowPoints", false) ? 1 : 0);
+
+    // Render mode and environment preset: this is the single loader that
+    // seeds the canonical VulkanViewSettings, so every consumer (the raster
+    // gate, the status-bar selector, the backend push) reads the same value.
+    vulkanSettings_.renderMode = hGrp->GetInt("VulkanRenderMode", 1);
+    vulkanSettings_.envMap = hGrp->GetInt("VulkanEnvironmentMap", -1);
+
+    vulkanSettings_.showEdges = hGrp->GetBool("VulkanShowEdges", false);
+    vulkanSettings_.showPoints = hGrp->GetBool("VulkanShowPoints", false);
+
+    const unsigned long color = hGrp->GetUnsigned("VulkanEdgeColor", 0x050505FFUL);
+    vulkanSettings_.edgeColor = SbColor4f(
+        ((color >> 24) & 0xff) / 255.0f,
+        ((color >> 16) & 0xff) / 255.0f,
+        ((color >> 8) & 0xff) / 255.0f,
+        1.0f);
+
+    vulkanSettings_.pathTracing = hGrp->GetBool("VulkanPathTracing", false);
+
+    vulkanSettings_.pathTracingBounces =
+        std::clamp(static_cast<int>(hGrp->GetInt("VulkanPathTracingBounces", 4)),
+                   1, 16);
+    vulkanSettings_.pathTracingSettleFrames = std::clamp(
+        static_cast<int>(hGrp->GetInt("VulkanPathTracingSettle", 6)), 1, 120);
+    vulkanSettings_.pathTracingMaxSamples = std::clamp(
+        static_cast<int>(hGrp->GetInt("VulkanPathTracingMaxSamples", 256)),
+        1, 4096);
+    // Denoiser backend, stored as the combo index (0=RTX, 1=OIDN, 2=FSR,
+    // 3=None); map to the backend name the RT renderer expects.
+    switch (hGrp->GetInt("VulkanPathTracingDenoiser", 0)) {
+        case 1: vulkanSettings_.pathTracingDenoiser = "oidn"; break;
+        case 2: vulkanSettings_.pathTracingDenoiser = "fsr"; break;
+        case 3: vulkanSettings_.pathTracingDenoiser = "none"; break;
+        default: vulkanSettings_.pathTracingDenoiser = "rtx"; break;
+    }
+
+    Q_EMIT vulkanSettingsChanged();
+}
+
 void View3DInventorViewer::setGradientBackgroundColor(const SbColor& fromColor, const SbColor& toColor)
 {
     pcBackGround->setColorGradient(fromColor, toColor);
@@ -2209,6 +2307,21 @@ NaviCube* View3DInventorViewer::getNaviCube() const
     return naviCube;
 }
 
+SoAnnotation* View3DInventorViewer::getNaviCubeAnnotation() const
+{
+    return naviCubeAnnotation;
+}
+
+SoNode* View3DInventorViewer::getAxisCrossOverlay()
+{
+    auto& overlay = overlayAxisCrossState();
+    overlay.ensureCreated();
+    if (overlay.overlayNode) {
+        overlay.overlayNode->enabled.setValue(this->axiscrossEnabled);
+    }
+    return overlay.overlayNode;
+}
+
 void View3DInventorViewer::setAxisCross(bool on)
 {
     SoNode* scene = getSceneGraph();
@@ -2243,6 +2356,54 @@ void View3DInventorViewer::setAxisCross(bool on)
 bool View3DInventorViewer::hasAxisCross()
 {
     return axisGroup;
+}
+
+void View3DInventorViewer::setGroundPlaneOpacity(float opacity)
+{
+    // Stored as "opacity" (1 = opaque, 0 = invisible), the node exposes it as
+    // transparency (the inverse) so higher values make the grid fainter.
+    const float clamped = std::clamp(opacity, 0.0F, 1.0F);
+    groundPlaneOpacity = clamped;
+    if (groundPlane) {
+        groundPlane->transparency.setValue(1.0F - clamped);
+    }
+}
+
+void View3DInventorViewer::setGroundPlane(bool on)
+{
+    SoNode* scene = getSceneGraph();
+    auto sep = static_cast<SoSeparator*>(scene);  // NOLINT
+
+    if (on) {
+        if (!groundPlane) {
+            groundPlane = new SoGroundPlane;
+            groundPlane->ref();
+            groundPlane->transparency.setValue(1.0F - groundPlaneOpacity);
+            groundPlaneGroup = new SoSeparator;
+            groundPlaneGroup->ref();
+            groundPlaneGroup->setName("groundPlane");
+            groundPlaneGroup->addChild(groundPlane);
+
+            // Draw the grid behind the model geometry. viewerSceneRoot's
+            // children are [viewerLightingRoot, pcViewProviderRoot, ...], so
+            // index 1 places the plane just before the document content.
+            sep->insertChild(groundPlaneGroup, 1);
+        }
+    }
+    else {
+        if (groundPlane) {
+            sep->removeChild(groundPlaneGroup);
+            groundPlaneGroup->unref();
+            groundPlaneGroup = nullptr;
+            groundPlane->unref();
+            groundPlane = nullptr;
+        }
+    }
+}
+
+bool View3DInventorViewer::hasGroundPlane()
+{
+    return groundPlane;
 }
 
 void View3DInventorViewer::showRotationCenter(bool show)
@@ -3334,7 +3495,9 @@ void View3DInventorViewer::renderGLActionScene(const QColor& backgroundColor, So
 
     {
         ZoneScopedN("Background");
+#ifdef HAVE_COIN_IR_RENDER_ACTION
         SoDevicePixelRatioElement::set(state, devicePixelRatio());
+#endif
         SoGLWidgetElement::set(state, qobject_cast<QOpenGLWidget*>(this->getGLWidget()));
         SoGLRenderActionElement::set(state, glra);
         SoGLVBOActivatedElement::set(state, this->vboEnabled);
@@ -3382,6 +3545,20 @@ void View3DInventorViewer::renderScene()
     SbVec2s origin = vp.getViewportOriginPixels();
     SbVec2s size = vp.getViewportSizePixels();
     glViewport(origin[0], origin[1], size[0], size[1]);
+
+    // The view-volume fields below are cheap to compute; the expensive part
+    // (file I/O) stays behind the macro's env check.
+    const SbViewVolume vv = this->getSoRenderManager()->getCamera()
+        ? this->getSoRenderManager()->getCamera()->getViewVolume()
+        : SbViewVolume();
+    VK_BREADCRUMB_ONCE("[VK-TRACE] renderScene glViewport=%dx%d glGLWidget=%dx%d "
+                       "aspect=%f near=%f far=%f depth=%f width=%f height=%f\n",
+                       size[0], size[1],
+                       this->getGLWidget() ? this->getGLWidget()->width() : -1,
+                       this->getGLWidget() ? this->getGLWidget()->height() : -1,
+                       vp.getViewportAspectRatio(), vv.getNearDist(),
+                       vv.getNearDist() + vv.getDepth(), vv.getDepth(),
+                       vv.getWidth(), vv.getHeight());
 
     const QColor col = this->backgroundColor();
     glClearColor(float(col.redF()), float(col.greenF()), float(col.blueF()), 0.0F);
@@ -3556,20 +3733,29 @@ bool View3DInventorViewer::processSoEvent(const SoEvent* ev)
 {
     ZoneScoped;
 
+    // Snapshot the camera pose before the event so a navigation/event that
+    // rotates, pans or zooms (which mutates the shared camera node in place)
+    // can be detected afterwards.  The display-only Vulkan widget owns no Coin
+    // sensors and, once the path tracer has converged, runs no continuous
+    // refine loop, so without this a camera move would never re-render:
+    // emit cameraMoved() below so the adapter can request one frame, which the
+    // backend's camera-version check then sees as a reset-on-move.
+    SoCamera* cam = getCamera();
+    const SbVec3f camPosBefore = cam ? cam->position.getValue() : SbVec3f();
+    const SbRotation camOriBefore = cam ? cam->orientation.getValue() : SbRotation();
+
+    bool result = false;
     if (naviCubeEnabled && naviCube->processSoEvent(ev)) {
         return true;
     }
     if (isRedirectedToSceneGraph()) {
-        bool processed = inherited::processSoEvent(ev);
+        result = inherited::processSoEvent(ev);
 
-        if (!processed) {
-            processed = navigation->processEvent(ev);
+        if (!result) {
+            result = navigation->processEvent(ev);
         }
-
-        return processed;
     }
-
-    if (ev->getTypeId().isDerivedFrom(SoKeyboardEvent::getClassTypeId())) {
+    else if (ev->getTypeId().isDerivedFrom(SoKeyboardEvent::getClassTypeId())) {
         // filter out 'Q' and 'ESC' keys
         const auto ke = static_cast<const SoKeyboardEvent*>(ev);  // NOLINT
 
@@ -3578,11 +3764,20 @@ bool View3DInventorViewer::processSoEvent(const SoEvent* ev)
             case SoKeyboardEvent::Q:  // ignore 'Q' keys (to prevent app from being closed)
                 return inherited::processSoEvent(ev);
             default:
+                result = navigation->processEvent(ev);
                 break;
         }
     }
+    else {
+        result = navigation->processEvent(ev);
+    }
 
-    return navigation->processEvent(ev);
+    if (cam && cam == getCamera()
+        && (cam->position.getValue() != camPosBefore
+            || cam->orientation.getValue() != camOriBefore)) {
+        Q_EMIT cameraMoved();
+    }
+    return result;
 }
 
 bool View3DInventorViewer::processSoEventBase(const SoEvent* const ev)
@@ -3902,6 +4097,15 @@ SbVec2s View3DInventorViewer::getPointOnViewport(const SbVec3f& pnt) const
     return {xpos, ypos};
 }
 
+SbVec2f View3DInventorViewer::viewportPixelScale() const
+{
+    const SbViewportRegion& vp = this->getSoRenderManager()->getViewportRegion();
+    const SbVec2s& vps = vp.getViewportSizePixels();
+    const float sx = (vps[0] > 0 && width() > 0) ? float(vps[0]) / float(width()) : 1.0f;
+    const float sy = (vps[1] > 0 && height() > 0) ? float(vps[1]) / float(height()) : 1.0f;
+    return {sx, sy};
+}
+
 QPoint View3DInventorViewer::toQPoint(const SbVec2s& pnt) const
 {
     const SbViewportRegion& vp = this->getSoRenderManager()->getViewportRegion();
@@ -3909,9 +4113,9 @@ QPoint View3DInventorViewer::toQPoint(const SbVec2s& pnt) const
     int xpos = pnt[0];
     int ypos = vps[1] - pnt[1] - 1;
 
-    qreal dev_pix_ratio = devicePixelRatio();
-    xpos = int(std::roundf(xpos / dev_pix_ratio));
-    ypos = int(std::roundf(ypos / dev_pix_ratio));
+    const SbVec2f scale = viewportPixelScale();
+    xpos = int(std::roundf(float(xpos) / scale[0]));
+    ypos = int(std::roundf(float(ypos) / scale[1]));
 
     return {xpos, ypos};
 }
@@ -4226,11 +4430,14 @@ bool View3DInventorViewer::applyCameraState(const SoCamera& sourceCamera)
         }
 
         const auto& sourcePerspective = static_cast<const SoPerspectiveCamera&>(sourceCamera);
+        targetPerspective->viewportMapping = sourcePerspective.viewportMapping;
         targetPerspective->position = sourcePerspective.position;
         targetPerspective->orientation = sourcePerspective.orientation;
         targetPerspective->nearDistance = sourcePerspective.nearDistance;
         targetPerspective->farDistance = sourcePerspective.farDistance;
         targetPerspective->focalDistance = sourcePerspective.focalDistance;
+        targetPerspective->heightAngle = sourcePerspective.heightAngle;
+        targetPerspective->aspectRatio = sourcePerspective.aspectRatio;
     }
     else if (targetCamera->getTypeId() == SoOrthographicCamera::getClassTypeId()) {
         auto* targetOrthographic = static_cast<SoOrthographicCamera*>(targetCamera);
@@ -4377,13 +4584,13 @@ bool View3DInventorViewer::getSceneBoundBox(SbBox3f& box) const
 
 void View3DInventorViewer::animatedViewAll(const SbBox3f& box, int steps, int ms)
 {
-    SoCamera* cam = this->getSoRenderManager()->getCamera();
-    if (!cam) {
+    SoCamera* cam0 = this->getSoRenderManager()->getCamera();
+    if (!cam0) {
         return;
     }
 
-    SbVec3f campos = cam->position.getValue();
-    SbRotation camrot = cam->orientation.getValue();
+    SbVec3f campos = cam0->position.getValue();
+    SbRotation camrot = cam0->orientation.getValue();
     SbViewportRegion vp = this->getSoRenderManager()->getViewportRegion();
 
     float aspectRatio = vp.getViewportAspectRatio();
@@ -4402,9 +4609,9 @@ void View3DInventorViewer::animatedViewAll(const SbBox3f& box, int steps, int ms
     float height = 0;
     float diff = 0;
 
-    if (cam->isOfType(SoOrthographicCamera::getClassTypeId())) {
+    if (cam0->isOfType(SoOrthographicCamera::getClassTypeId())) {
         isOrthographic = true;
-        height = static_cast<SoOrthographicCamera*>(cam)->height.getValue();  // NOLINT
+        height = static_cast<SoOrthographicCamera*>(cam0)->height.getValue();  // NOLINT
         if (aspectRatio < 1.0F) {
             diff = sphere.getRadius() * 2 - height * aspectRatio;
         }
@@ -4413,10 +4620,10 @@ void View3DInventorViewer::animatedViewAll(const SbBox3f& box, int steps, int ms
         }
         pos = (box.getCenter() - direction * sphere.getRadius());
     }
-    else if (cam->isOfType(SoPerspectiveCamera::getClassTypeId())) {
+    else if (cam0->isOfType(SoPerspectiveCamera::getClassTypeId())) {
         // NOLINTBEGIN
         float movelength = sphere.getRadius()
-            / float(tan(static_cast<SoPerspectiveCamera*>(cam)->heightAngle.getValue() / 2.0));
+            / float(tan(static_cast<SoPerspectiveCamera*>(cam0)->heightAngle.getValue() / 2.0));
         // NOLINTEND
         pos = box.getCenter() - direction * movelength;
     }
@@ -4427,6 +4634,17 @@ void View3DInventorViewer::animatedViewAll(const SbBox3f& box, int steps, int ms
     QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
 
     for (int i = 0; i < steps; i++) {
+        // The nested event loop below processes queued events, and a surface
+        // resize during it can swap/replace the camera node (FreeCAD's Vulkan
+        // viewport re-fits the camera on the first stable swapchain size).
+        // Writing through the snapshot pointer would then touch a
+        // dead field (SoField FLAG_ALIVE_PATTERN).  Re-read the camera each
+        // step and stop as soon as it is no longer the node we started with.
+        SoCamera* cam = this->getSoRenderManager()->getCamera();
+        if (cam != cam0) {
+            return;
+        }
+
         float par = float(i) / float(steps);
 
         if (isOrthographic) {
@@ -5061,6 +5279,12 @@ void View3DInventorViewer::setFeedbackVisibility(bool enable)
     if (this->isViewing()) {
         this->getSoRenderManager()->scheduleRedraw();
     }
+
+    // Keep the IR (Vulkan) overlay container in sync; it is read at frame
+    // start, so only touch it if it already exists.
+    if (auto* overlayNode = overlayAxisCrossState().overlayNode) {
+        overlayNode->enabled.setValue(enable);
+    }
 }
 
 /*!
@@ -5181,7 +5405,7 @@ void View3DInventorViewer::updateColors()
     }
 }
 
-void View3DInventorViewer::drawAxisCross()
+void View3DInventorViewer::updateAxisCrossNodes()
 {
     const SbVec2s view = this->getSoRenderManager()->getSize();
     const int viewWidth = view[0];
@@ -5196,8 +5420,6 @@ void View3DInventorViewer::drawAxisCross()
     if (pixelarea <= 0) {
         return;
     }
-
-    const SbVec2s origin(viewWidth - pixelarea, 0);
 
     constexpr float nearVal = 0.1f;
     constexpr float farVal = 10.0f;
@@ -5249,6 +5471,12 @@ void View3DInventorViewer::drawAxisCross()
         || !overlay.lettersCamera) {
         return;
     }
+    // Keep the IR (Vulkan) overlay container in sync with the current size
+    // preference; it computes its own corner viewport from its viewport
+    // region when traversed.
+    if (overlay.overlayNode) {
+        overlay.overlayNode->sizeFraction.setValue(this->axiscrossSize);
+    }
 
     SbRotation inv;
     if (cam) {
@@ -5298,7 +5526,7 @@ void View3DInventorViewer::drawAxisCross()
     constexpr float letterHeightFraction = 0.07f;
     constexpr float minLetterHeight = 8.0f;
     constexpr float maxLetterHeight = 18.0f;
-    const float deviceScale = static_cast<float>(devicePixelRatio());
+    const float deviceScale = viewportPixelScale()[0];
     const float targetLetterHeight = std::clamp(
         miniViewportSize * letterHeightFraction,
         minLetterHeight * deviceScale,
@@ -5331,6 +5559,30 @@ void View3DInventorViewer::drawAxisCross()
     overlay.xLetter.texture->image.setValue(SbVec2s(XPM_WIDTH, XPM_HEIGHT), 4, XPM_pixel_data);
     overlay.yLetter.texture->image.setValue(SbVec2s(YPM_WIDTH, YPM_HEIGHT), 4, YPM_pixel_data);
     overlay.zLetter.texture->image.setValue(SbVec2s(ZPM_WIDTH, ZPM_HEIGHT), 4, ZPM_pixel_data);
+}
+
+void View3DInventorViewer::drawAxisCross()
+{
+    this->updateAxisCrossNodes();
+
+    const SbVec2s view = this->getSoRenderManager()->getSize();
+    const int viewWidth = view[0];
+    const int viewHeight = view[1];
+    if (viewWidth <= 0 || viewHeight <= 0) {
+        return;
+    }
+    const int pixelarea = static_cast<int>(
+        static_cast<float>(this->axiscrossSize) / 100.0F * std::min(viewWidth, viewHeight)
+    );
+    if (pixelarea <= 0) {
+        return;
+    }
+    const SbVec2s origin(viewWidth - pixelarea, 0);
+
+    auto& overlay = overlayAxisCrossState();
+    if (!overlay.axisRoot || !overlay.lettersRoot) {
+        return;
+    }
 
     SbViewportRegion vp = this->getSoRenderManager()->getViewportRegion();
     vp.setViewportPixels(origin[0], origin[1], pixelarea, pixelarea);

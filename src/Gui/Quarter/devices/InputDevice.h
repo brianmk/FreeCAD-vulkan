@@ -39,6 +39,7 @@ class QEvent;
 class SoEvent;
 class QInputEvent;
 class QPointF;
+class QWidget;
 
 namespace SIM { namespace Coin3D { namespace Quarter {
 
@@ -60,6 +61,22 @@ public:
       const SbVec2s& logicalWindowSize,
       qreal devicePixelRatio
   );
+
+  /*!
+    Single source of truth for the fractional scale factor between two
+    widgets' logical coordinate spaces (e.g. a Vulkan display container and
+    the hidden OpenGL viewer that owns navigation/picking).  Both widgets live
+    in the same window/screen so they report the same system device pixel
+    ratio, and this helper returns src/dst from the *live*
+    devicePixelRatioF() -- never a cached or pre-rounded ratio.  The ratio is
+    1.0 on any display scale (125% Linux/Windows, 150%, 200% macOS Retina, ...);
+    a caller multiplies an event position by it to map src-logical to
+    dst-logical, after which the dst side applies its own live ratio in
+    toDevicePixelPosition().
+  */
+  static qreal crossWidgetPositionScale(const QWidget * src,
+                                        const QWidget * dst);
+
 
   void setMousePosition(const SbVec2s & pos);
   void setWindowSize(const SbVec2s & size);

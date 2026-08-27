@@ -416,6 +416,14 @@ class _View3DInventor:
         """Return whether the axis cross is enabled."""
         ...
 
+    def setGroundPlane(self, enabled: bool, /) -> None:
+        """Enable or disable the ground plane grid."""
+        ...
+
+    def hasGroundPlane(self) -> bool:
+        """Return whether the ground plane grid is enabled."""
+        ...
+
     def addDraggerCallback(
         self,
         dragger: object,

@@ -140,7 +140,11 @@ void ViewProviderDatum::attach(App::DocumentObject* pcObject)
 
 void ViewProviderDatum::setTemporaryScale(double factor)
 {
-    soScale->scaleFactor = soScale->scaleFactor.getValue() * factor;
+    // Temporarily enlarged datums follow the viewport size: factor is a
+    // fraction of the viewport height, so the planes stay readable on any
+    // screen resolution.
+    soScale->scaleAsFraction = true;
+    soScale->scaleFactor = factor;
 }
 
 void ViewProviderDatum::resetTemporarySize()
@@ -149,6 +153,7 @@ void ViewProviderDatum::resetTemporarySize()
                    .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
                    ->GetFloat("LocalCoordinateSystemSize", 1.0);  // NOLINT
 
+    soScale->scaleAsFraction = false;
     soScale->scaleFactor = sz;
 }
 

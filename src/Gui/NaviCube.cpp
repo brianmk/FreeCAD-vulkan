@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
@@ -54,6 +55,7 @@
 #include <QPainterPath>
 
 #include <Base/Color.h>
+#include <Base/Console.h>
 #include <Base/Tools.h>
 #include "NaviCube.h"
 #include "Application.h"
@@ -96,6 +98,7 @@ public:
 
     bool processSoEvent(const SoEvent* ev);
     void setSize(int size);
+    void setScale(float scale);
     SoNode* getCoinNode() const;
     void requestRedraw(bool touchNode = true);
 
@@ -188,6 +191,10 @@ private:
     SbVec2s posAreaBase = SbVec2s(0, 0);
     SbVec2s posAreaSize = SbVec2s(0, 0);
     qreal devicePixelRatio = 1.0;
+    // User preference: a multiplier on the physical (dpr-scaled) cube size so
+    // the navigation cube can be made larger/smaller independently of the base
+    // size and the system scale factor.  1.0 = 100% (cubeWidgetSize * dpr).
+    float userScale = 1.0F;
 
     Gui::View3DInventorViewer* viewer;
 
@@ -267,6 +274,11 @@ void NaviCube::setDraggable(bool draggable)
 void NaviCube::setSize(int size)
 {
     naviCubeImplementation->setSize(size);
+}
+
+void NaviCube::setScale(float scale)
+{
+    naviCubeImplementation->setScale(scale);
 }
 
 void NaviCube::setChamfer(float chamfer)
@@ -358,7 +370,7 @@ void NaviCube::setInactiveOpacity(float opacity)
 
 qreal NaviCubeImplementation::getPhysicalCubeWidgetSize()
 {
-    return cubeWidgetSize * devicePixelRatio;
+    return cubeWidgetSize * devicePixelRatio * userScale;
 }
 
 void NaviCubeImplementation::setLabels(const std::vector<std::string>& labels)
@@ -431,12 +443,11 @@ void NaviCubeImplementation::syncNodeState(SoAction* action)
     const SoType type = action->getTypeId();
     const bool isGLRender = type.isDerivedFrom(SoGLRenderAction::getClassTypeId());
 
-    if (isGLRender) {
-        if (!readyToRender()) {
-            return;
-        }
-    }
-    else if (!prepared) {
+    // Both the legacy GL render path and the Vulkan/IR overlay path must run
+    // prepare() (label textures, chamfer geometry) before they can render; the
+    // hidden GL viewer may never paint, so the Vulkan traversal has to trigger
+    // it too.
+    if (!readyToRender()) {
         return;
     }
 
@@ -797,6 +808,15 @@ void NaviCubeImplementation::setSize(int size)
     requestRedraw();
 }
 
+void NaviCubeImplementation::setScale(float scale)
+{
+    // Clamp to a sane range so a bad pref value cannot blow the cube up or
+    // shrink it to nothing.
+    userScale = std::clamp(scale, 0.1f, 10.0f);
+    viewSize = SbVec2s(0, 0);
+    requestRedraw();
+}
+
 void NaviCubeImplementation::prepare()
 {
     if (prepared || !viewer->viewport()) {
@@ -829,7 +849,7 @@ bool NaviCubeImplementation::populateRenderParams(
         return false;
     }
 
-    soNaviCube->size = static_cast<float>(cubeWidgetSize);
+    soNaviCube->size = static_cast<float>(getPhysicalCubeWidgetSize());
     soNaviCube->opacity = opacity;
     soNaviCube->borderWidth = static_cast<float>(borderWidth);
     soNaviCube->showCoordinateSystem = showCS;
@@ -886,12 +906,59 @@ void NaviCubeImplementation::createContextMenu(const std::vector<std::string>& c
 
 void NaviCubeImplementation::handleResize(const SbVec2s& viewSize)
 {
-    qreal currentDevicePixelRatio = viewer->devicePixelRatio();
+    // The viewer's viewport region can be sized in device pixels (Vulkan
+    // mode) or logical pixels (classic GL mode).  Size the cube in widget
+    // pixels in both cases by scaling with the region/widget ratio.
+    //
+    // The cube must SCALE with the system scale factor: cubeWidgetSize is a
+    // logical size, but the NavCube viewportRect is in device pixels, so it
+    // is rendered at cubeWidgetSize * dpr.  The dpr MUST come from the actual
+    // render widget's devicePixelRatioF() (the same source onSurfaceSizeChanged
+    // uses to build the device-pixel viewport region), NOT from
+    // viewportPixelScale() or viewer->devicePixelRatio().  viewportPixelScale()
+    // divides the render-manager region (device px) by width()/height() of the
+    // hidden GL widget, which are transient during QStackedWidget layout
+    // (100x30, then the real size) and diverge from the visible Vulkan
+    // container; using it latched a scale of ~31, blew the cube up to a
+    // full-screen rect, then collapsed it to a 6px speck.  And the viewer
+    // widget's own devicePixelRatio() is 1.0 even on HiDPI (the real ratio
+    // lives on the render/GL child widget), which pins the cube to 132 device
+    // px and makes it look too small on a high-density display.
+    qreal currentDevicePixelRatio = (viewer->getWidget() != nullptr)
+        ? viewer->getWidget()->devicePixelRatioF()
+        : viewer->devicePixelRatio();
+    if (currentDevicePixelRatio <= 0.0) {
+        currentDevicePixelRatio = 1.0;
+    }
+    if (getenv("FC_VULKAN_NAVI_DEBUG")) {
+        const SbVec2s& rvps = viewer->getSoRenderManager()->getViewportRegion().getViewportSizePixels();
+        fprintf(stderr,
+                "[NAVI] handleResize view=(%d,%d) dprQ=%.4f rmRegion=(%d,%d) widget=%dx%d\n",
+                viewSize[0], viewSize[1],
+                currentDevicePixelRatio,
+                rvps[0], rvps[1], viewer->width(), viewer->height());
+    }
+    // Defensive bound: a legitimate device-pixel ratio on desktop FreeCAD is
+    // <= 4 (fractional HiDPI scaling).  Something far larger indicates the
+    // widget latched a wrong scale.  Clamp it so the runaway case is
+    // impossible, and warn once so the latched-scale bug stays visible.
+    constexpr qreal maxNavigationPixelScale = 4.0;
+    if (currentDevicePixelRatio > maxNavigationPixelScale) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            Base::Console().warning(
+                "NaviCube: device pixel ratio %.3f exceeds sane maximum %.1f; "
+                "clamping. Check devicePixelRatio / camera viewport setup.\n",
+                currentDevicePixelRatio, maxNavigationPixelScale);
+        }
+    }
+    currentDevicePixelRatio = std::min(currentDevicePixelRatio, maxNavigationPixelScale);
     if (viewSize != this->viewSize || currentDevicePixelRatio != devicePixelRatio) {
         devicePixelRatio = currentDevicePixelRatio;
         qreal physicalCubeWidgetSize = getPhysicalCubeWidgetSize();
-        posAreaBase[0] = std::min((int)(posOffset[0] + physicalCubeWidgetSize * 0.55), viewSize[0] / 2);
-        posAreaBase[1] = std::min((int)(posOffset[1] + physicalCubeWidgetSize * 0.55), viewSize[1] / 2);
+        posAreaBase[0] = std::min((int)(posOffset[0] * devicePixelRatio + physicalCubeWidgetSize * 0.55), viewSize[0] / 2);
+        posAreaBase[1] = std::min((int)(posOffset[1] * devicePixelRatio + physicalCubeWidgetSize * 0.55), viewSize[1] / 2);
         posAreaSize[0] = viewSize[0] - 2 * posAreaBase[0];
         posAreaSize[1] = viewSize[1] - 2 * posAreaBase[1];
         this->viewSize = viewSize;

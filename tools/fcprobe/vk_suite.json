@@ -1,0 +1,123 @@
+{
+  "description": "Vulkan RTX feature regression suite: one case per phase, plus control runs for the env-gated features.",
+  "cases": [
+    {
+      "name": "blas-refit",
+      "script": "vk_blas_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1",
+        "FC_VULKAN_DUMP_FRAME": "1",
+        "FC_VULKAN_DUMP_START": "0",
+        "FC_VULKAN_DUMP_END": "3000",
+        "FC_VULKAN_PT_MAXSAMPLES": "64"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 300
+    },
+    {
+      "name": "adaptive-on",
+      "script": "vk_adaptive_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1",
+        "FC_VULKAN_PT_MAXSAMPLES": "64",
+        "FC_VULKAN_PT_MIN_SAMPLES": "2",
+        "FC_VULKAN_PT_THRESHOLD": "0.8",
+        "FC_VULKAN_PT_STOP_FRACTION": "0.5",
+        "FC_VULKAN_PT_TEMPORAL": "0"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 300
+    },
+    {
+      "name": "adaptive-off",
+      "script": "vk_adaptive_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1",
+        "FC_VULKAN_PT_ADAPTIVE": "0",
+        "FC_VULKAN_PT_MAXSAMPLES": "64",
+        "FC_VULKAN_PT_MIN_SAMPLES": "2",
+        "FC_VULKAN_PT_THRESHOLD": "0.8",
+        "FC_VULKAN_PT_STOP_FRACTION": "0.5",
+        "FC_VULKAN_PT_TEMPORAL": "0"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 300
+    },
+    {
+      "name": "temporal-on",
+      "script": "vk_temporal_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1",
+        "FC_VULKAN_PT_MAXSAMPLES": "100000",
+        "FC_VULKAN_PT_MIN_SAMPLES": "2",
+        "FC_VULKAN_PT_THRESHOLD": "0.8",
+        "FC_VULKAN_PT_STOP_FRACTION": "0"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 300
+    },
+    {
+      "name": "temporal-off",
+      "script": "vk_temporal_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1",
+        "FC_VULKAN_PT_TEMPORAL": "0",
+        "FC_VULKAN_PT_MAXSAMPLES": "100000",
+        "FC_VULKAN_PT_MIN_SAMPLES": "2",
+        "FC_VULKAN_PT_THRESHOLD": "0.8",
+        "FC_VULKAN_PT_STOP_FRACTION": "0"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 300
+    },
+    {
+      "name": "mis-on",
+      "script": "vk_mis_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1",
+        "FC_VULKAN_DUMP_FRAME": "1",
+        "FC_VULKAN_DUMP_START": "0",
+        "FC_VULKAN_DUMP_END": "3000",
+        "FC_VULKAN_PT_MAXSAMPLES": "32",
+        "FC_VULKAN_PT_MIN_SAMPLES": "2",
+        "FC_VULKAN_PT_THRESHOLD": "0.8",
+        "FC_VULKAN_PT_STOP_FRACTION": "0",
+        "FC_VULKAN_PT_TEMPORAL": "0"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 300
+    },
+    {
+      "name": "mis-off",
+      "script": "vk_mis_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1",
+        "FC_VULKAN_DUMP_FRAME": "1",
+        "FC_VULKAN_DUMP_START": "0",
+        "FC_VULKAN_DUMP_END": "3000",
+        "FC_VULKAN_PT_NEE": "0",
+        "FC_VULKAN_PT_MAXSAMPLES": "32",
+        "FC_VULKAN_PT_MIN_SAMPLES": "2",
+        "FC_VULKAN_PT_THRESHOLD": "0.8",
+        "FC_VULKAN_PT_STOP_FRACTION": "0",
+        "FC_VULKAN_PT_TEMPORAL": "0"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 300
+    }
+  ]
+}

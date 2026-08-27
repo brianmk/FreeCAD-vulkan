@@ -77,6 +77,12 @@ public:
     Py::Object dumpNode(const Py::Tuple&);
     Py::Object saveImage(const Py::Tuple&);
     Py::Object saveVectorGraphic(const Py::Tuple&);
+    Py::Object setPathTracingEnabled(const Py::Tuple&);
+    Py::Object isPathTracingEnabled();
+    Py::Object startPathTracing();
+    Py::Object isPathTracingActive();
+    Py::Object getVulkanFrameCount();
+    Py::Object requestVulkanRender();
     Py::Object getCamera();
     Py::Object getViewDirection();
     Py::Object getUpDirection();
@@ -111,6 +117,8 @@ public:
     Py::Object setNavigationType(const Py::Tuple&);
     Py::Object setAxisCross(const Py::Tuple&);
     Py::Object hasAxisCross();
+    Py::Object setGroundPlane(const Py::Tuple&);
+    Py::Object hasGroundPlane();
     Py::Object addDraggerCallback(const Py::Tuple&);
     Py::Object removeDraggerCallback(const Py::Tuple&);
     Py::Object getViewProvidersOfType(const Py::Tuple&);

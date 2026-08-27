@@ -124,6 +124,13 @@ protected:
     std::unique_ptr<std::map<QString, std::shared_ptr<Material>>> _materialPathMap;
 };
 
+/** Returns \a fileName with the ".FCMat" extension removed (case-insensitive). */
+inline QString stripMaterialExtension(const QString& fileName)
+{
+    QString result = fileName;
+    return result.remove(QStringLiteral(".FCMat"), Qt::CaseInsensitive);
+}
+
 }  // namespace Materials
 
 Q_DECLARE_METATYPE(std::shared_ptr<Materials::MaterialLibrary>)

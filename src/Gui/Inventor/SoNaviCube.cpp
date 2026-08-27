@@ -29,12 +29,16 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <limits>
 #include <memory>
 #include <numbers>
 
 #include <Inventor/actions/SoGLRenderAction.h>
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+#include <Inventor/actions/SoIRRenderAction.h>
+#endif
 #include <Inventor/actions/SoRayPickAction.h>
 #include <Inventor/details/SoFaceDetail.h>
 #include <Inventor/lists/SoPickedPointList.h>
@@ -67,6 +71,9 @@
 #include <Inventor/nodes/SoTransform.h>
 #include <Inventor/nodes/SoTexture2.h>
 #include <Inventor/nodes/SoVertexProperty.h>
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+#include <Inventor/rendering/SoRenderIR.h>
+#endif
 #include <Inventor/SbVec2f.h>
 #include <Inventor/SbVec4f.h>
 #include <Inventor/SbViewVolume.h>
@@ -723,6 +730,11 @@ void SoNaviCube::buildCubeSection() const
         offset->on = TRUE;
         labelsGroup->addChild(offset);
 
+        // Do NOT rely on back-face culling here: label quad winding is
+        // inconsistent across the six faces, so SOLID hints would cull the
+        // wrong labels.  Visibility is decided per-frame by updateLabels()
+        // via the visSwitch (faces facing the camera), which is
+        // winding-agnostic.
         auto* hints = new SoShapeHints;
         hints->vertexOrdering = SoShapeHints::UNKNOWN_ORDERING;
         hints->shapeType = SoShapeHints::UNKNOWN_SHAPE_TYPE;
@@ -760,7 +772,15 @@ void SoNaviCube::buildCubeSection() const
         }
         nodes.sep->addChild(nodes.face);
 
-        labelsGroup->addChild(nodes.sep);
+        // Winding-agnostic visibility: each label is wrapped in a switch so
+        // updateLabels() can hide the labels of faces that face away from the
+        // camera, independent of quad winding.  (SoShapeHints culling is
+        // unreliable for the label quads, and half-clipping the cube would
+        // expose the hollow interior at some angles.)
+        nodes.visSwitch = new SoSwitch;
+        nodes.visSwitch->whichChild = 0;
+        nodes.visSwitch->addChild(nodes.sep);
+        labelsGroup->addChild(nodes.visSwitch);
         labelNodes[pickIndex(pickId)] = nodes;
     }
 }
@@ -1201,8 +1221,56 @@ void SoNaviCube::updateButtons(const RenderParams& params) const
     }
 }
 
+namespace {
+// Outward face normal (in the NavCube's local frame) for each labeled face.
+// The sub-scene camera looks down -Z and the cube is rotated by
+// cameraOrientation.inverse(); a face is visible when its transformed normal
+// points back toward the camera (+Z), i.e. the face is front-facing.
+SbVec3f labelFaceNormal(SoNaviCube::PickId id)
+{
+    using P = SoNaviCube::PickId;
+    switch (id) {
+        case P::Top: return SbVec3f(0.0F, 0.0F, 1.0F);
+        case P::Front: return SbVec3f(0.0F, -1.0F, 0.0F);
+        case P::Left: return SbVec3f(-1.0F, 0.0F, 0.0F);
+        case P::Rear: return SbVec3f(0.0F, 1.0F, 0.0F);
+        case P::Right: return SbVec3f(1.0F, 0.0F, 0.0F);
+        case P::Bottom: return SbVec3f(0.0F, 0.0F, -1.0F);
+        default: return SbVec3f(0.0F, 0.0F, 1.0F);
+    }
+}
+}  // namespace
+
 void SoNaviCube::updateLabels(const RenderParams& params) const
 {
+    // Hide labels on faces that point away from the camera.  This is the
+    // definitive "disappear faces not visible from camera" fix: it is
+    // winding-agnostic and, unlike half-clipping the cube, never exposes the
+    // hollow interior at steep angles.
+    const SbRotation inv = cameraOrientation.getValue().inverse();
+    uint32_t mask = 0;
+    uint32_t bit = 1;
+    for (PickId pickId : kLabelPickIds) {
+        SbVec3f n = labelFaceNormal(pickId);
+        SbVec3f wn;
+        inv.multVec(n, wn);
+        if (wn[2] > 0.0F) {
+            mask |= bit;
+        }
+        bit <<= 1;
+    }
+    if (mask != style.faceVisMask) {
+        bit = 1;
+        for (PickId pickId : kLabelPickIds) {
+            LabelNodes& nodes = labelNodes[pickIndex(pickId)];
+            if (nodes.visSwitch) {
+                nodes.visSwitch->whichChild = (mask & bit) ? 0 : SO_SWITCH_NONE;
+            }
+            bit <<= 1;
+        }
+        style.faceVisMask = mask;
+    }
+
     const bool labelsStyleChanged = style.labelDirty || !nearlyEqual(style.labelsRgb, params.emphRgb)
         || !nearlyEqual(style.labelsTr, params.emphTr);
 
@@ -1364,6 +1432,98 @@ void SoNaviCube::GLRender(SoGLRenderAction* action)
     }
     renderCoin(action);
 }
+
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+void SoNaviCube::IRRender(SoIRRenderAction* action)
+{
+    if (!action) {
+        return;
+    }
+    renderOverlayIR(action);
+}
+
+void SoNaviCube::renderOverlayIR(SoIRRenderAction* action)
+{
+    const SbVec4f& rect = viewportRect.getValue();
+    const int viewportX = static_cast<int>(std::lround(rect[0]));
+    const int viewportY = static_cast<int>(std::lround(rect[1]));
+    const int viewportWidth = static_cast<int>(std::lround(rect[2]));
+    const int viewportHeight = static_cast<int>(std::lround(rect[3]));
+
+    if (viewportWidth <= 0 || viewportHeight <= 0) {
+        return;
+    }
+
+    if (getenv("FC_VULKAN_NAVI_DEBUG")) {
+        fprintf(stderr, "[NAVI] IRRender rect=(%d,%d %dx%d) size=%.1f opacity=%.2f\n",
+                viewportX, viewportY, viewportWidth, viewportHeight,
+                size.getValue(), opacity.getValue());
+    }
+
+    SoState* state = action->getState();
+    if (!state) {
+        return;
+    }
+
+    ensureGeometry();
+    ensureSceneGraph();
+    const RenderParams params = makeRenderParams();
+    updateSceneGraph(params);
+
+    SoDrawList& list = action->getMutableDrawList();
+    const int firstCommand = list.getNumCommands();
+
+    state->push();
+
+    // Scope the overlay scene to the NaviCube's corner viewport (Coin
+    // bottom-left origin; the backend flips it into Vulkan coordinates).
+    SbViewportRegion vp = SoViewportRegionElement::get(state);
+    vp.setViewportPixels(viewportX, viewportY, viewportWidth, viewportHeight);
+    SoViewportRegionElement::set(state, vp);
+
+    // Like the GL overlay pass, force BASE_COLOR lighting so viewer overrides
+    // and headlight state cannot tint the cube.
+    SoLightModelElement::set(state, this, SoLightModelElement::BASE_COLOR);
+    SoShapeStyleElement::setLightModel(state, SoLazyElement::BASE_COLOR);
+    SoLazyElement::setLightModel(state, SoLazyElement::BASE_COLOR);
+
+    // The sub-scene contains its own orthographic camera, so its commands
+    // carry the overlay projection/view matrices.
+    sceneRoot->IRRender(action);
+
+    // Promote the recorded commands to the overlay pass and scope them to the
+    // NaviCube rect: the backend draws this pass last, clearing the rect's
+    // depth first so the cube self-occludes independently of the main scene.
+    const int count = list.getNumCommands();
+    for (int i = firstCommand; i < count; ++i) {
+        SoRenderCommand& cmd = list.getCommand(i);
+        cmd.pass = SO_RENDERPASS_OVERLAY;
+        cmd.state.raster.viewportEnabled = TRUE;
+        cmd.state.raster.viewportX = viewportX;
+        cmd.state.raster.viewportY = viewportY;
+        cmd.state.raster.viewportWidth = viewportWidth;
+        cmd.state.raster.viewportHeight = viewportHeight;
+        cmd.state.raster.scissorEnabled = TRUE;
+        cmd.state.raster.scissorX = viewportX;
+        cmd.state.raster.scissorY = viewportY;
+        cmd.state.raster.scissorWidth = viewportWidth;
+        cmd.state.raster.scissorHeight = viewportHeight;
+    }
+
+    if (getenv("FC_VULKAN_NAVI_DEBUG") && count > firstCommand) {
+        const SoRenderCommand& c0 = list.getCommand(firstCommand);
+        float pm[4][4];
+        c0.projMatrix.getValue(reinterpret_cast<SbMat&>(pm));
+        fprintf(stderr, "[NAVI] first cmd pass=%d verts=%u proj00=%.4f proj33=%.4f viewport=%d,%d %dx%d\n",
+                static_cast<int>(c0.pass), c0.geometry.vertexCount,
+                pm[0][0], pm[3][3],
+                c0.state.raster.viewportX, c0.state.raster.viewportY,
+                c0.state.raster.viewportWidth, c0.state.raster.viewportHeight);
+    }
+
+    state->pop();
+}
+#endif
 
 void SoNaviCube::computeBBox(SoAction*, SbBox3f& box, SbVec3f& center)
 {

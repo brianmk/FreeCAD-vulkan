@@ -75,6 +75,16 @@ void DlgSettings3DViewImp::saveSettings()
     ui->xAxisColor->onSave();
     ui->yAxisColor->onSave();
     ui->zAxisColor->onSave();
+    ui->CheckBox_UseVulkanRenderer->onSave();
+    ui->CheckBox_UseVulkanRayTracing->onSave();
+    ui->CheckBox_VulkanShowEdges->onSave();
+    ui->CheckBox_VulkanShowPoints->onSave();
+    ui->CheckBox_VulkanPathTracing->onSave();
+    ui->SpinBox_VulkanBounces->onSave();
+    ui->SpinBox_VulkanSettle->onSave();
+    ui->SpinBox_VulkanMaxSamples->onSave();
+    ui->ComboBox_VulkanDenoiser->onSave();
+    ui->VulkanEdgeColor->onSave();
 }
 
 void DlgSettings3DViewImp::loadSettings()
@@ -95,6 +105,16 @@ void DlgSettings3DViewImp::loadSettings()
     ui->xAxisColor->onRestore();
     ui->yAxisColor->onRestore();
     ui->zAxisColor->onRestore();
+    ui->CheckBox_UseVulkanRenderer->onRestore();
+    ui->CheckBox_UseVulkanRayTracing->onRestore();
+    ui->CheckBox_VulkanShowEdges->onRestore();
+    ui->CheckBox_VulkanShowPoints->onRestore();
+    ui->CheckBox_VulkanPathTracing->onRestore();
+    ui->SpinBox_VulkanBounces->onRestore();
+    ui->SpinBox_VulkanSettle->onRestore();
+    ui->SpinBox_VulkanMaxSamples->onRestore();
+    ui->ComboBox_VulkanDenoiser->onRestore();
+    ui->VulkanEdgeColor->onRestore();
 
     loadAntiAliasing();
     loadRenderCache();

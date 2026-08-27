@@ -22,6 +22,7 @@
  ***************************************************************************/
 
 #include <FCConfig.h>
+#include <Base/VulkanBreadcrumbs.h>
 
 #include <Inventor/SoFullPath.h>
 #include <Inventor/SoPickedPoint.h>
@@ -32,6 +33,11 @@
 #include <Inventor/actions/SoGetPrimitiveCountAction.h>
 #include <Inventor/actions/SoGLRenderAction.h>
 #include <Inventor/actions/SoHandleEventAction.h>
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+#include <Inventor/actions/SoIRRenderAction.h>
+#endif
+#include <Inventor/rendering/SoRenderIR.h>
+#include <Inventor/elements/SoViewportRegionElement.h>
 #include <Inventor/actions/SoWriteAction.h>
 #include <Inventor/bundles/SoMaterialBundle.h>
 #include <Inventor/details/SoFaceDetail.h>
@@ -76,9 +82,14 @@
 
 #include <QOpenGLWidget>
 
+#include <cstdlib>
+#include <iomanip>
+#include <sstream>
+
 #include <App/Document.h>
 #include <App/GeoFeature.h>
 #include <App/ElementNamingUtils.h>
+#include <Base/Console.h>
 #include <Base/Tools.h>
 #include <Base/UnitsApi.h>
 
@@ -502,6 +513,11 @@ void SoFCUnifiedSelection::doAction(SoAction* action)
 
     if (action->getTypeId() == SoFCPreselectionAction::getClassTypeId()) {
         auto preselectAction = static_cast<SoFCPreselectionAction*>(action);
+        VK_BREADCRUMB_LIMITED(20,
+                              "[VK-TRACE] SoFCUnifiedSelection::doAction preselect type=%d "
+                              "setPreSelection=%d hlPath=%p\n",
+                              static_cast<int>(preselectAction->SelChange.Type),
+                              setPreSelection ? 1 : 0, (void*)currentHighlightPath);
         // Do not clear currently preselected object when setting new preselection
         if (!setPreSelection && preselectAction->SelChange.Type == SelectionChanges::RmvPreselect) {
             if (currentHighlightPath) {
@@ -556,6 +572,10 @@ void SoFCUnifiedSelection::doAction(SoAction* action)
             }
 
             if (pathToHighlight) {
+                VK_BREADCRUMB_LIMITED(20,
+                                      "[VK-TRACE] SoFCUnifiedSelection setPreselect "
+                                      "apply highlight path len=%d\n",
+                                      pathToHighlight->getLength());
                 SoHighlightElementAction highlightAction;
                 highlightAction.setHighlighted(true);
                 highlightAction.setColor(this->colorHighlight.getValue());
@@ -645,6 +665,10 @@ void SoFCUnifiedSelection::doAction(SoAction* action)
                     SoSelectionElementAction selectionAction(type);
                     selectionAction.setColor(this->colorSelection.getValue());
                     selectionAction.setElement(detail);
+                    VK_BREADCRUMB_LIMITED(20,
+                                          "[VK-TRACE] SoFCUnifiedSelection apply selection "
+                                          "type=%d detailPathLen=%d\n",
+                                          (int)type, detailPath->getLength());
                     if (detailPath->getLength()) {
                         selectionAction.apply(detailPath);
                     }
@@ -772,6 +796,10 @@ bool SoFCUnifiedSelection::setPreselect(
             SelectionChanges::MsgSource::Any,
             SelectionChanges::PickedPoint::Valid
         );
+        VK_BREADCRUMB_LIMITED(20,
+                              "[VK-TRACE] SoFCUnifiedSelection::setPreselect ret=%d "
+                              "hlPath=%p elem=%s\n",
+                              ret, (void*)currentHighlightPath, element ? element : "(nil)");
         if (ret < 0 && currentHighlightPath) {
             return true;
         }
@@ -787,10 +815,18 @@ bool SoFCUnifiedSelection::setPreselect(
             currentHighlightPath = Gui::toFullPath(path->copy());
             currentHighlightPath->ref();
             highlighted = true;
+            VK_BREADCRUMB(
+                    "[VK-TRACE] setPreselect HIGHLIGHT-ON doc=%s obj=%s "
+                    "elem=%s world=(%.4f,%.4f,%.4f)\n",
+                    docname, objname, element ? element : "", x, y, z);
         }
     }
 
     if (currentHighlightPath) {
+        VK_BREADCRUMB_LIMITED(20,
+                              "[VK-TRACE] SoFCUnifiedSelection::setPreselect final apply "
+                              "highlighted=%d hlPathLen=%d\n",
+                              highlighted ? 1 : 0, currentHighlightPath->getLength());
         SoHighlightElementAction action;
         action.setHighlighted(highlighted);
         action.setColor(this->colorHighlight.getValue());
@@ -1036,6 +1072,84 @@ bool SoFCUnifiedSelection::setSelection(const std::vector<PickedInfo>& infos, bo
     return true;
 }
 
+// Pick-probe diagnostic (see PickProbe parameter / FC_PICK_PROBE env var).
+//
+// When enabled, hover (preselection) and click (selection) events log a
+// single parseable line with the mouse position and the scene-space location
+// of the pick: the world hit point, the hit point in the picked object's
+// local (placement) frame, the subelement and the object's local bounding
+// box.  The local hit point can be compared against the bounding box planes
+// to verify that hover/click trigger exactly on the geometry (e.g. a 10 mm
+// box must never preselect at a local x beyond +/-5 mm).
+namespace {
+
+bool pickProbeEnabled()
+{
+    static const bool enabled = []() {
+        const char* v = std::getenv("FC_PICK_PROBE");
+        if (v && *v) {
+            // The env var wins over the preference; "0"/"false"/"off" disable.
+            return Base::envFlagTruthy("FC_PICK_PROBE");
+        }
+        auto hGrp = App::GetApplication().GetParameterGroupByPath(
+            "User parameter:BaseApp/Preferences/View"
+        );
+        return hGrp && hGrp->GetBool("PickProbe", false);
+    }();
+    return enabled;
+}
+
+void logPickProbeEvent(const char* kind,
+                       const SoEvent* event,
+                       const SoPickedPoint* pp,
+                       const ViewProviderDocumentObject* vpd,
+                       const std::string& element)
+{
+    std::ostringstream ss;
+    ss << std::fixed << std::setprecision(4);
+    const SbVec2s pos = event->getPosition();
+    ss << "[PICKPROBE] event=" << kind << " pos=" << pos[0] << ',' << pos[1];
+    if (pp) {
+        const SbVec3f hit = pp->getPoint();
+        ss << " hit=" << hit[0] << ',' << hit[1] << ',' << hit[2];
+        if (vpd) {
+            const App::DocumentObject* obj = vpd->getObject();
+            if (obj) {
+                ss << " obj=" << obj->getNameInDocument();
+                const Base::BoundBox3d bbox = vpd->getBoundingBox(nullptr, nullptr, false);
+                if (bbox.IsValid()) {
+                    ss << " bbox=" << bbox.MinX << ',' << bbox.MinY << ','
+                       << bbox.MinZ << ".." << bbox.MaxX << ',' << bbox.MaxY
+                       << ',' << bbox.MaxZ;
+                }
+                if (auto* geo = dynamic_cast<const App::GeoFeature*>(obj)) {
+                    const Base::Placement& placement = geo->Placement.getValue();
+                    Base::Vector3d local;
+                    placement.inverse().multVec(
+                        Base::Vector3d(hit[0], hit[1], hit[2]), local
+                    );
+                    ss << " local=" << local.x << ',' << local.y << ','
+                       << local.z;
+                }
+            }
+        }
+        if (!element.empty()) {
+            ss << " sub=" << element;
+        }
+    }
+    else {
+        ss << " obj=-";
+    }
+    // Mirror the pick-probe event into the breadcrumb trace stream so a single
+    // file carries both [VK-TRACE] breadcrumbs and [PICKPROBE] events.  The
+    // breadcrumb writer truncates/creates the file on first use and serializes
+    // across threads; the call is already gated by pickProbeEnabled().
+    Base::vulkanBreadcrumb("%s\n", ss.str().c_str());
+    Base::Console().message("%s\n", ss.str().c_str());
+}
+
+}  // namespace
+
 // doc from parent
 void SoFCUnifiedSelection::handleEvent(SoHandleEventAction* action)
 {
@@ -1044,7 +1158,6 @@ void SoFCUnifiedSelection::handleEvent(SoHandleEventAction* action)
         inherited::handleEvent(action);
         return;
     }
-
     auto preselectionMode = static_cast<SelectionModes>(this->preselectionMode.getValue());
     const SoEvent* event = action->getEvent();
 
@@ -1053,12 +1166,29 @@ void SoFCUnifiedSelection::handleEvent(SoHandleEventAction* action)
     //
     bool isMouseMotionEvent = event->isOfType(SoLocation2Event::getClassTypeId());
     if (isMouseMotionEvent) {
+        // The locals are cheap copies; the expensive part (file I/O) stays
+        // behind the macro's env check.
+        const SbVec2s pos = event->getPosition();
+        const SbViewportRegion vp = action->getViewportRegion();
+        const SbVec2s vpsize = vp.getViewportSizePixels();
+        VK_BREADCRUMB_SAMPLED(32, "[VK-TRACE] SoFCUnifiedSelection::handleEvent motion "
+                      "eventPos=%d,%d viewport=%dx%d normalized=(%.4f,%.4f)\n",
+                      pos[0], pos[1], vpsize[0], vpsize[1],
+                      vpsize[0] > 0 ? float(pos[0]) / float(vpsize[0]) : 0.0f,
+                      vpsize[1] > 0 ? float(pos[1]) / float(vpsize[1]) : 0.0f);
         // NOTE: If preselection is off then we do not check for a picked point because otherwise
         // this search may slow down extremely the system on really big data sets. In this case we
         // just check for a picked point if the data set has been selected.
         if (preselectionMode == AUTO || preselectionMode == ON) {
             // check to see if the mouse is over our geometry...
             auto infos = this->getPickedList(action, true);
+            if (pickProbeEnabled()) {
+                logPickProbeEvent("hover",
+                                  event,
+                                  infos.empty() ? nullptr : infos[0].pp,
+                                  infos.empty() ? nullptr : infos[0].vpd,
+                                  infos.empty() ? std::string() : infos[0].element);
+            }
             if (!infos.empty()) {
                 setPreselect(infos[0]);
             }
@@ -1082,6 +1212,13 @@ void SoFCUnifiedSelection::handleEvent(SoHandleEventAction* action)
         if (SoMouseButtonEvent::isButtonReleaseEvent(e, SoMouseButtonEvent::BUTTON1)) {
             // check to see if the mouse is over a geometry...
             auto infos = this->getPickedList(action, !Selection().needPickedList());
+            if (pickProbeEnabled()) {
+                logPickProbeEvent("click",
+                                  event,
+                                  infos.empty() ? nullptr : infos[0].pp,
+                                  infos.empty() ? nullptr : infos[0].vpd,
+                                  infos.empty() ? std::string() : infos[0].element);
+            }
             bool greedySel = Gui::Selection().getSelectionStyle()
                 == Gui::SelectionSingleton::SelectionStyle::GreedySelection;
             greedySel = greedySel || event->wasCtrlDown();
@@ -1696,8 +1833,7 @@ bool SoFCSelectionRoot::renderBBox(
     SbColor color,
     const SbMatrix* mat
 )
-{
-    auto data = (SoFCBBoxRenderInfo*)so_bbox_storage->get();
+{    auto data = (SoFCBBoxRenderInfo*)so_bbox_storage->get();
     if (data->cube == NULL) {
         data->cube = new SoCube;
         data->cube->ref();
@@ -1775,6 +1911,115 @@ bool SoFCSelectionRoot::renderBBox(
     return true;
 }
 
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+bool SoFCSelectionRoot::renderBBoxIR(
+    SoIRRenderAction* action,
+    SoNode* node,
+    const SbColor& color
+)
+{
+    auto data = static_cast<SoFCBBoxRenderInfo*>(so_bbox_storage->get());
+    if (!data->bboxaction) {
+        data->bboxaction = new SoGetBoundingBoxAction(SbViewportRegion());
+    }
+
+    auto state = action->getState();
+    data->bboxaction->setViewportRegion(action->getViewportRegion());
+    SoSwitchElement::set(data->bboxaction->getState(), SoSwitchElement::get(state));
+
+    bool project = ViewParams::instance()->getRenderProjectedBBox();
+    if (project || !node->isOfType(SoGroup::getClassTypeId())) {
+        data->bboxaction->apply(node);
+    }
+    else {
+        SoTempPath resetPath(2);
+        resetPath.ref();
+        auto group = static_cast<SoGroup*>(node);
+        for (int i = 0, count = group->getNumChildren(); i < count; ++i) {
+            auto child = group->getChild(i);
+            if (child->isOfType(SoTransform::getClassTypeId())) {
+                resetPath.append(group);
+                resetPath.append(child);
+                data->bboxaction->setResetPath(&resetPath, false);
+                break;
+            }
+        }
+        data->bboxaction->apply(node);
+        data->bboxaction->setResetPath(0);
+        resetPath.unrefNoDelete();
+    }
+
+    SbXfBox3f xbbox = data->bboxaction->getXfBoundingBox();
+    if (xbbox.isEmpty()) {
+        return false;
+    }
+
+    if (project) {
+        xbbox.transform(SoModelMatrixElement::get(state));
+    }
+    return renderBBoxIR(action, node, xbbox.project(), color);
+}
+
+bool SoFCSelectionRoot::renderBBoxIR(
+    SoIRRenderAction* action,
+    SoNode* node,
+    const SbBox3f& bbox,
+    SbColor color
+)
+{
+    auto data = static_cast<SoFCBBoxRenderInfo*>(so_bbox_storage->get());
+    if (data->cube == nullptr) {
+        data->cube = new SoCube;
+        data->cube->ref();
+    }
+
+    SoState* state = action->getState();
+    state->push();
+
+    if (ViewParams::instance()->getRenderProjectedBBox()) {
+        SoModelMatrixElement::makeIdentity(state, node);
+    }
+    else if (node->isOfType(SoGroup::getClassTypeId())) {
+        auto group = static_cast<SoGroup*>(node);
+        for (int i = 0, count = group->getNumChildren(); i < count; ++i) {
+            auto child = group->getChild(i);
+            if (child->isOfType(SoTransform::getClassTypeId())) {
+                SbMatrix matrix;
+                auto transform = static_cast<SoTransform*>(child);
+                matrix.setTransform(
+                    transform->translation.getValue(),
+                    transform->rotation.getValue(),
+                    transform->scaleFactor.getValue(),
+                    transform->scaleOrientation.getValue(),
+                    transform->center.getValue()
+                );
+                SoModelMatrixElement::mult(state, node, matrix);
+                break;
+            }
+        }
+    }
+
+    uint32_t packed = color.getPackedValue(0.0);
+    setupSelectionLineRendering(state, node, &packed, false);
+
+    SoDrawStyleElement::set(state, SoDrawStyleElement::LINES);
+    SoLineWidthElement::set(state, ViewParams::instance()->getSelectionBBoxLineWidth());
+
+    float x, y, z;
+    bbox.getSize(x, y, z);
+    data->cube->width = x;
+    data->cube->height = y;
+    data->cube->depth = z;
+
+    SoModelMatrixElement::translateBy(state, node, bbox.getCenter());
+
+    data->cube->IRRender(action);
+
+    state->pop();
+    return true;
+}
+#endif
+
 static std::time_t _CyclicLastReported;
 
 void SoFCSelectionRoot::renderPrivate(SoGLRenderAction* action, bool inPath)
@@ -1828,7 +2073,8 @@ bool SoFCSelectionRoot::_renderPrivate(SoGLRenderAction* action, bool inPath)
                         mat = ViewProvider::convert(SoModelMatrixElement::get(state));
                     }
                     auto fcbox = viewProvider->getBoundingBox(nullptr, &mat, project);
-                    SbBox3f bbox(fcbox.MinX, fcbox.MinY, fcbox.MinZ, fcbox.MaxX, fcbox.MaxY, fcbox.MaxZ);
+                    SbBox3f bbox(fcbox.MinX, fcbox.MinY, fcbox.MinZ,
+                                 fcbox.MaxX, fcbox.MaxY, fcbox.MaxZ);
                     renderBBox(action, this, bbox, color);
                 }
                 else {
@@ -1943,6 +2189,156 @@ void SoFCSelectionRoot::GLRenderInPath(SoGLRenderAction* action)
     }
     renderPrivate(action, true);
 }
+
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+void SoFCSelectionRoot::IRRender(SoIRRenderAction* action)
+{
+    renderPrivateIR(action);
+}
+
+void SoFCSelectionRoot::renderPrivateIR(SoIRRenderAction* action)
+{
+    VK_BREADCRUMB_LIMITED(10,
+                          "[VK-TRACE] SoFCSelectionRoot::renderPrivateIR this=%p "
+                          "SelStack.size=%zu\n",
+                          this, SelStack.size());
+    if (ViewParams::instance()->getCoinCycleCheck() && !SelStack.nodeSet.insert(this).second) {
+        std::time_t t = std::time(nullptr);
+        if (_CyclicLastReported < t) {
+            _CyclicLastReported = t + 5;
+            FC_ERR("Cyclic scene graph: " << getName());
+        }
+        return;
+    }
+    SelStack.push_back(this);
+    if (_renderPrivateIR(action)) {
+        inherited::IRRender(action);
+    }
+    SelStack.pop_back();
+    SelStack.nodeSet.erase(this);
+}
+
+bool SoFCSelectionRoot::_renderPrivateIR(SoIRRenderAction* action)
+{
+    // Record the command range emitted for this node so a selection/highlight
+    // override can promote the recorded geometry to the overlay pass.
+    SoDrawList& list = action->getMutableDrawList();
+    const int fcmd = list.getNumCommands();
+    auto ctx2 = std::static_pointer_cast<SelContext>(
+        getNodeContext2(SelStack, this, SelContext::merge)
+    );
+    if (ctx2 && ctx2->hideAll) {
+        return false;
+    }
+
+    auto state = action->getState();
+    SelContextPtr ctx = getRenderContext<SelContext>(this);
+    int style = selectionStyle.getValue();
+    VK_BREADCRUMB_LIMITED(10,
+                          "[VK-TRACE] SoFCSelectionRoot::_renderPrivateIR this=%p ctx=%p "
+                          "selAll=%d hlAll=%d style=%d\n",
+                          this, ctx.get(), ctx ? ctx->selAll : -1, ctx ? ctx->hlAll : -1, style);
+    if (ctx && ctx->hideAll) {
+        return false;
+    }
+
+    // Bounding-box selection drawing: record a line-mode cube for the
+    // selection bounding box, mirroring the GL _renderPrivate() Box branch.
+    // The box replaces the selection color override, not the geometry, so
+    // children still render normally below.
+    if ((style == SoFCSelectionRoot::Box || SoFCUnifiedSelection::getShowSelectionBoundingBox())
+        && ctx && !ctx->hideAll && (ctx->selAll || ctx->hlAll)) {
+        if (style == SoFCSelectionRoot::PassThrough) {
+            style = SoFCSelectionRoot::Box;
+        }
+        else {
+            const SbColor& color = (ctx->hlAll && !ctx->selAll) ? ctx->hlColor : ctx->selColor;
+            if (SoFCUnifiedSelection::getShowSelectionBoundingBox()) {
+                if (ViewParams::instance()->getUseTightBoundingBox() && viewProvider) {
+                    Base::Matrix4D mat;
+                    bool project = ViewParams::instance()->getRenderProjectedBBox();
+                    if (project) {
+                        mat = ViewProvider::convert(SoModelMatrixElement::get(state));
+                    }
+                    auto fcbox = viewProvider->getBoundingBox(nullptr, &mat, project);
+                    SbBox3f bbox(fcbox.MinX, fcbox.MinY, fcbox.MinZ,
+                                 fcbox.MaxX, fcbox.MaxY, fcbox.MaxZ);
+                    renderBBoxIR(action, this, bbox, color);
+                }
+                else {
+                    renderBBoxIR(action, this, color);
+                }
+            }
+            else {
+                renderBBoxIR(action, this, color);
+            }
+        }
+    }
+
+    bool selPushed = false;
+    bool hlPushed = false;
+    if (ctx) {
+        if ((selPushed = ctx->selAll)) {
+            SelColorStack.push_back(ctx->selColor);
+            if (style != SoFCSelectionRoot::Box) {
+                state->push();
+                auto& color = SelColorStack.back();
+                SoLazyElement::setEmissive(state, &color);
+                SoOverrideElement::setEmissiveColorOverride(state, this, true);
+                if (SoLazyElement::getLightModel(state) == SoLazyElement::BASE_COLOR) {
+                    auto& packer = shapeColorPacker;
+                    SoLazyElement::setDiffuse(state, this, 1, &color, &packer);
+                    SoOverrideElement::setDiffuseColorOverride(state, this, true);
+                    SoMaterialBindingElement::set(state, this, SoMaterialBindingElement::OVERALL);
+                    SoOverrideElement::setMaterialBindingOverride(state, this, true);
+                }
+            }
+        }
+        if ((hlPushed = ctx->hlAll)) {
+            HlColorStack.push_back(ctx->hlColor);
+        }
+    }
+
+    inherited::IRRender(action);
+
+    if (hlPushed) {
+        HlColorStack.pop_back();
+    }
+    if (selPushed) {
+        SelColorStack.pop_back();
+        if (style != SoFCSelectionRoot::Box) {
+            state->pop();
+        }
+    }
+
+    // When a selection or highlight override was active, the geometry just
+    // recorded belongs to a selected/highlighted object.  In the Vulkan
+    // ray-tracing backend that geometry would otherwise be part of the traced
+    // image and force a re-trace/re-denoise on every hover.  Promote it to the
+    // OVERLAY pass so the path tracer skips it and the raster overlay pass
+    // draws it as a layer on top of the traced surface, without restarting the
+    // accumulation/denoiser.
+    if ((selPushed || hlPushed) && list.getNumCommands() > fcmd) {
+        const int count = list.getNumCommands();
+        SbViewportRegion vp = SoViewportRegionElement::get(state);
+        const short vx = std::max(0, (int)vp.getViewportOriginPixels()[0]);
+        const short vy = std::max(0, (int)vp.getViewportOriginPixels()[1]);
+        const short vw = std::max(1, (int)vp.getViewportSizePixels()[0]);
+        const short vh = std::max(1, (int)vp.getViewportSizePixels()[1]);
+        for (int i = fcmd; i < count; ++i) {
+            SoRenderCommand& cmd = list.getCommand(i);
+            cmd.pass = SO_RENDERPASS_OVERLAY;
+            cmd.state.raster.scissorEnabled = TRUE;
+            cmd.state.raster.scissorX = vx;
+            cmd.state.raster.scissorY = vy;
+            cmd.state.raster.scissorWidth = vw;
+            cmd.state.raster.scissorHeight = vh;
+        }
+    }
+
+    return false;
+}
+#endif
 
 bool SoFCSelectionRoot::checkColorOverride(SoState* state)
 {
@@ -2089,9 +2485,16 @@ void SoFCSelectionRoot::callback(SoCallbackAction* action)
 void SoFCSelectionRoot::doAction(SoAction* action)
 {
     BEGIN_ACTION
+
+    // Selection and preselection contexts are maintained in SelStack by
+    // renderPrivate() for the OpenGL path and by renderPrivateIR() for the
+    // retained/IR path.  doAction() only has to keep ActionStacks keyed for
+    // the selection/highlight actions, so nothing extra is pushed here.
+
     if (doActionPrivate(stack, action)) {
         inherited::doAction(action);
     }
+
     END_ACTION
 }
 
@@ -2509,6 +2912,54 @@ void SoFCPathAnnotation::GLRenderBelowPath(SoGLRenderAction* action)
 void SoFCPathAnnotation::GLRenderInPath(SoGLRenderAction* action)
 {
     GLRenderBelowPath(action);
+}
+
+void SoFCPathAnnotation::IRRender(SoIRRenderAction* action)
+{
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    if (!path || !path->getLength()) {
+        return;
+    }
+    SoState* state = action->getState();
+    if (!state) {
+        return;
+    }
+
+    // Record the highlighted shape using the scene camera matrices (so the
+    // highlight lands on the correct world-space face), then promote the
+    // recorded commands to the overlay pass.  The overlay pass is drawn by
+    // the raster backend on top of the path-traced image: the path tracer
+    // skips SO_RENDERPASS_OVERLAY, so the highlight never re-traces or
+    // re-denoses the scene, and it appears as a distinct layer above the
+    // traced surface.  The scissor is scoped to the current viewport so the
+    // overlay backend accepts the command (it skips unscissored overlays).
+    SoDrawList& list = action->getMutableDrawList();
+    const int firstCommand = list.getNumCommands();
+
+    state->push();
+
+    SbViewportRegion vp = SoViewportRegionElement::get(state);
+    const short vx = std::max(0, (int)vp.getViewportOriginPixels()[0]);
+    const short vy = std::max(0, (int)vp.getViewportOriginPixels()[1]);
+    const short vw = std::max(1, (int)vp.getViewportSizePixels()[0]);
+    const short vh = std::max(1, (int)vp.getViewportSizePixels()[1]);
+
+    inherited::IRRender(action);
+
+    const int count = list.getNumCommands();
+    for (int i = firstCommand; i < count; ++i) {
+        SoRenderCommand& cmd = list.getCommand(i);
+        cmd.pass = SO_RENDERPASS_OVERLAY;
+        cmd.state.raster.scissorEnabled = TRUE;
+        cmd.state.raster.scissorX = vx;
+        cmd.state.raster.scissorY = vy;
+        cmd.state.raster.scissorWidth = vw;
+        cmd.state.raster.scissorHeight = vh;
+    }
+    state->pop();
+#else
+    inherited::IRRender(action);
+#endif
 }
 
 void SoFCPathAnnotation::setDetail(SoDetail* d)

@@ -58,6 +58,7 @@ class SoOrthographicCamera;
 class SoPerspectiveCamera;
 class SoTransform;
 class SoVertexProperty;
+class SoIRRenderAction;
 namespace Gui
 {
 
@@ -129,6 +130,9 @@ protected:
     ~SoNaviCube() override;
 
     void GLRender(SoGLRenderAction* action) override;
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    void IRRender(SoIRRenderAction* action) override;
+#endif
     void generatePrimitives(SoAction* action) override;
     void computeBBox(SoAction* action, SbBox3f& box, SbVec3f& center) override;
 
@@ -156,6 +160,7 @@ private:
     };
 
     void renderCoin(SoGLRenderAction* action);
+    void renderOverlayIR(SoIRRenderAction* action);
     void ensureSceneGraph() const;
     void rebuildSceneGraph() const;
     void resetSceneGraph() const;
@@ -209,6 +214,7 @@ private:
     struct LabelNodes
     {
         SoSeparator* sep {nullptr};
+        SoSwitch* visSwitch {nullptr};
         SoMaterial* material {nullptr};
         SoTexture2* texture {nullptr};
         SoVertexProperty* vertexProperty {nullptr};
@@ -257,6 +263,7 @@ private:
         bool buttonDirty {true};
         bool labelDirty {true};
         bool axisDirty {true};
+        uint32_t faceVisMask {0};
         SbColor buttonsBaseRgb {0.0F, 0.0F, 0.0F};
         SbColor buttonsHiliteRgb {0.0F, 0.0F, 0.0F};
         SbColor buttonsOutlineRgb {0.0F, 0.0F, 0.0F};

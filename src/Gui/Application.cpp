@@ -545,6 +545,18 @@ Application::Application(bool GUIenabled)
             (void)coin_setenv("COIN_VBO", "1", true);
         }
 
+        // Honor the --enable-vulkan command-line flag: persist it into the
+        // view preferences before any 3D view is constructed, so the
+        // View3DInventor path picks the Vulkan renderer for this run.
+        // Only an explicit truthy value enables it: an explicit
+        // "--set-config UseVulkanRenderer=0" must be able to override the
+        // flag (count() alone would treat the key's mere presence as on).
+        auto configIt = App::Application::Config().find("UseVulkanRenderer");
+        if (configIt != App::Application::Config().end()
+            && configIt->second == "1") {
+            hViewGrp->SetBool("UseVulkanRenderer", true);
+        }
+
         // Check for the symbols for group separator and decimal point. They must be different
         // otherwise Qt doesn't work properly.
 #if defined(Q_OS_WIN32)
@@ -806,10 +818,7 @@ void Application::open(const char* FileName, const char* Module)
                         "User parameter:BaseApp/Preferences/View"
                     );
                     if (hGrp->GetBool("AutoFitToView", true)) {
-                        Command::doCommand(
-                            Command::Gui,
-                            "Gui.getMainWindow().getActiveWindow().sendMessage(\"ViewFit\")"
-                        );
+                        sendMsgToActiveView("ViewFit");
                     }
                 }
             }
@@ -1609,23 +1618,28 @@ void Application::setActiveDocument(Gui::Document* pcDocument)
     // Macro recording of this is problematic, thus it's written out as comment.
     if (pcDocument) {
         pcDocument->setIsActive(true);
+        const char* docName = pcDocument->getDocument()->getName();
 
+        nameApp.reserve(96);
         nameApp += "App.setActiveDocument(\"";
-        nameApp += pcDocument->getDocument()->getName();
+        nameApp += docName;
         nameApp += "\")\n";
         nameApp += "App.ActiveDocument=App.getDocument(\"";
-        nameApp += pcDocument->getDocument()->getName();
+        nameApp += docName;
         nameApp += "\")";
         macroManager()->addLine(MacroManager::Cmt, nameApp.c_str());
+        nameGui.reserve(64);
         nameGui += "Gui.ActiveDocument=Gui.getDocument(\"";
-        nameGui += pcDocument->getDocument()->getName();
+        nameGui += docName;
         nameGui += "\")";
         macroManager()->addLine(MacroManager::Cmt, nameGui.c_str());
     }
     else {
+        nameApp.reserve(48);
         nameApp += "App.setActiveDocument(\"\")\n";
         nameApp += "App.ActiveDocument=None";
         macroManager()->addLine(MacroManager::Cmt, nameApp.c_str());
+        nameGui.reserve(24);
         nameGui += "Gui.ActiveDocument=None";
         macroManager()->addLine(MacroManager::Cmt, nameGui.c_str());
     }
@@ -2264,8 +2278,17 @@ void setCategoryFilterRules()
 
 bool isSuppressedQtWarning(const QMessageLogContext& context, const QString& msg)
 {
-    return context.category && strcmp(context.category, "qt.text.font.db") == 0
-        && msg.startsWith(QStringLiteral("OpenType support missing for "));
+    if (context.category && strcmp(context.category, "qt.text.font.db") == 0
+        && msg.startsWith(QStringLiteral("OpenType support missing for "))) {
+        return true;
+    }
+    // Qt's QWindow::setTransientParent() warns when a popup/menu/tooltip is
+    // anchored on a widget that has a native QWidgetWindow that is not itself a
+    // top-level window (e.g. an embedded 3D view, dock widget, or ribbon).  Qt
+    // simply ignores the transient-parent hint and continues, so this is
+    // benign.  It is emitted right when a context menu pops up over the
+    // viewport or a UI bar.
+    return msg.contains(QStringLiteral("must be a top level window."));
 }
 }  // namespace
 

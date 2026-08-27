@@ -37,6 +37,8 @@
 #include <QEvent>
 #include <QMouseEvent>
 
+#include <Base/VulkanBreadcrumbs.h>
+
 #include "QuarterWidget.h"
 #include "devices/Keyboard.h"
 #include "devices/Mouse.h"
@@ -87,8 +89,18 @@ public:
 
     SbVec2s mousepos = InputDevice::toDevicePixelPosition(
         getLocalPosition(event),
-        this->windowsize,
+        effectiveWindowSize(quarterwidget),
         quarterwidget->devicePixelRatio());
+    // Duplicate of InputDevice::toDevicePixelPosition's own trace; the helper
+    // already logs the dpr/window mapping once, so log this around the same
+    // (constant) values at most once to avoid per-event repetition.
+    VK_BREADCRUMB_ONCE(
+            "[VK-TRACE] toDevicePixelPosition logical=(%.1f,%.1f) "
+            "windowLogical=%dx%d dpr=%.2f -> device=%d,%d\n",
+            getLocalPosition(event).x(), getLocalPosition(event).y(),
+            this->windowsize[0], this->windowsize[1],
+            quarterwidget->devicePixelRatio(),
+            mousepos[0], mousepos[1]);
     Q_FOREACH(InputDevice * device, this->devices) {
       device->setMousePosition(mousepos);
     }

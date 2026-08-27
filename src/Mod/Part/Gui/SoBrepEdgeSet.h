@@ -32,8 +32,12 @@
 #include <Gui/Selection/SoFCSelectionContext.h>
 #include <Mod/Part/PartGlobal.h>
 
+#include "SoBrepOverlayHelpers.h"
+
 
 class SoCoordinateElement;
+class SoIRRenderAction;
+class SoState;
 
 namespace PartGui
 {
@@ -63,6 +67,9 @@ public:
 protected:
     ~SoBrepEdgeSet() override;
     void GLRender(SoGLRenderAction* action) override;
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    void IRRender(SoIRRenderAction* action) override;
+#endif
     void GLRenderBelowPath(SoGLRenderAction* action) override;
     void doAction(SoAction* action) override;
     SoDetail* createLineSegmentDetail(
@@ -78,8 +85,23 @@ private:
     struct SelContext;
     using SelContextPtr = std::shared_ptr<SelContext>;
 
+    /// Indices/color/depth-mode payload shared by the GL and IR overlay paths.
+    struct OverlayLines
+    {
+        const int32_t* indices = nullptr;
+        int count = 0;
+        SbColor color;
+        OverlayDepthMode depthMode = OverlayDepthMode::RespectDepth;
+    };
+
     void renderHighlight(SoGLRenderAction* action, SelContextPtr);
     void renderSelection(SoGLRenderAction* action, SelContextPtr, bool push = true);
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    void renderHighlightIR(SoIRRenderAction* action, SelContextPtr);
+    void renderSelectionIR(SoIRRenderAction* action, SelContextPtr);
+#endif
+    bool collectHighlightLines(SoState*, SelContextPtr, OverlayLines&) const;
+    bool collectSelectionLines(SoState*, SelContextPtr, OverlayLines&) const;
     bool validIndexes(const SoCoordinateElement*, const std::vector<int32_t>&) const;
 
 

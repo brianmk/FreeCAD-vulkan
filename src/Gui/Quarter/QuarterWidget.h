@@ -214,4 +214,34 @@ private:
   bool initialized;
 };
 
+/*!
+  The Quarter widget's own size is unreliable while the widget is hidden
+  (it can report garbage device sizes or never receive resize events), which
+  corrupts the SoEvent position used by FreeCAD's navigation.  The render
+  manager viewport is kept correct by the Vulkan viewer integration, so use
+  it as the source of truth when converting Qt positions to Coin
+  device-pixel coordinates.
+*/
+inline SbVec2s effectiveWindowSize(const QuarterWidget * quarter)
+{
+  // Return the LOGICAL window size.  The render manager's viewport region is
+  // in DEVICE pixels (sized at the widget's devicePixelRatio, e.g. *1.25), but
+  // the cursor position toDevicePixelPosition() flips and multiplies against
+  // this size.  Using the physical viewport size there double-applies the ratio
+  // on the vertical axis and shifted hover/select picking by the DPI factor on
+  // a fractional-scaling display (125% Windows/Linux, 2.0 Retina).  Normalize
+  // back to logical by dividing the physical viewport size by the (live) ratio;
+  // this stays correct whether the widget itself tracks the container size
+  // (Coin mode) or its viewport region is pinned to the Vulkan surface (the
+  // hidden GL viewer).
+  if (SoRenderManager * rm = quarter->getSoRenderManager()) {
+    const SbVec2s & vpsize = rm->getViewportRegion().getViewportSizePixels();
+    if (vpsize[0] > 0 && vpsize[1] > 0) {
+      const qreal dpr = qMax(1.0, quarter->devicePixelRatio());
+      return SbVec2s(qRound(vpsize[0] / dpr), qRound(vpsize[1] / dpr));
+    }
+  }
+  return SbVec2s(quarter->width(), quarter->height());
+}
+
 }}} // namespace

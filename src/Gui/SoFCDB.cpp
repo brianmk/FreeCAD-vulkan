@@ -60,7 +60,6 @@
 #include "Navigation/NavigationStyle.h"
 #include "Navigation/SiemensNXNavigationStyle.h"
 #include "SelectionObject.h"
-#include "SoDevicePixelRatioElement.h"
 #include "SoFCColorBar.h"
 #include "SoFCInteractiveElement.h"
 #include "SoFCSelection.h"
@@ -81,6 +80,8 @@
 #include "Inventor/SoFCBackgroundGradient.h"
 #include "Inventor/SoFCBoundingBox.h"
 #include "Inventor/SoNaviCube.h"
+#include "Inventor/SoGroundPlane.h"
+#include "Inventor/SoAxisCrossOverlay.h"
 #include "Inventor/SoMouseWheelEvent.h"
 #include "Inventor/SoFCTransform.h"
 #include "Inventor/SoToggleSwitch.h"
@@ -105,7 +106,6 @@ SbBool Gui::SoFCDB::isInitialized()
 void Gui::SoFCDB::init()
 {
     SoInteraction ::init();
-    SoDevicePixelRatioElement ::initClass();
     SoGLRenderActionElement ::initClass();
     SoFCInteractiveElement ::initClass();
     SoGLWidgetElement ::initClass();
@@ -146,6 +146,8 @@ void Gui::SoFCDB::init()
     SoRegPoint ::initClass();
     SoDrawingGrid ::initClass();
     SoNaviCube ::initClass();
+    SoGroundPlane ::initClass();
+    SoAxisCrossOverlay ::initClass();
     SoFCTransform ::initClass();
     SoAutoZoomTranslation ::initClass();
     MarkerBitmaps ::initClass();

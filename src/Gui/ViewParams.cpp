@@ -408,7 +408,10 @@ void ViewParams::setup()
     addParameter("DatumScale", Double {100.0});
     addParameter("DatumPlaneSize", Double {62.0});
     addParameter("DatumLineSize", Double {70.0});
-    addParameter("DatumTemporaryScaleFactor", Double {2.0});
+    // Fraction of the viewport height used for temporarily enlarged datum
+    // planes (e.g. while picking a sketch/datum attachment plane).  Kept as
+    // a fraction so the planes scale with the screen resolution.
+    addParameter("DatumTemporaryScaleFactor", Double {0.4});
     addParameter("ViewSelectionExtend", Bool {false});
     addParameter("ViewSelectionExtendFactor", Double {0.5});
     addParameter("SelectionLineThicken", Double {1.0});

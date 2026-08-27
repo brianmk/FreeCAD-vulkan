@@ -394,8 +394,7 @@ MaterialLoader::getMaterialFromYAML(const std::shared_ptr<MaterialLibraryLocal>&
 
         // Always get the name from the filename
         QFileInfo filepath(path);
-        QString name =
-            filepath.fileName().remove(QStringLiteral(".FCMat"), Qt::CaseInsensitive);
+        QString name = stripMaterialExtension(filepath.fileName());
 
         model = std::make_shared<MaterialYamlEntry>(library,
                                                     name,

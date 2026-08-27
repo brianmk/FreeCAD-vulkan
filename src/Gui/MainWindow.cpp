@@ -27,6 +27,7 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QCloseEvent>
+#include <QComboBox>
 #include <QContextMenuEvent>
 #include <QDesktopServices>
 #include <QDockWidget>
@@ -47,10 +48,14 @@
 #include <QScreen>
 #include <QSettings>
 #include <QSignalMapper>
+#include <QSignalBlocker>
 #include <QStatusBar>
 #include <QThread>
 #include <QTimer>
 #include <QToolBar>
+#include <QHBoxLayout>
+#include <QSlider>
+#include <QToolButton>
 #include <QUrlQuery>
 #include <QWhatsThis>
 #include <QWindow>
@@ -308,6 +313,96 @@ private:
 
 // -------------------------------------
 
+/// A status-bar widget that toggles the viewer ground-plane grid and lets the
+/// user dial its visibility with a transparency slider. It writes its state to
+/// the "View" preferences group, which View3DSettings observes, so every open
+/// 3D view updates live without this widget having to reach into the viewers
+/// (mirrors how ShowAxisCross / ShowNaviCube preferences drive the viewer).
+class GroundPlaneWidget: public QWidget, public ParameterGrp::ObserverType
+{
+public:
+    explicit GroundPlaneWidget(QWidget* parent)
+        : QWidget(parent)
+        , hGrp(App::GetApplication().GetParameterGroupByPath(
+            "User parameter:BaseApp/Preferences/View"))
+    {
+        setWindowTitle(qApp->translate("Gui::MainWindow", "Ground Plane Grid"));
+        // Visibility is owned and persisted by MainWindow's status-bar registry.
+
+        auto* layout = new QHBoxLayout(this);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(2);
+
+        auto* toggleButton = new QToolButton(this);
+        toggleButton->setIcon(BitmapFactory().pixmap("Std_Plane"));
+        toggleButton->setIconSize(QSize(16, 16));
+        toggleButton->setCheckable(true);
+        toggleButton->setAutoRaise(true);
+        //: Tooltip for the status bar button that toggles the ground plane grid
+        toggleButton->setToolTip(QObject::tr("Toggles the ground plane grid"));
+
+        m_opacitySlider = new QSlider(Qt::Horizontal, this);
+        m_opacitySlider->setRange(0, 100);
+        m_opacitySlider->setFixedWidth(90);
+        m_opacitySlider->setSingleStep(1);
+        m_opacitySlider->setPageStep(5);
+        //: Tooltip for the status bar slider that adjusts the ground plane opacity
+        m_opacitySlider->setToolTip(QObject::tr("Ground plane opacity"));
+
+        layout->addWidget(toggleButton);
+        layout->addWidget(m_opacitySlider);
+
+        connect(toggleButton, &QToolButton::toggled, this, [this](bool on) {
+            hGrp->SetBool("ShowGroundPlane", on);
+        });
+        connect(m_opacitySlider, &QSlider::valueChanged, this, [this](int value) {
+            hGrp->SetFloat("GroundPlaneOpacity", value / 100.0);
+        });
+        connect(m_opacitySlider, &QSlider::sliderReleased, this, &GroundPlaneWidget::syncFromPrefs);
+
+        hGrp->Attach(this);
+        syncFromPrefs();
+    }
+
+    ~GroundPlaneWidget() override
+    {
+        hGrp->Detach(this);
+    }
+
+    void OnChange(Base::Subject<const char*>& /*rCaller*/, const char* reason) override
+    {
+        if (strcmp(reason, "ShowGroundPlane") == 0 || strcmp(reason, "GroundPlaneOpacity") == 0) {
+            syncFromPrefs();
+        }
+    }
+
+    QSize sizeHint() const override
+    {
+        return minimumSizeHint();
+    }
+
+    QSize minimumSizeHint() const override
+    {
+        return QSize(112, 20);
+    }
+
+private:
+    void syncFromPrefs()
+    {
+        auto* toggleButton = findChild<QToolButton*>();
+        if (toggleButton) {
+            toggleButton->setChecked(hGrp->GetBool("ShowGroundPlane", false));
+        }
+        double opacity = hGrp->GetFloat("GroundPlaneOpacity", 0.15);
+        m_opacitySlider->setValue(static_cast<int>(opacity * 100.0));
+    }
+
+    ParameterGrp::handle hGrp;
+    QSlider* m_opacitySlider = nullptr;
+};
+
+// -------------------------------------
+
 /// One entry in the status-bar item registry owned by MainWindow.
 struct StatusBarItem
 {
@@ -330,6 +425,11 @@ struct MainWindowP
     StatusBarLabel* actionLabel;
     InputHintWidget* hintLabel;
     QLabel* rightSideLabel;
+#ifdef FREECAD_USE_VULKAN
+    QComboBox* viewModeCombo = nullptr;
+    QComboBox* envMapCombo = nullptr;
+    QToolButton* edgeOverlayButton = nullptr;
+#endif
     std::vector<StatusBarItem> statusBarItems;
     ParameterGrp::handle hStatusBar;
     QTimer* actionTimer;
@@ -535,6 +635,113 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
          .persistentVisibility = true}
     );
 
+#ifdef FREECAD_USE_VULKAN
+    // View render-mode selector ("Interactive (raster Coin)", "Interactive
+    // (raster Vulkan)", "Wireframe", "Ambient Occlusion", "Ray Tracing",
+    // "Environment").  Lives in the main window status bar, LEFT of the
+    // ground-plane grid control (order 250 < 300), and drives the ACTIVE 3D
+    // view's mode (each view keeps its own).  Re-populated and re-synchronised
+    // whenever the active view changes.  The two raster modes map to
+    // ViewRenderMode::RasterCoin / Interactive and always keep the Vulkan
+    // viewport in pure raster (no path tracing / ray tracing / denoiser / edge
+    // & point overlays).
+    d->viewModeCombo = new QComboBox(statusBar());
+    d->viewModeCombo->setObjectName(QStringLiteral("ViewRenderingMode"));
+    //: Status-bar view render-mode entry: the default raster rendering
+    //: (classic Coin raster), no ray tracing.
+    d->viewModeCombo->addItem(tr("Interactive (raster Coin)"));
+    //: Status-bar view render-mode entry: Vulkan raster viewport, no ray tracing.
+    d->viewModeCombo->addItem(tr("Interactive (raster Vulkan)"));
+    //: Status-bar view render-mode entry: raster wireframe draw style
+    d->viewModeCombo->addItem(tr("Wireframe"));
+    //: Status-bar view render-mode entry: single-sample ray ambient occlusion
+    d->viewModeCombo->addItem(tr("Ambient Occlusion"));
+    //: Status-bar view render-mode entry: accumulating ray path tracer
+    d->viewModeCombo->addItem(tr("Ray Tracing"));
+    //: Status-bar view render-mode entry: single-sample environment/IBL preview
+    d->viewModeCombo->addItem(tr("Environment"));
+    addStatusBarItem(
+        d->viewModeCombo,
+        {.id = "viewModeCombo",
+         //: A context menu action used to show or hide the view rendering mode
+         //: selector in the status bar
+         .title = tr("View Rendering Mode"),
+         .slot = StatusBarSlot::Right,
+         .order = 250,
+         .persistentVisibility = true}
+    );
+    connect(d->viewModeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, &MainWindow::onViewModeComboChanged);
+
+    // "Cubemap" environment selector, shown next to the view render mode.
+    // Same per-view state model as the mode selector.  Index 0 = viewport
+    // background gradient (-1); the rest mirror the backend preset table.
+    d->envMapCombo = new QComboBox(statusBar());
+    d->envMapCombo->setObjectName(QStringLiteral("ViewEnvironmentMode"));
+    d->envMapCombo->addItem(tr("Viewport Background"));
+    //: Status-bar environment selector entry: procedural daylight cubemap
+    d->envMapCombo->addItem(tr("Daylight"));
+    //: Status-bar environment selector entry: procedural sunset cubemap
+    d->envMapCombo->addItem(tr("Sunset"));
+    //: Status-bar environment selector entry: procedural overcast cubemap
+    d->envMapCombo->addItem(tr("Overcast"));
+    //: Status-bar environment selector entry: procedural neutral studio cubemap
+    d->envMapCombo->addItem(tr("Neutral Studio"));
+    //: Status-bar environment selector entry: procedural night cubemap
+    d->envMapCombo->addItem(tr("Night"));
+    //: Status-bar environment selector entry: wooden desk room cubemap
+    d->envMapCombo->addItem(tr("Desk"));
+    //: Status-bar environment selector entry: wooden table room cubemap
+    d->envMapCombo->addItem(tr("Table"));
+    //: Status-bar environment selector entry: bright white lab room cubemap
+    d->envMapCombo->addItem(tr("White Lab"));
+    //: Status-bar environment selector entry: pure white background cubemap
+    d->envMapCombo->addItem(tr("White Background"));
+    addStatusBarItem(
+        d->envMapCombo,
+        {.id = "envMapCombo",
+         //: A context menu action used to show or hide the environment mode
+         //: selector in the status bar
+         .title = tr("Environment"), .slot = StatusBarSlot::Right,
+         .order = 252}
+    );
+    connect(d->envMapCombo, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, &MainWindow::onEnvMapComboChanged);
+
+    // Toggle for the black BRep edge overlay drawn on top of objects in the
+    // Vulkan viewport (the "edges" display option).  Lives next to the
+    // environment selector; its checked state mirrors the active view.
+    d->edgeOverlayButton = new QToolButton(statusBar());
+    d->edgeOverlayButton->setObjectName(QStringLiteral("EdgeOverlayButton"));
+    d->edgeOverlayButton->setCheckable(true);
+    d->edgeOverlayButton->setAutoRaise(true);
+    d->edgeOverlayButton->setIcon(BitmapFactory().iconFromTheme("DrawStyleFlatLines"));
+    d->edgeOverlayButton->setToolTip(tr("Toggle the object edge overlay"));
+    addStatusBarItem(
+        d->edgeOverlayButton,
+        {.id = "edgeOverlayButton",
+         //: A context menu action used to show or hide the edge overlay toggle
+         //: in the status bar
+         .title = tr("Edge Overlay"),
+         .slot = StatusBarSlot::Right,
+         .order = 253,
+         .persistentVisibility = true}
+    );
+    connect(d->edgeOverlayButton, &QToolButton::toggled,
+            this, &MainWindow::onEdgeOverlayToggled);
+#endif // FREECAD_USE_VULKAN
+
+    auto* groundPlaneWidget = new GroundPlaneWidget(statusBar());
+    addStatusBarItem(
+        groundPlaneWidget,
+        {.id = "groundPlaneWidget",
+         //: A context menu action used to show or hide the ground plane grid control
+         //: in the status bar
+         .title = tr("Ground Plane Grid"),
+         .slot = StatusBarSlot::Right,
+         .order = 300,
+         .persistentVisibility = true}
+    );
     auto* toggleBottomPanelsButton = new QToolButton(statusBar());
     toggleBottomPanelsButton->setIconSize(QSize(16, 16));
     toggleBottomPanelsButton->setIcon(BitmapFactory().pixmap("Std_ToggleBottomPanels"));
@@ -994,6 +1201,19 @@ void MainWindow::closeActiveWindow()
 
 int MainWindow::confirmSave(App::Document* doc, QWidget* parent, bool addCheckbox)
 {
+    // Testing flag: skip the unsaved-document prompt and discard changes.
+    // Enabled by the FC_SKIP_UNSAVED_PROMPT environment variable.
+    static int skipUnsaved = -1;
+    if (skipUnsaved == -1) {
+        const char* env = getenv("FC_SKIP_UNSAVED_PROMPT");
+        skipUnsaved = (env && env[0] && strcmp(env, "0") != 0
+                       && strcmp(env, "false") != 0 && strcmp(env, "off") != 0)
+            ? 1
+            : 0;
+    }
+    if (skipUnsaved) {
+        return ConfirmSaveResult::DiscardAll;
+    }
     QMessageBox box(parent ? parent : this);
     box.setObjectName(QStringLiteral("confirmSave"));
     box.setIcon(QMessageBox::Question);
@@ -1433,6 +1653,16 @@ void MainWindow::addWindow(MDIView* view)
 
     connect(view, &MDIView::message, this, &MainWindow::showMessage);
     connect(this, &MainWindow::windowStateChanged, view, &MDIView::windowStateChanged);
+    // The render mode can auto-fall-back to raster when the hardware lacks ray
+    // tracing; keep the status-bar selector (and edge-overlay button) in step.
+    if (const auto* v3 = qobject_cast<View3DInventor*>(view)) {
+#ifdef FREECAD_USE_VULKAN
+        connect(v3, &View3DInventor::renderModeChanged,
+                this, &MainWindow::syncViewModeCombo);
+        connect(v3, &View3DInventor::renderModeChanged,
+                this, &MainWindow::syncEdgeOverlayButton);
+#endif
+    }
 
     // listen to the incoming events of the view
     view->installEventFilter(this);
@@ -1464,6 +1694,14 @@ void MainWindow::removeWindow(Gui::MDIView* view, bool close)
     // free all connections
     disconnect(view, &MDIView::message, this, &MainWindow::showMessage);
     disconnect(this, &MainWindow::windowStateChanged, view, &MDIView::windowStateChanged);
+    if (const auto* v3 = qobject_cast<View3DInventor*>(view)) {
+#ifdef FREECAD_USE_VULKAN
+        disconnect(v3, &View3DInventor::renderModeChanged,
+                   this, &MainWindow::syncViewModeCombo);
+        disconnect(v3, &View3DInventor::renderModeChanged,
+                   this, &MainWindow::syncEdgeOverlayButton);
+#endif
+    }
 
     view->removeEventFilter(this);
 
@@ -1585,6 +1823,14 @@ void MainWindow::setActiveWindow(MDIView* view)
     d->activeView = view;
     Application::Instance->viewActivated(view);
 
+    // Keep the status-bar view rendering mode selector in step with the newly
+    // active view (each view owns its own render mode).
+#ifdef FREECAD_USE_VULKAN
+    syncViewModeCombo();
+    syncEnvMapCombo();
+    syncEdgeOverlayButton();
+#endif
+
     // activate/remember workbench by tab (if enabled)
 
     const ParameterGrp::handle hGrp = App::GetApplication().GetParameterGroupByPath(
@@ -1621,6 +1867,78 @@ void MainWindow::onWindowActivated(QMdiSubWindow* mdi)
     auto view = dynamic_cast<MDIView*>(mdi->widget());
     setActiveWindow(view);
 }
+
+#ifdef FREECAD_USE_VULKAN
+void MainWindow::syncViewModeCombo()
+{
+    if (!d->viewModeCombo) {
+        return;
+    }
+    // Reflect the active 3D view's render mode.  Views other than 3D views
+    // have no mode; show a neutral state (the default raster Coin mode).
+    View3DInventor* view = dynamic_cast<View3DInventor*>(d->activeView.data());
+    const Gui::ViewRenderMode mode =
+        view ? view->getRenderMode() : Gui::ViewRenderMode::RasterCoin;
+    QSignalBlocker blocker(d->viewModeCombo);
+    d->viewModeCombo->setCurrentIndex(static_cast<int>(mode));
+}
+
+void MainWindow::onViewModeComboChanged(int index)
+{
+    if (index < 0) {
+        return;
+    }
+    View3DInventor* view = dynamic_cast<View3DInventor*>(d->activeView.data());
+    if (!view) {
+        return;
+    }
+    view->setRenderMode(static_cast<Gui::ViewRenderMode>(index));
+}
+
+void MainWindow::syncEnvMapCombo()
+{
+    if (!d->envMapCombo) {
+        return;
+    }
+    // Reflect the active 3D view's environment preset.  Combo index 0 =
+    // viewport background (backend envMap -1), so index = envMap + 1.
+    View3DInventor* view = dynamic_cast<View3DInventor*>(d->activeView.data());
+    const int envMap = view ? view->getEnvMap() : -1;
+    QSignalBlocker blocker(d->envMapCombo);
+    d->envMapCombo->setCurrentIndex(envMap + 1);
+}
+
+void MainWindow::onEnvMapComboChanged(int index)
+{
+    // combo index 0 = viewport background (backend -1).
+    View3DInventor* view = dynamic_cast<View3DInventor*>(d->activeView.data());
+    if (!view) {
+        return;
+    }
+    view->setEnvMap(index - 1);
+}
+
+void MainWindow::onEdgeOverlayToggled(bool checked)
+{
+    View3DInventor* view = dynamic_cast<View3DInventor*>(d->activeView.data());
+    if (!view) {
+        return;
+    }
+    view->setShowEdges(checked);
+}
+
+void MainWindow::syncEdgeOverlayButton()
+{
+    if (!d->edgeOverlayButton) {
+        return;
+    }
+    // Checked state mirrors the active view's edge-overlay visibility.
+    View3DInventor* vecView = dynamic_cast<View3DInventor*>(d->activeView.data());
+    const bool showEdges = vecView ? vecView->getShowEdges() : false;
+    QSignalBlocker blocker(d->edgeOverlayButton);
+    d->edgeOverlayButton->setChecked(showEdges);
+}
+#endif // FREECAD_USE_VULKAN
 
 void MainWindow::onWindowsMenuAboutToShow()
 {

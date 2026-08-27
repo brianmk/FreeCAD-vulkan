@@ -22,11 +22,16 @@
  ******************************************************************************/
 
 #include <FCConfig.h>
+#include <Base/VulkanBreadcrumbs.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <limits>
 #include <Inventor/actions/SoGetBoundingBoxAction.h>
 #include <Inventor/actions/SoGLRenderAction.h>
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+#include <Inventor/actions/SoIRRenderAction.h>
+#endif
 #include <Inventor/details/SoPointDetail.h>
 #include <Inventor/elements/SoCoordinateElement.h>
 #include <Inventor/elements/SoDepthBufferElement.h>
@@ -43,111 +48,13 @@
 #include <Gui/Inventor/So3DAnnotation.h>
 
 #include "ViewProviderExt.h"
+#include "SoBrepOverlayHelpers.h"
 #include "SoBrepPointSet.h"
 
 
 using namespace PartGui;
 
 SO_NODE_SOURCE(SoBrepPointSet)
-
-/// Controls how B-rep overlay primitives interact with the scene depth buffer.
-enum class OverlayDepthMode
-{
-    /// Keep normal occlusion so committed selection does not expose hidden geometry.
-    RespectDepth,
-    /// Render above model geometry for hover and preselection feedback.
-    DrawOnTop,
-};
-
-static void applyOverlayPrimitiveState(SoState* state, SoNode* node)
-{
-    if (!state || !node) {
-        return;
-    }
-
-    SoLazyElement::setLightModel(state, SoLazyElement::BASE_COLOR);
-    SoTextureEnabledElement::set(state, node, false);
-    SoMaterialBindingElement::set(state, SoMaterialBindingElement::OVERALL);
-    SoOverrideElement::setMaterialBindingOverride(state, node, true);
-}
-
-static void applyOverlayDepthState(SoState* state, OverlayDepthMode depthMode)
-{
-    switch (depthMode) {
-        case OverlayDepthMode::DrawOnTop:
-            SoDepthBufferElement::set(
-                state,
-                FALSE,
-                FALSE,
-                SoDepthBufferElement::ALWAYS,
-                SbVec2f(0.0f, 1.0f)
-            );
-            return;
-        case OverlayDepthMode::RespectDepth:
-            SoDepthBufferElement::set(
-                state,
-                TRUE,
-                FALSE,
-                SoDepthBufferElement::LEQUAL,
-                SbVec2f(0.0f, 1.0f)
-            );
-            return;
-    }
-}
-
-static void renderOverlayPoints(
-    SoGLRenderAction* action,
-    SoIndexedPointSet* pointSet,
-    const int32_t* indices,
-    int numIndices,
-    const SbColor& color,
-    OverlayDepthMode depthMode
-)
-{
-    if (!action || !pointSet || !indices || numIndices <= 0) {
-        return;
-    }
-
-    std::vector<int32_t> pointIndices;
-    pointIndices.reserve(static_cast<size_t>(numIndices) + 1);
-
-    for (int i = 0; i < numIndices; i++) {
-        const int32_t idx = indices[i];
-        if (idx >= 0) {
-            pointIndices.push_back(idx);
-        }
-    }
-    pointIndices.push_back(-1);
-
-    if (pointIndices.size() <= 1) {
-        return;
-    }
-
-    auto state = action->getState();
-    state->push();
-
-    applyOverlayPrimitiveState(state, pointSet);
-    applyOverlayDepthState(state, depthMode);
-
-    SoLazyElement::setEmissive(state, &color);
-    uint32_t packedColor = color.getPackedValue(0.0);
-    SoLazyElement::setPacked(state, pointSet, 1, &packedColor, false);
-
-    float ps = SoPointSizeElement::get(state);
-    if (ps < 4.0f) {
-        SoPointSizeElement::set(state, pointSet, 4.0f);
-    }
-
-    // setValues() does not shrink the field, so rewrite the overlay index array
-    // to the exact size to avoid stale points from the previous overlay render.
-    pointSet->coordIndex.setNum(static_cast<int>(pointIndices.size()));
-    int32_t* coordIndex = pointSet->coordIndex.startEditing();
-    std::copy(pointIndices.begin(), pointIndices.end(), coordIndex);
-    pointSet->coordIndex.finishEditing();
-    pointSet->GLRender(action);
-
-    state->pop();
-}
 
 void SoBrepPointSet::initClass()
 {
@@ -190,7 +97,8 @@ void SoBrepPointSet::GLRender(SoGLRenderAction* action)
         return;
     }
     SelContextPtr ctx2;
-    SelContextPtr ctx = Gui::SoFCSelectionRoot::getRenderContext<SelContext>(this, selContext, ctx2);
+    SelContextPtr ctx =
+        Gui::SoFCSelectionRoot::getRenderContext<SelContext>(this, selContext, ctx2);
     if (ctx2 && ctx2->selectionIndex.empty()) {
         return;
     }
@@ -316,6 +224,128 @@ void SoBrepPointSet::GLRender(SoGLRenderAction* action)
     }
 }
 
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+void SoBrepPointSet::IRRender(SoIRRenderAction* action)
+{
+    VK_BREADCRUMB_LIMITED(30, "[VK-TRACE] SoBrepPointSet::IRRender this=%p\n", this);
+    auto state = action->getState();
+    selCounter.checkRenderCache(state);
+
+    const SoCoordinateElement* coords = SoCoordinateElement::getInstance(state);
+    int num = coords->getNum() - this->startIndex.getValue();
+    if (num < 0) {
+        return;
+    }
+
+    SelContextPtr ctx2;
+    SelContextPtr ctx =
+        Gui::SoFCSelectionRoot::getRenderContext<SelContext>(this, selContext, ctx2);
+    copyIRRenderContexts(ctx, ctx2);
+    VK_BREADCRUMB_LIMITED(30,
+                          "[VK-TRACE] SoBrepPointSet::IRRender ctx=%p hlIdx=%d selIdx=%zu "
+                          "ctx2=%p ctx2selIdx=%zu\n",
+                          ctx.get(), ctx ? ctx->highlightIndex : -2,
+                          ctx ? ctx->selectionIndex.size() : (size_t)-1,
+                          ctx2.get(), ctx2 ? ctx2->selectionIndex.size() : (size_t)-1);
+    // Parity with GLRender(): an existing-but-empty secondary context
+    // inhibits drawing of the base geometry in partial-render scenarios.
+    if (ctx2 && ctx2->selectionIndex.empty()) {
+        return;
+    }
+    // Clarify selection: render the highlighted points on top of everything
+    // else.  GL registers the node for the delayed-annotations pass; the IR
+    // path records the points inline with the depth test off and the
+    // backend draws such commands last.
+    const bool hasContextHighlight = ctx && ctx->isHighlighted() && !ctx->isHighlightAll()
+        && ctx->highlightIndex >= 0;
+    if (Gui::Selection().isClarifySelectionActive() && hasContextHighlight) {
+        renderClarifySelectionIR(action,
+                                 ctx,
+                                 viewProvider,
+                                 [this](SoIRRenderAction* a, SelContextPtr c) {
+                                     this->renderHighlightIR(a, c);
+                                 },
+                                 [this](SoIRRenderAction* a) {
+                                     this->SoPointSet::IRRender(a);
+                                 });
+        return;
+    }
+    SelContextPtr globalCtx = selContext2
+        ? std::dynamic_pointer_cast<SelContext>(selContext2->copy())
+        : SelContextPtr();
+    if (globalCtx && globalCtx->checkGlobal(ctx)) {
+        ctx = globalCtx;
+    }
+
+    inherited::IRRender(action);
+
+    if (ctx && ctx->highlightIndex == std::numeric_limits<int>::max() && !ctx->isSelectAll()) {
+        if (ctx->selectionIndex.empty()) {
+            if (ctx2) {
+                ctx2->selectionColor = ctx->highlightColor;
+                renderSelectionIR(action, ctx2);
+            }
+            else {
+                renderHighlightIR(action, ctx);
+            }
+        }
+        else {
+            renderSelectionIR(action, ctx);
+            if (ctx2) {
+                ctx2->selectionColor = ctx->highlightColor;
+                renderSelectionIR(action, ctx2);
+            }
+            else {
+                renderHighlightIR(action, ctx);
+            }
+        }
+        return;
+    }
+
+    renderHighlightIR(action, ctx);
+    if (ctx && !ctx->selectionIndex.empty()) {
+        if (ctx->isSelectAll()) {
+            if (ctx2 && !ctx2->selectionIndex.empty()) {
+                ctx2->selectionColor = ctx->selectionColor;
+                renderSelectionIR(action, ctx2);
+            }
+            else {
+                renderSelectionIR(action, ctx);
+            }
+            return;
+        }
+        renderSelectionIR(action, ctx);
+    }
+    if (ctx2 && !ctx2->selectionIndex.empty()) {
+        renderSelectionIR(action, ctx2);
+    }
+
+    // Optional overlay rendering for deterministic tests (and programmatic usage).
+    const int hlNum = highlightCoordIndex.getNum();
+    if (hlNum > 0) {
+        renderOverlayPoints(
+            action,
+            overlayPointSet,
+            highlightCoordIndex.getValues(0),
+            hlNum,
+            highlightColor.getValue(),
+            OverlayDepthMode::DrawOnTop
+        );
+    }
+    const int selNum = selectionCoordIndex.getNum();
+    if (selNum > 0) {
+        renderOverlayPoints(
+            action,
+            overlayPointSet,
+            selectionCoordIndex.getValues(0),
+            selNum,
+            selectionColor.getValue(),
+            OverlayDepthMode::DrawOnTop
+        );
+    }
+}
+#endif
+
 void SoBrepPointSet::GLRenderBelowPath(SoGLRenderAction* action)
 {
     inherited::GLRenderBelowPath(action);
@@ -352,111 +382,137 @@ void SoBrepPointSet::getBoundingBox(SoGetBoundingBoxAction* action)
     }
 }
 
-void SoBrepPointSet::renderHighlight(SoGLRenderAction* action, SelContextPtr ctx)
+//! Shared decision logic for renderHighlight()/renderHighlightIR(): which
+//! point indices the highlight covers.
+static bool collectHighlightPoints(const SoBrepPointSet* node,
+                                   SoState* state,
+                                   Gui::SoFCSelectionContextPtr ctx,
+                                   std::vector<int32_t>& pointIndices)
 {
     if (!ctx || ctx->highlightIndex < 0) {
-        return;
+        return false;
     }
 
-    const SoCoordinateElement* coords = SoCoordinateElement::getInstance(action->getState());
+    const SoCoordinateElement* coords = SoCoordinateElement::getInstance(state);
     if (!coords) {
-        return;
+        return false;
     }
 
-    int id = ctx->highlightIndex;
+    const int startIndex = node->startIndex.getValue();
+    const int id = ctx->highlightIndex;
     if (id == std::numeric_limits<int>::max()) {
-        std::vector<int32_t> pointIndices;
-        pointIndices.reserve(coords->getNum() - startIndex.getValue());
-        for (int idx = startIndex.getValue(); idx < coords->getNum(); ++idx) {
-            pointIndices.push_back(static_cast<int32_t>(idx));
-        }
-        renderOverlayPoints(
-            action,
-            overlayPointSet,
-            pointIndices.data(),
-            static_cast<int>(pointIndices.size()),
-            ctx->highlightColor,
-            OverlayDepthMode::DrawOnTop
-        );
-        return;
-    }
-    if (id < this->startIndex.getValue() || id >= coords->getNum()) {
-        SoDebugError::postWarning("SoBrepPointSet::renderHighlight", "highlightIndex out of range");
-        return;
-    }
-
-    const int32_t pointIndices[1] = {static_cast<int32_t>(id)};
-    renderOverlayPoints(
-        action,
-        overlayPointSet,
-        pointIndices,
-        1,
-        ctx->highlightColor,
-        OverlayDepthMode::DrawOnTop
-    );
-}
-
-void SoBrepPointSet::renderSelection(SoGLRenderAction* action, SelContextPtr ctx, bool /*push*/)
-{
-    if (!ctx) {
-        return;
-    }
-
-    const SoCoordinateElement* coords = SoCoordinateElement::getInstance(action->getState());
-    if (!coords) {
-        return;
-    }
-
-    int startIndex = this->startIndex.getValue();
-    if (ctx->isSelectAll()) {
-        std::vector<int32_t> pointIndices;
         pointIndices.reserve(coords->getNum() - startIndex);
         for (int idx = startIndex; idx < coords->getNum(); ++idx) {
             pointIndices.push_back(static_cast<int32_t>(idx));
         }
-        renderOverlayPoints(
-            action,
-            overlayPointSet,
-            pointIndices.data(),
-            static_cast<int>(pointIndices.size()),
-            ctx->selectionColor,
-            OverlayDepthMode::RespectDepth
-        );
+        return true;
     }
-    else {
-        std::vector<int32_t> pointIndices;
-        pointIndices.reserve(ctx->selectionIndex.size());
-        bool warn = false;
-
-        for (auto idx : ctx->selectionIndex) {
-            if (idx >= startIndex && idx < coords->getNum()) {
-                pointIndices.push_back(static_cast<int32_t>(idx));
-            }
-            else {
-                warn = true;
-            }
-        }
-
-        renderOverlayPoints(
-            action,
-            overlayPointSet,
-            pointIndices.data(),
-            static_cast<int>(pointIndices.size()),
-            ctx->selectionColor,
-            OverlayDepthMode::RespectDepth
-        );
-
-        if (warn) {
-            SoDebugError::postWarning("SoBrepPointSet::renderSelection", "selectionIndex out of range");
-        }
+    if (id < startIndex || id >= coords->getNum()) {
+        SoDebugError::postWarning("SoBrepPointSet::collectHighlightPoints",
+                                  "highlightIndex out of range");
+        return false;
     }
+    pointIndices.push_back(static_cast<int32_t>(id));
+    return true;
 }
+
+//! Shared decision logic for renderSelection()/renderSelectionIR().
+static bool collectSelectionPoints(const SoBrepPointSet* node,
+                                   SoState* state,
+                                   Gui::SoFCSelectionContextPtr ctx,
+                                   std::vector<int32_t>& pointIndices)
+{
+    if (!ctx) {
+        return false;
+    }
+
+    const SoCoordinateElement* coords = SoCoordinateElement::getInstance(state);
+    if (!coords) {
+        return false;
+    }
+
+    const int startIndex = node->startIndex.getValue();
+    if (ctx->isSelectAll()) {
+        pointIndices.reserve(coords->getNum() - startIndex);
+        for (int idx = startIndex; idx < coords->getNum(); ++idx) {
+            pointIndices.push_back(static_cast<int32_t>(idx));
+        }
+        return true;
+    }
+
+    pointIndices.reserve(ctx->selectionIndex.size());
+    bool warn = false;
+    for (auto idx : ctx->selectionIndex) {
+        if (idx >= startIndex && idx < coords->getNum()) {
+            pointIndices.push_back(static_cast<int32_t>(idx));
+        }
+        else {
+            warn = true;
+        }
+    }
+    if (warn) {
+        SoDebugError::postWarning("SoBrepPointSet::collectSelectionPoints",
+                                  "selectionIndex out of range");
+    }
+    return true;
+}
+
+void SoBrepPointSet::renderHighlight(SoGLRenderAction* action, SelContextPtr ctx)
+{
+    std::vector<int32_t> pointIndices;
+    if (!collectHighlightPoints(this, action->getState(), ctx, pointIndices)) {
+        return;
+    }
+    renderOverlayPoints(action, overlayPointSet, pointIndices.data(),
+                        static_cast<int>(pointIndices.size()),
+                        ctx->highlightColor, OverlayDepthMode::DrawOnTop);
+}
+
+void SoBrepPointSet::renderSelection(SoGLRenderAction* action, SelContextPtr ctx, bool /*push*/)
+{
+    std::vector<int32_t> pointIndices;
+    if (!collectSelectionPoints(this, action->getState(), ctx, pointIndices)) {
+        return;
+    }
+    renderOverlayPoints(action, overlayPointSet, pointIndices.data(),
+                        static_cast<int>(pointIndices.size()),
+                        ctx->selectionColor, OverlayDepthMode::RespectDepth);
+}
+
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+void SoBrepPointSet::renderHighlightIR(SoIRRenderAction* action, SelContextPtr ctx)
+{
+    std::vector<int32_t> pointIndices;
+    if (!collectHighlightPoints(this, action->getState(), ctx, pointIndices)) {
+        return;
+    }
+    renderOverlayPoints(action, overlayPointSet, pointIndices.data(),
+                        static_cast<int>(pointIndices.size()),
+                        ctx->highlightColor, OverlayDepthMode::DrawOnTop);
+}
+
+void SoBrepPointSet::renderSelectionIR(SoIRRenderAction* action, SelContextPtr ctx)
+{
+    std::vector<int32_t> pointIndices;
+    if (!collectSelectionPoints(this, action->getState(), ctx, pointIndices)) {
+        return;
+    }
+    renderOverlayPoints(action, overlayPointSet, pointIndices.data(),
+                        static_cast<int>(pointIndices.size()),
+                        ctx->selectionColor, OverlayDepthMode::RespectDepth);
+}
+#endif
 
 void SoBrepPointSet::doAction(SoAction* action)
 {
     if (action->getTypeId() == Gui::SoHighlightElementAction::getClassTypeId()) {
         Gui::SoHighlightElementAction* hlaction = static_cast<Gui::SoHighlightElementAction*>(action);
         selCounter.checkAction(hlaction);
+        VK_BREADCRUMB_LIMITED(30,
+                              "[VK-TRACE] SoBrepPointSet::doAction HL this=%p "
+                              "highlighted=%d detail=%p\n",
+                              this, hlaction->isHighlighted() ? 1 : 0,
+                              (const void*)hlaction->getElement());
         if (!hlaction->isHighlighted()) {
             SelContextPtr ctx
                 = Gui::SoFCSelectionRoot::getActionContext(action, this, selContext, false);

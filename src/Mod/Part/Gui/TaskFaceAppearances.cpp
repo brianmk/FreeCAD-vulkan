@@ -27,6 +27,7 @@
 #include <QFontMetrics>
 #include <QPointer>
 #include <QSet>
+#include <QStringList>
 #include <BRep_Tool.hxx>
 #include <BRepGProp.hxx>
 #include <gp_Pnt.hxx>
@@ -432,15 +433,12 @@ void FaceAppearances::onSelectionChanged(const Gui::SelectionChanges& msg)
 
 void FaceAppearances::updatePanel()
 {
-    QString faces = QStringLiteral("[");
-    int size = d->index.size();
+    QStringList parts;
+    parts.reserve(d->index.size());
     for (int it : d->index) {
-        faces += QString::number(it + 1);
-        if (--size > 0) {
-            faces += QStringLiteral(",");
-        }
+        parts.push_back(QString::number(it + 1));
     }
-    faces += QStringLiteral("]");
+    QString faces = QStringLiteral("[") + parts.join(QLatin1Char(',')) + QStringLiteral("]");
 
     int maxWidth = d->ui->labelElement->width();
     QFontMetrics fm(d->ui->labelElement->font());

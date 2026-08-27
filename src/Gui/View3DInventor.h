@@ -45,6 +45,26 @@ class View3DPy;
 class View3DSettings;
 class NaviCubeSettings;
 
+/// Ray-traced view render mode for a 3D view.
+/// 0 = Interactive (raster Coin) -- the default raster rendering, no ray
+/// tracing; 1 = Interactive (raster Vulkan) -- Vulkan raster viewport;
+/// 2 = Wireframe (raster); 3 = Ambient Occlusion (single-sample ray preview);
+/// 4 = Ray Tracing (accumulating path tracer); 5 = Environment (single-sample
+/// IBL preview).  Mirrored by the status-bar selector in the main window; each
+/// view keeps its own mode.  The two "Interactive" raster modes never enable
+/// path tracing, ray tracing, the denoiser or the edge/point overlays.
+#ifdef FREECAD_USE_VULKAN
+enum class ViewRenderMode : int {
+    RasterCoin = 0,     // Interactive (raster Coin): classic Coin/GL raster
+    RasterVulkan = 1,   // Interactive (raster Vulkan): Vulkan raster viewport
+    Wireframe = 2,
+    AmbientOcclusion = 3,
+    RayTracing = 4,
+    Environment = 5,
+};
+#endif
+class VulkanViewportAdapter;
+
 struct RayPickInfo
 {
     bool isValid;
@@ -135,12 +155,69 @@ public:
     }
     bool containsViewProvider(const ViewProvider*) const override;
 
+Q_SIGNALS:
+#ifdef FREECAD_USE_VULKAN
+    /// Emitted whenever the effective render mode changes (including after a
+    /// ray-traced mode is auto-fallen-back to raster when the hardware lacks
+    /// ray tracing).  The status bar re-synchronises the render-mode selector.
+    void renderModeChanged(int mode);
+#endif
+
 public Q_SLOTS:
     /// override the cursor in this view
     void setOverrideCursor(const QCursor&) override;
     void restoreOverrideCursor() override;
 
     void dump(const char* filename, bool onlyVisible = false);
+
+    /// Enable/disable path tracing on the Vulkan viewport (no-op without a
+    /// Vulkan viewer or ray-tracing device).  See QuarterVulkanWidget::
+    /// setPathTracingEnabled() for the semantics.
+    void setPathTracingEnabled(bool enabled);
+
+    /// Start flag: begins a progressive path-traced render (one jittered
+    /// sample per frame with denoising).  Camera moves or scene changes
+    /// drop back to a single-sample preview until the flag is raised again.
+    void setPathTracingStart(bool start);
+
+    /// Whether path tracing is enabled on the Vulkan viewport.
+    bool isPathTracingEnabled() const;
+
+    /// Whether a progressive path-tracing accumulation is running.
+    bool isPathTracingActive() const;
+
+#ifdef FREECAD_USE_VULKAN
+    /// Ray-traced view render mode (see Gui::ViewRenderMode).  Mirrored by
+    /// the status-bar selector in the main window; each view keeps its own.
+    ViewRenderMode getRenderMode() const;
+    void setRenderMode(ViewRenderMode mode);
+#endif
+
+#ifdef FREECAD_USE_VULKAN
+    /// "Cubemap" environment preset (-1 = viewport background gradient).
+    /// Mirrored by the status-bar environment selector; each view keeps its
+    /// own.  Only meaningful while the Vulkan viewport / RT backend is active.
+    int getEnvMap() const;
+    void setEnvMap(int index);
+
+    /// Whether the black edge overlay (BRep edges) is drawn on top of objects
+    /// in the Vulkan viewport.  Backed by the VulkanShowEdges preference and
+    /// mirrored by the status-bar edge-overlay button.
+    bool getShowEdges() const;
+    void setShowEdges(bool enabled);
+#endif
+
+    /// Ordinal of the Vulkan viewport's last presented frame (see
+    /// QuarterVulkanWidget::getRenderFrameCount).  0 when this view has no
+    /// Vulkan viewport.  Probe phase markers and frame dumps key off it so
+    /// the checker can correlate records independent of stream ordering.
+    uint32_t getVulkanFrameCount() const;
+
+    /// Force a single Vulkan frame even when the viewport is converged-idle.
+    /// Scripted probes call this after a scene/camera edit so the harness's
+    /// doc.recompute()/updateGui() (which bypasses Application::onUpdate)
+    /// still produces a render.  No-op without a Vulkan viewport.
+    void requestVulkanRender();
 
 protected Q_SLOTS:
     void stopAnimating();
@@ -157,14 +234,23 @@ protected:
     void focusInEvent(QFocusEvent* e) override;
     void customEvent(QEvent* e) override;
     void contextMenuEvent(QContextMenuEvent* e) override;
+    bool eventFilter(QObject* watched, QEvent* e) override;
 
 private:
     View3DInventorViewer* _viewer;
     PyObject* _viewerPy;
     QTimer* stopSpinTimer;
     QStackedWidget* stack;
+    VulkanViewportAdapter* _vulkanAdapter = nullptr;
     std::unique_ptr<View3DSettings> viewSettings;
     std::unique_ptr<NaviCubeSettings> naviSettings;
+#ifdef FREECAD_USE_VULKAN
+    ViewRenderMode _renderMode = ViewRenderMode::RasterCoin;
+    //! One-shot guard so the "ray tracing unsupported on this device" warning
+    //! is logged only per transition instead of spamming every frame/emit.
+    bool _rayTracingUnavailableWarned = false;
+    int _envMap = -1;   // cubemap environment preset (-1 = viewport gradient)
+#endif
 
     // friends
     friend class View3DPy;

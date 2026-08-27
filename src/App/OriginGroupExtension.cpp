@@ -291,7 +291,7 @@ void OriginGroupExtension::relinkToOrigin(App::DocumentObject* obj)
     }
 }
 
-std::vector<DocumentObject*> OriginGroupExtension::addObjects(std::vector<DocumentObject*> objs)
+std::vector<DocumentObject*> OriginGroupExtension::addObjects(const std::vector<DocumentObject*>& objs)
 {
 
     for (auto obj : objs) {

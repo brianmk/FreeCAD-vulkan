@@ -55,7 +55,7 @@ public:
     }
 
     void setPyObject(PyObject*) override;
-    virtual void setFilter(const std::string filter);
+    virtual void setFilter(std::string filter);
     virtual std::string getFilter() const;
 
 private:

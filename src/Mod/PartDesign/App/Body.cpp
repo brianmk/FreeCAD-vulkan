@@ -263,7 +263,7 @@ std::vector<App::DocumentObject*> Body::addObject(App::DocumentObject* feature)
     return result;
 }
 
-std::vector<App::DocumentObject*> Body::addObjects(std::vector<App::DocumentObject*> objs)
+std::vector<App::DocumentObject*> Body::addObjects(const std::vector<App::DocumentObject*>& objs)
 {
 
     for (auto obj : objs) {
