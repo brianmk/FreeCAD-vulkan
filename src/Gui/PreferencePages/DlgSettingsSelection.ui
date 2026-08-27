@@ -113,10 +113,70 @@ A larger value makes it easier to select elements, but may prevent selection of 
            <double>200.000000000000000</double>
           </property>
           <property name="value">
-           <double>5.000000000000000</double>
+           <double>8.000000000000000</double>
           </property>
           <property name="prefEntry" stdset="0">
            <cstring>PickRadius</cstring>
+          </property>
+          <property name="prefPath" stdset="0">
+           <cstring>View</cstring>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item row="8" column="0" colspan="2">
+       <layout class="QHBoxLayout" name="horizontalLayout_2">
+        <item>
+         <widget class="QLabel" name="spinPickRadiusScaleLabel">
+          <property name="text">
+           <string>Zoom scale</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <spacer name="horizSpacer_2">
+          <property name="orientation">
+           <enum>Qt::Orientation::Horizontal</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>250</width>
+            <height>10</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+        <item>
+         <widget class="Gui::PrefDoubleSpinBox" name="spinPickRadiusScale">
+          <property name="minimumSize">
+           <size>
+            <width>120</width>
+            <height>0</height>
+           </size>
+          </property>
+          <property name="toolTip">
+           <string>Multiplier on top of the pick radius. Also scales the pick area with the camera zoom
+and display resolution so the world-space tolerance stays roughly constant.
+       </string>
+          </property>
+          <property name="inputMethodHints">
+           <set>Qt::InputMethodHint::ImhPreferNumbers</set>
+          </property>
+          <property name="decimals">
+           <number>1</number>
+          </property>
+          <property name="minimum">
+           <double>0.100000000000000</double>
+          </property>
+          <property name="maximum">
+           <double>50.000000000000000</double>
+          </property>
+          <property name="value">
+           <double>1.000000000000000</double>
+          </property>
+          <property name="prefEntry" stdset="0">
+           <cstring>PickRadiusScale</cstring>
           </property>
           <property name="prefPath" stdset="0">
            <cstring>View</cstring>
