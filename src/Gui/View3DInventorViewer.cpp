@@ -1207,7 +1207,7 @@ void View3DInventorViewer::init()
     // increase refcount before passing it to setScenegraph(), to avoid
     // premature destruction
     pcViewProviderRoot->ref();
-    setSceneGraph(viewerSceneRoot);
+    View3DInventorViewer::setSceneGraph(viewerSceneRoot);
     // Event callback node
     pEventCallback = new SoEventCallback();
     pEventCallback->setUserData(this);
@@ -1286,7 +1286,7 @@ void View3DInventorViewer::init()
     }
 
     setSeekDistance(100);  // NOLINT
-    setViewing(false);
+    View3DInventorViewer::setViewing(false);
 
     setBackgroundColor(QColor(25, 25, 25));  // NOLINT
     setGradientBackground(Background::LinearGradient);
@@ -1372,7 +1372,7 @@ View3DInventorViewer::~View3DInventorViewer()
     this->pcBackGround->unref();
     this->pcBackGround = nullptr;
 
-    setSceneGraph(nullptr);
+    View3DInventorViewer::setSceneGraph(nullptr);
     this->viewerSceneRoot->unref();
     this->viewerLightingRoot = nullptr;
     this->viewerSceneRoot = nullptr;
