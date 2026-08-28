@@ -388,10 +388,11 @@ private Q_SLOTS:
      * Activates the associated tab to this widget.
      */
     void onWindowActivated(QMdiSubWindow*);
+#ifdef FREECAD_USE_VULKAN
     /**
      * Applies the status-bar view rendering mode combo to the active 3D view.
      */
-   void onViewModeComboChanged(int index);
+    void onViewModeComboChanged(int index);
     /**
      * Re-synchronises the status-bar view mode combo to the active view's mode.
      */
@@ -414,6 +415,7 @@ private Q_SLOTS:
      * current edge-hidden state.
      */
     void syncEdgeOverlayButton();
+#endif
     /**
      * Close tab at position index.
      */

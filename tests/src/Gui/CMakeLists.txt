@@ -27,6 +27,7 @@ if(FREECAD_USE_VULKAN)
 endif()
 
 # Qt tests
+setup_qt_test(ObjectSelection)
 setup_qt_test(QuantitySpinBox)
 
 target_link_libraries(Gui_tests_run PRIVATE

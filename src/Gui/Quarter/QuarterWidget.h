@@ -107,6 +107,7 @@ public:
   Q_PROPERTY(TransparencyType transparencyType READ transparencyType WRITE setTransparencyType) // clazy:exclude=qproperty-without-notify
   Q_PROPERTY(RenderMode renderMode READ renderMode WRITE setRenderMode) // clazy:exclude=qproperty-without-notify
   Q_PROPERTY(StereoMode stereoMode READ stereoMode WRITE setStereoMode) // clazy:exclude=qproperty-without-notify
+  Q_PROPERTY(int maxFrameRate READ maxFrameRate WRITE setMaxFrameRate) // clazy:exclude=qproperty-without-notify
   Q_PROPERTY(qreal devicePixelRatio READ devicePixelRatio NOTIFY devicePixelRatioChanged)
 
   Q_ENUM(TransparencyType)
@@ -147,6 +148,9 @@ public:
 
   bool clearWindow() const;
   void setClearWindow(bool onoff);
+
+  int maxFrameRate() const;
+  void setMaxFrameRate(int fps);
 
   bool interactionModeEnabled() const;
   void setInteractionModeEnabled(bool onoff);
@@ -220,10 +224,21 @@ private:
 */
 inline SbVec2s effectiveWindowSize(const QuarterWidget * quarter)
 {
+  // Return the LOGICAL window size.  The render manager's viewport region is
+  // in DEVICE pixels (sized at the widget's devicePixelRatio, e.g. *1.25), but
+  // the cursor position toDevicePixelPosition() flips and multiplies against
+  // this size.  Using the physical viewport size there double-applies the ratio
+  // on the vertical axis and shifted hover/select picking by the DPI factor on
+  // a fractional-scaling display (125% Windows/Linux, 2.0 Retina).  Normalize
+  // back to logical by dividing the physical viewport size by the (live) ratio;
+  // this stays correct whether the widget itself tracks the container size
+  // (Coin mode) or its viewport region is pinned to the Vulkan surface (the
+  // hidden GL viewer).
   if (SoRenderManager * rm = quarter->getSoRenderManager()) {
     const SbVec2s & vpsize = rm->getViewportRegion().getViewportSizePixels();
     if (vpsize[0] > 0 && vpsize[1] > 0) {
-      return vpsize;
+      const qreal dpr = qMax(1.0, quarter->devicePixelRatio());
+      return SbVec2s(qRound(vpsize[0] / dpr), qRound(vpsize[1] / dpr));
     }
   }
   return SbVec2s(quarter->width(), quarter->height());

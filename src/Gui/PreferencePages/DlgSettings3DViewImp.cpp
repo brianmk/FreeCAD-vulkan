@@ -68,6 +68,7 @@ void DlgSettings3DViewImp::saveSettings()
     ui->CheckBox_useVBO->onSave();
     ui->FloatSpinBox_EyeDistance->onSave();
     ui->FloatSpinBox_DatumScale->onSave();
+    ui->SpinBox_MaxFrameRate->onSave();
     ui->axisLetterColor->onSave();
     ui->radioPerspective->onSave();
     ui->radioOrthographic->onSave();
@@ -82,7 +83,6 @@ void DlgSettings3DViewImp::saveSettings()
     ui->SpinBox_VulkanBounces->onSave();
     ui->SpinBox_VulkanSettle->onSave();
     ui->SpinBox_VulkanMaxSamples->onSave();
-    ui->CheckBox_VulkanDenoise->onSave();
     ui->ComboBox_VulkanDenoiser->onSave();
     ui->VulkanEdgeColor->onSave();
 }
@@ -97,6 +97,7 @@ void DlgSettings3DViewImp::loadSettings()
     ui->CheckBox_useVBO->onRestore();
     ui->FloatSpinBox_EyeDistance->onRestore();
     ui->FloatSpinBox_DatumScale->onRestore();
+    ui->SpinBox_MaxFrameRate->onRestore();
     ui->axisLetterColor->onRestore();
     ui->radioPerspective->onRestore();
     ui->radioOrthographic->onRestore();
@@ -112,7 +113,6 @@ void DlgSettings3DViewImp::loadSettings()
     ui->SpinBox_VulkanBounces->onRestore();
     ui->SpinBox_VulkanSettle->onRestore();
     ui->SpinBox_VulkanMaxSamples->onRestore();
-    ui->CheckBox_VulkanDenoise->onRestore();
     ui->ComboBox_VulkanDenoiser->onRestore();
     ui->VulkanEdgeColor->onRestore();
 

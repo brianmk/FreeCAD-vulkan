@@ -539,6 +539,50 @@ bounding box size of the 3D object that is currently displayed.</string>
           </property>
          </widget>
         </item>
+        <item row="6" column="0">
+         <widget class="QLabel" name="maxFrameRateLabel">
+          <property name="text">
+           <string>Maximum frame rate</string>
+          </property>
+         </widget>
+        </item>
+        <item row="6" column="1">
+         <widget class="Gui::PrefSpinBox" name="SpinBox_MaxFrameRate">
+          <property name="minimumSize">
+           <size>
+            <width>120</width>
+            <height>0</height>
+           </size>
+          </property>
+          <property name="toolTip">
+           <string>Upper limit on how often the 3D view is redrawn.
+'Automatic' follows the refresh rate of the display, since drawing
+faster than the display can show only wastes graphics card work.
+Set to 0 to redraw as fast as the graphics driver allows.</string>
+          </property>
+          <property name="specialValueText">
+           <string>Automatic</string>
+          </property>
+          <property name="suffix">
+           <string> FPS</string>
+          </property>
+          <property name="minimum">
+           <number>-1</number>
+          </property>
+          <property name="maximum">
+           <number>1000</number>
+          </property>
+          <property name="value">
+           <number>-1</number>
+          </property>
+          <property name="prefEntry" stdset="0">
+           <cstring>MaxFrameRate</cstring>
+          </property>
+          <property name="prefPath" stdset="0">
+           <cstring>View</cstring>
+          </property>
+         </widget>
+        </item>
        </layout>
       </item>
      </layout>
@@ -626,11 +670,17 @@ bounding box size of the 3D object that is currently displayed.</string>
           <cstring>View</cstring>
          </property>
         </widget>
-       </item>
-       <item>
-        <layout class="QHBoxLayout" name="horizontalLayoutVulkanBounces">
-         <item>
-          <widget class="QLabel" name="labelVulkanBounces">
+        </item>
+        <item>
+         <widget class="QGroupBox" name="groupBoxPathTracingSettings">
+          <property name="title">
+           <string>Path tracing settings</string>
+          </property>
+          <layout class="QVBoxLayout" name="verticalLayoutPathTracingSettings">
+           <item>
+            <layout class="QHBoxLayout" name="horizontalLayoutVulkanBounces">
+          <item>
+           <widget class="QLabel" name="labelVulkanBounces">
            <property name="text">
             <string>Path tracing bounces</string>
            </property>
@@ -729,26 +779,10 @@ bounding box size of the 3D object that is currently displayed.</string>
          </item>
         </layout>
        </item>
-       <item>
-        <widget class="Gui::PrefCheckBox" name="CheckBox_VulkanDenoise">
-         <property name="text">
-          <string>Denoise path tracing</string>
-         </property>
-         <property name="toolTip">
-          <string>Apply the edge-stopping denoise filter when displaying path-traced frames.  Turn off to see the raw accumulated radiance, including the Monte-Carlo noise of the early refinement frames.</string>
-         </property>
-         <property name="prefEntry" stdset="0">
-          <cstring>VulkanPathTracingDenoise</cstring>
-         </property>
-         <property name="prefPath" stdset="0">
-          <cstring>View</cstring>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <layout class="QHBoxLayout" name="horizontalLayoutVulkanDenoiser">
-         <item>
-          <widget class="QLabel" name="labelVulkanDenoiser">
+           <item>
+            <layout class="QHBoxLayout" name="horizontalLayoutVulkanDenoiser">
+          <item>
+           <widget class="QLabel" name="labelVulkanDenoiser">
            <property name="text">
             <string>Denoiser</string>
            </property>
@@ -787,10 +821,13 @@ bounding box size of the 3D object that is currently displayed.</string>
            </item>
           </widget>
          </item>
-        </layout>
-       </item>
-       <item>
-        <layout class="QHBoxLayout" name="horizontalLayoutPreselMsg">
+         </layout>
+        </item>
+           </layout>
+          </widget>
+         </item>
+        <item>
+         <layout class="QHBoxLayout" name="horizontalLayoutPreselMsg">
         <item>
          <widget class="QLabel" name="labelPreselMsg">
           <property name="text">

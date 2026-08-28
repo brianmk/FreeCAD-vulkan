@@ -121,8 +121,16 @@ public:
     void setSeekValueAsPercentage(bool on);
     bool isSeekValuePercentage() const;
 
-    virtual float getPickRadius() const {return this->pickRadius;}
+    virtual float getPickRadius() const
+    {
+        // Effective pick radius: the configured base (px) scaled by the
+        // resolution (device pixel ratio) and the camera zoom level, so the
+        // world-space pick tolerance stays roughly constant (easier to hit when
+        // zoomed in) and is consistent on high-DPI displays.
+        return this->pickRadius * this->pickRadiusScale * static_cast<float>(this->devicePixelRatio()) * this->zoomFactor();
+    }
     virtual void setPickRadius(float pickRadius);
+    virtual void setPickRadiusScale(float pickRadiusScale);
 
     virtual void saveHomePosition();
     virtual void resetToHomePosition();
@@ -152,6 +160,11 @@ private:
     void resetFrameCounter();
     SbVec2f addFrametime(double ft);
 
+    //! World-space size covered by one (logical) pixel at the current camera.
+    float worldPerPixel() const;
+    //! Zoom compensation factor relative to the anchored reference zoom.
+    float zoomFactor() const;
+
     bool m_viewingflag = false;
     int  m_interactionnesting = 0;
     SoCallbackList m_interactionStartCallback;
@@ -173,6 +186,11 @@ private:
     SoSearchAction searchaction;
     SoGetMatrixAction matrixaction;
     float pickRadius = 0.0F;
+    //! User-scalable multiplier on top of the base pick radius (from settings).
+    float pickRadiusScale = 1.0F;
+    //! World-per-pixel at the reference zoom, used to keep the world-space pick
+    //! tolerance constant as the camera zooms.  0 = not anchored yet.
+    float m_referenceWorldPerPixel = 0.0F;
     // Home position storage.
     SoNode * m_storedcamera = nullptr;
 

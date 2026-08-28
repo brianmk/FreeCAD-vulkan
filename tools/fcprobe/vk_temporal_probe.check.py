@@ -79,9 +79,6 @@ def check(lines, report):
     def err(msg):
         report.add_error(msg)
 
-    env = report.session.get("env_overrides", {})
-    temporal_off = env.get("FC_VULKAN_PT_TEMPORAL") == "0"
-
     events = _windowed(lines)
     states = [(p, m) for p, k, m in events if k == "state"]
     adaptives = [(p, m) for p, k, m in events if k == "adaptive"]
@@ -177,6 +174,3 @@ def check(lines, report):
             err(f"edit-box: {len(edit_reproject)} scene-change frames "
                 "reprojected (history must not be reused across scene "
                 "edits)")
-
-    if temporal_off:
-        pass

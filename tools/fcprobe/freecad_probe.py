@@ -279,6 +279,16 @@ def _frame_num(path: str) -> int:
     return int(m.group(1)) if m else 0
 
 
+def frame_paths(frames_dir: str) -> list[str]:
+    """Return the PNG frame dumps in `frames_dir` sorted by frame ordinal.
+
+    Frame dumps are named ``vk_frame_<ordinal>.png``; sorting by the trailing
+    ordinal (not lexicographically) keeps ``frame_2.png`` before ``frame_10.png``.
+    """
+    import glob
+    return sorted(glob.glob(os.path.join(frames_dir, "*.png")), key=_frame_num)
+
+
 def check_preferences(events: Iterable[dict[str, Any]],
                       frames_dir: str,
                       edge_rgb: tuple[int, int, int] = (255, 0, 0),
@@ -291,8 +301,6 @@ def check_preferences(events: Iterable[dict[str, Any]],
     must contain enough ``edge_rgb`` pixels; with it off, some frame must have
     none.  Returns a list of error strings (empty == PASS).
     """
-    import glob
-    import os
     errors: list[str] = []
     evs = list(events)
     traces = [ev.get("text", "") for ev in evs
@@ -305,7 +313,7 @@ def check_preferences(events: Iterable[dict[str, Any]],
     if any("edges=0" in t for t in traces) is False:
         errors.append("applyVulkanSettings never recorded edges=0 (baseline)")
 
-    frames = sorted(glob.glob(os.path.join(frames_dir, "*.png")), key=_frame_num)
+    frames = frame_paths(frames_dir)
     if not frames:
         errors.append("no frame dumps to analyze")
         return errors
@@ -342,16 +350,18 @@ def compare_frames(baseline_dir: str, frames_dir: str,
                    mean_threshold: float = 1.5,
                    big_threshold_px: int = 200) -> list[str]:
     """Compare a run's frame dumps against a baseline, returning error strings."""
-    import glob
-    base = sorted(glob.glob(os.path.join(baseline_dir, "*.png")))
-    out = sorted(glob.glob(os.path.join(frames_dir, "*.png")))
+    base = frame_paths(baseline_dir)
+    out = frame_paths(frames_dir)
     errors = []
     if not base and not out:
         return ["no frames to compare"]
     if len(base) != len(out):
+        # Counts differ, so a positional per-frame zip would misalign the
+        # frames and double-report spurious diffs on top of the mismatch.
         errors.append(
             f"frame count mismatch: baseline {len(base)} vs run {len(out)}"
         )
+        return errors
     for b, o in zip(base, out):
         m = image_metrics(b, o)
         if "error" in m:
@@ -401,8 +411,7 @@ def pick_trace_from_log(lines: Iterable[str]) -> list[dict[str, Any]]:
 
 
 def diff_pick_traces(a: list[dict[str, Any]], b: list[dict[str, Any]],
-                     pos_tol: float = 1.0, hit_tol: float = 1e-3,
-                     slack: int = 2) -> list[str]:
+                     pos_tol: float = 1.0, hit_tol: float = 1e-3) -> list[str]:
     """Compare two pick-probe traces, returning human-readable differences.
 
     Matches entries positionally (hover/click, in order) and compares the mouse
@@ -434,7 +443,7 @@ def diff_pick_traces(a: list[dict[str, Any]], b: list[dict[str, Any]],
             errors.append(f"[{i}] object {oa} vs {ob}")
         elif a_has_hit:
             d = max(abs(ha[j] - hb[j]) for j in range(3))
-            if d > hit_tol + slack * 0.0:
+            if d > hit_tol:
                 errors.append(f"[{i}] hit {ha} vs {hb} (d={d:.4f})")
     return errors
 

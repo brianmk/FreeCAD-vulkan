@@ -31,6 +31,8 @@ class View3DInventorViewer;
  */
 class VulkanViewportAdapter : public QObject
 {
+    Q_OBJECT
+
 public:
     VulkanViewportAdapter(QStackedWidget* stack,
                           View3DInventorViewer* viewer,
@@ -60,6 +62,28 @@ public:
     void setPathTracingStart(bool start);
     bool isPathTracingEnabled() const;
     bool isPathTracingActive() const;
+    /// Whether the Vulkan device advertises the hardware ray-tracing extension
+    /// set (VK_KHR_acceleration_structure / ray_tracing_pipeline / ray_query).
+    /// Only trustworthy once isRayTracingProbed() is true.  Mirrors
+    /// QuarterVulkanWidget::isRayTracingAvailable.
+    bool isRayTracingAvailable() const;
+    /// Whether the renderer has probed the device and settled ray-tracing
+    /// availability.  Mirrors QuarterVulkanWidget::isRayTracingProbed.
+    bool isRayTracingProbed() const;
+    /// Show the Vulkan viewport (\a vulkan = true) or the classic Coin/OpenGL
+    /// viewer (\a vulkan = false) in the view's stacked widget.  Only has an
+    /// effect when a Vulkan renderer is active; re-syncs the Vulkan surface
+    /// (scene/camera/background) before it is brought back on top.
+    void useVulkanViewport(bool vulkan);
+
+Q_SIGNALS:
+    /// Re-emitted from QuarterVulkanWidget::rayTracingUnavailable: a
+    /// path-tracing request was dropped because the ray-tracing backend could
+    /// not be brought up on this device.  The view should fall back to a
+    /// raster render mode.
+    void rayTracingUnavailable();
+
+public:
     /// Set the ray-traced view mode (0 = Interactive/raster, 1 = Ambient
     /// Occlusion, 2 = Path Tracing).  Mirrors QuarterVulkanWidget::setViewMode.
     void setViewMode(int mode);

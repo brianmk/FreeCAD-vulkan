@@ -425,9 +425,11 @@ struct MainWindowP
     StatusBarLabel* actionLabel;
     InputHintWidget* hintLabel;
     QLabel* rightSideLabel;
+#ifdef FREECAD_USE_VULKAN
     QComboBox* viewModeCombo = nullptr;
     QComboBox* envMapCombo = nullptr;
     QToolButton* edgeOverlayButton = nullptr;
+#endif
     std::vector<StatusBarItem> statusBarItems;
     ParameterGrp::handle hStatusBar;
     QTimer* actionTimer;
@@ -633,15 +635,23 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
          .persistentVisibility = true}
     );
 
-    // View render-mode selector ("Interactive", "Wireframe", "Ambient
-    // Occlusion", "Ray Tracing").  Lives in the main window status bar, LEFT
-    // of the ground-plane grid control (order 250 < 300), and drives the
-    // ACTIVE 3D view's mode (each view keeps its own).  Re-populated and
-    // re-synchronised whenever the active view changes.
+#ifdef FREECAD_USE_VULKAN
+    // View render-mode selector ("Interactive (raster Coin)", "Interactive
+    // (raster Vulkan)", "Wireframe", "Ambient Occlusion", "Ray Tracing",
+    // "Environment").  Lives in the main window status bar, LEFT of the
+    // ground-plane grid control (order 250 < 300), and drives the ACTIVE 3D
+    // view's mode (each view keeps its own).  Re-populated and re-synchronised
+    // whenever the active view changes.  The two raster modes map to
+    // ViewRenderMode::RasterCoin / Interactive and always keep the Vulkan
+    // viewport in pure raster (no path tracing / ray tracing / denoiser / edge
+    // & point overlays).
     d->viewModeCombo = new QComboBox(statusBar());
     d->viewModeCombo->setObjectName(QStringLiteral("ViewRenderingMode"));
-    //: Status-bar view render-mode entry: classic raster viewport
-    d->viewModeCombo->addItem(tr("Interactive"));
+    //: Status-bar view render-mode entry: the default raster rendering
+    //: (classic Coin raster), no ray tracing.
+    d->viewModeCombo->addItem(tr("Interactive (raster Coin)"));
+    //: Status-bar view render-mode entry: Vulkan raster viewport, no ray tracing.
+    d->viewModeCombo->addItem(tr("Interactive (raster Vulkan)"));
     //: Status-bar view render-mode entry: raster wireframe draw style
     d->viewModeCombo->addItem(tr("Wireframe"));
     //: Status-bar view render-mode entry: single-sample ray ambient occlusion
@@ -719,6 +729,7 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
     );
     connect(d->edgeOverlayButton, &QToolButton::toggled,
             this, &MainWindow::onEdgeOverlayToggled);
+#endif // FREECAD_USE_VULKAN
 
     auto* groundPlaneWidget = new GroundPlaneWidget(statusBar());
     addStatusBarItem(
@@ -1420,8 +1431,12 @@ static View3DInventorViewer* spaceballMotionEventTarget()
 {
     // check if the active window has a 3d view
 
-    if (auto viewer = getMainWindow()->activeWindow()->findChild<View3DInventorViewer*>()) {
-        return viewer;
+    if (auto mw = getMainWindow()) {
+        if (auto aw = mw->activeWindow()) {
+            if (auto viewer = aw->findChild<View3DInventorViewer*>()) {
+                return viewer;
+            }
+        }
     }
 
     // check active view for the document
@@ -1642,6 +1657,16 @@ void MainWindow::addWindow(MDIView* view)
 
     connect(view, &MDIView::message, this, &MainWindow::showMessage);
     connect(this, &MainWindow::windowStateChanged, view, &MDIView::windowStateChanged);
+    // The render mode can auto-fall-back to raster when the hardware lacks ray
+    // tracing; keep the status-bar selector (and edge-overlay button) in step.
+    if (const auto* v3 = qobject_cast<View3DInventor*>(view)) {
+#ifdef FREECAD_USE_VULKAN
+        connect(v3, &View3DInventor::renderModeChanged,
+                this, &MainWindow::syncViewModeCombo);
+        connect(v3, &View3DInventor::renderModeChanged,
+                this, &MainWindow::syncEdgeOverlayButton);
+#endif
+    }
 
     // listen to the incoming events of the view
     view->installEventFilter(this);
@@ -1673,6 +1698,14 @@ void MainWindow::removeWindow(Gui::MDIView* view, bool close)
     // free all connections
     disconnect(view, &MDIView::message, this, &MainWindow::showMessage);
     disconnect(this, &MainWindow::windowStateChanged, view, &MDIView::windowStateChanged);
+    if (const auto* v3 = qobject_cast<View3DInventor*>(view)) {
+#ifdef FREECAD_USE_VULKAN
+        disconnect(v3, &View3DInventor::renderModeChanged,
+                   this, &MainWindow::syncViewModeCombo);
+        disconnect(v3, &View3DInventor::renderModeChanged,
+                   this, &MainWindow::syncEdgeOverlayButton);
+#endif
+    }
 
     view->removeEventFilter(this);
 
@@ -1796,9 +1829,11 @@ void MainWindow::setActiveWindow(MDIView* view)
 
     // Keep the status-bar view rendering mode selector in step with the newly
     // active view (each view owns its own render mode).
+#ifdef FREECAD_USE_VULKAN
     syncViewModeCombo();
     syncEnvMapCombo();
     syncEdgeOverlayButton();
+#endif
 
     // activate/remember workbench by tab (if enabled)
 
@@ -1837,16 +1872,17 @@ void MainWindow::onWindowActivated(QMdiSubWindow* mdi)
     setActiveWindow(view);
 }
 
+#ifdef FREECAD_USE_VULKAN
 void MainWindow::syncViewModeCombo()
 {
     if (!d->viewModeCombo) {
         return;
     }
     // Reflect the active 3D view's render mode.  Views other than 3D views
-    // have no mode; show a neutral state (Interactive) for them.
+    // have no mode; show a neutral state (the default raster Coin mode).
     View3DInventor* view = dynamic_cast<View3DInventor*>(d->activeView.data());
     const Gui::ViewRenderMode mode =
-        view ? view->getRenderMode() : Gui::ViewRenderMode::Interactive;
+        view ? view->getRenderMode() : Gui::ViewRenderMode::RasterCoin;
     QSignalBlocker blocker(d->viewModeCombo);
     d->viewModeCombo->setCurrentIndex(static_cast<int>(mode));
 }
@@ -1906,6 +1942,7 @@ void MainWindow::syncEdgeOverlayButton()
     QSignalBlocker blocker(d->edgeOverlayButton);
     d->edgeOverlayButton->setChecked(showEdges);
 }
+#endif // FREECAD_USE_VULKAN
 
 void MainWindow::onWindowsMenuAboutToShow()
 {

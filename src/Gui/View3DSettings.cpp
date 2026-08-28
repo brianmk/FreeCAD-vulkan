@@ -97,6 +97,7 @@ void View3DSettings::applySettings()
     OnChange(*hGrp, "AxisZColor");
     OnChange(*hGrp, "UseVBO");
     OnChange(*hGrp, "RenderCache");
+    OnChange(*hGrp, "MaxFrameRate");
     OnChange(*hGrp, "Orthographic");
     OnChange(*hGrp, "NavigationStyle");
     OnChange(*hGrp, "OrbitStyle");
@@ -106,6 +107,7 @@ void View3DSettings::applySettings()
     OnChange(*hGrp, "Dimensions3dVisible");
     OnChange(*hGrp, "DimensionsDeltaVisible");
     OnChange(*hGrp, "PickRadius");
+    OnChange(*hGrp, "PickRadiusScale");
     OnChange(*hGrp, "TransparentObjectRenderType");
     OnChange(*hGrp, "UseVulkanRenderer");
     OnChange(*hGrp, "UseVulkanRayTracing");
@@ -116,7 +118,6 @@ void View3DSettings::applySettings()
     OnChange(*hGrp, "VulkanPathTracingBounces");
     OnChange(*hGrp, "VulkanPathTracingSettle");
     OnChange(*hGrp, "VulkanPathTracingMaxSamples");
-    OnChange(*hGrp, "VulkanPathTracingDenoise");
     OnChange(*hGrp, "VulkanPathTracingDenoiser");
     OnChange(*hGrp, "PreselectionMessageRate");
 
@@ -458,6 +459,11 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
             }
         }
     }
+    else if (strcmp(Reason, "MaxFrameRate") == 0) {
+        for (auto _viewer : _viewers) {
+            _viewer->setMaxFrameRate(static_cast<int>(rGrp.GetInt("MaxFrameRate", -1)));
+        }
+    }
     else if (strcmp(Reason, "Orthographic") == 0) {
         // check whether a perspective or orthogrphic camera should be set
         if (rGrp.GetBool("Orthographic", true)) {
@@ -515,7 +521,12 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
     }
     else if (strcmp(Reason, "PickRadius") == 0) {
         for (auto _viewer : _viewers) {
-            _viewer->setPickRadius(rGrp.GetFloat("PickRadius", 5.0f));
+            _viewer->setPickRadius(rGrp.GetFloat("PickRadius", 8.0f));
+        }
+    }
+    else if (strcmp(Reason, "PickRadiusScale") == 0) {
+        for (auto _viewer : _viewers) {
+            _viewer->setPickRadiusScale(rGrp.GetFloat("PickRadiusScale", 1.0f));
         }
     }
     else if (strcmp(Reason, "TransparentObjectRenderType") == 0) {
@@ -544,7 +555,6 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
              || strcmp(Reason, "VulkanPathTracingBounces") == 0
              || strcmp(Reason, "VulkanPathTracingSettle") == 0
              || strcmp(Reason, "VulkanPathTracingMaxSamples") == 0
-             || strcmp(Reason, "VulkanPathTracingDenoise") == 0
              || strcmp(Reason, "VulkanPathTracingDenoiser") == 0) {
         // Vulkan-only display options are owned by the viewers; each viewer
         // reloads them from the preferences and notifies its Vulkan viewport.

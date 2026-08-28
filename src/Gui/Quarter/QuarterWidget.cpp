@@ -600,7 +600,20 @@ the widget is located within, and updated whenever any change occurs, emitting a
 qreal
 QuarterWidget::devicePixelRatio() const
 {
-  return PRIVATE(this)->device_pixel_ratio;
+  // Return the *live* ratio (devicePixelRatioF(), from the window/screen)
+  // rather than the snapshot cached by updateDevicePixelRatio().  The cached
+  // value goes stale on a hidden, non-current stack-page widget: it starts at
+  // 1.0 and only refreshes on a real paint/resize, so on a fractional-scaling
+  // display (e.g. 1.25) the render viewport region is sized at the live ratio
+  // while this accessor still reported 1.0.  In Coin mode events reach the GL
+  // viewer directly (no Vulkan forward-rescale), so EventFilter/Mouse convert
+  // cursor positions with this value against a device-pixel viewport region --
+  // a stale 1.0 shifted hover/click picking by the DPI factor (1/dpr).  Using
+  // the live ratio in every consumer keeps the picked coordinates in the same
+  // pixel space as the (physical) viewport region.  Call QWidget's
+  // implementation rather than devicePixelRatioF(): that helper forwards to the
+  // virtual devicePixelRatio(), which would recurse back into this override.
+  return this->QWidget::devicePixelRatio();
 }
 
 /*!
@@ -905,6 +918,7 @@ void QuarterWidget::paintEvent(QPaintEvent* event)
     //glDrawBuffer(w->format().swapBehavior() == QSurfaceFormat::DoubleBuffer ? GL_BACK : GL_FRONT);
 
     w->makeCurrent();
+    PRIVATE(this)->timesincelastframe.restart();
     this->actualRedraw();
 
     QOpenGLFunctions* functions = w->context() ? w->context()->functions() : nullptr;
@@ -934,6 +948,11 @@ void QuarterWidget::paintEvent(QPaintEvent* event)
     // process the delay queue the next time we enter this function,
     // unless we get here after a call to redraw().
     PRIVATE(this)->processdelayqueue = true;
+
+    // Nothing above can have asked for another frame, so any request that is
+    // still outstanding has been satisfied by the render we just did. The
+    // frame is timed from before actualRedraw(), not from here.
+    PRIVATE(this)->frameRendered();
 }
 
 bool QuarterWidget::viewportEvent(QEvent* event)
@@ -984,10 +1003,9 @@ bool QuarterWidget::viewportEvent(QEvent* event)
 void
 QuarterWidget::redraw()
 {
-  // we're triggering the next paintGL(). Set a flag to remember this
-  // to avoid that we process the delay queue in paintGL()
-  PRIVATE(this)->processdelayqueue = false;
-
+  // The request may be deferred to honor the frame rate limit, but it is
+  // never dropped, so every caller still gets its frame.
+  //
   // When stylesheet is used, there is recursive repaint warning caused by
   // repaint() here. It happens when switching active documents. Based on call
   // stacks, it happens like this, the repaint event first triggers a series
@@ -999,10 +1017,35 @@ QuarterWidget::redraw()
   // back to the first QuarterWidget, at which time the "Recursive repaint
   // detected" Qt warning message will be printed.
   //
-  // Note that, the recursive repaint is not infinite due to setting
-  // 'processdelayqueue = false' above. However, it does cause annoying
-  // flickering, and actually crash on Windows.
-  this->viewport()->update();
+  // Note that the recursive repaint is not infinite due to setting
+  // 'processdelayqueue = false' in issueRedraw(). However, it does cause
+  // annoying flickering, and actually crash on Windows.
+  PRIVATE(this)->requestRedraw();
+}
+
+/*!
+  Returns the upper limit on how often the scene is rendered. A negative value
+  follows the refresh rate of the screen the widget is shown on, zero renders
+  as fast as the driver allows and a positive value is a limit in frames per
+  second.
+*/
+int
+QuarterWidget::maxFrameRate() const
+{
+  return PRIVATE(this)->maxframerate;
+}
+
+/*!
+  Sets the upper limit on how often the scene is rendered. Rendering faster
+  than the display can show only wastes GPU work, so the default is to follow
+  the refresh rate of the screen.
+
+  \sa maxFrameRate()
+*/
+void
+QuarterWidget::setMaxFrameRate(int fps)
+{
+  PRIVATE(this)->setMaxFrameRate(fps);
 }
 
 /*!

@@ -50,13 +50,29 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
     syncViewer();
     // The viewer replaces its camera node whenever the projection type
     // changes (menu toggle, Python setCameraType, camera restore on
-    // document load).  Re-sync the Vulkan widget immediately so its
-    // render manager never keeps referencing the orphaned old camera:
-    // a stale camera makes the auto-clipping update the wrong node's
-    // near/far planes while the rendered view uses the new node, whose
-    // planes stay at their defaults and cull everything beyond 10 units.
+    // document load).  The Vulkan render manager re-resolves the camera
+    // from the scene-graph authority every frame (refreshActiveCamera /
+    // resolveActiveCamera), so a full re-sync of the (unchanged) scene,
+    // overlays, background and settings is not needed here.  Only re-point
+    // the widget's camera member, re-orient the axis cross to the new node,
+    // and request one frame; a stale camera would otherwise make the
+    // auto-clipping update the wrong node's near/far planes while the view
+    // used the new node.  syncViewer() (which also pushes the scene) is
+    // left for real scene churn via onUpdate()/requestVulkanRender().
     connect(_viewer, &View3DInventorViewer::cameraChanged,
-            this, [this] { syncViewer(); });
+            this, [this] {
+                if (!_vulkanViewer || !_viewer) {
+                    return;
+                }
+                SoRenderManager* rm = _viewer->getSoRenderManager();
+                if (!rm) {
+                    return;
+                }
+                _vulkanViewer->setCamera(rm->getCamera());
+                _viewer->updateAxisCrossNodes();
+                _vulkanViewer->setDecorationSceneGraph(_viewer->getAxisCrossOverlay());
+                _vulkanViewer->redraw();
+            });
     // The viewer owns the Vulkan display options; re-apply them to the
     // Vulkan widget whenever preferences change.
     connect(_viewer, &View3DInventorViewer::vulkanSettingsChanged,
@@ -64,17 +80,11 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
     stack->setCurrentWidget(_vulkanViewer);
     // The Vulkan widget is display-only; relay its viewport input events
     // to the (hidden) OpenGL viewer so navigation and picking still work.
-    // Pass the ratio the GL side itself uses when converting event
-    // positions (QuarterWidget caches devicePixelRatio(); that cached value
-    // is what the relay must match, not devicePixelRatioF()), so the widget
-    // does not have to guess it from the target's type at event time.
-    qreal glDpr = _viewer->getWidget()->devicePixelRatioF();
-    if (const auto * quarter = qobject_cast<
-            const SIM::Coin3D::Quarter::QuarterWidget *>(
-                _viewer->getWidget())) {
-        glDpr = quarter->devicePixelRatio();
-    }
-    _vulkanViewer->setEventForwardTarget(_viewer->getWidget(), glDpr);
+    // The container<->viewer coordinate scale is derived live from both
+    // widgets' devicePixelRatioF() by InputDevice::crossWidgetPositionScale()
+    // at event time (single source of truth, portable across 1.25/1.5/2.0
+    // display scales); the ratio argument is unused, so pass the default.
+    _vulkanViewer->setEventForwardTarget(_viewer->getWidget(), -1.0);
     // Navigation and picking run on the hidden OpenGL viewer, so cursor
     // shape changes land on its widget.  Mirror them onto the visible
     // Vulkan container (see eventFilter) and pick up the initial state.
@@ -86,6 +96,11 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
     connect(_vulkanViewer,
             &SIM::Coin3D::Quarter::QuarterVulkanWidget::surfaceSizeChanged,
             this, &VulkanViewportAdapter::onSurfaceSizeChanged);
+    // Relay a ray-tracing-unavailable drop so the view can fall back to a
+    // raster render mode (feature detection for non path-tracing hardware).
+    connect(_vulkanViewer,
+            &SIM::Coin3D::Quarter::QuarterVulkanWidget::rayTracingUnavailable,
+            this, &VulkanViewportAdapter::rayTracingUnavailable);
 #else
     Q_UNUSED(stack);
     Q_UNUSED(viewer);
@@ -131,6 +146,55 @@ void VulkanViewportAdapter::syncViewer()
 #endif
 }
 
+bool VulkanViewportAdapter::isRayTracingAvailable() const
+{
+#ifdef FREECAD_USE_VULKAN
+    return _vulkanViewer && _vulkanViewer->isRayTracingAvailable();
+#else
+    return false;
+#endif
+}
+
+bool VulkanViewportAdapter::isRayTracingProbed() const
+{
+#ifdef FREECAD_USE_VULKAN
+    return _vulkanViewer && _vulkanViewer->isRayTracingProbed();
+#else
+    return false;
+#endif
+}
+
+void VulkanViewportAdapter::useVulkanViewport(bool vulkan)
+{
+#ifdef FREECAD_USE_VULKAN
+    if (!_vulkanViewer || !_viewer) {
+        return;
+    }
+    auto* host = qobject_cast<QStackedWidget*>(_vulkanViewer->parentWidget());
+    if (!host) {
+        return;
+    }
+    QWidget* target = vulkan ? static_cast<QWidget*>(_vulkanViewer)
+                             : _viewer->getWidget();
+    if (host->currentWidget() == target) {
+        return;
+    }
+    // The GL viewer drives navigation/picking and is the scene-graph authority;
+    // before the Vulkan surface is shown again, push its current
+    // scene/camera/background back in so the switch does not leave a stale
+    // frame on top.
+    if (vulkan) {
+        syncViewer();
+    }
+    host->setCurrentWidget(target);
+    if (vulkan) {
+        _vulkanViewer->redraw();
+    }
+#else
+    Q_UNUSED(vulkan);
+#endif
+}
+
 void VulkanViewportAdapter::pushSettings()
 {
 #ifdef FREECAD_USE_VULKAN
@@ -138,36 +202,48 @@ void VulkanViewportAdapter::pushSettings()
         return;
     }
     const VulkanViewSettings& settings = _viewer->getVulkanViewSettings();
+    // The raster gate is DERIVED here from the single-source settings
+    // struct (VulkanViewSettings::rasterOnly()), not passed in separately.
+    // In a raster render mode the viewport must never enable path tracing,
+    // ray tracing, the denoiser or the edge/point overlays, even when the
+    // persisted preferences asked for them -- the mode is the authority and
+    // this gate keeps edges/path-tracing from leaking back into Interactive.
+    const bool raster = settings.rasterOnly();
     if (Base::envFlagEnabled("FC_VULKAN_BACKEND_DEBUG")) {
-        Base::Console().message("[VK-SET] pushSettings edges=%d points=%d "
+        const bool effEdges = raster ? false : settings.showEdges;
+        const bool effPoints = raster ? false : settings.showPoints;
+        Base::Console().message("[VK-SET] pushSettings raster=%d edges=%d points=%d "
                                 "edgeColor=(%.2f,%.2f,%.2f,%.2f) pt=%d "
-                                "bounces=%d settle=%d denoise=%d\n",
+                                "bounces=%d settle=%d "
+                                "(prefEdges=%d prefPoints=%d)\n",
+                                raster ? 1 : 0, effEdges ? 1 : 0,
+                                effPoints ? 1 : 0,
+                                settings.edgeColor[0], settings.edgeColor[1],
+                                settings.edgeColor[2], settings.edgeColor[3],
+                                !raster ? 1 : 0,
+                                settings.pathTracingBounces,
+                                settings.pathTracingSettleFrames,
                                 settings.showEdges ? 1 : 0,
-                            settings.showPoints ? 1 : 0,
-                            settings.edgeColor[0], settings.edgeColor[1],
-                            settings.edgeColor[2], settings.edgeColor[3],
-                            settings.pathTracing ? 1 : 0,
-                            settings.pathTracingBounces,
-                            settings.pathTracingSettleFrames,
-                            settings.pathTracingDenoise ? 1 : 0);
+                                settings.showPoints ? 1 : 0);
     }
-    _vulkanViewer->setWireframeOverlay(settings.showEdges);
-    _vulkanViewer->setPointsOverlay(settings.showPoints);
+    _vulkanViewer->setWireframeOverlay(raster ? false : settings.showEdges);
+    _vulkanViewer->setPointsOverlay(raster ? false : settings.showPoints);
     _vulkanViewer->setEdgeColor(settings.edgeColor);
+    // Cubemap environment preset (from the canonical settings struct).
+    _vulkanViewer->setEnvMap(settings.envMap);
 
-    // Path tracing toggle + tuning (start flag: enabling kicks off a
-    // progressive render; camera moves reset to the live preview until the
-    // camera settles, then the accumulation auto-restarts).
-    _vulkanViewer->setPathTracingEnabled(settings.pathTracing);
+    // Path tracing toggle + tuning.  Enable only in a ray-traced mode; the
+    // start latch (kicking off a progressive render) is raised by the mode
+    // switch, not here -- camera moves reset to the live preview until the
+    // camera settles, then the accumulation auto-restarts.
+    _vulkanViewer->setPathTracingEnabled(!raster);
     _vulkanViewer->setPathTracingBounces(settings.pathTracingBounces);
     _vulkanViewer->setPathTracingSettleFrames(settings.pathTracingSettleFrames);
     _vulkanViewer->setPathTracingMaxSamples(settings.pathTracingMaxSamples);
-    _vulkanViewer->setPathTracingDenoise(settings.pathTracingDenoise);
+    // Denoising is required for path tracing and is enabled automatically by
+    // the renderer; only the denoiser filter is selectable here.
     if (!settings.pathTracingDenoiser.empty()) {
         _vulkanViewer->setPathTracingDenoiser(settings.pathTracingDenoiser);
-    }
-    if (settings.pathTracing) {
-        _vulkanViewer->setPathTracingStart(true);
     }
     // The RTX backend is always brought up when the device supports it
     // (independent of UseVulkanRayTracing), so path tracing can be toggled
@@ -179,7 +255,7 @@ void VulkanViewportAdapter::pushSettings()
     // on isRayTracingProbed(): before the renderer's first initResources()
     // availability is unknown and must not produce a spurious warning.
     const bool rtUnavailable =
-        settings.pathTracing && _vulkanViewer->isRayTracingProbed() &&
+        !raster && _vulkanViewer->isRayTracingProbed() &&
         !_vulkanViewer->isRayTracingAvailable();
     if (rtUnavailable && !_pathTracingRtMismatchWarned) {
         Base::Console().warning(
@@ -364,6 +440,16 @@ void VulkanViewportAdapter::onSurfaceSizeChanged(const QSize& surfaceSize)
     SbViewportRegion vp(static_cast<short>(pw), static_cast<short>(ph));
     _viewer->getSoRenderManager()->setViewportRegion(vp);
     _viewer->getSoEventManager()->setViewportRegion(vp);
+
+    // The viewport region is in device pixels (dpr * logical), so tell the
+    // render manager the real device-pixel ratio.  This propagates to the
+    // CoSoDevicePixelRatioElement and the render backend's params
+    // (.devicePixelRatio), which the GL and Vulkan backends use to scale
+    // logical SoDrawStyle line widths / point sizes into device pixels.
+    // Without it the ratio stayed 1.0, so on a fractional-scaling display
+    // (e.g. 1.25) lines and points rendered 1/dpr too thin and, for the
+    // NaviCube overlay, its edge/axis strokes and dots drifted off the cube.
+    _viewer->getSoRenderManager()->setDevicePixelRatio(static_cast<float>(dpr));
 
     // NOTE: Do NOT write the surface aspect into the shared camera's
     // aspectRatio field.  SoOrthographicCamera::getViewVolume() (and

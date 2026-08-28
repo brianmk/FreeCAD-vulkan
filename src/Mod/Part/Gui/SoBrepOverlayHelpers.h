@@ -20,6 +20,7 @@
 #endif
 #include <Inventor/elements/SoDepthBufferElement.h>
 #include <Inventor/elements/SoLazyElement.h>
+#include <Inventor/elements/SoLineWidthElement.h>
 #include <Inventor/elements/SoMaterialBindingElement.h>
 #include <Inventor/elements/SoOverrideElement.h>
 #include <Inventor/elements/SoPointSizeElement.h>
@@ -219,6 +220,10 @@ static void renderOverlayLines(
     applyOverlayPrimitiveState(state, lineSet);
     applyOverlayDepthState(state, depthMode);
 
+    // Draw highlight/selection edges thicker than the base edges so they are
+    // clearly visible on top of the model geometry (2x the current line width).
+    SoLineWidthElement::set(state, lineSet, SoLineWidthElement::get(state) * 2.0f);
+
     const SbColor sbColor(color.r, color.g, color.b);
     const float transparency = std::max(0.0f, 1.0f - color.a);
     const bool hasTransparency = transparency > 0.0f;
@@ -383,7 +388,13 @@ static void renderOverlayFaces(
     const uint32_t packed = color.getPackedValue(0.0f);
     SoLazyElement::setPacked(state, faceSet, 1, &packed, false);
 
-    faceSet->coordIndex.setValues(0, static_cast<int32_t>(coordIndex.size()), coordIndex.data());
+    // setValues() does not shrink the field, so rewrite the overlay index
+    // array to the exact size to avoid stale faces from a previous, larger
+    // highlight/selection overlay.
+    faceSet->coordIndex.setNum(static_cast<int>(coordIndex.size()));
+    int32_t* coordIndexField = faceSet->coordIndex.startEditing();
+    std::copy(coordIndex.begin(), coordIndex.end(), coordIndexField);
+    faceSet->coordIndex.finishEditing();
     renderOverlayNode(faceSet, action);
 
     // The IR path records the highlight/selection face as a plain opaque draw
