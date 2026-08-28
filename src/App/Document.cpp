@@ -2471,7 +2471,7 @@ void Document::getLinksTo(std::set<DocumentObject*>& links,
         if (o == obj) {
             continue;
         }
-        auto linked = o;
+        DocumentObject* linked = nullptr;
         if ((options & GetLinkArrayElement) != 0) {
             linked = o->getLinkedObject(false);
         }
