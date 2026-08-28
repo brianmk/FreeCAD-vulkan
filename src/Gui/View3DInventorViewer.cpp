@@ -2206,7 +2206,14 @@ void View3DInventorViewer::setRenderCache(int mode)
 
     if (canAutoCache < 0) {
         const char* env = coin_getenv("COIN_AUTO_CACHING");
-        canAutoCache = env ? atoi(env) : 1;
+        if (env) {
+            char* end = nullptr;
+            long value = std::strtol(env, &end, 10);
+            canAutoCache = (end != env && *end == '\0') ? static_cast<int>(value) : 1;
+        }
+        else {
+            canAutoCache = 1;
+        }
     }
 
     // If coin auto cache is disabled, do not use 'Auto' render cache mode, but
