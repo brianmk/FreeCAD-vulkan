@@ -194,7 +194,7 @@
          <cstring>EnableHeadlight</cstring>
         </property>
         <property name="prefPath" stdset="0">
-         <cstring>View</cstring>
+         <cstring>View/LightSources</cstring>
         </property>
        </widget>
       </item>
@@ -230,7 +230,7 @@
          <cstring>EnableBacklight</cstring>
         </property>
         <property name="prefPath" stdset="0">
-         <cstring>View</cstring>
+         <cstring>View/LightSources</cstring>
         </property>
        </widget>
       </item>
@@ -345,7 +345,7 @@
          <cstring>EnableFillLight</cstring>
         </property>
         <property name="prefPath" stdset="0">
-         <cstring>View</cstring>
+         <cstring>View/LightSources</cstring>
         </property>
        </widget>
       </item>

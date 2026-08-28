@@ -314,14 +314,15 @@ public:
         vkLog("  queue family index: %u", m_window->graphicsQueueFamilyIndex());
         vkLog("  graphics queue: %p", static_cast<void*>(m_window->graphicsQueue()));
 
-        SoVulkanDeviceContext context;
-        context.instance = m_instance->vkInstance();
-        context.physicalDevice = m_window->physicalDevice();
-        context.device = m_window->device();
-        context.graphicsQueue = m_window->graphicsQueue();
-        context.graphicsQueueFamilyIndex = m_window->graphicsQueueFamilyIndex();
+        m_initContext = {};
+        m_initContext.instance = m_instance->vkInstance();
+        m_initContext.physicalDevice = m_window->physicalDevice();
+        m_initContext.device = m_window->device();
+        m_initContext.graphicsQueue = m_window->graphicsQueue();
+        m_initContext.graphicsQueueFamilyIndex =
+            m_window->graphicsQueueFamilyIndex();
         if (props) {
-            context.apiVersion = props->apiVersion;
+            m_initContext.apiVersion = props->apiVersion;
         }
         // Request the ray-tracing backend BEFORE initialize() only when path
         // tracing is (or will be) used.  Bringing it up unconditionally
@@ -333,7 +334,7 @@ public:
         // raster backend; ensureRayTracing() brings the RT backend up lazily
         // the first time path tracing is toggled on, with no re-open needed.
         m_manager.setRayTracing(m_pathTracingEnabled ? TRUE : FALSE);
-        m_initialized = m_manager.initialize(&context);
+        m_initialized = m_manager.initialize(&m_initContext);
         // Whether the RTX backend actually built during this initialize().
         // This is NOT device support: when path tracing was off at startup the
         // RT backend is skipped, so this is false even on an RT-capable one.
@@ -965,6 +966,14 @@ private:
     // or initResources() completed); before that the adapter must not warn
     // about missing hardware ray tracing.
     bool m_rtxBackendProbed = false;
+    // The device context handed to SoVulkanRenderManager::initialize().  The
+    // manager retains the POINTER (documented: the application must keep it
+    // alive until shutdown) so ensureRayTracing() can lazily build the RTX
+    // backend later; a stack local would dangle once initResources() returns
+    // and the lazy RT build would read freed memory (garbage apiVersion ->
+    // "requires a Vulkan 1.2+ device" on an RT-capable GPU, and a repeating
+    // path-tracing fallback).
+    SoVulkanDeviceContext m_initContext;
     // Guards the frame-state members below, which are written from the
     // widget API (and redraw sensors) and snapshotted by startNextFrame().
     // Qt 6 runs both on the GUI thread, so the lock documents the snapshot
