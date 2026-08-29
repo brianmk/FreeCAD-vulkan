@@ -1044,6 +1044,21 @@ public:
     // requesting the extension on a device without it would fail device
     // creation, so query it before adding it to the device extension set.
     bool rtExternalSemaphoreFdAvailable = false;
+    // Whether the selected device advertises the optional capability
+    // extensions the RTX backend uses to improve the path tracer.  These are
+    // strictly optional (the backend falls back gracefully), so they are
+    // queried and only requested when present.  vkCreateDevice fails if an
+    // unknown/unsupported extension is requested, so each must be gated.
+    bool rtPositionFetchAvailable = false;
+    bool rtOpacityMicromapAvailable = false;
+    bool rtNvClusterAvailable = false;
+    bool rtNvPartitionedAvailable = false;
+    bool rtNvLinearSweptSpheresAvailable = false;
+    // Feature structs behind the optional extensions above.  They live on the
+    // window object (not the modifier lambda) because QVulkanWindowPrivate::
+    // init() reads the pNext chain after the callback returns.
+    VkPhysicalDeviceRayTracingPositionFetchFeaturesKHR rtPositionFetch {};
+    VkPhysicalDeviceOpacityMicromapFeaturesEXT rtOpacityMicromap {};
 
 private:
     QuarterVulkanRenderer * m_renderer;
@@ -1355,6 +1370,11 @@ bool QuarterVulkanWidget::deviceSupportsRayTracing(VkPhysicalDevice device)
     bool haveAS = false;
     bool haveRTPipeline = false;
     bool haveRayQuery = false;
+    bool havePositionFetch = false;
+    bool haveOpacityMicromap = false;
+    bool haveNvCluster = false;
+    bool haveNvPartitioned = false;
+    bool haveNvLSS = false;
     for (const auto & ext : exts) {
         if (std::strcmp(ext.extensionName, "VK_KHR_acceleration_structure")
             == 0) {
@@ -1368,7 +1388,32 @@ bool QuarterVulkanWidget::deviceSupportsRayTracing(VkPhysicalDevice device)
         else if (std::strcmp(ext.extensionName, "VK_KHR_ray_query") == 0) {
             haveRayQuery = true;
         }
+        else if (std::strcmp(ext.extensionName,
+                             "VK_KHR_ray_tracing_position_fetch") == 0) {
+            havePositionFetch = true;
+        }
+        else if (std::strcmp(ext.extensionName, "VK_EXT_opacity_micromap")
+                 == 0) {
+            haveOpacityMicromap = true;
+        }
+        else if (std::strcmp(ext.extensionName,
+                             "VK_NV_cluster_acceleration_structure") == 0) {
+            haveNvCluster = true;
+        }
+        else if (std::strcmp(ext.extensionName,
+                             "VK_NV_partitioned_acceleration_structure") == 0) {
+            haveNvPartitioned = true;
+        }
+        else if (std::strcmp(ext.extensionName,
+                             "VK_NV_ray_tracing_linear_swept_spheres") == 0) {
+            haveNvLSS = true;
+        }
     }
+    d->vulkanWindow->rtPositionFetchAvailable = havePositionFetch;
+    d->vulkanWindow->rtOpacityMicromapAvailable = haveOpacityMicromap;
+    d->vulkanWindow->rtNvClusterAvailable = haveNvCluster;
+    d->vulkanWindow->rtNvPartitionedAvailable = haveNvPartitioned;
+    d->vulkanWindow->rtNvLinearSweptSpheresAvailable = haveNvLSS;
     return haveAS && haveRTPipeline && haveRayQuery;
 }
 
@@ -1447,6 +1492,24 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
         deviceExt << QByteArrayLiteral("VK_KHR_external_semaphore")
                   << QByteArrayLiteral("VK_KHR_external_semaphore_fd");
     }
+    // Optional capability extensions (queried above).  Requesting an
+    // extension a device does not expose would fail device creation, so each
+    // is gated on the probe result.
+    if (d->vulkanWindow->rtPositionFetchAvailable) {
+        deviceExt << QByteArrayLiteral("VK_KHR_ray_tracing_position_fetch");
+    }
+    if (d->vulkanWindow->rtOpacityMicromapAvailable) {
+        deviceExt << QByteArrayLiteral("VK_EXT_opacity_micromap");
+    }
+    if (d->vulkanWindow->rtNvClusterAvailable) {
+        deviceExt << QByteArrayLiteral("VK_NV_cluster_acceleration_structure");
+    }
+    if (d->vulkanWindow->rtNvPartitionedAvailable) {
+        deviceExt << QByteArrayLiteral("VK_NV_partitioned_acceleration_structure");
+    }
+    if (d->vulkanWindow->rtNvLinearSweptSpheresAvailable) {
+        deviceExt << QByteArrayLiteral("VK_NV_ray_tracing_linear_swept_spheres");
+    }
     d->window->setDeviceExtensions(deviceExt);
     vkLog("QuarterVulkanWidget: request device ext: "
           "accel_structure, ray_tracing_pipeline, ray_query, "
@@ -1498,6 +1561,27 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
           &d->vulkanWindow->rtRayTracingPipeline;
         d->vulkanWindow->rtBufferDeviceAddress.pNext =
           &d->vulkanWindow->rtAccelerationStructure;
+        // Chain the optional capability feature structs (each gated on its
+        // extension being present) so the device enables them.  The driver
+        // walks the whole pNext chain, so the order is cosmetic only.
+        if (d->vulkanWindow->rtPositionFetchAvailable) {
+            d->vulkanWindow->rtPositionFetch.sType =
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_POSITION_FETCH_FEATURES_KHR;
+            d->vulkanWindow->rtPositionFetch.rayTracingPositionFetch = VK_TRUE;
+            d->vulkanWindow->rtPositionFetch.pNext =
+                d->vulkanWindow->rtBufferDeviceAddress.pNext;
+            d->vulkanWindow->rtBufferDeviceAddress.pNext =
+                &d->vulkanWindow->rtPositionFetch;
+        }
+        if (d->vulkanWindow->rtOpacityMicromapAvailable) {
+            d->vulkanWindow->rtOpacityMicromap.sType =
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_FEATURES_EXT;
+            d->vulkanWindow->rtOpacityMicromap.micromap = VK_TRUE;
+            d->vulkanWindow->rtOpacityMicromap.pNext =
+                d->vulkanWindow->rtBufferDeviceAddress.pNext;
+            d->vulkanWindow->rtBufferDeviceAddress.pNext =
+                &d->vulkanWindow->rtOpacityMicromap;
+        }
         features.pNext = &d->vulkanWindow->rtBufferDeviceAddress;
       });
     vkLog("QuarterVulkanWidget: requested ray tracing pipeline device "
