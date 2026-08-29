@@ -320,6 +320,7 @@ private:
     void releaseSharedInstance();
     void selectPhysicalDevice();
     bool deviceSupportsRayTracing(VkPhysicalDevice device);
+    bool deviceSupportsExtension(VkPhysicalDevice device, const char * name);
     void configureDeviceFeatures(bool rayTracing);
     void logSupportedSampleCounts();
 

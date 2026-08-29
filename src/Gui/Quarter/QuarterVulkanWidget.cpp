@@ -473,11 +473,13 @@ public:
             // startNextFrame().  When the backend is up but no scene is set
             // yet, signal it with the (empty) command buffer so the present
             // pipeline never stalls waiting for a frame that will not come.
-            // When the backend itself is unavailable the frame loop never
-            // starts, so there is nothing to signal in that case.
-            if (m_initialized) {
-                m_window->frameReady();
-            }
+            // A failed backend initResources() must release the frame too:
+            // Qt still drives startNextFrame() after init (the swapchain is
+            // its own, independent of our backend), and skipping frameReady()
+            // there parks the present loop forever -- a frozen viewport that
+            // never recovers, because Qt schedules no further frame while one
+            // is pending.
+            m_window->frameReady();
             return;
         }
 
@@ -692,7 +694,11 @@ private:
         // changed, so the manager (and the shader's u_state.y) picks AO vs
         // multi-bounce.  The RT backend must be initialized first; the enable
         // toggle above builds it lazily when path tracing was requested.
-        if (m_viewMode != m_appliedViewMode) {
+        // `reapplyPT` re-pushes even when the request matches the recorded
+        // baseline: a freshly (re)built engine starts from its own defaults,
+        // so a mode chosen while the backend was down would otherwise be
+        // swallowed by the equality check and never reach the new engine.
+        if (reapplyPT || m_viewMode != m_appliedViewMode) {
             if (m_rtxBackendBuilt) {
                 m_manager.setViewMode(m_viewMode);
             }
@@ -700,8 +706,12 @@ private:
         }
         // Environment "cubemap" preset: apply to the manager when it changed,
         // so the environment-lit view (and the path-tracer sky) use the
-        // selected sky instead of the viewport gradient.
-        if (m_envMap != m_appliedEnvMap) {
+        // selected sky instead of the viewport gradient.  Index -1 (both
+        // members' default) means "no preset": in Vulkan the engine then
+        // renders the sky from the viewport background gradient, and the
+        // freshly built RTX engine itself already defaults to -1, so forcing
+        // a -1 re-push onto it early-returns in setEnvMap() unchanged.
+        if (reapplyPT || m_envMap != m_appliedEnvMap) {
             if (m_rtxBackendBuilt) {
                 m_manager.setEnvMap(m_envMap);
             }
@@ -1029,6 +1039,11 @@ public:
     // Determined by the physical-device probe so the feature request below
     // matches the device QVulkanWindow actually creates.
     bool rtRayTracingAvailable = false;
+    // Whether the selected device supports VK_KHR_external_semaphore_fd.
+    // The CUDA/OptiX denoiser interop imports Vulkan FD semaphores, but
+    // requesting the extension on a device without it would fail device
+    // creation, so query it before adding it to the device extension set.
+    bool rtExternalSemaphoreFdAvailable = false;
 
 private:
     QuarterVulkanRenderer * m_renderer;
@@ -1131,6 +1146,15 @@ QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent, bool rayTracing)
 void QuarterVulkanWidget::ensureSharedInstance()
 {
     QMutexLocker locker(&g_sharedVulkanInstance.mutex);
+    if (g_sharedVulkanInstance.instance &&
+        !g_sharedVulkanInstance.instance->isValid() &&
+        g_sharedVulkanInstance.refs == 0) {
+        // A previous failed or abandoned creation can leave a sticky invalid
+        // pointer behind.  Drop it when nobody references it so reopening a
+        // view gets a fresh attempt instead of reusing the invalid instance.
+        delete g_sharedVulkanInstance.instance;
+        g_sharedVulkanInstance.instance = nullptr;
+    }
     if (!g_sharedVulkanInstance.instance) {
         g_sharedVulkanInstance.instance = new QVulkanInstance;
         // Ray tracing requires Vulkan 1.2+ (acceleration-structure and
@@ -1223,6 +1247,18 @@ void QuarterVulkanWidget::releaseSharedInstance()
 // so the feature is probed per device and only requested when present.
 void QuarterVulkanWidget::selectPhysicalDevice()
 {
+    // The instance may have failed to create (no driver/loader on this
+    // machine -- ensureSharedInstance() logs the failure and the constructor
+    // continues so the widget can still fall back gracefully).  In that state
+    // QVulkanInstance::functions() carries null entry points, and calling
+    // vkEnumeratePhysicalDevices through them crashes on construction.  Bail
+    // out instead; Qt will refuse to initialize the window with the invalid
+    // instance and the view stays empty rather than taking the process down.
+    if (!d->instance || !d->instance->isValid()) {
+        vkErr("QuarterVulkanWidget: Vulkan instance is invalid; skipping "
+              "physical device selection");
+        return;
+    }
     auto * f = d->instance->functions();
     uint32_t devCount = 0;
     f->vkEnumeratePhysicalDevices(d->instance->vkInstance(), &devCount,
@@ -1239,6 +1275,7 @@ void QuarterVulkanWidget::selectPhysicalDevice()
     int bestScore = -1;
     bool bestFillMode = false;
     bool bestRt = false;
+    bool bestExternalSemaphoreFd = false;
     for (uint32_t i = 0; i < devCount; ++i) {
         VkPhysicalDeviceProperties props {};
         f->vkGetPhysicalDeviceProperties(devs[i], &props);
@@ -1264,6 +1301,8 @@ void QuarterVulkanWidget::selectPhysicalDevice()
         f->vkGetPhysicalDeviceFeatures(devs[i], &devFeatures);
         const bool fillMode = devFeatures.fillModeNonSolid ? true : false;
         const bool rtReady = this->deviceSupportsRayTracing(devs[i]);
+        const bool extSemFd =
+            this->deviceSupportsExtension(devs[i], "VK_KHR_external_semaphore_fd");
         // Tie-breakers stay below the discrete/integrated type gap (50) so a
         // dedicated GPU is always preferred over an integrated one that
         // happens to have more secondary features.
@@ -1279,11 +1318,13 @@ void QuarterVulkanWidget::selectPhysicalDevice()
             bestIndex = static_cast<int>(i);
             bestFillMode = fillMode;
             bestRt = rtReady;
+            bestExternalSemaphoreFd = extSemFd;
         }
     }
 
     d->vulkanWindow->fillModeNonSolid = bestFillMode;
     d->vulkanWindow->rtRayTracingAvailable = bestRt;
+    d->vulkanWindow->rtExternalSemaphoreFdAvailable = bestExternalSemaphoreFd;
     // Pin QVulkanWindow to the GPU we probed, so the feature/extensions
     // requested by configureDeviceFeatures() are guaranteed to be supported
     // by the device that is actually created.
@@ -1331,6 +1372,29 @@ bool QuarterVulkanWidget::deviceSupportsRayTracing(VkPhysicalDevice device)
     return haveAS && haveRTPipeline && haveRayQuery;
 }
 
+bool QuarterVulkanWidget::deviceSupportsExtension(VkPhysicalDevice device,
+                                                  const char * name)
+{
+    if (!d->instance || !d->instance->functions() || !name) {
+        return false;
+    }
+    auto * f = d->instance->functions();
+    uint32_t extCount = 0;
+    f->vkEnumerateDeviceExtensionProperties(device, nullptr, &extCount,
+                                            nullptr);
+    std::vector<VkExtensionProperties> exts(extCount);
+    if (extCount > 0) {
+        f->vkEnumerateDeviceExtensionProperties(device, nullptr, &extCount,
+                                                exts.data());
+    }
+    for (const auto & ext : exts) {
+        if (std::strcmp(ext.extensionName, name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Request the device extensions and feature structs for ray tracing (when
 // the chosen device supports them) plus fillModeNonSolid for the
 // wireframe/points overlays, before the window is first shown:
@@ -1372,16 +1436,24 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
         return;
     }
 
-    d->window->setDeviceExtensions({
+    QList<QByteArray> deviceExt {
         QByteArrayLiteral("VK_KHR_acceleration_structure"),
         QByteArrayLiteral("VK_KHR_ray_tracing_pipeline"),
         QByteArrayLiteral("VK_KHR_ray_query"),
         QByteArrayLiteral("VK_KHR_deferred_host_operations"),
         QByteArrayLiteral("VK_KHR_external_memory_fd"),
-    });
+    };
+    if (d->vulkanWindow->rtExternalSemaphoreFdAvailable) {
+        deviceExt << QByteArrayLiteral("VK_KHR_external_semaphore")
+                  << QByteArrayLiteral("VK_KHR_external_semaphore_fd");
+    }
+    d->window->setDeviceExtensions(deviceExt);
     vkLog("QuarterVulkanWidget: request device ext: "
           "accel_structure, ray_tracing_pipeline, ray_query, "
-          "deferred_host_ops, external_memory_fd");
+          "deferred_host_ops, external_memory_fd%s",
+          d->vulkanWindow->rtExternalSemaphoreFdAvailable
+            ? ", external_semaphore, external_semaphore_fd"
+            : "");
     // Enable the device features behind those extensions.  The modifier
     // receives VkPhysicalDeviceFeatures2 after Qt has populated it; chain
     // the RT feature structs onto pNext.

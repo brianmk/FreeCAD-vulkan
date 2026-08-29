@@ -424,8 +424,8 @@ void VulkanViewportAdapter::onSurfaceSizeChanged(const QSize& surfaceSize)
         return;
     }
     const qreal dpr = glWidget->devicePixelRatioF();
-    const int pw = qMax(1, static_cast<int>(logical.width() * dpr));
-    const int ph = qMax(1, static_cast<int>(logical.height() * dpr));
+    const int pw = qMax(1, qRound(logical.width() * dpr));
+    const int ph = qMax(1, qRound(logical.height() * dpr));
     const SbVec2s glSize =
         _viewer->getSoRenderManager()->getViewportRegion().getViewportSizePixels();
     VK_BREADCRUMB("[VK-TRACE] surfaceSizeChanged surface=%dx%d "
