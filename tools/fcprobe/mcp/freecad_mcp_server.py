@@ -337,63 +337,103 @@ def new_sketch(name: str = "Sketch", plane: str = "XY",
 
 @mcp.tool()
 def sketch_rectangle(sketch: str, x0: float = 0.0, y0: float = 0.0,
-                     x1: float = 10.0, y1: float = 10.0) -> str:
-    """Add a closed rectangle to `sketch` (corner-to-corner)."""
+                     x1: float = 10.0, y1: float = 10.0,
+                     construction: bool = False) -> str:
+    """Add a closed rectangle to `sketch` (corner-to-corner). Set
+    `construction=True` for a reference line that does not drive the solid."""
     return _fmt(_call("sketch_rectangle", sketch=sketch, x0=x0, y0=y0,
-                      x1=x1, y1=y1))
+                      x1=x1, y1=y1, construction=construction))
 
 
 @mcp.tool()
 def sketch_polygon(sketch: str, radius: float = 10.0, sides: int = 6,
-                   center: Optional[List[float]] = None) -> str:
-    """Add a regular closed N-gon to `sketch` (center=[x,y])."""
+                   center: Optional[List[float]] = None,
+                   construction: bool = False) -> str:
+    """Add a regular closed N-gon to `sketch` (center=[x,y]). `construction`
+    toggles reference (non-solid-driving) geometry."""
     return _fmt(_call("sketch_polygon", sketch=sketch, radius=radius,
-                      sides=sides, center=center or [0, 0]))
+                      sides=sides, center=center or [0, 0],
+                      construction=construction))
 
 
 @mcp.tool()
 def sketch_polyline(sketch: str, points: List[List[float]],
-                    closed: bool = True) -> str:
+                    closed: bool = True, construction: bool = False) -> str:
     """Add a polyline to `sketch`. `points` is [[x,y], ...]; set closed=True
-    to link the last point back to the first."""
+    to link the last point back to the first. `construction` toggles reference
+    (non-solid-driving) geometry."""
     return _fmt(_call("sketch_polyline", sketch=sketch, points=points,
-                      closed=closed))
+                      closed=closed, construction=construction))
 
 
 @mcp.tool()
-def sketch_line(sketch: str, p0: List[float], p1: List[float]) -> str:
-    """Add a single line segment to `sketch` from p0 to p1 ([x,y])."""
-    return _fmt(_call("sketch_line", sketch=sketch, p0=p0, p1=p1))
+def sketch_line(sketch: str, p0: List[float], p1: List[float],
+                construction: bool = False) -> str:
+    """Add a single line segment to `sketch` from p0 to p1 ([x,y]).
+    `construction=True` makes it a reference line (used for symmetry/helpers,
+    not part of the solid)."""
+    return _fmt(_call("sketch_line", sketch=sketch, p0=p0, p1=p1,
+                      construction=construction))
 
 
 @mcp.tool()
 def sketch_circle(sketch: str, radius: float = 10.0,
-                  center: Optional[List[float]] = None) -> str:
-    """Add a full circle to `sketch` (center=[x,y])."""
+                  center: Optional[List[float]] = None,
+                  construction: bool = False) -> str:
+    """Add a full circle to `sketch` (center=[x,y]). `construction=True` makes
+    it a reference circle (e.g. a bolt circle, not part of the solid)."""
     return _fmt(_call("sketch_circle", sketch=sketch, radius=radius,
-                      center=center or [0, 0]))
+                      center=center or [0, 0], construction=construction))
 
 
 @mcp.tool()
 def sketch_arc(sketch: str, radius: float = 10.0,
                center: Optional[List[float]] = None,
-               start_angle: float = 0.0, end_angle: float = 90.0) -> str:
-    """Add an arc to `sketch` (center=[x,y], angles in degrees)."""
+               start_angle: float = 0.0, end_angle: float = 90.0,
+               construction: bool = False) -> str:
+    """Add an arc to `sketch` (center=[x,y], angles in degrees).
+    `construction=True` makes it a reference arc."""
     return _fmt(_call("sketch_arc", sketch=sketch, radius=radius,
                       center=center or [0, 0], start_angle=start_angle,
-                      end_angle=end_angle))
+                      end_angle=end_angle, construction=construction))
 
 
 @mcp.tool()
-def sketch_spline(sketch: str, points: List[List[float]]) -> str:
-    """Add a spline to `sketch` through the given [[x,y], ...] points."""
-    return _fmt(_call("sketch_spline", sketch=sketch, points=points))
+def sketch_spline(sketch: str, points: List[List[float]],
+                  construction: bool = False) -> str:
+    """Add a spline to `sketch` through the given [[x,y], ...] points.
+    `construction=True` makes it a reference spline."""
+    return _fmt(_call("sketch_spline", sketch=sketch, points=points,
+                      construction=construction))
 
 
 @mcp.tool()
 def add_constraint(sketch: str, type: str = "Coincident",
                    args: Optional[List[int]] = None) -> str:
-    """Add a sketcher constraint (e.g. type='Coincident' with args=[g1,p,g2,p])."""
+    """Add a Sketcher constraint to `sketch`.
+
+`type` is the constraint name (case-insensitive): Coincident, Horizontal,
+Vertical, DistanceX, DistanceY, Distance, Radius, Diameter, Block, Symmetric,
+Parallel, Perpendicular, Tangent, Equal, PointOnObject, Angle, ...
+
+`args` is the Sketcher DSL (geometry index + vertex position per operand). Vertex
+positions: line start=1, line end=2, circle/arc centre=3, whole geometry=0.
+
+Arg counts by type:
+  args=[g,p]            DistanceX / DistanceY (that point's horizontal/vertical
+                        offset from the origin; 2 args) or Radius/Diameter on g
+  args=[g1,p1,g2,p2]    Coincident, Distance (between two points), Parallel,
+                        Perpendicular, Tangent, Symmetric, collinear
+  args=[g]              Block, Horizontal, Vertical (whole geometry)
+
+Examples:
+  args=[0,2,1,2]        Coincident: geo0 end <-> geo1 end
+  args=[0,3]            DistanceX of circle-0 centre from origin
+  args=[0]              Radius on circle geo0
+
+A dimension constraint fixes only its value; set the value separately with
+set_sketch_constraint_value (returns the constraint index). After adding, recompute
+then validate_sketch to catch any redundant/conflicting result."""
     return _fmt(_call("add_constraint", sketch=sketch, type=type,
                       args=args or []))
 
@@ -401,8 +441,12 @@ def add_constraint(sketch: str, type: str = "Coincident",
 @mcp.tool()
 def pad(sketch: str, length: float = 10.0, name: str = "Pad",
         symmetric: bool = False, reversed: bool = False) -> str:
-    """Extrude the `sketch` (a closed profile in a body) into a solid and add
-    it as a PartDesign Pad. symmetric pads both ways about the sketch plane."""
+    """Extrude the `sketch` (a closed, non-self-intersecting profile) into a solid
+    and add it as a PartDesign::Pad in the Body. `length` is in mm; `symmetric`
+    extrudes both ways about the sketch plane; `reversed` flips the direction.
+    The sketch must be closed/coincident to form a valid profile - check it with
+    validate_sketch first. After recompute, verify with get_property(Body,...,'Length')
+    or inspect the result."""
     return _fmt(_call("pad", sketch=sketch, length=length, name=name,
                       symmetric=symmetric, reversed=reversed))
 
@@ -410,7 +454,11 @@ def pad(sketch: str, length: float = 10.0, name: str = "Pad",
 @mcp.tool()
 def pocket(sketch: str, length: float = 10.0, name: str = "Pocket",
            symmetric: bool = False, reversed: bool = False) -> str:
-    """Cut the `sketch` out of the body's solid (PartDesign Pocket)."""
+    """Cut the `sketch`'s profile out of the solid (PartDesign::Pocket). `length`
+    is the cut depth in mm (larger than the body if you want a through cut);
+    `symmetric` cuts both ways; `reversed` flips the cut direction. The profile
+    must lie on a face/plane of the body. After recompute, verify with
+    get_property or measure_clearance."""
     return _fmt(_call("pocket", sketch=sketch, length=length, name=name,
                       symmetric=symmetric, reversed=reversed))
 
@@ -459,6 +507,31 @@ def mirror_object(source: str, normal: Optional[List[float]] = None,
 
 
 @mcp.tool()
+def pattern(feature: Optional[str] = None, style: str = "polar",
+            occurrences: int = 3, axis: str = "Z", angle: float = 360.0,
+            length: float = 10.0, mode: str = "whole",
+            reversed: bool = False, name: Optional[str] = None) -> str:
+    """Repeat an existing PartDesign feature (pad/pocket) as a pattern.
+
+`style`:
+  polar        -> PartDesign PolarPattern about origin `axis` (X/Y/Z). `mode`=
+                  'whole' (Extent) sweeps `angle` as the total span across all
+                  occurrences; 'spacing' or 'single' sets `angle` as the gap
+                  between consecutive copies. Use occurrences+angle e.g. to make
+                  a ring of holes about a hole.
+  rectangular  -> PartDesign LinearPattern along origin `axis`, step `length`,
+                  `occurrences` copies.
+
+Call only AFTER the source feature exists (pad/pocket it first); `feature`
+defaults to the body's tip. Then recompute + validate_sketch/measure_clearance to
+check the pattern nests without overlaps."""
+    return _fmt(_call("pattern", feature=feature, style=style,
+                      occurrences=occurrences, axis=axis, angle=angle,
+                      length=length, mode=mode, reversed=bool(reversed),
+                      name=name))
+
+
+@mcp.tool()
 def run_command(command: str) -> str:
     """Run a FreeCAD GUI command by name (e.g. 'Std_New', 'PartDesign_Pad')."""
     return _fmt(_call("run_command", command=command))
@@ -483,6 +556,14 @@ def fit_view() -> str:
 
 
 @mcp.tool()
+def control_camera(action: str = "fit", direction: Optional[List[float]] = None) -> str:
+    """Drive the 3D viewport camera. `action` is one of: fit | isometric | top |
+    front | right | rear | bottom | left | dimetric | trimetric | axometric |
+    zoom_in | zoom_out | rotate_left | rotate_right | set_direction."""
+    return _fmt(_call("control_camera", action=action, direction=direction))
+
+
+@mcp.tool()
 def screenshot(path: str = "/tmp/opencode/freecad_mcp_shot.png",
                format: str = "PNG") -> str:
     """Save a static image of the viewport. `format` is e.g. PNG."""
@@ -500,10 +581,13 @@ def run_python(code: str, mode: str = "exec") -> str:
 
 @mcp.tool()
 def sketch_ellipse(sketch: str, center: Optional[List[float]] = None,
-                   major_radius: float = 20.0, minor_radius: float = 10.0) -> str:
-    """Add an ellipse to `sketch` (center=[x,y])."""
+                   major_radius: float = 20.0, minor_radius: float = 10.0,
+                   construction: bool = False) -> str:
+    """Add an ellipse to `sketch` (center=[x,y]). `construction=True` makes it
+    a reference ellipse."""
     return _fmt(_call("sketch_ellipse", sketch=sketch, center=center or [0, 0],
-                      major_radius=major_radius, minor_radius=minor_radius))
+                      major_radius=major_radius, minor_radius=minor_radius,
+                      construction=construction))
 
 
 @mcp.tool()
@@ -514,10 +598,12 @@ def sketch_point(sketch: str, position: Optional[List[float]] = None) -> str:
 
 @mcp.tool()
 def sketch_slot(sketch: str, center: Optional[List[float]] = None,
-                length: float = 20.0, width: float = 10.0) -> str:
-    """Add a rounded slot (stadium) to `sketch` (center=[x,y])."""
+                length: float = 20.0, width: float = 10.0,
+                construction: bool = False) -> str:
+    """Add a rounded slot (stadium) to `sketch` (center=[x,y]).
+    `construction=True` makes it a reference slot."""
     return _fmt(_call("sketch_slot", sketch=sketch, center=center or [0, 0],
-                      length=length, width=width))
+                      length=length, width=width, construction=construction))
 
 
 # --- extended part coverage ---
@@ -555,7 +641,10 @@ def loft(sections: List[str], name: str = "Loft") -> str:
 @mcp.tool()
 def boolean_op(shape: str, tool: str, mode: str = "fuse",
                name: Optional[str] = None) -> str:
-    """Boolean of two objects: mode='fuse'|'cut'|'common', or 'a'|'b' names."""
+    """Boolean of two objects. `shape` and `tool` are object names; `mode` is
+    'fuse' (union), 'cut' (shape - tool; order matters), or 'common' (intersection).
+    Result is created as a Part::Boolean with `name`. Both inputs must be solids
+    with a Shape; verify with measure_clearance if you expect them to mate."""
     return _fmt(_call("boolean_op", shape=shape, tool=tool, mode=mode, name=name))
 
 
@@ -599,13 +688,17 @@ def make_torus(radius1: float = 10.0, radius2: float = 2.0, name: str = "Torus",
 
 
 @mcp.tool()
-def add_fastener(object_name: str = "Pocket", screw_type: str = "iso4014",
+def add_fastener(object_name: str = "Pocket", screw_type: str = "ISO4014",
                  centers: Optional[List[List[float]]] = None,
-                 diameter: Optional[float] = None) -> str:
+                 diameter: Optional[float] = None, flip: bool = True) -> str:
     """Add Fasteners screws/bolts to the circular hole faces of `object_name`.
-    Restrict to `centers=[[x,y],..]` and/or `diameter`; size derives from the hole."""
+    Restrict to `centers=[[x,y],..]` (hole centre on the top face) and/or
+    `diameter`; screw size derives from the matching hole. `screw_type` is the
+    uppercase Fasteners code, e.g. 'ISO4014' (hex), 'ISO4762' (socket cap),
+    'DIN933' (hex, full thread). `flip=True` sets Invert so the head sits on the
+    top face (head-up). Returns the created screws and the hole edges used."""
     return _fmt(_call("add_fastener", object_name=object_name, screw_type=screw_type,
-                      centers=centers or [], diameter=diameter))
+                      centers=centers or [], diameter=diameter, flip=flip))
 
 
 @mcp.tool()
@@ -620,6 +713,102 @@ def set_render_mode(mode: str = "opengl") -> str:
     """Switch the 3D viewport renderer backend. mode='opengl'|'vulkan'|'raytracing'.
     Sets the preference and recreates the active 3D view."""
     return _fmt(_call("set_render_mode", mode=mode))
+
+
+@mcp.tool()
+def measure_clearance(a: Optional[str] = None, b: Optional[str] = None,
+                      objects: Optional[List[str]] = None) -> str:
+    """Validate clearance between objects (mm). Give `a`+`b` for one pair, or
+    `objects=[names]` for all pairs. Returns `min_distance_mm` (min surface gap;
+    0 when touching/overlapping) and `overlaps`/`common_volume_mm3` when the
+    shapes' intersection has positive volume (a real collision). Use after any
+    geometric change to confirm parts do not interpenetrate."""
+    return _fmt(_call("measure_clearance", a=a, b=b, objects=objects))
+
+
+@mcp.tool()
+def add_parameter(name: str, value: Any, unit: Optional[str] = None) -> str:
+    """Create/redefine a named parameter stored as a Spreadsheet alias. `value` is
+    a number or a '40 mm' string; pass `unit` to append a unit to a number."""
+    return _fmt(_call("add_parameter", name=name, value=value, unit=unit))
+
+
+@mcp.tool()
+def set_parameter(name: str, value: Any, unit: Optional[str] = None) -> str:
+    """Update a named parameter's value (creates it if missing). `value` is a
+    number or a '40 mm' string; `unit` appends a unit to a numeric value. Changing
+    a value propagates to any property linked via link_property."""
+    return _fmt(_call("set_parameter", name=name, value=value, unit=unit))
+
+
+@mcp.tool()
+def get_parameter(name: str) -> str:
+    """Read a parameter's value."""
+    return _fmt(_call("get_parameter", name=name))
+
+
+@mcp.tool()
+def list_parameters() -> str:
+    """List all parameters (spreadsheet aliases) and their values."""
+    return _fmt(_call("list_parameters"))
+
+
+@mcp.tool()
+def get_property(object: str, property: str) -> str:
+    """Read a property from an object (e.g. Pad.Length)."""
+    return _fmt(_call("get_property", object=object, property=property))
+
+
+@mcp.tool()
+def set_property(object: str, property: str, value: str) -> str:
+    """Set a property on an object directly (e.g. Pad.Length='36 mm')."""
+    return _fmt(_call("set_property", object=object, property=property, value=value))
+
+
+@mcp.tool()
+def link_property(object: str, property: str, parameter: str) -> str:
+    """Bind `object.property` to a parameter via an Expression (=Params.<parameter>)
+    so the dimension is driven by the spreadsheet cell. `object` is an object name
+    (e.g. 'Pad'), `property` a numeric property (e.g. 'Length'), `parameter` a name
+    already created by add_parameter. Works on feature properties (Pad.Length,
+    Pocket.Length); it does NOT drive raw sketch geometry coordinates."""
+    return _fmt(_call("link_property", object=object, property=property, parameter=parameter))
+
+
+@mcp.tool()
+def capture_parameter(object: str, property: str, parameter: str) -> str:
+    """Convert a measurement into a parameter: reads the current `object.property`
+    value, stores it as the `parameter`, then binds the property to it so the
+    dimension is now driven by (and editable via) the parameter."""
+    return _fmt(_call("capture_parameter", object=object, property=property, parameter=parameter))
+
+
+@mcp.tool()
+def get_sketch_constraints(sketch: str) -> str:
+    """List a sketch's constraints (index, type, value) — for dimension introspection."""
+    return _fmt(_call("get_sketch_constraints", sketch=sketch))
+
+
+@mcp.tool()
+def set_sketch_constraint_value(sketch: str, index: int, value: str) -> str:
+    """Set a sketch constraint's datum value (e.g. '40 mm')."""
+    return _fmt(_call("set_sketch_constraint_value", sketch=sketch, index=index, value=value))
+
+
+@mcp.tool()
+def validate_sketch(sketch: str) -> str:
+    """Solver diagnostics for a sketch: degrees of freedom (DoF), FullyConstrained
+    flag, status string, redundant/conflicting/malformed constraint indices, a
+    per-constraint breakdown and a geometry outline."""
+    return _fmt(_call("validate_sketch", sketch=sketch))
+
+
+@mcp.tool()
+def suggest_constraints(sketch: str, mode: str = "analyze") -> str:
+    """Suggest what to do to a sketch: remove redundant/conflicting constraints,
+    FreeCAD's missing-constraint hints, and a reason about remaining DOF.
+    mode='apply' runs FreeCAD's autoconstraint to add missing constraints."""
+    return _fmt(_call("suggest_constraints", sketch=sketch, mode=mode))
 
 
 # ---------------------------------------------------------------------------

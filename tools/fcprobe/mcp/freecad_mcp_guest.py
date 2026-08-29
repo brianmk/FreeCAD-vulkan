@@ -282,6 +282,31 @@ def _plane_feature(body: Any, plane: str) -> Any:
     return feats[0]
 
 
+def _axis_feature(body: Any, axis: str) -> Any:
+    """Return the body-origin axis (a PartDesign datum line) for `axis` (X/Y/Z)."""
+    feats = list(body.Origin.OriginFeatures)
+    want = axis.strip().upper()
+    if want not in {"X", "Y", "Z"}:
+        raise RuntimeError(f"unknown origin axis {axis!r}")
+
+    # Origin datum lines are named "X_Axis"/"Y_Axis"/"Z_Axis".  Match only the
+    # requested axis so a missing datum cannot silently pattern about another
+    # coordinate direction.
+    expected = f"{want}_AXIS"
+    for f in feats:
+        label = (
+            f"{getattr(f, 'Name', '')} {getattr(f, 'Label', '')} "
+            f"{getattr(f, 'Role', '')}"
+        ).upper().replace(" ", "_")
+        is_axis = (
+            getattr(f, "TypeId", "") == "PartDesign::Line"
+            or "AXIS" in label
+        )
+        if is_axis and (expected in label or f"{want}AXIS" in label):
+            return f
+    raise RuntimeError(f"no {want} axis in body origin")
+
+
 def _sketch_plane(body: Any, plane: str, sketch: Any) -> None:
     """Attach `sketch` to the requested origin plane of `body`."""
     import FreeCAD as App
@@ -349,7 +374,7 @@ def add_constraint(params: Dict[str, Any]) -> Dict[str, Any]:
     App, _, Sketcher = _app_modules()
     doc = _doc(params.get("doc", "active"))
     sketch = _get_sketch(params.get("sketch") or params.get("name"), doc)
-    ctype = (params.get("type") or "Coincident").capitalize()
+    ctype = _canon_constraint_type(params.get("type"))
     # args come as either an explicit `args`/`params` list or the a/a_point/b/b_point
     # convenience form; any string arg is resolved as a geometry index by name.
     args = list(params.get("args") or params.get("params") or [])
@@ -375,8 +400,29 @@ def add_constraint(params: Dict[str, Any]) -> Dict[str, Any]:
     return {"added": str(con), "constraint_count": len(sketch.Constraints)}
 
 
+# Sketcher constraint names are PascalCase (e.g. DistanceY, not distancey).  Map a
+# case-insensitive model value to the canonical name so "DistanceY" / "distancey"
+# both work.  Unknown names pass through so the solver reports them accurately.
+_CONSTRAINT_TYPES = {
+    "coincident": "Coincident", "horizontal": "Horizontal", "vertical": "Vertical",
+    "parallel": "Parallel", "perpendicular": "Perpendicular", "tangent": "Tangent",
+    "distancex": "DistanceX", "distancey": "DistanceY", "distance": "Distance",
+    "radius": "Radius", "diameter": "Diameter", "angle": "Angle", "equal": "Equal",
+    "pointonobject": "PointOnObject", "pointonline": "PointOnLine",
+    "pointonplane": "PointOnPlane", "symmetric": "Symmetric", "block": "Block",
+    "collinear": "Collinear", "midpoint": "MidPoint", "smooth": "Smooth",
+    "snellslaw": "SnellsLaw", "internallignment": "InternalAlignment",
+    "equal_distance": "EqualDistance", "auxbuilt": "AuxBuilt", "spacing": "Spacing",
+}
+
+
+def _canon_constraint_type(t: Any) -> str:
+    t = (t or "Coincident").strip()
+    return _CONSTRAINT_TYPES.get(t.lower(), t)
+
+
 def _add_closed_profile(sketch: Any, pts: List[List[float]], doc: Any,
-                        Sketcher: Any, Part: Any, App: Any) -> None:
+                        Sketcher: Any, Part: Any, App: Any, construction: bool = False) -> None:
     """Add pts as a polygon of line segments + coincident constraints, closing
     the loop so the wire is a valid Pad/Pocket profile."""
     edges = []
@@ -386,7 +432,7 @@ def _add_closed_profile(sketch: Any, pts: List[List[float]], doc: Any,
         edges.append(Part.LineSegment(Vector(p0[0], p0[1], 0),
                                       Vector(p1[0], p1[1], 0)))
     for g in edges:
-        sketch.addGeometry(g, False)
+        sketch.addGeometry(g, construction)
     n = len(edges)
     for i in range(n):
         a = (i, 2)
@@ -395,13 +441,13 @@ def _add_closed_profile(sketch: Any, pts: List[List[float]], doc: Any,
 
 
 def _add_open_polyline(sketch: Any, pts: List[List[float]], doc: Any,
-                       Sketcher: Any, Part: Any, App: Any) -> None:
+                       Sketcher: Any, Part: Any, App: Any, construction: bool = False) -> None:
     from FreeCAD import Vector
     edges = [Part.LineSegment(Vector(pts[i][0], pts[i][1], 0),
                               Vector(pts[i + 1][0], pts[i + 1][1], 0))
              for i in range(len(pts) - 1)]
     for g in edges:
-        sketch.addGeometry(g, False)
+        sketch.addGeometry(g, construction)
     for i in range(len(edges) - 1):
         sketch.addConstraint(Sketcher.Constraint("Coincident", i, 2, i + 1, 1))
 
@@ -418,7 +464,8 @@ def sketch_rectangle(params: Dict[str, Any]) -> Dict[str, Any]:
     x0, y0 = params.get("x0", 0.0), params.get("y0", 0.0)
     x1, y1 = params.get("x1", 10.0), params.get("y1", 10.0)
     pts = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
-    _add_closed_profile(sketch, pts, doc, Sketcher, Part, App)
+    _add_closed_profile(sketch, pts, doc, Sketcher, Part, App,
+                        construction=bool(params.get("construction", False)))
     doc.recompute()
     return {"geometry_count": len(sketch.Geometry), "constraint_count": len(sketch.Constraints),
             "edges": len(pts)}
@@ -434,7 +481,8 @@ def sketch_polygon(params: Dict[str, Any]) -> Dict[str, Any]:
     import math
     pts = [[cx + r * math.cos(2 * math.pi * i / sides),
             cy + r * math.sin(2 * math.pi * i / sides)] for i in range(sides)]
-    _add_closed_profile(sketch, pts, doc, Sketcher, Part, App)
+    _add_closed_profile(sketch, pts, doc, Sketcher, Part, App,
+                        construction=bool(params.get("construction", False)))
     doc.recompute()
     return {"geometry_count": len(sketch.Geometry), "constraint_count": len(sketch.Constraints),
             "sides": sides, "radius": r}
@@ -450,7 +498,8 @@ def sketch_polyline(params: Dict[str, Any]) -> Dict[str, Any]:
     closed = bool(params.get("closed", False))
     if closed:
         pts = pts + [pts[0]]
-    _add_open_polyline(sketch, pts, doc, Sketcher, Part, App)
+    _add_open_polyline(sketch, pts, doc, Sketcher, Part, App,
+                       construction=bool(params.get("construction", False)))
     if closed:
         n = len(sketch.Geometry)
         if n >= 2:
@@ -473,7 +522,7 @@ def sketch_line(params: Dict[str, Any]) -> Dict[str, Any]:
     else:
         g = Part.LineSegment(Vector(params.get("x0", 0), params.get("y0", 0), 0),
                              Vector(params.get("x1", 10), params.get("y1", 10), 0))
-    sketch.addGeometry(g, False)
+    sketch.addGeometry(g, bool(params.get("construction", False)))
     doc.recompute()
     return {"geometry_count": len(sketch.Geometry)}
 
@@ -486,7 +535,7 @@ def sketch_circle(params: Dict[str, Any]) -> Dict[str, Any]:
     cx, cy = params.get("center", [0, 0])
     r = params.get("radius", 10.0)
     c = Part.Circle(Vector(cx, cy, 0), Vector(0, 0, 1), r)
-    sketch.addGeometry(c, False)
+    sketch.addGeometry(c, bool(params.get("construction", False)))
     doc.recompute()
     return {"geometry_count": len(sketch.Geometry), "center": [cx, cy], "radius": r}
 
@@ -503,7 +552,7 @@ def sketch_arc(params: Dict[str, Any]) -> Dict[str, Any]:
     a1 = params.get("end_angle", 90.0)
     circle = Part.Circle(Vector(cx, cy, 0), Vector(0, 0, 1), r)
     arc = Part.ArcOfCircle(circle, math.radians(a0), math.radians(a1))
-    sketch.addGeometry(arc, False)
+    sketch.addGeometry(arc, bool(params.get("construction", False)))
     doc.recompute()
     return {"geometry_count": len(sketch.Geometry), "start_angle": a0, "end_angle": a1}
 
@@ -517,7 +566,7 @@ def sketch_spline(params: Dict[str, Any]) -> Dict[str, Any]:
     if not pts or len(pts) < 2:
         raise RuntimeError("spline needs >= 2 points")
     bs = Part.BSplineCurve([Vector(p[0], p[1], 0) for p in pts])
-    sketch.addGeometry(bs, False)
+    sketch.addGeometry(bs, bool(params.get("construction", False)))
     doc.recompute()
     return {"geometry_count": len(sketch.Geometry), "points": len(pts)}
 
@@ -737,6 +786,51 @@ def mirror_object(params: Dict[str, Any]) -> Dict[str, Any]:
     mm.Label = params.get("label", "Mirroring")
     doc.recompute()
     return _feature_result(doc, mm)
+
+
+def pattern(params: Dict[str, Any]) -> Dict[str, Any]:
+    """PartDesign pattern of an existing feature: polar (about an axis) or
+    rectangular/linear (along an axis)."""
+    App, _, _ = _app_modules()
+    doc = _doc(params.get("doc", "active"))
+    body = _active_body(doc)
+    if body is None:
+        raise RuntimeError("pattern needs a PartDesign::Body")
+    feature = params.get("feature") or params.get("source") or params.get("name")
+    if feature is None:
+        feature = getattr(body, "Tip", None) or _last_feature(doc, body)
+        if feature is None:
+            raise RuntimeError("no feature to pattern (build a pad/pocket first)")
+    if isinstance(feature, str):
+        feature = _obj(doc, feature)
+    style = (params.get("style") or params.get("type") or "polar").lower()
+    occurrences = int(params.get("occurrences", 3))
+    if occurrences < 1:
+        raise RuntimeError("occurrences must be >= 1")
+    if style == "polar":
+        obj = doc.addObject("PartDesign::PolarPattern", params.get("name", "PolarPattern"))
+        body.addObject(obj)
+        obj.Originals = [feature]
+        obj.Axis = (_axis_feature(body, params.get("axis", "Z")), [""])
+        mode = (params.get("mode") or "whole").lower()
+        obj.Mode = "Spacing" if mode in ("half", "single", "spacing") else "Extent"
+        obj.Angle = float(params.get("angle", 360.0))
+        obj.Occurrences = occurrences
+        if params.get("reversed"):
+            obj.Reversed = True
+    elif style in ("rectangular", "linear"):
+        obj = doc.addObject("PartDesign::LinearPattern", params.get("name", "LinearPattern"))
+        body.addObject(obj)
+        obj.Originals = [feature]
+        obj.Direction = (_axis_feature(body, params.get("axis", "X")), [""])
+        obj.Length = float(params.get("length", 10.0))
+        obj.Occurrences = occurrences
+        if params.get("reversed"):
+            obj.Reversed = True
+    else:
+        raise RuntimeError(f"unknown pattern style {style!r}")
+    doc.recompute()
+    return _feature_result(doc, obj)
 
 
 # ---------------------------------------------------------------------------
@@ -1080,6 +1174,41 @@ def fit_view(params: Dict[str, Any]) -> Dict[str, Any]:
     return {"fit": True}
 
 
+def control_camera(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Drive the 3D viewport camera. `action` is one of:
+       fit | isometric | top | front | right | rear | bottom | left | dimetric |
+       trimetric | axometric | zoom_in | zoom_out | rotate_left | rotate_right |
+       set_direction (needs `direction=[x,y,z]`)."""
+    import FreeCAD
+    import FreeCADGui
+    view = FreeCADGui.activeView()
+    if view is None:
+        raise RuntimeError("no active view")
+    action = (params.get("action") or "fit").lower()
+    standard = {"isometric": "viewIsometric", "top": "viewTop", "front": "viewFront",
+                "right": "viewRight", "rear": "viewRear", "bottom": "viewBottom",
+                "left": "viewLeft", "dimetric": "viewDimetric",
+                "trimetric": "viewTrimetric", "axometric": "viewAxometric"}
+    if action == "fit":
+        view.fitAll()
+    elif action in standard:
+        getattr(view, standard[action])()
+    elif action == "zoom_in":
+        view.zoomIn()
+    elif action == "zoom_out":
+        view.zoomOut()
+    elif action == "rotate_left":
+        view.viewRotateLeft()
+    elif action == "rotate_right":
+        view.viewRotateRight()
+    elif action == "set_direction":
+        d = params.get("direction", [0, 0, 1])
+        view.setViewDirection(FreeCAD.Vector(float(d[0]), float(d[1]), float(d[2])))
+    else:
+        raise RuntimeError(f"unknown camera action {action!r}")
+    return {"action": action, "view_direction": str(view.getViewDirection())}
+
+
 def screenshot(params: Dict[str, Any]) -> Dict[str, Any]:
     import FreeCADGui
     view = FreeCADGui.activeView()
@@ -1109,7 +1238,7 @@ def sketch_ellipse(params: Dict[str, Any]) -> Dict[str, Any]:
     rx = params.get("major_radius", params.get("radius", 20.0))
     ry = params.get("minor_radius", rx / 2.0)
     geom = Part.Ellipse(Vector(cx, cy, 0), Vector(cx + rx, cy, 0), Vector(cx, cy + ry, 0))
-    sketch.addGeometry(geom, False)
+    sketch.addGeometry(geom, bool(params.get("construction", False)))
     doc.recompute()
     return {"geometry_count": len(sketch.Geometry), "center": [cx, cy],
             "major_radius": rx, "minor_radius": ry}
@@ -1121,7 +1250,7 @@ def sketch_point(params: Dict[str, Any]) -> Dict[str, Any]:
     sketch = _resolve_sketch_params(doc, params)
     from FreeCAD import Vector
     x, y = params.get("position", [0, 0])
-    sketch.addGeometry(Part.Point(Vector(x, y, 0)), False)
+    sketch.addGeometry(Part.Point(Vector(x, y, 0)), bool(params.get("construction", False)))
     doc.recompute()
     return {"geometry_count": len(sketch.Geometry), "position": [x, y]}
 
@@ -1148,7 +1277,7 @@ def sketch_slot(params: Dict[str, Any]) -> Dict[str, Any]:
     arcB = Part.ArcOfCircle(cB, math.radians(270), math.radians(90))
     for g in (arcA, Part.LineSegment(pA - Vector(0, r, 0), pB - Vector(0, r, 0)),
               arcB, Part.LineSegment(pB + Vector(0, r, 0), pA + Vector(0, r, 0))):
-        sketch.addGeometry(g, False)
+        sketch.addGeometry(g, bool(params.get("construction", False)))
     n = len(sketch.Geometry) - len(sketch.Geometry)  # noop
     start = len(sketch.Geometry) - 4
     for k in range(4):
@@ -1327,7 +1456,7 @@ def add_fastener(params: Dict[str, Any]) -> Dict[str, Any]:
     App, _, _ = _app_modules()
     doc = _doc(params.get("doc", "active"))
     obj = _obj(doc, params.get("object") or params.get("object_name") or "Pocket")
-    stype = params.get("screw_type", params.get("type", "iso4014"))
+    stype = (params.get("screw_type") or params.get("type") or "ISO4014").upper()
     centers = params.get("centers") or []
     diameter = params.get("diameter")
     shape = obj.Shape
@@ -1361,6 +1490,9 @@ def add_fastener(params: Dict[str, Any]) -> Dict[str, Any]:
         FastenersCmd.FSScrewObject(a, stype, selObj)
         a.Label = a.Proxy.familyType if getattr(a.Proxy, "familyType", None) else a.Label
         FastenersCmd.FSViewProviderTree(a.ViewObject)
+        flip = params.get("flip")
+        if flip is not None and hasattr(a, "Invert"):
+            a.Invert = bool(flip)
         made.append(a.Name)
     doc.recompute()
     return {"screws": made, "edges": [e for e, _ in top_circ], "count": len(made)}
@@ -1380,6 +1512,396 @@ def export_objects(params: Dict[str, Any]) -> Dict[str, Any]:
     import Import
     Import.export(sel, path)
     return {"path": path, "objects": [o.Name for o in sel], "count": len(sel)}
+
+
+def measure_clearance(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate clearance between objects.  ``min_distance_mm`` is the OCCT
+    minimum gap between the two shapes (0 when they touch/overlap);
+    ``overlaps`` is True when their intersection has positive volume (= clipping)."""
+    App, _, _ = _app_modules()
+    doc = _doc(params.get("doc", "active"))
+
+    def _shape(name: Any) -> Any:
+        obj = name if not isinstance(name, str) else _obj(doc, name)
+        if not hasattr(obj, "Shape"):
+            raise RuntimeError(f"{getattr(obj, 'Name', name)!r} has no Shape")
+        return obj, obj.Shape
+
+    def _pair(n1: Any, n2: Any) -> Dict[str, Any]:
+        _, s1 = _shape(n1)
+        _, s2 = _shape(n2)
+        try:
+            dist = s1.distToShape(s2)[0]
+        except Exception:
+            dist = None
+        try:
+            common = s1.common(s2).Volume
+        except Exception:
+            common = 0.0
+        name1 = n1 if isinstance(n1, str) else n1.Name
+        name2 = n2 if isinstance(n2, str) else n2.Name
+        return {"a": name1, "b": name2, "min_distance_mm": dist,
+                "overlaps": bool(common and common > 1e-6),
+                "common_volume_mm3": round(common, 3)}
+
+    res: List[Dict[str, Any]] = []
+    a = params.get("a")
+    b = params.get("b")
+    names = params.get("objects")
+    if a and b:
+        pairs = [(a, b)]
+    elif names:
+        pairs = [(names[i], names[j]) for i in range(len(names))
+                 for j in range(i + 1, len(names))]
+    else:
+        raise RuntimeError("measure_clearance needs 'a'+'b' or an 'objects' list")
+    res = [_pair(n1, n2) for n1, n2 in pairs]
+    return {"pairs": res, "overlaps": [r for r in res if r["overlaps"]]}
+
+
+PARAM_SHEET_NAME = "Params"
+
+
+def _param_sheet(doc: Any) -> Any:
+    s = doc.getObject(PARAM_SHEET_NAME)
+    if s is None:
+        s = doc.addObject("Spreadsheet::Sheet", PARAM_SHEET_NAME)
+        doc.recompute()
+    return s
+
+
+def _param_cell(sheet: Any, name: str) -> Optional[str]:
+    for r in range(1, 1000):
+        cell = "A%d" % r
+        try:
+            if (sheet.getAlias(cell) or "") == name:
+                return cell
+        except Exception:
+            continue
+    return None
+
+
+def _freecell(sheet: Any) -> str:
+    r = 1
+    while True:
+        cell = "A%d" % r
+        if not sheet.getContents(cell):
+            return cell
+        r += 1
+        if r > 10000:
+            raise RuntimeError("spreadsheet full")
+
+
+def _value_str(value: Any, unit: Optional[str]) -> str:
+    if isinstance(value, str):
+        return value
+    if unit:
+        return "%s %s" % (value, unit)
+    return str(value)
+
+
+def add_parameter(params: Dict[str, Any]) -> Dict[str, Any]:
+    App, _, _ = _app_modules()
+    doc = _doc(params.get("doc", "active"))
+    name = params.get("name")
+    value = params.get("value")
+    if not name:
+        raise RuntimeError("add_parameter needs a 'name'")
+    if value is None:
+        raise RuntimeError("add_parameter needs a 'value'")
+    unit = params.get("unit")
+    sheet = _param_sheet(doc)
+    cell = _param_cell(sheet, name) or _freecell(sheet)
+    text = _value_str(value, unit)
+    sheet.set(cell, text)
+    sheet.setAlias(cell, name)
+    doc.recompute()
+    return {"parameter": name, "cell": cell, "value": text}
+
+
+def set_parameter(params: Dict[str, Any]) -> Dict[str, Any]:
+    App, _, _ = _app_modules()
+    doc = _doc(params.get("doc", "active"))
+    name = params.get("name")
+    value = params.get("value")
+    if not name or value is None:
+        raise RuntimeError("set_parameter needs a 'name' and a 'value'")
+    unit = params.get("unit")
+    return add_parameter({"name": name, "value": value, "unit": unit, "doc": doc.Name})
+
+
+def get_parameter(params: Dict[str, Any]) -> Dict[str, Any]:
+    App, _, _ = _app_modules()
+    doc = _doc(params.get("doc", "active"))
+    name = params.get("name")
+    if not name:
+        raise RuntimeError("get_parameter needs a 'name'")
+    sheet = doc.getObject(PARAM_SHEET_NAME)
+    if sheet is None:
+        return {"parameter": name, "found": False}
+    cell = _param_cell(sheet, name)
+    if cell is None:
+        return {"parameter": name, "found": False}
+    return {"parameter": name, "cell": cell, "value": sheet.getContents(cell), "found": True}
+
+
+def list_parameters(params: Dict[str, Any]) -> Dict[str, Any]:
+    App, _, _ = _app_modules()
+    doc = _doc(params.get("doc", "active"))
+    sheet = doc.getObject(PARAM_SHEET_NAME)
+    if sheet is None:
+        return {"parameters": {}}
+    out: Dict[str, str] = {}
+    for r in range(1, 1000):
+        cell = "A%d" % r
+        try:
+            alias = sheet.getAlias(cell) or ""
+        except Exception:
+            alias = ""
+        if alias:
+            out[alias] = sheet.getContents(cell)
+    return {"parameters": out}
+
+
+def get_property(params: Dict[str, Any]) -> Dict[str, Any]:
+    App, _, _ = _app_modules()
+    doc = _doc(params.get("doc", "active"))
+    obj = _obj(doc, params.get("object"))
+    prop = params.get("property")
+    if not prop:
+        raise RuntimeError("get_property needs 'object' and 'property'")
+    return {"object": obj.Name, "property": prop, "value": str(getattr(obj, prop))}
+
+
+def set_property(params: Dict[str, Any]) -> Dict[str, Any]:
+    App, _, _ = _app_modules()
+    doc = _doc(params.get("doc", "active"))
+    obj = _obj(doc, params.get("object"))
+    prop = params.get("property")
+    value = params.get("value")
+    if not prop or value is None:
+        raise RuntimeError("set_property needs 'object', 'property', 'value'")
+    setattr(obj, prop, value)
+    doc.recompute()
+    return {"object": obj.Name, "property": prop, "value": str(getattr(obj, prop))}
+
+
+def link_property(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Bind ``object.property`` to a parameter via an OCCT expression
+    (``Params.<parameter>``) so the dimension is driven by the spreadsheet cell."""
+    App, _, _ = _app_modules()
+    doc = _doc(params.get("doc", "active"))
+    obj = _obj(doc, params.get("object"))
+    prop = params.get("property")
+    name = params.get("parameter")
+    if not prop or not name:
+        raise RuntimeError("link_property needs 'object', 'property', 'parameter'")
+    if doc.getObject(PARAM_SHEET_NAME) is None:
+        raise RuntimeError("no parameters yet (call add_parameter first)")
+    expr = params.get("expression") or "%s.%s" % (PARAM_SHEET_NAME, name)
+    obj.setExpression(prop, expr)
+    doc.recompute()
+    return {"object": obj.Name, "property": prop, "expression": expr,
+            "value_after": str(getattr(obj, prop, None))}
+
+
+def capture_parameter(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Turn an existing measurement into a named parameter: read the current
+    ``object.property`` value, store it as the parameter, then bind the property
+    to it so the dimension is now driven by (and editable via) the parameter."""
+    App, _, _ = _app_modules()
+    doc = _doc(params.get("doc", "active"))
+    obj = _obj(doc, params.get("object"))
+    prop = params.get("property")
+    name = params.get("parameter")
+    if not prop or not name:
+        raise RuntimeError("capture_parameter needs 'object', 'property', 'parameter'")
+    val = getattr(obj, prop)
+    num = val.Value if hasattr(val, "Value") else float(val)
+    unit = params.get("unit")
+    created = add_parameter({"name": name, "value": num, "unit": unit, "doc": doc.Name})
+    linked = link_property({"object": obj.Name, "property": prop, "parameter": name, "doc": doc.Name})
+    return {"parameter": name, "object": obj.Name, "property": prop,
+            "value": num, "param_cell": created["cell"],
+            "expression": linked["expression"], "value_after": linked["value_after"]}
+
+
+def get_sketch_constraints(params: Dict[str, Any]) -> Dict[str, Any]:
+    App, _, _ = _app_modules()
+    doc = _doc(params.get("doc", "active"))
+    sk = _obj(doc, params.get("sketch"))
+    out = []
+    for i, c in enumerate(sk.Constraints):
+        out.append({"index": i, "type": c.Type, "value": c.Value})
+    return {"sketch": sk.Name, "n_constraints": len(sk.Constraints),
+            "constraints": out}
+
+
+def set_sketch_constraint_value(params: Dict[str, Any]) -> Dict[str, Any]:
+    App, _, _ = _app_modules()
+    doc = _doc(params.get("doc", "active"))
+    sk = _obj(doc, params.get("sketch"))
+    idx = int(params.get("index"))
+    value = params.get("value")
+    if value is None:
+        raise RuntimeError("set_sketch_constraint_value needs 'sketch', 'index', 'value'")
+    sk.setDatum(idx, App.Units.Quantity(str(value)))
+    doc.recompute()
+    return {"sketch": sk.Name, "index": idx, "value": str(value)}
+
+
+def _sketch_geom_outline(sk: Any) -> List[Dict[str, Any]]:
+    """Compact geometry outline (with coordinates) so the agent can reason about
+    which constraints a sketch still needs."""
+    out = []
+    for i, g in enumerate(sk.Geometry):
+        t = g.TypeId
+        item: Dict[str, Any] = {"index": i, "type": t.split("::")[-1]}
+        try:
+            if hasattr(g, "StartPoint") and hasattr(g, "EndPoint"):
+                item["start"] = [round(g.StartPoint.x, 3), round(g.StartPoint.y, 3)]
+                item["end"] = [round(g.EndPoint.x, 3), round(g.EndPoint.y, 3)]
+            elif hasattr(g, "Center"):
+                item["center"] = [round(g.Center.x, 3), round(g.Center.y, 3)]
+                if hasattr(g, "Radius"):
+                    item["radius"] = round(g.Radius, 3)
+            elif t == "Part::Point":
+                item["position"] = [round(g.X, 3), round(g.Y, 3)] if hasattr(g, "X") else None
+        except Exception:
+            pass
+        out.append(item)
+    return out
+
+
+def _sketch_constraint_detail(sk: Any) -> List[Dict[str, Any]]:
+    out = []
+    for i, c in enumerate(sk.Constraints):
+        out.append({
+            "index": i, "type": c.Type, "value": getattr(c, "Value", None),
+            "first": getattr(c, "First", None), "first_pos": getattr(c, "FirstPos", None),
+            "second": getattr(c, "Second", None), "second_pos": getattr(c, "SecondPos", None),
+            "third": getattr(c, "Third", None),
+            "driving": bool(getattr(c, "Driving", True)),
+            "active": bool(getattr(c, "IsActive", True)),
+        })
+    return out
+
+
+def validate_sketch(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Solver diagnostics for a sketch: DoF, full-constraint state, status string,
+    redundant / conflicting / malformed constraint indices, a per-constraint
+    breakdown, and a geometry outline the agent can reason about."""
+    App, _, _ = _app_modules()
+    doc = _doc(params.get("doc", "active"))
+    sk = _get_sketch(params.get("sketch") or params.get("name"), doc)
+
+    def _ints(x):
+        try:
+            return [int(v) for v in (x or [])]
+        except Exception:
+            return []
+
+    return {
+        "sketch": sk.Name,
+        "dof": int(sk.DoF),
+        "fully_constrained": bool(sk.FullyConstrained),
+        "status": str(sk.getStatusString()),
+        "redundant": _ints(sk.RedundantConstraints),
+        "partially_redundant": _ints(sk.PartiallyRedundantConstraints),
+        "conflicting": _ints(sk.ConflictingConstraints),
+        "malformed": _ints(sk.MalformedConstraints),
+        "missing_equality": _ints(sk.MissingLineEqualityConstraints),
+        "missing_point_on_point": _ints(sk.MissingPointOnPointConstraints),
+        "missing_radius": _ints(sk.MissingRadiusConstraints),
+        "missing_hv": _ints(sk.MissingVerticalHorizontalConstraints),
+        "constraints": _sketch_constraint_detail(sk),
+        "geometry": _sketch_geom_outline(sk),
+        "geometry_count": len(sk.Geometry),
+    }
+
+
+def suggest_constraints(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Suggest what to do to a sketch based on the solver:
+      - remove redundant/conflicting constraints (with indices),
+      - FreeCAD's own missing-constraint hints,
+      - a reason about the remaining degrees of freedom + geometry type.
+    ``mode='apply'`` additionally runs FreeCAD's ``autoconstraint`` to let the
+    solver add the missing 'common' constraints itself."""
+    App, _, Sketcher = _app_modules()
+    doc = _doc(params.get("doc", "active"))
+    sk = _get_sketch(params.get("sketch") or params.get("name"), doc)
+    mode = (params.get("mode") or "analyze").lower()
+
+    suggestions: List[Dict[str, Any]] = []
+
+    # fixes first: redundant / conflicting / malformed
+    for i in list(getattr(sk, "RedundantConstraints", []) or []):
+        suggestions.append({"action": "remove", "constraint": int(i),
+                            "why": "redundant"})
+    for i in list(getattr(sk, "PartiallyRedundantConstraints", []) or []):
+        suggestions.append({"action": "remove", "constraint": int(i),
+                            "why": "partially redundant"})
+    for i in list(getattr(sk, "ConflictingConstraints", []) or []):
+        suggestions.append({"action": "resolve_conflict", "constraint": int(i),
+                            "why": "conflicting"})
+    for i in list(getattr(sk, "MalformedConstraints", []) or []):
+        suggestions.append({"action": "fix", "constraint": int(i),
+                            "why": "malformed"})
+
+    # FreeCAD's detectMissing* hints (did not mutate the sketch)
+    for attr, kind in (("detectMissingVerticalHorizontalConstraints", "vertical/horizontal"),
+                       ("detectMissingPointOnPointConstraints", "point-on-point"),
+                       ("detectMissingEqualityConstraints", "equality"),
+                       ("detectMissingRadiusConstraints", "radius")):
+        if hasattr(sk, attr):
+            try:
+                res = getattr(sk, attr)()
+                for r in (res or []):
+                    suggestions.append({"action": "add", "type": kind, "hint": list(r)
+                                        if isinstance(r, (list, tuple)) else r})
+            except Exception:
+                pass
+
+    # reason about remaining DOF + geometry
+    dof = int(sk.DoF)
+    types = [g.TypeId for g in sk.Geometry]
+    n_lines = sum(1 for t in types if "LineSegment" in t)
+    n_circ = sum(1 for t in types if "Circle" in t and "Arc" not in t)
+    n_arc = sum(1 for t in types if "Arc" in t)
+    if dof > 0:
+        note = (f"{dof} degree(s) of freedom remain; the sketch is under-constrained. "
+                f"Add dimension/position constraints (e.g. Coincident to origin, "
+                f"DistanceX/DistanceY, Horizontal/Vertical, Block) to reach "
+                f"FullyConstrained. Current geometry: {n_lines} line(s), "
+                f"{n_circ} circle(s), {n_arc} arc(s).")
+        suggestions.append({"action": "dimension", "why": "underconstrained", "note": note})
+    if n_circ:
+        suggestions.append({"action": "add", "type": "radius"
+                            if not sk.FullyConstrained else None,
+                            "hint": "each circle typically wants a Radius/Diameter + a "
+                                    "Coincident/distance to position it",
+                            "why": "circles"})
+    elif n_lines > 0 and dof > 0:
+        suggestions.append({"action": "add", "type": "distance",
+                            "hint": "a rectangle/profile of lines typically wants "
+                                    "DistanceX/DistanceY (or Horizontal/Vertical + "
+                                    "distances) to fix its size and position",
+                            "why": "lines"})
+
+    if mode == "apply" and hasattr(sk, "autoconstraint"):
+        try:
+            added = sk.autoconstraint()
+            doc.recompute()
+            suggestions.append({"action": "applied", "count": int(added),
+                                "note": "FreeCAD autoconstraint ran"})
+        except Exception as exc:
+            suggestions.append({"action": "applied", "count": 0,
+                                "note": f"autoconstraint failed: {exc}"})
+
+    return {"sketch": sk.Name, "dof": dof, "fully_constrained": bool(sk.FullyConstrained),
+            "suggestions": suggestions}
+
+
 
 
 def set_render_mode(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -1451,6 +1973,7 @@ HANDLERS: Dict[str, Callable[[Dict[str, Any]], Any]] = {
     "add_hole": add_hole,
     "mirror": mirror,
     "mirror_object": mirror_object,
+    "pattern": pattern,
     # extended sketch coverage
     "sketch_ellipse": sketch_ellipse,
     "sketch_point": sketch_point,
@@ -1468,12 +1991,27 @@ HANDLERS: Dict[str, Callable[[Dict[str, Any]], Any]] = {
     "make_torus": make_torus,
     "add_fastener": add_fastener,
     "export_objects": export_objects,
+    "measure_clearance": measure_clearance,
+    # parameters (spreadsheet-backed)
+    "add_parameter": add_parameter,
+    "set_parameter": set_parameter,
+    "get_parameter": get_parameter,
+    "list_parameters": list_parameters,
+    "get_property": get_property,
+    "set_property": set_property,
+    "link_property": link_property,
+    "capture_parameter": capture_parameter,
+    "get_sketch_constraints": get_sketch_constraints,
+    "set_sketch_constraint_value": set_sketch_constraint_value,
+    "validate_sketch": validate_sketch,
+    "suggest_constraints": suggest_constraints,
     "set_render_mode": set_render_mode,
     # GUI / workbench / view
     "run_command": run_command,
     "set_workbench": set_workbench,
     "set_view": set_view,
     "fit_view": fit_view,
+    "control_camera": control_camera,
     "screenshot": screenshot,
     # cursor / synthetic input
     "get_cursor": get_cursor,
