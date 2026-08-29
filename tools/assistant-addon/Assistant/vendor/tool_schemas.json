@@ -1,0 +1,2048 @@
+[
+  {
+    "name": "active_document",
+    "description": "Return the name of the currently active document, or null.",
+    "inputSchema": {
+      "properties": {},
+      "title": "active_documentArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "add_constraint",
+    "description": "Add a Sketcher constraint to `sketch`.\n\n`type` is the constraint name (case-insensitive): Coincident, Horizontal,\nVertical, DistanceX, DistanceY, Distance, Radius, Diameter, Block, Symmetric,\nParallel, Perpendicular, Tangent, Equal, PointOnObject, Angle, ...\n\n`args` is the Sketcher DSL (geometry index + vertex position per operand). Vertex\npositions: line start=1, line end=2, circle/arc centre=3, whole geometry=0.\n\nArg counts by type:\n  args=[g,p]            DistanceX / DistanceY (that point's horizontal/vertical\n                        offset from the origin; 2 args) or Radius/Diameter on g\n  args=[g1,p1,g2,p2]    Coincident, Distance (between two points), Parallel,\n                        Perpendicular, Tangent, Symmetric, collinear\n  args=[g]              Block, Horizontal, Vertical (whole geometry)\n\nExamples:\n  args=[0,2,1,2]        Coincident: geo0 end <-> geo1 end\n  args=[0,3]            DistanceX of circle-0 centre from origin\n  args=[0]              Radius on circle geo0\n\nA dimension constraint fixes only its value; set the value separately with\nset_sketch_constraint_value (returns the constraint index). After adding, recompute\nthen validate_sketch to catch any redundant/conflicting result.",
+    "inputSchema": {
+      "properties": {
+        "sketch": {
+          "title": "Sketch",
+          "type": "string"
+        },
+        "type": {
+          "default": "Coincident",
+          "title": "Type",
+          "type": "string"
+        },
+        "args": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Args"
+        }
+      },
+      "required": [
+        "sketch"
+      ],
+      "title": "add_constraintArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "add_fastener",
+    "description": "Add Fasteners screws/bolts to the circular hole faces of `object_name`.\nRestrict to `centers=[[x,y],..]` (hole centre on the top face) and/or\n`diameter`; screw size derives from the matching hole. `screw_type` is the\nuppercase Fasteners code, e.g. 'ISO4014' (hex), 'ISO4762' (socket cap),\n'DIN933' (hex, full thread). `flip=True` sets Invert so the head sits on the\ntop face (head-up). Returns the created screws and the hole edges used.",
+    "inputSchema": {
+      "properties": {
+        "object_name": {
+          "default": "Pocket",
+          "title": "Object Name",
+          "type": "string"
+        },
+        "screw_type": {
+          "default": "ISO4014",
+          "title": "Screw Type",
+          "type": "string"
+        },
+        "centers": {
+          "anyOf": [
+            {
+              "items": {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Centers"
+        },
+        "diameter": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Diameter"
+        },
+        "flip": {
+          "default": true,
+          "title": "Flip",
+          "type": "boolean"
+        }
+      },
+      "title": "add_fastenerArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "add_hole",
+    "description": "Add a threaded hole (PartDesign::Hole) from a circle sketch. `threaded`\ntoggles the cosmetic thread; `model_thread` generates real thread geometry;\n`throughall` drills through; `hole_cut` is none/counterbore/countersink/\ncounterdrill; `drill_point` is flat/angled.",
+    "inputSchema": {
+      "properties": {
+        "sketch": {
+          "title": "Sketch",
+          "type": "string"
+        },
+        "diameter": {
+          "default": 5.0,
+          "title": "Diameter",
+          "type": "number"
+        },
+        "depth": {
+          "default": 10.0,
+          "title": "Depth",
+          "type": "number"
+        },
+        "threaded": {
+          "default": true,
+          "title": "Threaded",
+          "type": "boolean"
+        },
+        "model_thread": {
+          "default": false,
+          "title": "Model Thread",
+          "type": "boolean"
+        },
+        "throughall": {
+          "default": false,
+          "title": "Throughall",
+          "type": "boolean"
+        },
+        "drill_point": {
+          "default": "flat",
+          "title": "Drill Point",
+          "type": "string"
+        },
+        "hole_cut": {
+          "default": "none",
+          "title": "Hole Cut",
+          "type": "string"
+        },
+        "name": {
+          "default": "Hole",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sketch"
+      ],
+      "title": "add_holeArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "add_parameter",
+    "description": "Create/redefine a named parameter stored as a Spreadsheet alias. `value` is\na number or a '40 mm' string; pass `unit` to append a unit to a number.",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "title": "add_parameterArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "boolean_op",
+    "description": "Boolean of two objects. `shape` and `tool` are object names; `mode` is\n'fuse' (union), 'cut' (shape - tool; order matters), or 'common' (intersection).\nResult is created as a Part::Boolean with `name`. Both inputs must be solids\nwith a Shape; verify with measure_clearance if you expect them to mate.",
+    "inputSchema": {
+      "properties": {
+        "shape": {
+          "title": "Shape",
+          "type": "string"
+        },
+        "tool": {
+          "title": "Tool",
+          "type": "string"
+        },
+        "mode": {
+          "default": "fuse",
+          "title": "Mode",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        }
+      },
+      "required": [
+        "shape",
+        "tool"
+      ],
+      "title": "boolean_opArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "capture_parameter",
+    "description": "Convert a measurement into a parameter: reads the current `object.property`\nvalue, stores it as the `parameter`, then binds the property to it so the\ndimension is now driven by (and editable via) the parameter.",
+    "inputSchema": {
+      "properties": {
+        "object": {
+          "title": "Object",
+          "type": "string"
+        },
+        "property": {
+          "title": "Property",
+          "type": "string"
+        },
+        "parameter": {
+          "title": "Parameter",
+          "type": "string"
+        }
+      },
+      "required": [
+        "object",
+        "property",
+        "parameter"
+      ],
+      "title": "capture_parameterArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "chamfer",
+    "description": "Add a PartDesign chamfer to `edges` of `feature`.",
+    "inputSchema": {
+      "properties": {
+        "feature": {
+          "title": "Feature",
+          "type": "string"
+        },
+        "edges": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Edges",
+          "type": "array"
+        },
+        "size": {
+          "default": 1.0,
+          "title": "Size",
+          "type": "number"
+        },
+        "name": {
+          "default": "Chamfer",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "feature",
+        "edges"
+      ],
+      "title": "chamferArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "clear_log",
+    "description": "Clear the captured log buffer.",
+    "inputSchema": {
+      "properties": {},
+      "title": "clear_logArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "clear_selection",
+    "description": "Clear the current selection.",
+    "inputSchema": {
+      "properties": {},
+      "title": "clear_selectionArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "click",
+    "description": "Synthetic left-click at a logical viewport position (x, y px).\nReturns whether something was hit and the resulting selection.",
+    "inputSchema": {
+      "properties": {
+        "x": {
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "clickArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "control_camera",
+    "description": "Drive the 3D viewport camera. `action` is one of: fit | isometric | top |\nfront | right | rear | bottom | left | dimetric | trimetric | axometric |\nzoom_in | zoom_out | rotate_left | rotate_right | set_direction.",
+    "inputSchema": {
+      "properties": {
+        "action": {
+          "default": "fit",
+          "title": "Action",
+          "type": "string"
+        },
+        "direction": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Direction"
+        }
+      },
+      "title": "control_cameraArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "delete_object",
+    "description": "Delete the object named `name` from the active document.",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "delete_objectArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "export_objects",
+    "description": "Export objects to `path` (extension selects STEP/STL/IGES...). Use\n`objects=[names]` or export everything with a Shape.",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "objects": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Objects"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "export_objectsArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "extrude",
+    "description": "Extrude a sketch/shape with the Part workbench (not body-bound).\nReturns the Part::Extrusion solid with its bounding box.",
+    "inputSchema": {
+      "properties": {
+        "sketch": {
+          "title": "Sketch",
+          "type": "string"
+        },
+        "length": {
+          "default": 10.0,
+          "title": "Length",
+          "type": "number"
+        },
+        "dir": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dir"
+        },
+        "name": {
+          "default": "Extrusion",
+          "title": "Name",
+          "type": "string"
+        },
+        "solid": {
+          "default": true,
+          "title": "Solid",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sketch"
+      ],
+      "title": "extrudeArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "fillet",
+    "description": "Add a PartDesign fillet to `edges` (e.g. ['Edge1','Edge2']) of `feature`.",
+    "inputSchema": {
+      "properties": {
+        "feature": {
+          "title": "Feature",
+          "type": "string"
+        },
+        "edges": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Edges",
+          "type": "array"
+        },
+        "radius": {
+          "default": 1.0,
+          "title": "Radius",
+          "type": "number"
+        },
+        "name": {
+          "default": "Fillet",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "feature",
+        "edges"
+      ],
+      "title": "filletArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "fit_view",
+    "description": "Zoom/pan the view to fit all objects on screen.",
+    "inputSchema": {
+      "properties": {},
+      "title": "fit_viewArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_cursor",
+    "description": "Read the cursor position in the 3D viewport (global px, viewport\nlogical px, device px, viewport size, dpr) plus the hovered object.",
+    "inputSchema": {
+      "properties": {},
+      "title": "get_cursorArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_log",
+    "description": "Return recent FreeCAD log output (stdout/stderr of the process, plus\nevery C++/Qt/Python console message). `limit` = up to N lines; `tail=True`\nreturns the most recent lines (default) or the oldest.",
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "default": 200,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "tail": {
+          "default": true,
+          "title": "Tail",
+          "type": "boolean"
+        }
+      },
+      "title": "get_logArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_parameter",
+    "description": "Read a parameter's value.",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "get_parameterArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_placement",
+    "description": "Return the Placement (base + rotation) of the named object.",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "get_placementArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_property",
+    "description": "Read a property from an object (e.g. Pad.Length).",
+    "inputSchema": {
+      "properties": {
+        "object": {
+          "title": "Object",
+          "type": "string"
+        },
+        "property": {
+          "title": "Property",
+          "type": "string"
+        }
+      },
+      "required": [
+        "object",
+        "property"
+      ],
+      "title": "get_propertyArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_selection",
+    "description": "Read the current FreeCAD selection: objects and their sub-elements\n(faces/edges/vertices). Empty when no GUI is attached.",
+    "inputSchema": {
+      "properties": {},
+      "title": "get_selectionArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_sketch_constraints",
+    "description": "List a sketch's constraints (index, type, value) \u2014 for dimension introspection.",
+    "inputSchema": {
+      "properties": {
+        "sketch": {
+          "title": "Sketch",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sketch"
+      ],
+      "title": "get_sketch_constraintsArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "link_property",
+    "description": "Bind `object.property` to a parameter via an Expression (=Params.<parameter>)\nso the dimension is driven by the spreadsheet cell. `object` is an object name\n(e.g. 'Pad'), `property` a numeric property (e.g. 'Length'), `parameter` a name\nalready created by add_parameter. Works on feature properties (Pad.Length,\nPocket.Length); it does NOT drive raw sketch geometry coordinates.",
+    "inputSchema": {
+      "properties": {
+        "object": {
+          "title": "Object",
+          "type": "string"
+        },
+        "property": {
+          "title": "Property",
+          "type": "string"
+        },
+        "parameter": {
+          "title": "Parameter",
+          "type": "string"
+        }
+      },
+      "required": [
+        "object",
+        "property",
+        "parameter"
+      ],
+      "title": "link_propertyArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_objects",
+    "description": "List every object in the active document (name, label, TypeId,\nvisibility, state).",
+    "inputSchema": {
+      "properties": {},
+      "title": "list_objectsArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_parameters",
+    "description": "List all parameters (spreadsheet aliases) and their values.",
+    "inputSchema": {
+      "properties": {},
+      "title": "list_parametersArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "loft",
+    "description": "Loft through `sections` (list of sketch names, >= 2).",
+    "inputSchema": {
+      "properties": {
+        "sections": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Sections",
+          "type": "array"
+        },
+        "name": {
+          "default": "Loft",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sections"
+      ],
+      "title": "loftArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "log",
+    "description": "Write a line into the FreeCAD console/log. `level` is message/warning/\nerror/log.",
+    "inputSchema": {
+      "properties": {
+        "level": {
+          "default": "message",
+          "title": "Level",
+          "type": "string"
+        },
+        "message": {
+          "default": "",
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "title": "logArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "make_box",
+    "description": "Create a Part::Box.",
+    "inputSchema": {
+      "properties": {
+        "length": {
+          "default": 10.0,
+          "title": "Length",
+          "type": "number"
+        },
+        "width": {
+          "default": 10.0,
+          "title": "Width",
+          "type": "number"
+        },
+        "height": {
+          "default": 10.0,
+          "title": "Height",
+          "type": "number"
+        },
+        "name": {
+          "default": "Box",
+          "title": "Name",
+          "type": "string"
+        },
+        "position": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Position"
+        }
+      },
+      "title": "make_boxArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "make_cone",
+    "description": "Create a Part::Cone.",
+    "inputSchema": {
+      "properties": {
+        "radius1": {
+          "default": 5.0,
+          "title": "Radius1",
+          "type": "number"
+        },
+        "radius2": {
+          "default": 0.0,
+          "title": "Radius2",
+          "type": "number"
+        },
+        "height": {
+          "default": 10.0,
+          "title": "Height",
+          "type": "number"
+        },
+        "name": {
+          "default": "Cone",
+          "title": "Name",
+          "type": "string"
+        },
+        "position": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Position"
+        }
+      },
+      "title": "make_coneArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "make_cylinder",
+    "description": "Create a Part::Cylinder.",
+    "inputSchema": {
+      "properties": {
+        "radius": {
+          "default": 5.0,
+          "title": "Radius",
+          "type": "number"
+        },
+        "height": {
+          "default": 10.0,
+          "title": "Height",
+          "type": "number"
+        },
+        "name": {
+          "default": "Cylinder",
+          "title": "Name",
+          "type": "string"
+        },
+        "position": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Position"
+        }
+      },
+      "title": "make_cylinderArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "make_sphere",
+    "description": "Create a Part::Sphere.",
+    "inputSchema": {
+      "properties": {
+        "radius": {
+          "default": 5.0,
+          "title": "Radius",
+          "type": "number"
+        },
+        "name": {
+          "default": "Sphere",
+          "title": "Name",
+          "type": "string"
+        },
+        "position": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Position"
+        }
+      },
+      "title": "make_sphereArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "make_torus",
+    "description": "Create a Part::Torus.",
+    "inputSchema": {
+      "properties": {
+        "radius1": {
+          "default": 10.0,
+          "title": "Radius1",
+          "type": "number"
+        },
+        "radius2": {
+          "default": 2.0,
+          "title": "Radius2",
+          "type": "number"
+        },
+        "name": {
+          "default": "Torus",
+          "title": "Name",
+          "type": "string"
+        },
+        "position": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Position"
+        }
+      },
+      "title": "make_torusArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "measure_clearance",
+    "description": "Validate clearance between objects (mm). Give `a`+`b` for one pair, or\n`objects=[names]` for all pairs. Returns `min_distance_mm` (min surface gap;\n0 when touching/overlapping) and `overlaps`/`common_volume_mm3` when the\nshapes' intersection has positive volume (a real collision). Use after any\ngeometric change to confirm parts do not interpenetrate.",
+    "inputSchema": {
+      "properties": {
+        "a": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "A"
+        },
+        "b": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "B"
+        },
+        "objects": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Objects"
+        }
+      },
+      "title": "measure_clearanceArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "mirror",
+    "description": "Mirror the previous (or named `feature`) about a body plane (XY/XZ/YZ)\nusing PartDesign::Mirrored.",
+    "inputSchema": {
+      "properties": {
+        "feature": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Feature"
+        },
+        "plane": {
+          "default": "XY",
+          "title": "Plane",
+          "type": "string"
+        },
+        "name": {
+          "default": "Mirror",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "title": "mirrorArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "mirror_object",
+    "description": "Mirror a whole Part object about a plane at `base` along `normal`\n(Part workbench mirroring, e.g. a box about the YZ plane).",
+    "inputSchema": {
+      "properties": {
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "normal": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Normal"
+        },
+        "base": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Base"
+        },
+        "name": {
+          "default": "Mirroring",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "title": "mirror_objectArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "move_cursor",
+    "description": "Move the mouse cursor to a logical viewport position (x, y in px) and\nreturn the sampled position + hovered object.",
+    "inputSchema": {
+      "properties": {
+        "x": {
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "move_cursorArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "new_document",
+    "description": "Create a new empty document (e.g. \"Part\") and return its name.",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "new_documentArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "new_sketch",
+    "description": "Create a new sketch. `plane` is XY/XZ/YZ. `body` is 'auto' (create or\nreuse a PartDesign::Body), a body name, or 'None' for a free sketch.\nReturns the sketch name, its body and plane.",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "default": "Sketch",
+          "title": "Name",
+          "type": "string"
+        },
+        "plane": {
+          "default": "XY",
+          "title": "Plane",
+          "type": "string"
+        },
+        "body": {
+          "default": "auto",
+          "title": "Body",
+          "type": "string"
+        }
+      },
+      "title": "new_sketchArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "open_document",
+    "description": "Open an existing FreeCAD document (.FCStd, .step, .brep, ...) and\nreturn its name.",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "open_documentArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "pad",
+    "description": "Extrude the `sketch` (a closed, non-self-intersecting profile) into a solid\nand add it as a PartDesign::Pad in the Body. `length` is in mm; `symmetric`\nextrudes both ways about the sketch plane; `reversed` flips the direction.\nThe sketch must be closed/coincident to form a valid profile - check it with\nvalidate_sketch first. After recompute, verify with get_property(Body,...,'Length')\nor inspect the result.",
+    "inputSchema": {
+      "properties": {
+        "sketch": {
+          "title": "Sketch",
+          "type": "string"
+        },
+        "length": {
+          "default": 10.0,
+          "title": "Length",
+          "type": "number"
+        },
+        "name": {
+          "default": "Pad",
+          "title": "Name",
+          "type": "string"
+        },
+        "symmetric": {
+          "default": false,
+          "title": "Symmetric",
+          "type": "boolean"
+        },
+        "reversed": {
+          "default": false,
+          "title": "Reversed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sketch"
+      ],
+      "title": "padArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "pattern",
+    "description": "Repeat an existing PartDesign feature (pad/pocket) as a pattern.\n\n`style`:\n  polar        -> PartDesign PolarPattern about origin `axis` (X/Y/Z). `mode`=\n                  'whole' (Extent) sweeps `angle` as the total span across all\n                  occurrences; 'spacing' or 'single' sets `angle` as the gap\n                  between consecutive copies. Use occurrences+angle e.g. to make\n                  a ring of holes about a hole.\n  rectangular  -> PartDesign LinearPattern along origin `axis`, step `length`,\n                  `occurrences` copies.\n\nCall only AFTER the source feature exists (pad/pocket it first); `feature`\ndefaults to the body's tip. Then recompute + validate_sketch/measure_clearance to\ncheck the pattern nests without overlaps.",
+    "inputSchema": {
+      "properties": {
+        "feature": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Feature"
+        },
+        "style": {
+          "default": "polar",
+          "title": "Style",
+          "type": "string"
+        },
+        "occurrences": {
+          "default": 3,
+          "title": "Occurrences",
+          "type": "integer"
+        },
+        "axis": {
+          "default": "Z",
+          "title": "Axis",
+          "type": "string"
+        },
+        "angle": {
+          "default": 360.0,
+          "title": "Angle",
+          "type": "number"
+        },
+        "length": {
+          "default": 10.0,
+          "title": "Length",
+          "type": "number"
+        },
+        "mode": {
+          "default": "whole",
+          "title": "Mode",
+          "type": "string"
+        },
+        "reversed": {
+          "default": false,
+          "title": "Reversed",
+          "type": "boolean"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        }
+      },
+      "title": "patternArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "pocket",
+    "description": "Cut the `sketch`'s profile out of the solid (PartDesign::Pocket). `length`\nis the cut depth in mm (larger than the body if you want a through cut);\n`symmetric` cuts both ways; `reversed` flips the cut direction. The profile\nmust lie on a face/plane of the body. After recompute, verify with\nget_property or measure_clearance.",
+    "inputSchema": {
+      "properties": {
+        "sketch": {
+          "title": "Sketch",
+          "type": "string"
+        },
+        "length": {
+          "default": 10.0,
+          "title": "Length",
+          "type": "number"
+        },
+        "name": {
+          "default": "Pocket",
+          "title": "Name",
+          "type": "string"
+        },
+        "symmetric": {
+          "default": false,
+          "title": "Symmetric",
+          "type": "boolean"
+        },
+        "reversed": {
+          "default": false,
+          "title": "Reversed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sketch"
+      ],
+      "title": "pocketArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "recompute",
+    "description": "Recompute the active document after a model change.",
+    "inputSchema": {
+      "properties": {},
+      "title": "recomputeArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "revolve",
+    "description": "Revolve `sketch` (in a body) about an axis (default the body's V_Axis).",
+    "inputSchema": {
+      "properties": {
+        "sketch": {
+          "title": "Sketch",
+          "type": "string"
+        },
+        "angle": {
+          "default": 360.0,
+          "title": "Angle",
+          "type": "number"
+        },
+        "axis_object": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Axis Object"
+        },
+        "axis_element": {
+          "default": "V_Axis",
+          "title": "Axis Element",
+          "type": "string"
+        },
+        "name": {
+          "default": "Revolution",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sketch"
+      ],
+      "title": "revolveArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "run_command",
+    "description": "Run a FreeCAD GUI command by name (e.g. 'Std_New', 'PartDesign_Pad').",
+    "inputSchema": {
+      "properties": {
+        "command": {
+          "title": "Command",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "title": "run_commandArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "run_python",
+    "description": "Run a FreeCAD Python snippet. mode='exec' for statements, 'eval' for a\nsingle expression. Returns any printed stdout and the eval result.",
+    "inputSchema": {
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "mode": {
+          "default": "exec",
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "title": "run_pythonArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "screenshot",
+    "description": "Save a static image of the viewport. `format` is e.g. PNG.",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "default": "/tmp/opencode/freecad_mcp_shot.png",
+          "title": "Path",
+          "type": "string"
+        },
+        "format": {
+          "default": "PNG",
+          "title": "Format",
+          "type": "string"
+        }
+      },
+      "title": "screenshotArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "select_objects",
+    "description": "Programmatically select the named objects (replaces the selection).",
+    "inputSchema": {
+      "properties": {
+        "names": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Names",
+          "type": "array"
+        }
+      },
+      "required": [
+        "names"
+      ],
+      "title": "select_objectsArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "set_active_document",
+    "description": "Make the document named `name` the active document.",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "set_active_documentArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "set_parameter",
+    "description": "Update a named parameter's value (creates it if missing). `value` is a\nnumber or a '40 mm' string; `unit` appends a unit to a numeric value. Changing\na value propagates to any property linked via link_property.",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "title": "set_parameterArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "set_placement",
+    "description": "Set the base position of the named object to `base` (keep rotation).",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "base": {
+          "items": {
+            "type": "number"
+          },
+          "title": "Base",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "base"
+      ],
+      "title": "set_placementArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "set_property",
+    "description": "Set a property on an object directly (e.g. Pad.Length='36 mm').",
+    "inputSchema": {
+      "properties": {
+        "object": {
+          "title": "Object",
+          "type": "string"
+        },
+        "property": {
+          "title": "Property",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "object",
+        "property",
+        "value"
+      ],
+      "title": "set_propertyArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "set_render_mode",
+    "description": "Switch the 3D viewport renderer backend. mode='opengl'|'vulkan'|'raytracing'.\nSets the preference and recreates the active 3D view.",
+    "inputSchema": {
+      "properties": {
+        "mode": {
+          "default": "opengl",
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "title": "set_render_modeArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "set_sketch_constraint_value",
+    "description": "Set a sketch constraint's datum value (e.g. '40 mm').",
+    "inputSchema": {
+      "properties": {
+        "sketch": {
+          "title": "Sketch",
+          "type": "string"
+        },
+        "index": {
+          "title": "Index",
+          "type": "integer"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sketch",
+        "index",
+        "value"
+      ],
+      "title": "set_sketch_constraint_valueArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "set_view",
+    "description": "Set the 3D view orientation: top, front, right, isometric, home.",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "default": "top",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "title": "set_viewArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "set_workbench",
+    "description": "Activate a FreeCAD workbench by name.",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "default": "PartDesignWorkbench",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "title": "set_workbenchArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "sketch_arc",
+    "description": "Add an arc to `sketch` (center=[x,y], angles in degrees).\n`construction=True` makes it a reference arc.",
+    "inputSchema": {
+      "properties": {
+        "sketch": {
+          "title": "Sketch",
+          "type": "string"
+        },
+        "radius": {
+          "default": 10.0,
+          "title": "Radius",
+          "type": "number"
+        },
+        "center": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Center"
+        },
+        "start_angle": {
+          "default": 0.0,
+          "title": "Start Angle",
+          "type": "number"
+        },
+        "end_angle": {
+          "default": 90.0,
+          "title": "End Angle",
+          "type": "number"
+        },
+        "construction": {
+          "default": false,
+          "title": "Construction",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sketch"
+      ],
+      "title": "sketch_arcArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "sketch_circle",
+    "description": "Add a full circle to `sketch` (center=[x,y]). `construction=True` makes\nit a reference circle (e.g. a bolt circle, not part of the solid).",
+    "inputSchema": {
+      "properties": {
+        "sketch": {
+          "title": "Sketch",
+          "type": "string"
+        },
+        "radius": {
+          "default": 10.0,
+          "title": "Radius",
+          "type": "number"
+        },
+        "center": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Center"
+        },
+        "construction": {
+          "default": false,
+          "title": "Construction",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sketch"
+      ],
+      "title": "sketch_circleArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "sketch_ellipse",
+    "description": "Add an ellipse to `sketch` (center=[x,y]). `construction=True` makes it\na reference ellipse.",
+    "inputSchema": {
+      "properties": {
+        "sketch": {
+          "title": "Sketch",
+          "type": "string"
+        },
+        "center": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Center"
+        },
+        "major_radius": {
+          "default": 20.0,
+          "title": "Major Radius",
+          "type": "number"
+        },
+        "minor_radius": {
+          "default": 10.0,
+          "title": "Minor Radius",
+          "type": "number"
+        },
+        "construction": {
+          "default": false,
+          "title": "Construction",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sketch"
+      ],
+      "title": "sketch_ellipseArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "sketch_line",
+    "description": "Add a single line segment to `sketch` from p0 to p1 ([x,y]).\n`construction=True` makes it a reference line (used for symmetry/helpers,\nnot part of the solid).",
+    "inputSchema": {
+      "properties": {
+        "sketch": {
+          "title": "Sketch",
+          "type": "string"
+        },
+        "p0": {
+          "items": {
+            "type": "number"
+          },
+          "title": "P0",
+          "type": "array"
+        },
+        "p1": {
+          "items": {
+            "type": "number"
+          },
+          "title": "P1",
+          "type": "array"
+        },
+        "construction": {
+          "default": false,
+          "title": "Construction",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sketch",
+        "p0",
+        "p1"
+      ],
+      "title": "sketch_lineArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "sketch_point",
+    "description": "Add a point (vertex) to `sketch` (position=[x,y]).",
+    "inputSchema": {
+      "properties": {
+        "sketch": {
+          "title": "Sketch",
+          "type": "string"
+        },
+        "position": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Position"
+        }
+      },
+      "required": [
+        "sketch"
+      ],
+      "title": "sketch_pointArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "sketch_polygon",
+    "description": "Add a regular closed N-gon to `sketch` (center=[x,y]). `construction`\ntoggles reference (non-solid-driving) geometry.",
+    "inputSchema": {
+      "properties": {
+        "sketch": {
+          "title": "Sketch",
+          "type": "string"
+        },
+        "radius": {
+          "default": 10.0,
+          "title": "Radius",
+          "type": "number"
+        },
+        "sides": {
+          "default": 6,
+          "title": "Sides",
+          "type": "integer"
+        },
+        "center": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Center"
+        },
+        "construction": {
+          "default": false,
+          "title": "Construction",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sketch"
+      ],
+      "title": "sketch_polygonArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "sketch_polyline",
+    "description": "Add a polyline to `sketch`. `points` is [[x,y], ...]; set closed=True\nto link the last point back to the first. `construction` toggles reference\n(non-solid-driving) geometry.",
+    "inputSchema": {
+      "properties": {
+        "sketch": {
+          "title": "Sketch",
+          "type": "string"
+        },
+        "points": {
+          "items": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "title": "Points",
+          "type": "array"
+        },
+        "closed": {
+          "default": true,
+          "title": "Closed",
+          "type": "boolean"
+        },
+        "construction": {
+          "default": false,
+          "title": "Construction",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sketch",
+        "points"
+      ],
+      "title": "sketch_polylineArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "sketch_rectangle",
+    "description": "Add a closed rectangle to `sketch` (corner-to-corner). Set\n`construction=True` for a reference line that does not drive the solid.",
+    "inputSchema": {
+      "properties": {
+        "sketch": {
+          "title": "Sketch",
+          "type": "string"
+        },
+        "x0": {
+          "default": 0.0,
+          "title": "X0",
+          "type": "number"
+        },
+        "y0": {
+          "default": 0.0,
+          "title": "Y0",
+          "type": "number"
+        },
+        "x1": {
+          "default": 10.0,
+          "title": "X1",
+          "type": "number"
+        },
+        "y1": {
+          "default": 10.0,
+          "title": "Y1",
+          "type": "number"
+        },
+        "construction": {
+          "default": false,
+          "title": "Construction",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sketch"
+      ],
+      "title": "sketch_rectangleArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "sketch_slot",
+    "description": "Add a rounded slot (stadium) to `sketch` (center=[x,y]).\n`construction=True` makes it a reference slot.",
+    "inputSchema": {
+      "properties": {
+        "sketch": {
+          "title": "Sketch",
+          "type": "string"
+        },
+        "center": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Center"
+        },
+        "length": {
+          "default": 20.0,
+          "title": "Length",
+          "type": "number"
+        },
+        "width": {
+          "default": 10.0,
+          "title": "Width",
+          "type": "number"
+        },
+        "construction": {
+          "default": false,
+          "title": "Construction",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sketch"
+      ],
+      "title": "sketch_slotArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "sketch_spline",
+    "description": "Add a spline to `sketch` through the given [[x,y], ...] points.\n`construction=True` makes it a reference spline.",
+    "inputSchema": {
+      "properties": {
+        "sketch": {
+          "title": "Sketch",
+          "type": "string"
+        },
+        "points": {
+          "items": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "title": "Points",
+          "type": "array"
+        },
+        "construction": {
+          "default": false,
+          "title": "Construction",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sketch",
+        "points"
+      ],
+      "title": "sketch_splineArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "snapshot",
+    "description": "Return viewport + document + selection + camera state (a live probe\nsnapshot).",
+    "inputSchema": {
+      "properties": {},
+      "title": "snapshotArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "status",
+    "description": "Report the live FreeCAD instance: active document, object count,\nselection, GUI availability, and the socket in use.",
+    "inputSchema": {
+      "properties": {},
+      "title": "statusArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "suggest_constraints",
+    "description": "Suggest what to do to a sketch: remove redundant/conflicting constraints,\nFreeCAD's missing-constraint hints, and a reason about remaining DOF.\nmode='apply' runs FreeCAD's autoconstraint to add missing constraints.",
+    "inputSchema": {
+      "properties": {
+        "sketch": {
+          "title": "Sketch",
+          "type": "string"
+        },
+        "mode": {
+          "default": "analyze",
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sketch"
+      ],
+      "title": "suggest_constraintsArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "validate_sketch",
+    "description": "Solver diagnostics for a sketch: degrees of freedom (DoF), FullyConstrained\nflag, status string, redundant/conflicting/malformed constraint indices, a\nper-constraint breakdown and a geometry outline.",
+    "inputSchema": {
+      "properties": {
+        "sketch": {
+          "title": "Sketch",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sketch"
+      ],
+      "title": "validate_sketchArguments",
+      "type": "object"
+    }
+  }
+]

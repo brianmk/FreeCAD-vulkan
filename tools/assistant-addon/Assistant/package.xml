@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<package format="1" xmlns="https://wiki.freecad.org/Package_Metadata">
+  <name>Assistant</name>
+  <description>VSCode-style AI chat dock that drives any FreeCAD tool through tool-calling.</description>
+  <version>0.1</version>
+  <date>2026-08-28</date>
+  <maintainer>FreeCAD dev</maintainer>
+  <license file="LICENSE">LGPL-2.1-or-later</license>
+  <icon>Resources/assistant.svg</icon>
+
+  <content>
+    <workbench>
+      <classname>AssistantWorkbench</classname>
+      <subdirectory>./</subdirectory>
+      <tag>chat</tag>
+      <tag>ai</tag>
+      <tag>ui/ux</tag>
+    </workbench>
+  </content>
+
+</package>
