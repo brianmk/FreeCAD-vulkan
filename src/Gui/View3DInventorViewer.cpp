@@ -2096,6 +2096,7 @@ void View3DInventorViewer::applyVulkanSettings()
         case 1: vulkanSettings_.pathTracingDenoiser = "oidn"; break;
         case 2: vulkanSettings_.pathTracingDenoiser = "fsr"; break;
         case 3: vulkanSettings_.pathTracingDenoiser = "none"; break;
+        case 4: vulkanSettings_.pathTracingDenoiser = "dlssrr"; break;
         default: vulkanSettings_.pathTracingDenoiser = "rtx"; break;
     }
 

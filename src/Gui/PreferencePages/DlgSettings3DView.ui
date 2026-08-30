@@ -787,7 +787,7 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
             <string>Denoiser</string>
            </property>
            <property name="toolTip">
-            <string>Which machine-learning denoiser cleans the path-traced frames.  RTX (OptiX) runs on the GPU and is the fastest; OIDN runs on the CPU; FSR is only available in a build with the AMD FFX SDK.  None disables denoising and shows the raw accumulated radiance.</string>
+            <string>Which machine-learning denoiser cleans the path-traced frames.  RTX (OptiX) runs on the GPU and is the fastest (when the NVIDIA runtime is present); OIDN runs on the CPU; FSR requires a build with the AMD FFX SDK; DLSS-RR uses the NVIDIA NGX ray-reconstruction runtime (dlopen'd at runtime, gated on a registered App ID).  None disables denoising and shows the raw accumulated radiance.</string>
            </property>
           </widget>
          </item>
@@ -817,6 +817,11 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
            <item>
             <property name="text">
              <string>None</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>DLSS-RR (NVIDIA NGX, GPU)</string>
             </property>
            </item>
           </widget>
