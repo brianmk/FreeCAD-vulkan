@@ -47,6 +47,7 @@
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 
 #include <QAction>
 #include <QMenu>
@@ -1053,6 +1054,16 @@ void ViewProviderPartExt::setupCoinGeometry(
         return;
     }
 
+    // The Vulkan ray-traced viewport composites BRep edge lines over the
+    // traced surface.  A parametric seam edge (the meridian where a closed
+    // smooth surface such as a sphere or cylinder wraps from 0 to 2pi) is a
+    // real BRep edge but is geometrically invisible: both sides lie on the
+    // same smooth surface.  In the RT view we skip these seam edges so they
+    // do not appear as a phantom line across the face.  The standard raster
+    // GL path keeps them (matching classic Coin/FreeCAD wire behaviour), so
+    // the seam only disappears in the path-traced view.
+    const bool rtvActive = rtvSeamSuppressionEnabled();
+
     // time measurement and book keeping
     Base::TimeElapsed startTime;
 
@@ -1133,6 +1144,53 @@ void ViewProviderPartExt::setupCoinGeometry(
     std::map<int, std::vector<int32_t>> lineSetMap;
     std::set<int> edgeIdxSet;
     std::vector<int32_t> edgeVector;
+
+    // In the RT view, drop parametric seam edges: an edge is a seam when the
+    // two faces adjacent to it meet with better-than-C0 continuity (a smooth
+    // closed surface such as a sphere/cylinder's 0->2pi wrap).  Such an edge
+    // is geometrically invisible and only reappears as a phantom line across
+    // the face, so the RT composite skips it.  Note: an edge coincident with
+    // exactly one face can still be a seam (the sphere's single face); that
+    // case is handled separately below via BRep_Tool::Continuity with the
+    // face itself.
+    std::set<int> seamEdges;
+    if (rtvActive) {
+        TopTools_IndexedDataMapOfShapeListOfShape edgeFaceMap;
+        TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE,
+                                      edgeFaceMap);
+        for (int i = 1; i <= edgeMap.Extent(); i++) {
+            const TopoDS_Edge& aEdge = TopoDS::Edge(edgeMap(i));
+            if (!edgeFaceMap.Contains(aEdge)) {
+                continue;
+            }
+            const TopTools_ListOfShape& faces = edgeFaceMap.FindFromKey(aEdge);
+            const int nFaces = faces.Extent();
+            if (nFaces >= 2) {
+                // Continuity < C1 means a genuine crease (box edge, fillet):
+                // draw it.  C1+ means the two faces are tangent/smooth, i.e.
+                // a parametric seam: skip it in RT.
+                const TopoDS_Face& f1 = TopoDS::Face(faces.First());
+                TopoDS_Face f2 = TopoDS::Face(faces.Last());
+                if (BRep_Tool::Continuity(aEdge, f1, f2) > GeomAbs_C0) {
+                    seamEdges.insert(i);
+                }
+            }
+            else if (nFaces == 1) {
+                // A seam edge of a closed single-face surface (e.g. a full
+                // sphere's meridian) is adjacent to that one face on both
+                // sides.  The edge is degenerate to the surface: it carries
+                // no geometric crease.  Detect it by comparing the surface
+                // normal at the two ends of the edge parameter range: on a
+                // smooth closed surface they are parallel.  A true boundary
+                // (open face) has a free edge already handled in the free-edge
+                // pass, so a face's own closed smooth edge is the seam.
+                const TopoDS_Face& f1 = TopoDS::Face(faces.First());
+                if (BRep_Tool::Continuity(aEdge, f1, f1) > GeomAbs_C0) {
+                    seamEdges.insert(i);
+                }
+            }
+        }
+    }
 
     // count and index the edges
     for (int i = 1; i <= edgeMap.Extent(); i++) {
@@ -1304,6 +1362,14 @@ void ViewProviderPartExt::setupCoinGeometry(
             // already processed this index ?
             if (edgeIdxSet.find(edgeIndex) != edgeIdxSet.end()) {
 
+                // An RT view drops parametric seam edges (see seamEdges):
+                // skip adding them to the line set so the phantom meridian
+                // does not render across the smooth face.
+                if (rtvActive && seamEdges.find(edgeIndex) != seamEdges.end()) {
+                    edgeIdxSet.erase(edgeIndex);
+                    continue;
+                }
+
                 // this holds the indices of the edge's triangulation to the current polygon
                 Handle(Poly_PolygonOnTriangulation)
                     aPoly = BRep_Tool::PolygonOnTriangulation(curEdge, mesh, aLoc);
@@ -1355,6 +1421,9 @@ void ViewProviderPartExt::setupCoinGeometry(
 
         // handling of the free edge that are not associated to a face
         int hash = Part::ShapeMapHasher {}(aEdge);
+        if (rtvActive && seamEdges.find(i) != seamEdges.end()) {
+            continue;  // RT view drops parametric seam edges (see seamEdges)
+        }
         if (faceEdges.find(hash) == faceEdges.end()) {
             Handle(Poly_Polygon3D) aPoly = Part::Tools::polygonOfEdge(aEdge, aLoc);
             if (!aPoly.IsNull()) {
@@ -1432,6 +1501,21 @@ void ViewProviderPartExt::setupCoinGeometry(
         numLines
     );
 #endif
+}
+
+bool
+ViewProviderPartExt::rtvSeamSuppressionEnabled()
+{
+    // The RT viewport is wired when the Vulkan renderer and ray tracing are
+    // both enabled.  Same preference group the renderer reads (see
+    // View3DInventorViewer::applyVulkanSettings / View3DInventor).
+    auto hGrp = App::GetApplication().GetParameterGroupByPath(
+        "User parameter:BaseApp/Preferences/View");
+    if (!hGrp) {
+        return false;
+    }
+    return hGrp->GetBool("UseVulkanRenderer", false) &&
+           hGrp->GetBool("UseVulkanRayTracing", false);
 }
 
 void ViewProviderPartExt::setupCoinGeometry(

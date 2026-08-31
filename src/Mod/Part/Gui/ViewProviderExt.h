@@ -216,6 +216,10 @@ protected:
         const char* PropName
     ) override;
 
+    /// Whether the Vulkan ray-traced viewport is active (drives seam-edge
+    /// suppression).  Reads the same view preference group the renderer uses.
+    static bool rtvSeamSuppressionEnabled();
+
     // nodes for the data representation
     SoMaterialBinding* pcFaceBind;
     SoMaterialBinding* pcLineBind;
