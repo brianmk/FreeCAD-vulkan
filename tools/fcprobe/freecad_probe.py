@@ -1996,6 +1996,92 @@ class Session:
         self.errors.append(msg)
         self.emit("error", msg=msg)
 
+    # -- API authoring/safety helpers --------------------------------------
+    def api_dump(self, obj: Any, name: str = "obj") -> None:
+        """Introspect a live FreeCAD object and print its real, callable API.
+
+        The C++ bindings expose methods/attributes that a static Python linter
+        cannot see, so probing against a guessed name (`movePoint`, `.Index`,
+        an index into ``Constraints``) fails at runtime.  Call this first to dump
+        the actual surface and author against it instead of guessing::
+
+            s.api_dump(sk, "sketch")          # methods/attrs
+            s.api_dump(sk.Constraints, "c")   # a PropertyConstraintList
+        """
+        members = []
+        for m in dir(obj):
+            if m.startswith("__"):
+                continue
+            try:
+                value = getattr(obj, m)
+            except Exception:
+                value = "<unreadable>"
+            kind = type(value).__name__
+            if callable(value):
+                members.append(f"{m}()")
+            else:
+                members.append(f"{m}:{kind}")
+        self.emit("api", obj=name, count=len(members))
+        for m in members:
+            print(f"    {m}", flush=True)
+
+        if hasattr(obj, "getTypeId"):
+            try:
+                self.emit("api", obj=name, type_id=obj.getTypeId().getName().getString())
+            except Exception:
+                pass
+
+        # For document objects expose property lists that probes index into.
+        for prop in ("Constraints", "Geometry", "Body", "Support"):
+            try:
+                sub = getattr(obj, prop)
+            except Exception:
+                continue
+            seq = []
+            for i in range(min(8, getattr(sub, "__len__", lambda: -1)())):
+                try:
+                    seq.append(repr(getattr(sub, i))[:80])
+                except Exception:
+                    seq.append(f"[{i}]")
+            self.emit("api", obj=name, prop=prop, count=
+                      getattr(sub, "__len__", lambda: -1)())
+            for s in seq:
+                print(f"    {prop}[{s}]", flush=True)
+
+    def try_call(self, obj: Any, name: str, *args: Any,
+                 default: Any = None) -> Any:
+        """Safely call a binding method, returning ``default`` if the method is
+        missing or raises.  Records a session error with the real cause so a
+        probe fails loudly with the correct fix rather than a cryptic
+        ``AttributeError`` mid-run::
+
+            v = s.try_call(sketch, "setDatum", 0, 42.0)
+            if v is None:          # binding missing or call failed
+                ...
+        """
+        import FreeCAD as App
+        if not hasattr(obj, name):
+            self.error("try_call(%s): %r has no method %r; callable attrs: %s",
+                       type(obj).__name__, name, name,
+                       ", ".join(m for m in dir(obj)
+                                 if not m.startswith("__") and callable(getattr(obj, m, None))))
+            return default
+        fn = getattr(obj, name)
+        if not callable(fn):
+            self.error("try_call(%s): %r is not callable (got %r)",
+                       type(obj).__name__, name, getattr(obj, name))
+            return default
+        try:
+            return fn(*args)
+        except (IndexError, ValueError) as e:
+            self.error("try_call(%s): %r(%s) failed (%s)",
+                       type(obj).__name__, name, args, e)
+            return default
+        except Exception as e:
+            self.error("try_call(%s): %r(%s) raised %r",
+                       type(obj).__name__, name, args, e)
+            return default
+
     # -- invariants + soak -------------------------------------------------
     def expect(self, name: str, cond: bool, detail: str = "") -> bool:
         """Record an invariant check: emits `[HARNESS] expect name=.. ok=..` and

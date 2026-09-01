@@ -410,6 +410,7 @@ void SIM::Coin3D::Quarter::SoQTQuarterAdaptor::setPickRadius(float pickRadius)
     // Re-anchor the zoom reference to the current camera state so the base
     // pick radius is calibrated for the view it is applied in.
     this->m_referenceWorldPerPixel = 0.0F;
+    this->m_referenceLogicalHeight = 0.0F;
     SoEventManager* evm = this->getSoEventManager();
     if (evm){
         SoHandleEventAction* hea = evm->getHandleEventAction();
@@ -460,17 +461,37 @@ float SIM::Coin3D::Quarter::SoQTQuarterAdaptor::zoomFactor() const
     if (wpp <= 0.0F) {
         return 1.0F;
     }
-    if (m_referenceWorldPerPixel <= 0.0F) {
-        // First evaluation after anchoring: calibrate to the current zoom and
-        // report no compensation yet.
+    // The reference is only meaningful for one viewport size.  If the viewport
+    // has been resized since anchoring, the cached world-per-pixel was measured
+    // in a differently-sized window, so re-anchor to the current geometry and
+    // report no compensation for this frame.
+    SoCamera* cam = getCamera();
+    float logicalH = 0.0F;
+    if (cam) {
+        const SbViewportRegion& vp = getViewportRegion();
+        const float deviceH = static_cast<float>(vp.getViewportSizePixels()[1]);
+        const qreal dpr = qMax(1.0, this->devicePixelRatio());
+        logicalH = deviceH / static_cast<float>(dpr);
+    }
+    if (m_referenceWorldPerPixel <= 0.0F
+        || (logicalH > 0.0F && m_referenceLogicalHeight > 0.0F
+            && std::abs(logicalH - m_referenceLogicalHeight) > 0.5F)) {
+        // First evaluation after anchoring (or the viewport was resized):
+        // calibrate to the current zoom and report no compensation yet.
         const_cast<SoQTQuarterAdaptor*>(this)->m_referenceWorldPerPixel = wpp;
+        const_cast<SoQTQuarterAdaptor*>(this)->m_referenceLogicalHeight = logicalH;
         return 1.0F;
     }
     // As the camera zooms in, worldPerPixel shrinks, so this ratio grows and
     // the pick radius covers the same world-space size -> easier to hit when
     // zoomed in.  Clamp to 1.0 so zooming OUT never makes picking harder than
-    // the calibrated base radius.
-    return std::max(1.0F, m_referenceWorldPerPixel / wpp);
+    // the calibrated base radius.  Also clamp the upper bound so a degenerate
+    // world-per-pixel (e.g. a collapsed camera or a stale viewport anchor)
+    // cannot inflate the pick radius into tens of thousands of pixels, which
+    // would snap the cursor to geometry absurdly far away.
+    float zoom = std::max(1.0F, m_referenceWorldPerPixel / wpp);
+    constexpr float kMaxZoomCompensation = 20.0F;
+    return std::min(zoom, kMaxZoomCompensation);
 }
 
 bool SIM::Coin3D::Quarter::SoQTQuarterAdaptor::seekToPoint(const SbVec2s& screenpos)

@@ -2319,6 +2319,25 @@ SoAnnotation* View3DInventorViewer::getNaviCubeAnnotation() const
     return naviCubeAnnotation;
 }
 
+void View3DInventorViewer::requestNaviCubeRedraw()
+{
+    // Called by the NaviCube when its overlay state changes (hover highlight,
+    // click-to-reorient).  The display-only Vulkan widget owns no Coin sensors
+    // and would not re-render on a navcube event alone, so emit the signal the
+    // View3DInventor adapter listens for to request a frame.
+    Q_EMIT naviCubeChanged();
+}
+
+void View3DInventorViewer::requestSceneRedraw()
+{
+    // Called by scene components that mutate the shared scene graph and request
+    // a redraw that only reaches the GL viewer's render manager (e.g. the
+    // Sketcher refreshes its edit geometry on every solver update).  The
+    // display-only Vulkan widget owns no Coin sensors, so emit the signal the
+    // View3DInventor adapter listens for to request a frame.
+    Q_EMIT sceneRefreshed();
+}
+
 SoNode* View3DInventorViewer::getAxisCrossOverlay()
 {
     auto& overlay = overlayAxisCrossState();

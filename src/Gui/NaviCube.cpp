@@ -496,6 +496,9 @@ void NaviCubeImplementation::requestRedraw(bool touchNode)
         if (auto* rm = viewer->getSoRenderManager()) {
             rm->scheduleRedraw();
         }
+        // The GL render-manager redraw never reaches the display-only Vulkan
+        // widget, so ask the viewer to request a frame for the overlay change.
+        viewer->requestNaviCubeRedraw();
     }
 }
 
@@ -930,14 +933,6 @@ void NaviCubeImplementation::handleResize(const SbVec2s& viewSize)
     if (currentDevicePixelRatio <= 0.0) {
         currentDevicePixelRatio = 1.0;
     }
-    if (getenv("FC_VULKAN_NAVI_DEBUG")) {
-        const SbVec2s& rvps = viewer->getSoRenderManager()->getViewportRegion().getViewportSizePixels();
-        fprintf(stderr,
-                "[NAVI] handleResize view=(%d,%d) dprQ=%.4f rmRegion=(%d,%d) widget=%dx%d\n",
-                viewSize[0], viewSize[1],
-                currentDevicePixelRatio,
-                rvps[0], rvps[1], viewer->width(), viewer->height());
-    }
     // Defensive bound: a legitimate device-pixel ratio on desktop FreeCAD is
     // <= 4 (fractional HiDPI scaling).  Something far larger indicates the
     // widget latched a wrong scale.  Clamp it so the runaway case is
@@ -965,6 +960,7 @@ void NaviCubeImplementation::handleResize(const SbVec2s& viewSize)
     }
 }
 
+
 PickId NaviCubeImplementation::pickFace(short x, short y)
 {
     if (!readyToRender()) {
@@ -984,6 +980,7 @@ PickId NaviCubeImplementation::pickFace(short x, short y)
     const int center = viewportSize / 2;
     const SbVec2s point(static_cast<short>(2 * x + center), static_cast<short>(2 * y + center));
     const PickId picked = soNaviCube->pickAt(point);
+
 
     return picked;
 }
@@ -1165,6 +1162,9 @@ bool NaviCubeImplementation::mouseReleased(short x, short y)
                 orientation = getFaceRotation(pickId);
             }
             viewer->setCameraOrientation(orientation, moveToCenter);
+            // The navcube consumes the event, so cameraMoved() is never
+            // emitted; wake the display-only Vulkan widget explicitly.
+            viewer->requestNaviCubeRedraw();
 
             if (moveToCenter) {
                 resetClickState();
@@ -1231,6 +1231,9 @@ void NaviCubeImplementation::setHilite(PickId hilite)
             soNaviCube->hiliteId = static_cast<int>(hiliteId);
         }
         viewer->getSoRenderManager()->scheduleRedraw();
+        // The display-only Vulkan widget only re-renders when the adapter
+        // requests a frame; the GL redraw above never reaches it.
+        viewer->requestNaviCubeRedraw();
     }
 }
 

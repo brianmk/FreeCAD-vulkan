@@ -1454,6 +1454,7 @@ bool ViewProviderSketch::mouseButtonPressed(int Button, bool pressed, const SbVe
 
                     // a redraw is required in order to clear the rubberband
                     const_cast<Gui::View3DInventorViewer*>(viewer)->redraw();
+                    const_cast<Gui::View3DInventorViewer*>(viewer)->requestSceneRedraw();
                     setSketchMode(STATUS_NONE);
                     return true;
                 case STATUS_SKETCH_UseHandler: {
@@ -1503,6 +1504,7 @@ bool ViewProviderSketch::mouseButtonPressed(int Button, bool pressed, const SbVe
                     // a redraw is required in order to clear the rubberband
                     draw(true, false);
                     const_cast<Gui::View3DInventorViewer*>(viewer)->redraw();
+                    const_cast<Gui::View3DInventorViewer*>(viewer)->requestSceneRedraw();
                     setSketchMode(STATUS_NONE);
                     return true;
                 default:
@@ -1932,6 +1934,7 @@ bool ViewProviderSketch::mouseMove(const SbVec2s& cursorPos, Gui::View3DInventor
                 DoubleClick::newCursorPos.getValue()[0],
                 viewer->getGLWidget()->height() * dpr - DoubleClick::newCursorPos.getValue()[1]);
             viewer->redraw();
+            viewer->requestSceneRedraw();
             return true;
         }
         default:
@@ -3747,7 +3750,13 @@ void ViewProviderSketch::draw(bool temp /*=false*/, bool rebuildinformationoverl
 
     Gui::MDIView* mdi = this->getActiveView();
     if (mdi && mdi->isDerivedFrom<Gui::View3DInventor>()) {
-        static_cast<Gui::View3DInventor*>(mdi)->getViewer()->redraw();
+        auto* viewer = static_cast<Gui::View3DInventor*>(mdi)->getViewer();
+        viewer->redraw();
+        // The display-only Vulkan viewport owns no Coin sensors, so the GL
+        // redraw above never wakes it; request a surface frame so the updated
+        // sketch geometry/constraints follow every solve (drag, binding edit,
+        // dimension change) instead of being dropped until the view moves.
+        viewer->requestSceneRedraw();
     }
 }
 
@@ -3769,11 +3778,22 @@ bool ViewProviderSketch::getIsShownVirtualSpace() const
 void ViewProviderSketch::drawEdit(const std::vector<Base::Vector2d>& EditCurve)
 {
     editCoinManager->drawEdit(EditCurve, geometryCreationMode);
+    requestPreviewSceneRedraw();
 }
 
 void ViewProviderSketch::drawEdit(const std::list<std::vector<Base::Vector2d>>& list)
 {
     editCoinManager->drawEdit(list, geometryCreationMode);
+    requestPreviewSceneRedraw();
+}
+
+void ViewProviderSketch::requestPreviewSceneRedraw()
+{
+    Gui::MDIView* mdi = this->getActiveView();
+    if (mdi && mdi->isDerivedFrom<Gui::View3DInventor>()) {
+        auto* viewer = static_cast<Gui::View3DInventor*>(mdi)->getViewer();
+        viewer->requestSceneRedraw();
+    }
 }
 
 void ViewProviderSketch::drawLineExtensionAutoConstraintHint(
@@ -3829,6 +3849,7 @@ void ViewProviderSketch::drawEditMarkers(const std::vector<Base::Vector2d>& Edit
                                          unsigned int augmentationlevel)
 {
     editCoinManager->drawEditMarkers(EditMarkers, augmentationlevel);
+    requestPreviewSceneRedraw();
 }
 
 void ViewProviderSketch::updateData(const App::Property* prop) {
@@ -5033,16 +5054,19 @@ void ViewProviderSketch::setConstraintSelectability(bool enabled /*= true*/)
 void ViewProviderSketch::setPositionText(const Base::Vector2d& Pos, const SbString& text)
 {
     editCoinManager->setPositionText(Pos, text);
+    requestPreviewSceneRedraw();
 }
 
 void ViewProviderSketch::setPositionText(const Base::Vector2d& Pos)
 {
     editCoinManager->setPositionText(Pos);
+    requestPreviewSceneRedraw();
 }
 
 void ViewProviderSketch::resetPositionText()
 {
     editCoinManager->resetPositionText();
+    requestPreviewSceneRedraw();
 }
 
 void ViewProviderSketch::setPreselectPoint(int PreselectPoint)

@@ -623,6 +623,16 @@ public:
     NaviCube* getNaviCube() const;
     //! The annotation group holding the nav cube coin node (empty when hidden).
     SoAnnotation* getNaviCubeAnnotation() const;
+    //! Request a Vulkan-surface redraw after a NaviCube overlay state change
+    //! (hover highlight / click-to-reorient).  The display-only Vulkan widget
+    //! owns no Coin sensors, so the navcube event would otherwise never render.
+    void requestNaviCubeRedraw();
+    //! Request a Vulkan-surface redraw after a scene-graph change that is not
+    //! routed through a document change (e.g. the Sketcher updates its edit
+    //! geometry and requests only the GL viewer's redraw).  The display-only
+    //! Vulkan widget owns no Coin sensors, so the geometry edit would otherwise
+    //! stay invisible until the view is zoomed/rotated.
+    void requestSceneRedraw();
     //! The axis cross overlay container for the IR (Vulkan) render path:
     //! a SoAxisCrossOverlay scoping the shared axis/letter graphs to the
     //! bottom-right corner viewport in the overlay render pass.
@@ -684,6 +694,23 @@ Q_SIGNALS:
     //! request a redraw so the highlight appears even after path tracing
     //! has converged and the continuous refine loop has gone idle.
     void selectionChanged();
+    //! Emitted when the NaviCube overlay changed (a face was highlighted or
+    //! clicked to reorient the camera).  The NaviCube is part of the overlay
+    //! scene graph and its events are consumed inside processSoEvent(), so
+    //! neither the GL render-manager scheduleRedraw() nor cameraMoved() reach
+    //! the display-only Vulkan widget.  This lets the adapter request a frame
+    //! so the hover highlight and click-to-rotate appear after the path
+    //! tracer has converged.
+    void naviCubeChanged();
+    //! Emitted when some caller updated the shared scene graph and asked for a
+    //! redraw that only touched the GL viewer (e.g. the Sketcher edit-mode
+    //! geometry, constraints and dimensions are refreshed and the GL render
+    //! manager's redraw() is requested on every solver update).  The Vulkan
+    //! surface is display-only and owns no Coin sensors, so it would not wake
+    //! on such a request; this lets the adapter request a frame so sketched
+    //! geometry follows the mouse/binding edits instead of jumping every
+    //! couple of hundred millimetres.
+    void sceneRefreshed();
 
 protected:
     static GLenum getInternalTextureFormat();

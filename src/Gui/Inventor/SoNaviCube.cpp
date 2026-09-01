@@ -646,10 +646,14 @@ void SoNaviCube::buildCubeSection() const
         offset->on = TRUE;
         cubeSep->addChild(offset);
 
-        // Ensure consistent front-face orientation and enable solid face culling for the cube.
+        // Consistent front-face orientation. Keep the shape non-SOLID (two-sided
+        // fill): the Vulkan/IR backend splits the hovered face into its own draw
+        // batch, and with SOLID the isolated batch is back-face culled, so the
+        // highlight never reaches the screen. Depth testing within the overlay
+        // rect still keeps the cube self-occluded.
         auto* hints = new SoShapeHints;
         hints->vertexOrdering = SoShapeHints::COUNTERCLOCKWISE;
-        hints->shapeType = SoShapeHints::SOLID;
+        hints->shapeType = SoShapeHints::UNKNOWN_SHAPE_TYPE;
         hints->faceType = SoShapeHints::CONVEX;
         cubeSep->addChild(hints);
     }
@@ -1064,7 +1068,13 @@ void SoNaviCube::updateCameraAndTransform(const RenderParams& params) const
 
 void SoNaviCube::updateCube(const RenderParams& params) const
 {
-    if (cubeMaterial) {
+    const bool cubeMatChanged = !style.cubeMatValid
+        || !nearlyEqual(params.baseRgb, style.lastBaseRgb)
+        || !nearlyEqual(params.hiliteRgb, style.lastHiliteRgb)
+        || !nearlyEqual(params.baseTr, style.lastBaseTr)
+        || !nearlyEqual(params.hiliteTr, style.lastHiliteTr);
+
+    if (cubeMaterial && cubeMatChanged) {
         cubeMaterial->diffuseColor.setNum(2);
         cubeMaterial->diffuseColor.set1Value(0, params.baseRgb);
         cubeMaterial->diffuseColor.set1Value(1, params.hiliteRgb);
@@ -1078,6 +1088,7 @@ void SoNaviCube::updateCube(const RenderParams& params) const
     }
 
     const int count = static_cast<int>(kCubeFacePickOrder.size());
+    bool faceMatChanged = false;
     if (cubeFaces->materialIndex.getNum() != count) {
         cubeFaces->materialIndex.setNum(count);
         for (int i = 0; i < count; ++i) {
@@ -1085,37 +1096,69 @@ void SoNaviCube::updateCube(const RenderParams& params) const
         }
         style.lastHiliteFaceIndex = -1;
         style.lastHilitePick = PickId::None;
+        faceMatChanged = true;
     }
 
-    if (params.hilitePick == style.lastHilitePick) {
-        return;
-    }
+    if (params.hilitePick != style.lastHilitePick) {
+        const int newHiliteIndex = (params.hilitePick == PickId::None)
+            ? -1
+            : cubeFaceIndex(params.hilitePick);
 
-    const int newHiliteIndex = (params.hilitePick == PickId::None)
-        ? -1
-        : cubeFaceIndex(params.hilitePick);
-
-    if (newHiliteIndex != style.lastHiliteFaceIndex) {
-        if (style.lastHiliteFaceIndex >= 0 && style.lastHiliteFaceIndex < count) {
-            cubeFaces->materialIndex.set1Value(style.lastHiliteFaceIndex, 0);
+        if (newHiliteIndex != style.lastHiliteFaceIndex) {
+            if (style.lastHiliteFaceIndex >= 0 && style.lastHiliteFaceIndex < count) {
+                cubeFaces->materialIndex.set1Value(style.lastHiliteFaceIndex, 0);
+            }
+            if (newHiliteIndex >= 0 && newHiliteIndex < count) {
+                cubeFaces->materialIndex.set1Value(newHiliteIndex, 1);
+            }
+            style.lastHiliteFaceIndex = newHiliteIndex;
+            faceMatChanged = true;
         }
-        if (newHiliteIndex >= 0 && newHiliteIndex < count) {
-            cubeFaces->materialIndex.set1Value(newHiliteIndex, 1);
-        }
-        style.lastHiliteFaceIndex = newHiliteIndex;
+        style.lastHilitePick = params.hilitePick;
     }
-    style.lastHilitePick = params.hilitePick;
+
+    // The IR/Vulkan pipeline retains the shape's tessellated geometry (with
+    // baked material indices) and only rebuilds it when the node notifies;
+    // SoMF::set1Value writes the field without notifying, so the recorded
+    // draw commands kept the pre-hilite material index and the highlight
+    // never reached the GPU.  Notify the touched nodes explicitly.
+    if (cubeMatChanged || faceMatChanged) {
+        if (cubeMaterial) {
+            cubeMaterial->touch();
+        }
+        if (faceMatChanged) {
+            cubeFaces->touch();
+        }
+        style.lastBaseRgb = params.baseRgb;
+        style.lastHiliteRgb = params.hiliteRgb;
+        style.lastBaseTr = params.baseTr;
+        style.lastHiliteTr = params.hiliteTr;
+        style.cubeMatValid = true;
+    }
 }
 
 void SoNaviCube::updateEdges(const RenderParams& params) const
 {
+    const bool changed = !style.edgesValid
+        || !nearlyEqual(params.emphRgb, style.lastEmphRgb)
+        || !nearlyEqual(params.emphTr, style.lastEmphTr)
+        || !nearlyEqual(params.bw, style.lastBw);
+    if (!changed) {
+        return;
+    }
     if (edgeMaterial) {
         edgeMaterial->diffuseColor.setValue(params.emphRgb);
         edgeMaterial->transparency = params.emphTr;
+        edgeMaterial->touch();
     }
     if (edgeDrawStyle) {
         edgeDrawStyle->lineWidth = params.bw;
+        edgeDrawStyle->touch();
     }
+    style.lastEmphRgb = params.emphRgb;
+    style.lastEmphTr = params.emphTr;
+    style.lastBw = params.bw;
+    style.edgesValid = true;
 }
 
 void SoNaviCube::updateAxes(const RenderParams& params) const
@@ -1143,10 +1186,12 @@ void SoNaviCube::updateAxes(const RenderParams& params) const
         if (nodes.material) {
             nodes.material->diffuseColor.setValue(params.axisRgb[static_cast<size_t>(axis)]);
             nodes.material->transparency = params.axisTr;
+            nodes.material->touch();
         }
         if (nodes.drawStyle) {
             nodes.drawStyle->lineWidth = params.bw * 2.0F;
             nodes.drawStyle->pointSize = params.bw * 2.0F;
+            nodes.drawStyle->touch();
         }
     }
 
@@ -1454,11 +1499,6 @@ void SoNaviCube::renderOverlayIR(SoIRRenderAction* action)
         return;
     }
 
-    if (getenv("FC_VULKAN_NAVI_DEBUG")) {
-        fprintf(stderr, "[NAVI] IRRender rect=(%d,%d %dx%d) size=%.1f opacity=%.2f\n",
-                viewportX, viewportY, viewportWidth, viewportHeight,
-                size.getValue(), opacity.getValue());
-    }
 
     SoState* state = action->getState();
     if (!state) {
@@ -1510,16 +1550,6 @@ void SoNaviCube::renderOverlayIR(SoIRRenderAction* action)
         cmd.state.raster.scissorHeight = viewportHeight;
     }
 
-    if (getenv("FC_VULKAN_NAVI_DEBUG") && count > firstCommand) {
-        const SoRenderCommand& c0 = list.getCommand(firstCommand);
-        float pm[4][4];
-        c0.projMatrix.getValue(reinterpret_cast<SbMat&>(pm));
-        fprintf(stderr, "[NAVI] first cmd pass=%d verts=%u proj00=%.4f proj33=%.4f viewport=%d,%d %dx%d\n",
-                static_cast<int>(c0.pass), c0.geometry.vertexCount,
-                pm[0][0], pm[3][3],
-                c0.state.raster.viewportX, c0.state.raster.viewportY,
-                c0.state.raster.viewportWidth, c0.state.raster.viewportHeight);
-    }
 
     state->pop();
 }

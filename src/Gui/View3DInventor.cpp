@@ -224,6 +224,29 @@ View3DInventor::View3DInventor(
                         _vulkanAdapter->redraw();
                     }
                 });
+        // The NaviCube overlay changes (hover highlight, click-to-reorient)
+        // are consumed inside processSoEvent(), so they never raise the GL
+        // render manager's redraw or cameraMoved() that would wake the
+        // display-only Vulkan widget.  Ask the adapter for a frame so the
+        // highlight and rotation appear even after the path tracer converged.
+        connect(_viewer, &View3DInventorViewer::naviCubeChanged,
+                _vulkanAdapter, [this] {
+                    if (_vulkanAdapter) {
+                        _vulkanAdapter->redraw();
+                    }
+                });
+        // The Sketcher (and any scene component that refreshes the shared
+        // scene graph and requests only the GL viewer's redraw) mutates the
+        // coin nodes but never wakes the display-only Vulkan surface.  Ask
+        // the adapter for a frame so sketch geometry, constraints and
+        // dimensions update with every mouse-move / binding edit instead of
+        // being dropped until the view is zoomed or rotated.
+        connect(_viewer, &View3DInventorViewer::sceneRefreshed,
+                _vulkanAdapter, [this] {
+                    if (_vulkanAdapter) {
+                        _vulkanAdapter->redraw();
+                    }
+                });
         // Feature detection: if a ray-traced mode was chosen but the ray-tracing
         // backend turns out to be unavailable on this hardware (the device may
         // advertise the extensions yet fail to build the backend, e.g. on a

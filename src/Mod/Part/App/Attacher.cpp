@@ -999,9 +999,12 @@ GProp_GProps AttachEngine::getInertialPropsOfShape(const std::vector<const TopoS
                     );
                 }
                 if (sh.Infinite()) {
-                    throw AttachEngineException(
-                        "AttachEngine::getInertialPropsOfShape: infinite shape provided"
-                    );
+                    // An unbounded edge/wire has no finite length, so it has no
+                    // meaningful linear inertial properties (e.g. the unbounded
+                    // lines of the global origin planes).  Skip it instead of
+                    // failing, so inertia-based attachment modes degrade to the
+                    // remaining finite references rather than erroring the object.
+                    continue;
                 }
                 BRepGProp::LinearProperties(sh, gpr);
                 gpr_acc.Add(gpr);
@@ -1021,9 +1024,12 @@ GProp_GProps AttachEngine::getInertialPropsOfShape(const std::vector<const TopoS
                     );
                 }
                 if (sh.Infinite()) {
-                    throw AttachEngineException(
-                        "AttachEngine::getInertialPropsOfShape: infinite shape provided"
-                    );
+                    // An unbounded face/shell has no finite area, so it has no
+                    // meaningful surface inertial properties (e.g. the infinite
+                    // planes of the global origin).  Skip it instead of failing,
+                    // so inertia-based attachment modes degrade to the remaining
+                    // finite references rather than erroring the object.
+                    continue;
                 }
                 BRepGProp::SurfaceProperties(sh, gpr);
                 gpr_acc.Add(gpr);
@@ -1043,9 +1049,11 @@ GProp_GProps AttachEngine::getInertialPropsOfShape(const std::vector<const TopoS
                     );
                 }
                 if (sh.Infinite()) {
-                    throw AttachEngineException(
-                        "AttachEngine::getInertialPropsOfShape: infinite shape provided"
-                    );
+                    // An unbounded solid has no finite volume, so it has no
+                    // meaningful volumetric inertial properties.  Skip it instead
+                    // of failing, so inertia-based attachment modes degrade to the
+                    // remaining finite references rather than erroring the object.
+                    continue;
                 }
                 BRepGProp::VolumeProperties(sh, gpr);
                 gpr_acc.Add(gpr);
@@ -1607,6 +1615,55 @@ Base::Placement AttachEngine3D::_calculateAttachedPlacement(
 
         } break;
         case mmInertialCS: {
+            // An unbounded infinite planar face (e.g. a global origin plane like
+            // XY_Plane) has no meaningful inertia tensor, so the InertialCS mode
+            // cannot derive principal axes from it.  Instead of emitting the
+            // "inertia tensor is trivial" warning, fall back to the face's own
+            // plane normal like mmFlatFace does.  This keeps a sketch reliably
+            // mapped onto an origin plane.
+            // Unbounded infinite references (e.g. the global origin planes and
+            // origin axes) have no meaningful inertia tensor, so the InertialCS
+            // mode cannot derive principal axes from them.  Instead of emitting
+            // the "inertia tensor is trivial" warning, degrade each case to a
+            // well-defined orientation:
+            //  - one infinite planar face -> use the face's own plane normal
+            //    (like mmFlatFace),
+            //  - one infinite line/edge -> use the line direction as normal.
+            bool allInfinitePlanar = !shapes.empty();
+            for (const TopoShape* ts : shapes) {
+                const TopoDS_Shape& sh = ts->getShape();
+                if (sh.IsNull() || sh.ShapeType() != TopAbs_FACE || !sh.Infinite()) {
+                    allInfinitePlanar = false;
+                    break;
+                }
+            }
+            if (allInfinitePlanar) {
+                const PlanarFaceInfo faceInfo = getPlanarFaceInfo(*shapes[0], precision);
+                SketchNormal = faceInfo.normal;
+                Handle(Geom_Plane) gPlane = new Geom_Plane(faceInfo.plane);
+                GeomAPI_ProjectPointOnSurf projector(refOrg, gPlane);
+                SketchBasePoint = projector.NearestPoint();
+                break;
+            }
+            if (shapes.size() == 1) {
+                const TopoDS_Shape& sh = shapes[0]->getShape();
+                if (!sh.IsNull() && sh.ShapeType() == TopAbs_EDGE && sh.Infinite()) {
+                    Standard_Real u0 = 0.0, u1 = 1.0;
+                    Handle(Geom_Curve) curve = BRep_Tool::Curve(TopoDS::Edge(sh), u0, u1);
+                    if (!curve.IsNull() && curve->IsKind(STANDARD_TYPE(Geom_Line))) {
+                        // The unbounded line is an axis of the origin.  Use its
+                        // direction as the sketch normal and its location as the base.
+                        Handle(Geom_Line) line = Handle(Geom_Line)::DownCast(curve);
+                        gp_Dir dir = line->Lin().Direction();
+                        // If the line is not parallel to the canonical Z, this may
+                        // not be a plane the sketch really wants; still orient to it.
+                        SketchNormal = dir;
+                        SketchBasePoint = line->Lin().Location();
+                        break;
+                    }
+                }
+            }
+
             GProp_GProps gpr = AttachEngine::getInertialPropsOfShape(shapes);
             GProp_PrincipalProps pr = gpr.PrincipalProperties();
             if (pr.HasSymmetryPoint()) {

@@ -191,6 +191,12 @@ private:
     //! World-per-pixel at the reference zoom, used to keep the world-space pick
     //! tolerance constant as the camera zooms.  0 = not anchored yet.
     float m_referenceWorldPerPixel = 0.0F;
+    //! Viewport logical height (device px / dpr) at which m_referenceWorldPerPixel
+    //! was anchored.  When the viewport resizes the reference is invalidated so
+    //! zoomFactor reflects only the camera zoom, not the resize (otherwise a
+    //! stale reference calibrated in a differently-sized viewport makes the
+    //! effective pick radius explode).
+    float m_referenceLogicalHeight = 0.0F;
     // Home position storage.
     SoNode * m_storedcamera = nullptr;
 

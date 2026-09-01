@@ -259,6 +259,15 @@ private:
     {
         int lastHiliteFaceIndex {-1};
         PickId lastHilitePick {PickId::None};
+        bool cubeMatValid {false};
+        SbColor lastBaseRgb {0.0F, 0.0F, 0.0F};
+        SbColor lastHiliteRgb {0.0F, 0.0F, 0.0F};
+        float lastBaseTr {0.0F};
+        float lastHiliteTr {0.0F};
+        bool edgesValid {false};
+        SbColor lastEmphRgb {0.0F, 0.0F, 0.0F};
+        float lastEmphTr {0.0F};
+        float lastBw {0.0F};
         PickId lastButtonsHilitePick {PickId::None};
         bool buttonDirty {true};
         bool labelDirty {true};
