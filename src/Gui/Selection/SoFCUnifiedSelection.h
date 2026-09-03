@@ -250,7 +250,9 @@ public:
     //! selection/preselection highlight off the traced image: it is skipped by
     //! the path tracer (which only traces opaque commands) and drawn by the
     //! raster overlay pass, so it never re-traces or re-denoses the scene.
+#ifdef HAVE_COIN_IR_RENDER_ACTION
     void IRRender(SoIRRenderAction* action) override;
+#endif
 
     void getBoundingBox(SoGetBoundingBoxAction* action) override;
 

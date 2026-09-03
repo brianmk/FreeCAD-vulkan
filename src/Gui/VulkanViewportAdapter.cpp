@@ -17,6 +17,8 @@
 #include <Inventor/nodes/SoAnnotation.h>
 #include <Inventor/nodes/SoCamera.h>
 #include <Inventor/SoRenderManager.h>
+#include <Inventor/sensors/SoNodeSensor.h>
+#include <Inventor/sensors/SoSensor.h>
 
 #include <QEvent>
 #include <QSizePolicy>
@@ -71,6 +73,9 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
                 _vulkanViewer->setCamera(rm->getCamera());
                 _viewer->updateAxisCrossNodes();
                 _vulkanViewer->setDecorationSceneGraph(_viewer->getAxisCrossOverlay());
+                // The camera node was just replaced; re-point the camera change
+                // sensor at the new node so pose changes keep waking the frame.
+                attachSensors();
                 _vulkanViewer->redraw();
             });
     // The viewer owns the Vulkan display options; re-apply them to the
@@ -142,6 +147,9 @@ void VulkanViewportAdapter::syncViewer()
                                              SbColor4f(0.0f, 0.0f, 0.0f, 1.0f));
     }
     pushSettings();
+    // Track the scene/camera we just pushed so subsequent changes on the
+    // (possibly new) nodes wake the Vulkan frame (idempotent).
+    attachSensors();
     _vulkanViewer->redraw();
 #endif
 }
@@ -277,6 +285,69 @@ VulkanViewportAdapter::redraw()
 #ifdef FREECAD_USE_VULKAN
     if (_vulkanViewer) {
         _vulkanViewer->redraw();
+    }
+#endif
+}
+
+void VulkanViewportAdapter::requestVulkanFrame()
+{
+#ifdef FREECAD_USE_VULKAN
+    if (_vulkanViewer) {
+        // Qt coalesces repeated update()/redraw() requests into one repaint, so
+        // a burst of sensor triggers (e.g. every animation tick) costs one frame
+        // per shown frame rather than one per field write.
+        _vulkanViewer->redraw();
+    }
+#endif
+}
+
+void VulkanViewportAdapter::sceneChangedCB(void* data, SoSensor* /*sensor*/)
+{
+    static_cast<VulkanViewportAdapter*>(data)->requestVulkanFrame();
+}
+
+void VulkanViewportAdapter::cameraChangedCB(void* data, SoSensor* /*sensor*/)
+{
+    static_cast<VulkanViewportAdapter*>(data)->requestVulkanFrame();
+}
+
+void VulkanViewportAdapter::attachSensors()
+{
+#ifdef FREECAD_USE_VULKAN
+    if (!_viewer || !_vulkanViewer) {
+        return;
+    }
+    SoRenderManager* rm = _viewer->getSoRenderManager();
+    if (!rm) {
+        return;
+    }
+    // Mirror Coin's SoRenderManager: a node sensor on the scene root redraws on
+    // any geometry change (Sketcher edits, selection bake, recompute), and one
+    // on the camera node redraws on any pose change (interactive navigation,
+    // the navcube / view-home animation ticking the camera on a timer, and any
+    // programmatic setCameraOrientation).  A node sensor is a node auditor, so
+    // it fires on every field write of the tracked node.
+    SoNode* root = rm->getSceneGraph();
+    if (!_sceneSensor) {
+        _sceneSensor = std::make_unique<SoNodeSensor>(&VulkanViewportAdapter::sceneChangedCB, this);
+        _sceneSensor->setPriority(1);
+    }
+    if (_sceneSensor->getAttachedNode() != root) {
+        _sceneSensor->detach();
+        if (root) {
+            _sceneSensor->attach(root);
+        }
+    }
+    SoCamera* camera = rm->getCamera();
+    if (!_cameraSensor) {
+        _cameraSensor = std::make_unique<SoNodeSensor>(&VulkanViewportAdapter::cameraChangedCB, this);
+        _cameraSensor->setPriority(1);
+    }
+    if (_cameraSensor->getAttachedNode() != camera) {
+        _cameraSensor->detach();
+        if (camera) {
+            _cameraSensor->attach(camera);
+        }
     }
 #endif
 }
@@ -470,7 +541,14 @@ void VulkanViewportAdapter::onSurfaceSizeChanged(const QSize& surfaceSize)
     // repositions the camera outside the object.
     if (!_initialVulkanFitDone && pw > 1 && ph > 1) {
         _initialVulkanFitDone = true;
+        const bool animation = _viewer->isAnimationEnabled();
+        if (animation) {
+            _viewer->setAnimationEnabled(false);
+        }
         _viewer->viewAll();
+        if (animation) {
+            _viewer->setAnimationEnabled(true);
+        }
     }
 
     // Prevent the hidden page from affecting the stack's sizeHint so
@@ -490,6 +568,14 @@ void VulkanViewportAdapter::onSurfaceSizeChanged(const QSize& surfaceSize)
 VulkanViewportAdapter::~VulkanViewportAdapter()
 {
 #ifdef FREECAD_USE_VULKAN
+    // Detach the change sensors first: their callbacks call into _vulkanViewer,
+    // so they must not fire once the widget / scene graph start going away.
+    if (_cameraSensor) {
+        _cameraSensor->detach();
+    }
+    if (_sceneSensor) {
+        _sceneSensor->detach();
+    }
     // The QuarterVulkanWidget is a QObject child of the stack, so it outlives
     // this adapter (and the hidden _viewer) unless we remove it now.  Left
     // connected, its QVulkanWindow keeps re-initializing against a dying

@@ -141,6 +141,13 @@ struct DrawingParameters
     int constraintIconSize = 15;         // Size of constraint icons
     int constraintIconHitPaddingPx = 3;  // Extra hit padding for constraint icons
     int markerSize = 7;                  // Size used for markers
+    // The pixel dimension of the marker bitmap that Coin actually renders.
+    // MarkerBitmaps::getMarkerIndex() snaps the (DPR-scaled) markerSize to a
+    // registered size and falls back to CIRCLE_FILLED_7_7 (7x7), so the
+    // rendered dot is dpr-independent while the point-size element below is
+    // DPR-scaled.  The Vulkan/IR point renderer sizes dots from pointSize, so
+    // use this un-scaled bitmap size to match Coin's on-screen dot exactly.
+    int markerBitmapSize = 7;
 
     // transparency of visible axis
     float axisTransparency = 0.3f;
