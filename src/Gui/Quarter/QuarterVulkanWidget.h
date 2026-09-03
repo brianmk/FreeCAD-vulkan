@@ -229,6 +229,20 @@ public:
     bool getPathTracingEnabled() const;
 
     /*!
+      \brief Async-compute queue requested at device creation.
+
+      When the backend needs to overlap compute work with the graphics queue
+      (e.g. the RT denoiser copy), the widget asks QVulkanWindow to create a
+      second compute-capable queue and reports it here.  Returns the queue
+      family / index so SoVulkanRenderBackend can vkGetDeviceQueue() the
+      handle; family index UINT32_MAX (hasComputeQueue() false) when no queue
+      was created (or the request is not applicable).
+    */
+    bool hasAsyncComputeQueue() const;
+    uint32_t asyncComputeQueueFamilyIndex() const;
+    uint32_t asyncComputeQueueIndex() const;
+
+    /*!
       \brief Ray-traced view mode (AO preview vs full path tracing).
 
       ModeAmbientOcclusion runs the single-sample real-time AO preview;

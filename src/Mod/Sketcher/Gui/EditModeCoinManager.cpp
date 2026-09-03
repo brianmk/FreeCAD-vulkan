@@ -1799,8 +1799,7 @@ void EditModeCoinManager::createEditModeInventorNodes()
 
     editModeScenegraphNodes.OriginPointDrawStyle = new SoDrawStyle;
     editModeScenegraphNodes.OriginPointDrawStyle->setName("OriginPointDrawStyle");
-    editModeScenegraphNodes.OriginPointDrawStyle->pointSize = 8
-        * drawingParameters.pixelScalingFactor;
+    editModeScenegraphNodes.OriginPointDrawStyle->pointSize = drawingParameters.markerBitmapSize;
     visibleOrigin->addChild(editModeScenegraphNodes.OriginPointDrawStyle);
 
     editModeScenegraphNodes.OriginPointCoordinate = new SoCoordinate3;
@@ -1880,8 +1879,7 @@ void EditModeCoinManager::createEditModeInventorNodes()
     // Occluded origin
     editModeScenegraphNodes.OriginPointDrawStyleOccluded = new SoDrawStyle;
     editModeScenegraphNodes.OriginPointDrawStyleOccluded->setName("OriginPointDrawStyleOccluded");
-    editModeScenegraphNodes.OriginPointDrawStyleOccluded->pointSize = 8
-        * drawingParameters.pixelScalingFactor;
+    editModeScenegraphNodes.OriginPointDrawStyleOccluded->pointSize = drawingParameters.markerBitmapSize;
     occludedOverlayRoot->addChild(editModeScenegraphNodes.OriginPointDrawStyleOccluded);
 
     editModeScenegraphNodes.OriginPointCoordinateOccluded = new SoCoordinate3;
@@ -1936,8 +1934,7 @@ void EditModeCoinManager::createEditModeInventorNodes()
 
     editModeScenegraphNodes.EditMarkersDrawStyle = new SoDrawStyle;
     editModeScenegraphNodes.EditMarkersDrawStyle->setName("EditMarkersDrawStyle");
-    editModeScenegraphNodes.EditMarkersDrawStyle->pointSize = 8
-        * drawingParameters.pixelScalingFactor;
+    editModeScenegraphNodes.EditMarkersDrawStyle->pointSize = drawingParameters.markerBitmapSize;
     editMarkersRoot->addChild(editModeScenegraphNodes.EditMarkersDrawStyle);
 
     editModeScenegraphNodes.EditMarkerSet = new SoMarkerSet;
@@ -2146,6 +2143,12 @@ void EditModeCoinManager::updateElementSizeParameters()
     }
     drawingParameters.markerSize = scaledMarkerSize;
 
+    // The bitmap size MarkerBitmaps::getMarkerIndex actually renders for the
+    // CIRCLE_FILLED glyph: an exact registered size matches that bitmap,
+    // otherwise it falls back to the 7x7 bitmap.  The point-size derived from
+    // this (un-scaled) value drives the Vulkan dot size so it matches Coin.
+    drawingParameters.markerBitmapSize = (drawingParameters.markerSize == 9) ? 9 : 7;
+
     updateInventorNodeSizes();
 }
 
@@ -2191,16 +2194,14 @@ void EditModeCoinManager::updateInventorNodeSizes()
     updateInventorWidths();
 
     for (int l = 0; l < geometryLayerParameters.getCoinLayerCount(); l++) {
-        editModeScenegraphNodes.PointsDrawStyle[l]->pointSize = 8
-            * drawingParameters.pixelScalingFactor;
+        editModeScenegraphNodes.PointsDrawStyle[l]->pointSize = drawingParameters.markerBitmapSize;
         editModeScenegraphNodes.PointSet[l]->markerIndex = Gui::Inventor::MarkerBitmaps::getMarkerIndex(
             "CIRCLE_FILLED",
             drawingParameters.markerSize
         );
     }
 
-    editModeScenegraphNodes.OriginPointDrawStyle->pointSize = 8
-        * drawingParameters.pixelScalingFactor;
+    editModeScenegraphNodes.OriginPointDrawStyle->pointSize = drawingParameters.markerBitmapSize;
     editModeScenegraphNodes.OriginPointSet->markerIndex
         = Gui::Inventor::MarkerBitmaps::getMarkerIndex("CIRCLE_FILLED", drawingParameters.markerSize);
     editModeScenegraphNodes.OriginPointSetOccluded->markerIndex
@@ -2214,11 +2215,9 @@ void EditModeCoinManager::updateInventorNodeSizes()
     editModeScenegraphNodes.RootCrossDrawStyle->linePattern = drawingParameters.AxisLinePattern;
     editModeScenegraphNodes.RootCrossDrawStyleOccluded->linePattern = drawingParameters.AxisLinePattern;
 
-    editModeScenegraphNodes.OriginPointDrawStyleOccluded->pointSize = 8
-        * drawingParameters.pixelScalingFactor;
+    editModeScenegraphNodes.OriginPointDrawStyleOccluded->pointSize = drawingParameters.markerBitmapSize;
     editModeScenegraphNodes.EditCurvesDrawStyle->lineWidth = 3 * drawingParameters.pixelScalingFactor;
-    editModeScenegraphNodes.EditMarkersDrawStyle->pointSize = 8
-        * drawingParameters.pixelScalingFactor;
+    editModeScenegraphNodes.EditMarkersDrawStyle->pointSize = drawingParameters.markerBitmapSize;
     editModeScenegraphNodes.EditMarkerSet->markerIndex
         = Gui::Inventor::MarkerBitmaps::getMarkerIndex("CIRCLE_LINE", drawingParameters.markerSize);
     editModeScenegraphNodes.ConstraintDrawStyle->lineWidth = 1 * drawingParameters.pixelScalingFactor;

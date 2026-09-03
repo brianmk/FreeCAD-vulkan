@@ -174,6 +174,8 @@ private:
     void updateCameraAndTransform(const RenderParams& params) const;
     void updateCube(const RenderParams& params) const;
     void updateEdges(const RenderParams& params) const;
+    void updateEdgeVisibility() const;
+    void updateFillVisibility(const RenderParams& params) const;
     void updateAxes(const RenderParams& params) const;
     void updateButtons(const RenderParams& params) const;
     void updateLabels(const RenderParams& params) const;
@@ -305,6 +307,25 @@ private:
     mutable std::vector<std::int32_t> cubeCoordIndexData;
     mutable std::vector<SbVec3f> edgeCoordsData;
     mutable std::vector<std::int32_t> edgeCoordIndexData;
+    // Per-face ranges into edgeCoordIndexData so updateEdgeVisibility() can
+    // rebuild the live line indices to include only camera-facing faces' edge
+    // outlines (hiding the back-facing faces through the translucent shell).
+    mutable std::array<std::int32_t, kPickIdCount> edgeIndexBegin {};
+    mutable std::array<std::int32_t, kPickIdCount> edgeIndexEnd {};
+    mutable std::int32_t edgeFaceMask {-1};
+    // Per-face ranges into cubeCoordIndexData so updateFillVisibility() can
+    // rebuild the fill indices to include only camera-facing faces, hiding the
+    // back faces through the translucent shell (GPU back-face culling can't be
+    // used: the faceted faces are not uniformly wound).
+    mutable std::array<std::int32_t, kPickIdCount> cubeIndexBegin {};
+    mutable std::array<std::int32_t, kPickIdCount> cubeIndexEnd {};
+    mutable std::int32_t fillFaceMask {-1};
+    // Per-face material id (0=base, 1=hilite) keyed by position in
+    // kCubeFacePickOrder.  updateCube() writes the hover highlight here and
+    // updateFillVisibility() packs it into cubeFaces->materialIndex in draw
+    // order (the render-time index array is rebuilt/shrunk per camera, so it
+    // cannot double as the source of truth).
+    mutable std::array<int, kPickIdCount> faceMaterials {};
     mutable std::array<LabelSlot, kPickIdCount> labelSlots;
     int labelTextureCount {0};
 
