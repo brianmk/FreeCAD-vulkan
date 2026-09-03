@@ -320,5 +320,46 @@ novis = fp.check_preferences(evs2, fdir, min_px=3, edge_rgb=(0, 255, 0))
 check("check_preferences detects missing render",
       any("no frame renders edges" in e for e in novis))
 
+# --- pre-flight lint: static scan (no FreeCAD required) ---------------------
+_bad = "/tmp/opencode/_lint_bad.py"
+with open(_bad, "w") as fl:
+    fl.write("import FreeCAD\nx = 1\nprint(y + z)\n")
+st = fp.static_check(_bad)
+check("lint static undefined name ERROR",
+      any(lv == "ERROR" and "undefined name" in m for lv, _, m in st))
+
+_bad2 = "/tmp/opencode/_lint_unused.py"
+with open(_bad2, "w") as fl:
+    fl.write("import time\ndef f():\n    return 1\n")
+st2 = fp.static_check(_bad2)
+check("lint static unused import WARN",
+      any(lv == "WARN" and "never used" in m for lv, _, m in st2))
+
+_clean = "/tmp/opencode/_lint_clean.py"
+with open(_clean, "w") as fl:
+    fl.write("import os\nimport sys\nx = os.path.join('a')\nprint(sys.maxsize)\n")
+check("lint static clean has no findings", fp.static_check(_clean) == [])
+
+# --- smoke: skipped for scripts that import no FreeCAD/PySide/pivy ---------
+check("lint smoke skipped for non-FreeCAD script", fp.import_smoke(_clean) == [])
+
+# lint_script with smoke disabled is the static result alone
+check("lint_script smoke=off equals static",
+      fp.lint_script(_clean, smoke=False) == fp.static_check(_clean))
+
+# a syntax error surfaces as a single ERROR offline
+_syn = "/tmp/opencode/_lint_syn.py"
+with open(_syn, "w") as fl:
+    fl.write("def ok(:\n    pass\n")
+sst = fp.static_check(_syn)
+check("lint static syntax ERROR",
+      any(lv == "ERROR" and "syntax error" in m for lv, _, m in sst))
+
+# --- interactive-command dialog watchdog (host-visible helpers) -------------
+check("user-input command set includes Std_Open",
+      "Std_Open" in fp._USER_INPUT_COMMANDS)
+check("dialog timeout default is sane",
+      1000 <= fp._cmd_dialog_timeout_ms() <= 60000)
+
 print("=== RESULT:", "PASS" if PASS else "FAIL", "===")
 sys.exit(0 if PASS else 1)

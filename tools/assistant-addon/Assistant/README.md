@@ -29,6 +29,9 @@ Ollama, LM Studio, vLLM, ...).
   can use *any* tool in FreeCAD.
 - Auto-injects scene context (active doc, object inventory, selection, workbench,
   `Params` spreadsheet) into the prompt.
+- Shows context-aware quick-start links: **New document** when nothing is open,
+  and **Create a sketch** when the active document has no objects. Clicking a
+  link runs the corresponding tool in-place.
 - Persists preferences (endpoint/model/key/mode) in a FreeCAD parameter group.
 - Tool execution is marshalled to FreeCAD's **main thread** (safe against the
   viewport/scene threading rules).

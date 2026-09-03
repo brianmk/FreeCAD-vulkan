@@ -688,8 +688,7 @@ void EditModeGeometryCoinManager::createEditModePointInventorNodes()
         auto drawstyle = new SoDrawStyle;
         editModeScenegraphNodes.PointsDrawStyle.push_back(drawstyle);
         editModeScenegraphNodes.PointsDrawStyle[i]->setName(concat("PointsDrawStyle", i).c_str());
-        editModeScenegraphNodes.PointsDrawStyle[i]->pointSize = 8
-            * drawingParameters.pixelScalingFactor;
+        editModeScenegraphNodes.PointsDrawStyle[i]->pointSize = drawingParameters.markerBitmapSize;
         sep->addChild(editModeScenegraphNodes.PointsDrawStyle[i]);
 
         auto pointset = new SoMarkerSet;
