@@ -23,6 +23,7 @@ host Python too (for the parsers and report writer, which are pure Python).
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import os
@@ -867,10 +868,12 @@ def run_case(
             report.add_error("process exited with code %s", rc)
 
     # Fold the breadcrumb trace events into the report too.
+    trace_lines: List[str] = []
     if os.path.exists(trace_path):
         with open(trace_path, encoding="utf-8", errors="replace") as tf:
-            for ev in iter_events(tf):
-                report.events.append(ev)
+            trace_lines = tf.read().splitlines()
+        for ev in iter_events(iter(trace_lines)):
+            report.events.append(ev)
 
     # Khronos Vulkan validation diagnostics (VUID- lines) are emitted on
     # stderr/stdout; classify them and surface them in the report.
@@ -978,7 +981,10 @@ def run_case(
     if check_mod is not None:
         report.session["check_module"] = os.path.basename(
             os.path.splitext(script)[0] + ".check.py")
-        _run_check_module(check_mod, lines, report)
+        # Include the breadcrumb trace lines so checks for GUI-side records
+        # (e.g. applyVulkanSettings) can see them: they live in the trace file,
+        # not stdout.
+        _run_check_module(check_mod, lines + trace_lines, report)
 
     report.write()
     return report
@@ -1088,7 +1094,20 @@ def _run_check_module(check_mod, lines, report) -> None:
 def _cli(argv: List[str]) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    if args.command == "lint":
+        return _cli_lint(args)
     if args.command == "run":
+        if getattr(args, "lint", False):
+            pre = lint_script(args.script, binary=args.binary, smoke=True)
+            errors = [e for e in pre if e[0] == "ERROR"]
+            for level, lineno, msg in pre:
+                if level == "ERROR":
+                    print(_print_lint(args.script, level, lineno, msg))
+            if errors:
+                print(f"[lint] pre-flight FAILED for {args.script} "
+                      "(not launching FreeCAD)")
+                return 1
+            print(f"[lint] pre-flight OK for {args.script}")
         report = run_case(
             script=args.script,
             binary=args.binary,
@@ -1292,6 +1311,275 @@ def _print_report(artifact_dir: str) -> None:
         print(f"[report] ERROR {e}")
 
 
+# ---------------------------------------------------------------------------
+# Pre-flight validation: catch probe errors BEFORE the FreeCAD GUI run.
+#
+# A probe's ``import FreeCAD`` / ``FreeCADGui`` / ``PySide`` calls only resolve
+# inside the FreeCAD interpreter, so mistakes are normally found mid-run (or at
+# crash).  These HOST-side checks move the failure earlier, in two layers:
+#   1. static  - syntax + undefined-name + unused-import scan, no FreeCAD needed
+#                (dependency-free; may also invoke pyflakes when it is present).
+#   2. smoke   - replay the probe's import statements inside FreeCADCmd so a
+#                missing module / broken API import surfaces before launching.
+# ---------------------------------------------------------------------------
+
+# Import roots that prove a script is a FreeCAD (GUI) probe, and so should get
+# the import smoke test.  Host-side checkers (.check.py, plain python tools)
+# are left to the static layer only.
+_FC_IMPORT_ROOTS = frozenset({
+    "FreeCAD", "FreeCADGui", "FreeCADApp", "FreeCADBase",
+    "PySide", "PyQt", "PyQt6", "PyQt5", "pivy", "shiboken",
+})
+
+# Modules the probe imports that are NOT FreeCAD/PySide-ecosystem and do not
+# need to be re-imported in a fresh interpreter for the smoke test.
+_LINT_LOCAL_MODULES = frozenset({"freecad_probe"})
+
+
+def _builtin_names() -> frozenset[str]:
+    b = __builtins__
+    if isinstance(b, dict):
+        return frozenset(b.keys())
+    return frozenset(dir(b))
+
+
+_BUILTIN_NAMES = _builtin_names()
+# Implicit module-scope globals that are defined by the interpreter rather than
+# being bound in the source, so they are never "undefined" at runtime.
+_IMPLICIT_NAMES = frozenset({
+    "__file__", "__name__", "__doc__", "__package__", "__builtins__",
+    "__loader__", "__spec__", "__path__", "__debug__",
+})
+
+
+def static_check(path: str) -> list[tuple[str, int, str]]:
+    """Syntax + undefined-name + unused-import scan of a probe script.
+
+    Returns ``[(level, lineno, message), ...]`` where level is ``"ERROR"``
+    (syntax / NameError -- will fail at runtime) or ``"WARN"`` (unused import /
+    unused-assignment -- symptoms of copy-paste bugs).  No FreeCAD is required.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            src = f.read()
+    except OSError as exc:
+        return [("ERROR", 0, f"cannot read {path}: {exc}")]
+    try:
+        tree = ast.parse(src)
+    except SyntaxError as exc:
+        line = exc.lineno or 0
+        return [("ERROR", line, f"syntax error: {exc.msg.strip()}")]
+
+    findings: list[tuple[str, int, str]] = []
+    bound = _bindings(tree)
+    used_list = _loads(tree)
+    used = set(name for _, name in used_list)
+
+    # (1) Undefined name => NameError at runtime; the conservative rule only
+    #     reports a name that is never bound anywhere in the file, so it is safe
+    #     for forward references, closures and comprehension scopes.
+    for lineno, name in sorted(used_list):
+        if name in _BUILTIN_NAMES or name in _IMPLICIT_NAMES:
+            continue
+        if name in bound:
+            continue
+        findings.append(("ERROR", lineno, f"undefined name {name!r} (NameError at runtime)"))
+
+    # (2) Unused import => dead/copy-paste leftover, not an error.
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                alias = a.asname or a.name.split(".")[0]
+                if alias not in used:
+                    findings.append(
+                        ("WARN", node.lineno,
+                         f"import {a.name!r} is never used"))
+        elif isinstance(node, ast.ImportFrom):
+            for a in node.names:
+                if a.name == "*":
+                    continue
+                alias = a.asname or a.name
+                if alias not in used:
+                    findings.append(
+                        ("WARN", node.lineno,
+                         f"import {node.module + '.' + a.name!r} is never used"))
+    return findings
+
+
+def _bindings(tree: ast.AST) -> set[str]:
+    """Every name that appears as a binding target anywhere in a file."""
+    bound: set[str] = set()
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound.add(n.name)
+        elif isinstance(n, ast.Import):
+            for a in n.names:
+                bound.add(a.asname or a.name.split(".")[0])
+        elif isinstance(n, ast.ImportFrom):
+            for a in n.names:
+                if a.name != "*":
+                    bound.add(a.asname or a.name)
+        elif isinstance(n, ast.arg):
+            bound.add(n.arg)
+        elif isinstance(n, ast.Name):
+            if isinstance(n.ctx, (ast.Store, ast.Del)):
+                bound.add(n.id)
+        elif isinstance(n, ast.ExceptHandler) and n.name:
+            bound.add(n.name)
+        elif isinstance(n, (ast.Global, ast.Nonlocal)):
+            bound.update(n.names)
+    return bound
+
+
+def _loads(tree: ast.AST) -> list[tuple[int, str]]:
+    """Every Name used in a load context, as ``(lineno, name)``, stable order."""
+    out: list[tuple[int, str]] = []
+    seen: set[tuple[int, str]] = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
+            key = (n.lineno, n.id)
+            if key not in seen:
+                seen.add(key)
+                out.append(key)
+    return out
+
+
+def _import_statements(tree: ast.AST) -> list[str]:
+    """Reconstruct the probe's ``import`` statements for faithful replay."""
+    stmts: list[str] = []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Import):
+            parts = [
+                a.name + (f" as {a.asname}" if a.asname else "")
+                for a in n.names
+            ]
+            stmts.append("import " + ", ".join(parts))
+        elif isinstance(n, ast.ImportFrom) and n.module and not n.level:
+            names = [
+                a.name + (f" as {a.asname}" if a.asname else "")
+                for a in n.names
+                if a.name != "*"
+            ]
+            if names:
+                stmts.append(
+                    f"from {n.module} import " + ", ".join(names))
+    return stmts
+
+
+def _console_binary(binary: str) -> str:
+    """Prefer the console (headless) sibling ``FreeCADCmd`` of a ``FreeCAD``."""
+    d = os.path.dirname(os.path.abspath(binary))
+    cmd = os.path.join(d, "FreeCADCmd")
+    return cmd if os.path.isfile(cmd) else binary
+
+
+def import_smoke(path: str, binary: str = _DEFAULT_FREECAD,
+                 timeout: int = 90) -> list[tuple[str, int, str]]:
+    """Replay the probe's imports inside FreeCADCmd so a broken import is caught
+    before the GUI launch.  Returns ``[(level, lineno, message), ...]``.
+
+    Only scripts that actually import a FreeCAD / PySide / pivy root are smoked;
+    host-side checkers skip it.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+    except SyntaxError as exc:
+        return [("ERROR", exc.lineno or 0, f"syntax error: {exc.msg.strip()}")]
+    except OSError as exc5:
+        return [("ERROR", 0, f"cannot read {path}: {exc5}")]
+
+    roots: set[str] = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Import):
+            roots.add(n.names[0].name.split(".")[0])
+        elif isinstance(n, ast.ImportFrom) and n.module:
+            roots.add(n.module.split(".")[0])
+    if not (roots & _FC_IMPORT_ROOTS):
+        return []
+
+    stmts = _import_statements(tree)
+    if not stmts:
+        return []
+
+    probe_dir = os.path.dirname(os.path.abspath(path))
+    script = (
+        "import sys\n"
+        f"sys.path.insert(0, {probe_dir!r})\n"
+        f"sys.path.insert(0, {os.path.dirname(os.path.abspath(__file__))!r})\n"
+        + "\n".join(stmts)
+        + "\nprint('SMOKE_OK')\n"
+    )
+    cmd = [_console_binary(binary), "-c", script]
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout,
+            env=os.environ.copy(),
+        )
+    except OSError as exc:
+        return [("ERROR", 0, f"cannot launch {_console_binary(binary)}: {exc}")]
+    except subprocess.TimeoutExpired:
+        return [("ERROR", 0, f"import smoke timed out after {timeout}s "
+                             f"(output truncated)")]
+
+    if proc.returncode != 0 or "SMOKE_OK" not in proc.stdout:
+        tail = (proc.stderr or proc.stdout or "").strip()[-1200:]
+        return [("ERROR", 0, "import smoke failed:\n" + tail)]
+    return []
+
+
+def lint_script(path: str, binary: str = _DEFAULT_FREECAD,
+                smoke: bool = True) -> list[tuple[str, int, str]]:
+    """Full pre-flight for one probe: static scan + optional import smoke."""
+    out = static_check(path)
+    if smoke:
+        out += import_smoke(path, binary=binary)
+    return out
+
+
+def _expand_lint_paths(paths: list[str]) -> list[str]:
+    """Expand file/dir args into a concrete, de-duplicated list of py files."""
+    files: list[str] = []
+    for p in paths:
+        if os.path.isdir(p):
+            for name in sorted(os.listdir(p)):
+                if name.endswith(".py"):
+                    files.append(os.path.join(p, name))
+        else:
+            files.append(p)
+    return files
+
+
+def _print_lint(path: str, level: str, lineno: int, msg: str) -> str:
+    loc = f"{path}:{lineno}" if lineno else path
+    return f"[lint] {level} {loc} -- {msg}"
+
+
+def _cli_lint(args: Any) -> int:
+    files = _expand_lint_paths(args.paths)
+    if not files:
+        print("[lint] no probe files found")
+        return 2
+    fatal = 0
+    warn = 0
+    for path in files:
+        findings = lint_script(path, binary=args.binary, smoke=not args.no_smoke)
+        for level, lineno, msg in findings:
+            if level == "ERROR":
+                fatal += 1
+                print(_print_lint(path, level, lineno, msg))
+            elif args.verbose:
+                warn += 1
+                print(_print_lint(path, level, lineno, msg))
+            else:
+                warn += 1
+    if warn and not args.verbose:
+        print(f"[lint] {warn} WARN-level finding(s) present "
+              "(re-run with --verbose)")
+    print(f"[lint] {len(files)} file(s), {fatal} error(s)")
+    return 0 if fatal == 0 else 1
+
+
 def _build_parser() -> Any:
     import argparse
 
@@ -1373,6 +1661,33 @@ def _build_parser() -> Any:
         default=50,
         help="minimum edge-colored pixels for --check-preferences (default 50)",
     )
+    run.add_argument(
+        "--lint",
+        action="store_true",
+        help="run pre-flight checks (static + FreeCADCmd import smoke) and "
+             "abort before launching FreeCAD if any ERROR is found",
+    )
+    lint = sub.add_parser(
+        "lint",
+        help="pre-flight check a probe before running it in the GUI "
+             "(syntax, undefined names, unused imports, import smoke)",
+    )
+    lint.add_argument("paths", nargs="+", help="probe script(s) or directories")
+    lint.add_argument(
+        "--binary",
+        default=_DEFAULT_FREECAD,
+        help="FreeCAD binary used for the import smoke test",
+    )
+    lint.add_argument(
+        "--no-smoke",
+        action="store_true",
+        help="skip the FreeCADCmd import smoke test (static analysis only)",
+    )
+    lint.add_argument(
+        "--verbose",
+        action="store_true",
+        help="also report WARN-level findings (default: errors only)",
+    )
     rep = sub.add_parser("report", help="summarize an artifact dir's report.json")
     rep.add_argument("artifact_dir", help="path to an artifact directory (run bundle)")
 
@@ -1437,6 +1752,26 @@ def main(argv: Optional[List[str]] = None) -> int:
 # Everything below the line is only used by probe scripts that run within a
 # FreeCAD process.  It lazily imports FreeCAD / FreeCADGui / PySide so that
 # importing this module from host Python stays side-effect free.
+
+# Commands that open a modal, user-input dialog (file/param pickers).  Under
+# automation these block the GUI thread forever waiting for the user, so they
+# are dispatched under a watchdog that auto-dismisses the dialog after a short
+# delay (the command then returns with an empty result instead of hanging).
+_USER_INPUT_COMMANDS = frozenset({
+    "Std_Open", "Std_Save", "Std_SaveAs", "Std_Import", "Std_Export",
+    "Std_DlgPreferences", "Std_DlgMacroExecute", "Std_Print", "Std_OpenRecent",
+})
+
+
+def _cmd_dialog_timeout_ms() -> int:
+    """Watchdog delay before a user-input dialog is auto-dismissed (env set)."""
+    import os as _os
+
+    try:
+        return int(_os.environ.get("FC_CMD_DIALOG_TIMEOUT_MS", "1500"))
+    except (TypeError, ValueError):
+        return 1500
+
 
 class Session:
     """One probe session: viewport session + synthetic input + verdict.
@@ -1639,6 +1974,36 @@ class Session:
         ev = self._QtGui.QKeyEvent(QtCore.QEvent.KeyPress, key, mods)
         QW.QApplication.sendEvent(self.win, ev)
 
+    def _dialog_watchdog(self) -> Any:
+        """Arm a one-shot QTimer that rejects any active modal dialog.
+
+        Some commands (``Std_Open`` et al.) show a modal file/param dialog on
+        the GUI thread; an automated probe would block there forever.  The
+        watchdog fires inside the dialog's nested event loop and cancels it, so
+        the command returns (with an empty result) instead of hanging.  Return
+        the QTimer so the caller can ``stop()`` it if no dialog ever appeared.
+        """
+        QW = self._QtWidgets
+        QtCore = self._QtCore
+
+        def cancel():
+            w = QW.QApplication.activeModalWidget()
+            if w is not None:
+                try:
+                    w.reject()
+                except Exception:
+                    try:
+                        w.close()
+                    except Exception:
+                        pass
+
+        timer = QtCore.QTimer()
+        timer.setSingleShot(True)
+        timer.setInterval(_cmd_dialog_timeout_ms())
+        timer.timeout.connect(cancel)
+        timer.start()
+        return timer
+
     def command(self, cmd: str, require: bool = False) -> bool:
         """Run a FreeCAD command.
 
@@ -1648,17 +2013,25 @@ class Session:
         error is recorded and False is returned -- instead of the command being
         silently ignored by the GUI.  When False the command is fired verbatim
         and True is returned once dispatched (the caller verifies the outcome).
+
+        Commands that pop a user-input dialog (``Std_Open``, ``Std_SaveAs``,
+        ``Std_Import``, ...) are run under a dialog watchdog so they cannot
+        block the probe waiting for input.
         """
         self._record("command", cmd)
         if require and not self.command_available(cmd):
             self.error("command %r is not available (missing prerequisite "
                        "object or selection)", cmd)
             return False
+        watch = self._dialog_watchdog() if cmd in _USER_INPUT_COMMANDS else None
         try:
             self._Gui.runCommand(cmd)
         except Exception as exc:  # pragma: no cover - guest-only path
             self.error("command %r raised %r", cmd, exc)
             return False
+        finally:
+            if watch is not None:
+                watch.stop()
         return True
 
     def command_available(self, name: str) -> bool:
@@ -1855,18 +2228,27 @@ class Session:
         return doc is not None and doc.getObject(name) is not None
 
     def menu(self, text: str) -> bool:
-        """Trigger a real menu item whose label contains `text` (case-insensitive)."""
+        """Trigger a real menu item whose label contains `text` (case-insensitive).
+
+        Menu items can route to user-input commands (File > Open / Save As), so
+        the action is fired under the dialog watchdog to avoid blocking on a
+        modal dialog.
+        """
         self._record("menu", text)
         QW = self._QtWidgets
         mw = self._Gui.getMainWindow()
         needle = text.replace("&", "").lower()
-        for menu in mw.findChildren(QW.QMenu):
-            for act in menu.actions():
-                lbl = (act.text() or "").replace("&", "").lower()
-                if lbl and needle in lbl:
-                    act.trigger()
-                    return True
-        return False
+        watch = self._dialog_watchdog()
+        try:
+            for menu in mw.findChildren(QW.QMenu):
+                for act in menu.actions():
+                    lbl = (act.text() or "").replace("&", "").lower()
+                    if lbl and needle in lbl:
+                        act.trigger()
+                        return True
+            return False
+        finally:
+            watch.stop()
 
     def send_msg_to_view(self, msg: str) -> None:
         self._Gui.SendMsgToActiveView(msg)

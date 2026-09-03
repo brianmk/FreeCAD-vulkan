@@ -2344,3 +2344,25 @@ QWidget * QuarterVulkanWidget::getNativeWidget()
 }
 
 #endif // FREECAD_USE_VULKAN
+
+#if !defined(FREECAD_USE_VULKAN)
+// This TU is compiled on all builds (Qt.moc still reflects Q_OBJECT in the
+// header), but the whole implementation is above.  When the Vulkan backend is
+// off, provide out-of-line definitions for the non-inline members that moc
+// references so the generated metaobject/vtable still satisfies the linker.
+// These are never called: the adapter that instantiates the widget is itself
+// guarded by FREECAD_USE_VULKAN.
+SIM::Coin3D::Quarter::QuarterVulkanWidget::QuarterVulkanWidget
+    (QWidget * parent, bool /*rayTracing*/)
+    : QWidget(parent)
+{
+}
+
+SIM::Coin3D::Quarter::QuarterVulkanWidget::~QuarterVulkanWidget() = default;
+
+bool SIM::Coin3D::Quarter::QuarterVulkanWidget::eventFilter
+    (QObject * watched, QEvent * event)
+{
+    return QWidget::eventFilter(watched, event);
+}
+#endif

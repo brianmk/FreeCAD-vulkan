@@ -66,6 +66,9 @@ def _phase_of(marks, frame_ord):
         if ordv <= frame_ord and ordv > best_ord:
             best = name
             best_ord = ordv
+    if best_ord < 0 and marks:
+        # First frame (initial build) precedes the first marker -> first phase.
+        best = marks[0][1]
     return best
 
 

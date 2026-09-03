@@ -17,6 +17,7 @@
 #include <Inventor/actions/SoGLRenderAction.h>
 #ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/actions/SoIRRenderAction.h>
+#include <Inventor/rendering/SoRenderIR.h>
 #endif
 #include <Inventor/elements/SoCoordinateElement.h>
 #include <Inventor/elements/SoDepthBufferElement.h>
@@ -34,7 +35,6 @@
 #include <Inventor/nodes/SoIndexedLineSet.h>
 #include <Inventor/nodes/SoIndexedPointSet.h>
 #include <Inventor/nodes/SoVertexProperty.h>
-#include <Inventor/rendering/SoRenderIR.h>
 #include <Inventor/SbViewportRegion.h>
 
 #include <type_traits>
@@ -416,11 +416,20 @@ static void renderOverlayFaces(
 
     // Record the first draw-command index so that, on the IR (Vulkan) path,
     // the recorded overlay commands can be promoted to the OVERLAY pass below.
+    // isIR is compile-time: when the build has no IR render API (external/system
+    // Coin, HAVE_COIN_IR_RENDER_ACTION undefined) it is always false, so the
+    // SoIRRenderAction-only calls below compile out entirely.
+#ifdef HAVE_COIN_IR_RENDER_ACTION
     constexpr bool isIR = std::is_same_v<Action, SoIRRenderAction>;
+#else
+    constexpr bool isIR = false;
+#endif
     int firstCommand = -1;
+#ifdef HAVE_COIN_IR_RENDER_ACTION
     if constexpr (isIR) {
         firstCommand = action->getMutableDrawList().getNumCommands();
     }
+#endif
 
     applyOverlayPrimitiveState(state, faceSet);
 
@@ -462,6 +471,7 @@ static void renderOverlayFaces(
     // Promote the just-recorded commands to the OVERLAY pass, which the path
     // tracer skips, so the highlight is a separate raster layer on top of the
     // traced surface without re-tracing/re-denoising.
+#ifdef HAVE_COIN_IR_RENDER_ACTION
     if constexpr (isIR) {
         SoDrawList& list = action->getMutableDrawList();
         const int endCommand = list.getNumCommands();
@@ -481,6 +491,7 @@ static void renderOverlayFaces(
             cmd.state.raster.scissorHeight = vh;
         }
     }
+#endif
 
     state->pop();
 }
