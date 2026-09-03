@@ -2914,9 +2914,9 @@ void SoFCPathAnnotation::GLRenderInPath(SoGLRenderAction* action)
     GLRenderBelowPath(action);
 }
 
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 void SoFCPathAnnotation::IRRender(SoIRRenderAction* action)
 {
-#ifdef HAVE_COIN_IR_RENDER_ACTION
     if (!path || !path->getLength()) {
         return;
     }
@@ -2957,10 +2957,8 @@ void SoFCPathAnnotation::IRRender(SoIRRenderAction* action)
         cmd.state.raster.scissorHeight = vh;
     }
     state->pop();
-#else
-    inherited::IRRender(action);
-#endif
 }
+#endif // HAVE_COIN_IR_RENDER_ACTION
 
 void SoFCPathAnnotation::setDetail(SoDetail* d)
 {
