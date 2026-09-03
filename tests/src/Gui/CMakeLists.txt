@@ -15,8 +15,17 @@ add_executable(Gui_tests_run
         StyleParameters/YamlParameterSourceTest.cpp
         InputHintTest.cpp
         SelectionTest.cpp
-        SoRayPickActionTest.cpp
 )
+
+# SoRayPickActionTest validates the setRay() pick-radius fix (coin commit
+# "derive setRay pick radius from the viewport region"), which only exists in
+# the bundled Coin fork.  System/external Coin 4.0.10 lacks it, so the three
+# radius-sensitive assertions fail there.  Only build it with the bundled Coin.
+if(NOT FREECAD_USE_EXTERNAL_COIN_PIVY)
+    target_sources(Gui_tests_run PRIVATE
+        SoRayPickActionTest.cpp
+    )
+endif()
 
 # The Vulkan viewport test includes <Inventor/actions/SoIRRenderAction.h>,
 # which only exists in the bundled Coin (FREECAD_USE_VULKAN implies it).

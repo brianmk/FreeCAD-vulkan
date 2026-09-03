@@ -979,13 +979,57 @@ def clear_selection(params: Dict[str, Any]) -> Dict[str, Any]:
         return {"cleared": True, "gui_available": False}
 
 
+_USER_INPUT_COMMANDS = frozenset({
+    "Std_Open", "Std_Save", "Std_SaveAs", "Std_Import", "Std_Export",
+    "Std_DlgPreferences", "Std_DlgMacroExecute", "Std_Print", "Std_OpenRecent",
+})
+
+
+def _cmd_dialog_timeout_ms() -> int:
+    try:
+        return int(os.environ.get("FC_CMD_DIALOG_TIMEOUT_MS", "1500"))
+    except (TypeError, ValueError):
+        return 1500
+
+
+def _dialog_watchdog():
+    """Arm a QTimer to auto-dismiss any modal dialog a command opens, so a
+    user-input command (e.g. Std_Open) cannot block the agent.  Returns the
+    QTimer so the caller can stop() it if no dialog appeared."""
+    import PySide.QtCore as QtCore
+    import PySide.QtWidgets as QtWidgets
+
+    def cancel():
+        w = QtWidgets.QApplication.activeModalWidget()
+        if w is not None:
+            try:
+                w.reject()
+            except Exception:
+                try:
+                    w.close()
+                except Exception:
+                    pass
+
+    timer = QtCore.QTimer()
+    timer.setSingleShot(True)
+    timer.setInterval(_cmd_dialog_timeout_ms())
+    timer.timeout.connect(cancel)
+    timer.start()
+    return timer
+
+
 def run_command(params: Dict[str, Any]) -> Dict[str, Any]:
     try:
         import FreeCADGui
     except Exception:
         raise RuntimeError("run_command requires the FreeCAD GUI")
     cmd = params.get("command") or params.get("name")
-    FreeCADGui.runCommand(cmd)
+    watch = _dialog_watchdog() if cmd in _USER_INPUT_COMMANDS else None
+    try:
+        FreeCADGui.runCommand(cmd)
+    finally:
+        if watch is not None:
+            watch.stop()
     return {"command": cmd}
 
 

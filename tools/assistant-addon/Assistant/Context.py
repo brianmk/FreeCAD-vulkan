@@ -137,3 +137,38 @@ def build_context():
         pass
 
     return "\n".join(lines)
+
+
+def build_suggestions():
+    """Return the context-aware quick-start suggestions for the chat panel.
+
+    Each item is a dict: ``{"label", "command", "args", "hint"}`` where ``command``
+    is a ToolRegistry tool name and ``args`` its keyword arguments.  The panel
+    renders them as clickable links that run the tool directly.
+
+    Rules:
+      * no active document      -> suggest creating a new (empty) document
+      * active document with no
+        objects (no 3D objects
+        and no sketches)        -> suggest a new document AND a sketch (both
+                                    are valid next steps; FreeCAD usually
+                                    auto-creates an empty default document, so
+                                    the "no active document" branch rarely
+                                    fires and users still need a "New document"
+                                    link)
+      * otherwise               -> no suggestions
+    """
+    import FreeCAD as App
+    doc = App.ActiveDocument
+    new_doc = {"label": "New document", "command": "new_document",
+               "args": {"name": "Unnamed"}, "hint": "Create a fresh document to start."}
+    if doc is None:
+        return [new_doc]
+    if not doc.Objects:
+        return [
+            new_doc,
+            {"label": "Create a sketch", "command": "new_sketch",
+             "args": {"plane": "XY", "body": "auto"},
+             "hint": "Empty document - create a sketch to begin."},
+        ]
+    return []
