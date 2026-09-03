@@ -72,7 +72,10 @@ def step():
     steps[0] += 1
     k = steps[0]
     if k == 2:
-        # reset the overlays to a clean baseline BEFORE the box renders
+        # reset the overlays to a clean baseline BEFORE the box renders.
+        # Force raster mode (1): the edge/point overlay is only drawn by the
+        # raster backend, not the RTX path tracer.
+        s.set_pref(VIEW, "VulkanRenderMode", 1)
         apply_phase(0)
         build_scene()
     elif k == 3:
