@@ -35,8 +35,8 @@
 #include <Inventor/actions/SoHandleEventAction.h>
 #ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/actions/SoIRRenderAction.h>
-#endif
 #include <Inventor/rendering/SoRenderIR.h>
+#endif
 #include <Inventor/elements/SoViewportRegionElement.h>
 #include <Inventor/actions/SoWriteAction.h>
 #include <Inventor/bundles/SoMaterialBundle.h>
