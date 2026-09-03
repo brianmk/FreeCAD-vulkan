@@ -60,6 +60,17 @@ jobs:
     with:
       artifactBasename: Ubuntu-${{ github.run_id }}
 
+  # Fork-only: builds against the bundled Coin/Pivy with the Vulkan viewport
+  # enabled so the fork's SoIRRenderAction / Vulkan renderer code is actually
+  # compiled and exercised by the tests.  Runs in parallel with, and
+  # independent of, the system-Coin Ubuntu job above.
+  UbuntuVulkan:
+    needs: [Prepare]
+    if: "!startsWith(github.head_ref, 'refs/heads/backport-')"
+    uses: ./.github/workflows/sub_buildUbuntuVulkan.yml
+    with:
+      artifactBasename: UbuntuVulkan-${{ github.run_id }}
+
   Lint:
     needs: [Prepare]
     if: "!startsWith(github.head_ref, 'refs/heads/backport-')"
@@ -75,6 +86,7 @@ jobs:
     needs: [
         Prepare,
         Ubuntu,
+        UbuntuVulkan,
         Lint
       ]
     if: always()
