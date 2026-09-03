@@ -318,11 +318,13 @@ protected:
 private:
     void ensureSharedInstance();
     void releaseSharedInstance();
+#ifdef FREECAD_USE_VULKAN
     void selectPhysicalDevice();
     bool deviceSupportsRayTracing(VkPhysicalDevice device);
     bool deviceSupportsExtension(VkPhysicalDevice device, const char * name);
     void configureDeviceFeatures(bool rayTracing);
     void logSupportedSampleCounts();
+#endif
 
     QuarterVulkanWidgetPrivate * d;
     QTimer * injectTimer = nullptr;
