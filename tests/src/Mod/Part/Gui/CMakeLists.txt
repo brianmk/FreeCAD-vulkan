@@ -6,10 +6,9 @@ if(FREECAD_USE_VULKAN)
     add_executable(PartGui_tests_run
         VulkanSelectionTest.cpp
     )
+    target_link_libraries(PartGui_tests_run
+        GTest::gtest_main
+        PartGui
+        FreeCADGui
+    )
 endif()
-
-target_link_libraries(PartGui_tests_run
-    GTest::gtest_main
-    PartGui
-    FreeCADGui
-)
