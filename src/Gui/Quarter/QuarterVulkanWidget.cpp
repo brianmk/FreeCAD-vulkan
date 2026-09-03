@@ -36,7 +36,7 @@
 #include <QStringList>
 #include <QTimer>
 #include <QWheelEvent>
-#include <QtGui/6.11.2/QtGui/qpa/qwindowsysteminterface.h>
+#include <QtGui/qpa/qwindowsysteminterface.h>
 
 #include "Selection.h"
 

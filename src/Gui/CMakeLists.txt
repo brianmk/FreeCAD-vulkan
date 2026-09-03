@@ -136,6 +136,17 @@ if(FREECAD_USE_VULKAN)
     target_include_directories(FreeCADGui SYSTEM PRIVATE
         ${QtGui_INCLUDE_DIRS}
     )
+    # QuarterVulkanWidget.cpp includes the Qt QPA header
+    # <QtGui/qpa/qwindowsysteminterface.h> (for the Qt 6 MouseEvent/Expose
+    # sync helpers).  qpa/ headers live in the QT_VERSION-specific private
+    # include dir exposed by Qt6::GuiPrivate, not ${QtGui_INCLUDE_DIRS}
+    # (which is the public QtGui root).  Link GuiPrivate so the include
+    # resolves regardless of the installed Qt 6.x.y version; the source uses
+    # the version-agnostic <QtGui/qpa/...> path.
+    if(FREECAD_QT_MAJOR_VERSION EQUAL 6)
+        find_package(Qt6 REQUIRED COMPONENTS GuiPrivate)
+        list(APPEND FreeCADGui_LIBS Qt6::GuiPrivate)
+    endif()
 endif()
 
 if (TARGET Coin::Coin)
