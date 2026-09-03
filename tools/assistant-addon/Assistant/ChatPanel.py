@@ -71,6 +71,14 @@ class ChatPanel(QtWidgets.QDockWidget):
         cam.addStretch(1)
         lay.addLayout(cam)
 
+        # context-aware quick-start suggestions (new document / new sketch links)
+        self._sugg = QtWidgets.QWidget(w)
+        self._sugg_lay = QtWidgets.QHBoxLayout(self._sugg)
+        self._sugg_lay.setContentsMargins(0, 0, 0, 0)
+        self._sugg_lay.setSpacing(8)
+        self._sugg.setVisible(False)
+        lay.addWidget(self._sugg)
+
         # message browser
         self._view = QtWidgets.QTextBrowser()
         self._view.setOpenExternalLinks(True)
@@ -130,6 +138,7 @@ class ChatPanel(QtWidgets.QDockWidget):
         self._input.setAcceptDrops(True)
 
         self._render()
+        self._refresh_suggestions()
         self.setMinimumWidth(380)
         self.resize(460, 640)
 
@@ -219,6 +228,7 @@ class ChatPanel(QtWidgets.QDockWidget):
         if not text:
             return
         self._input.clear()
+        self._refresh_suggestions()
         self._push_user(text)
         self._stream = ""
         image_url = image_mime = None
@@ -254,6 +264,43 @@ class ChatPanel(QtWidgets.QDockWidget):
             R.call("control_camera", {"action": action})
         except Exception as exc:
             self._status(f"camera {action}: {exc}")
+
+    def _refresh_suggestions(self):
+        from Context import build_suggestions
+        while self._sugg_lay.count():
+            item = self._sugg_lay.takeAt(0)
+            wid = item.widget()
+            if wid is not None:
+                wid.deleteLater()
+        items = build_suggestions()
+        if not items:
+            self._sugg.setVisible(False)
+            return
+        for s in items:
+            btn = QtWidgets.QPushButton(s.get("label", s["command"]) + " →")
+            btn.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
+            btn.setFlat(True)
+            btn.setStyleSheet(
+                "QPushButton{border:none;background:transparent;color:#3b82f6;"
+                "text-decoration:underline;padding:0 2px;font-weight:600}"
+                "QPushButton:hover{color:#1d4ed8}"
+                "QPushButton:disabled{color:#888}")
+            btn.setToolTip(s.get("hint", ""))
+            btn.clicked.connect(lambda _=False, s=s: self._run_suggestion(s))
+            self._sugg_lay.addWidget(btn)
+        self._sugg_lay.addStretch(1)
+        self._sugg.setVisible(True)
+
+    def _run_suggestion(self, s):
+        import ToolRegistry as R
+        self._status(f"⚙ {s.get('label', s['command'])}...")
+        try:
+            res = R.call(s["command"], s.get("args") or {})
+            self._status(f"✔ done: {res}")
+        except Exception as exc:
+            self._status(f"✖ {s.get('label', s['command'])}: {exc}")
+        finally:
+            self._refresh_suggestions()
 
     def _open_settings(self):
         import Preferences as P
@@ -385,6 +432,7 @@ class ChatPanel(QtWidgets.QDockWidget):
         self._send.setEnabled(True)
         self._stop.setEnabled(False)
         self._render()
+        self._refresh_suggestions()
 
     def _on_failed(self, msg):
         self._blocks.append(f"<div style='color:#c00'>Error: {html.escape(str(msg))}</div>")
@@ -392,6 +440,7 @@ class ChatPanel(QtWidgets.QDockWidget):
         self._send.setEnabled(True)
         self._stop.setEnabled(False)
         self._render()
+        self._refresh_suggestions()
 
     def _on_usage(self, u):
         p = u.get("prompt_tokens", "?")
