@@ -35,8 +35,8 @@
 #include <Inventor/actions/SoHandleEventAction.h>
 #ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/actions/SoIRRenderAction.h>
-#endif
 #include <Inventor/rendering/SoRenderIR.h>
+#endif
 #include <Inventor/elements/SoViewportRegionElement.h>
 #include <Inventor/actions/SoWriteAction.h>
 #include <Inventor/bundles/SoMaterialBundle.h>
@@ -2860,9 +2860,9 @@ void SoFCPathAnnotation::GLRenderInPath(SoGLRenderAction* action)
     GLRenderBelowPath(action);
 }
 
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 void SoFCPathAnnotation::IRRender(SoIRRenderAction* action)
 {
-#ifdef HAVE_COIN_IR_RENDER_ACTION
     if (!path || !path->getLength()) {
         return;
     }
@@ -2903,10 +2903,8 @@ void SoFCPathAnnotation::IRRender(SoIRRenderAction* action)
         cmd.state.raster.scissorHeight = vh;
     }
     state->pop();
-#else
-    inherited::IRRender(action);
-#endif
 }
+#endif // HAVE_COIN_IR_RENDER_ACTION
 
 void SoFCPathAnnotation::setDetail(SoDetail* d)
 {
