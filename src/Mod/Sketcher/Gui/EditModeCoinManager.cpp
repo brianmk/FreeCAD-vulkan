@@ -103,7 +103,8 @@ int preselectionPriority(const EditModeCoinManager::PreselectionResult& result)
             if (result.ConstraintKind == Result::ConstraintHitKind::Icon) {
                 return PreselectionPriority::ConstraintIcon;
             }
-            if (result.ConstraintKind == Result::ConstraintHitKind::DatumLabel) {
+            if (result.ConstraintKind == Result::ConstraintHitKind::DatumPresentation ||
+                result.ConstraintKind == Result::ConstraintHitKind::DatumAnnotation) {
                 return PreselectionPriority::ConstraintDatumLabel;
             }
             return PreselectionPriority::ConstraintFallback;
@@ -1117,6 +1118,22 @@ void EditModeCoinManager::drawEdit(
     editModeScenegraphNodes.EditCurvesMaterials->diffuseColor.finishEditing();
 }
 
+void EditModeCoinManager::updateEditCurveAppearance(GeometryCreationMode mode)
+{
+    setEditDrawStyle(mode);
+
+    auto& colors = editModeScenegraphNodes.EditCurvesMaterials->diffuseColor;
+    SbColor* values = colors.startEditing();
+    const SbColor& color = mode == GeometryCreationMode::Normal ? drawingParameters.CurveColor
+                                                               : drawingParameters.CurveDraftColor;
+
+    for (int i = 0; i < colors.getNum(); ++i) {
+        values[i] = color;
+    }
+
+    colors.finishEditing();
+}
+
 void EditModeCoinManager::drawLineExtensionAutoConstraintHint(
     const std::vector<Base::Vector2d>& HintCurve
 )
@@ -1238,6 +1255,17 @@ void EditModeCoinManager::setAxisPickStyle(bool on)
     }
 }
 
+void EditModeCoinManager::setOriginPointMarker(bool hollow)
+{
+    originPointMarkerHollow = hollow;
+    const char* markerName = hollow ? "CIRCLE_LINE" : "CIRCLE_FILLED";
+
+    editModeScenegraphNodes.OriginPointSet->markerIndex
+        = Gui::Inventor::MarkerBitmaps::getMarkerIndex(markerName, drawingParameters.markerSize);
+    editModeScenegraphNodes.OriginPointSetOccluded->markerIndex
+        = Gui::Inventor::MarkerBitmaps::getMarkerIndex(markerName, drawingParameters.markerSize);
+}
+
 EditModeCoinManager::PreselectionResult EditModeCoinManager::detectConstraintPreselection(
     const SoPickedPointList& points,
     const SbVec2s& cursorPos
@@ -1255,8 +1283,11 @@ EditModeCoinManager::PreselectionResult EditModeCoinManager::detectConstraintPre
             case ConstraintResult::HitKind::Icon:
                 target.ConstraintKind = PreselectionResult::ConstraintHitKind::Icon;
                 break;
-            case ConstraintResult::HitKind::DatumLabel:
-                target.ConstraintKind = PreselectionResult::ConstraintHitKind::DatumLabel;
+            case ConstraintResult::HitKind::DatumPresentation:
+                target.ConstraintKind = PreselectionResult::ConstraintHitKind::DatumPresentation;
+                break;
+            case ConstraintResult::HitKind::DatumAnnotation:
+                target.ConstraintKind = PreselectionResult::ConstraintHitKind::DatumAnnotation;
                 break;
             case ConstraintResult::HitKind::None:
                 target.ConstraintKind = PreselectionResult::ConstraintHitKind::None;
