@@ -35,6 +35,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <string>
+
+#include <Base/FileInfo.h>
 
 namespace Base {
 
@@ -75,13 +78,20 @@ inline void vulkanBreadcrumb(const char* fmt, ...)
     std::lock_guard<std::mutex> lock(logMutex);
     static FILE* log = []() -> FILE* {
         const char* path = std::getenv("FC_VULKAN_TRACE_FILE");
-        if (!path || !*path) {
-            path = "/tmp/freecad_vulkan_trace.log";
+        std::string fullPath;
+        if (path && *path) {
+            fullPath = path;
+        }
+        else {
+            // Use the OS temp dir (Base::FileInfo::getTempPath) rather than a
+            // hardcoded /tmp so the log lands somewhere writeable on
+            // Windows/macOS too.
+            fullPath = Base::FileInfo::getTempPath() + "freecad_vulkan_trace.log";
         }
         // Create/truncate the log on the first call of each process, so a
         // fresh FreeCAD run starts with an empty file.  Fall back to the
-        // user's home directory if the default path is not writable.
-        FILE* f = std::fopen(path, "w");
+        // user's home directory if the temp path is not writable.
+        FILE* f = std::fopen(fullPath.c_str(), "w");
         if (!f) {
             const char* home = std::getenv("HOME");
             if (home && *home) {
@@ -94,7 +104,7 @@ inline void vulkanBreadcrumb(const char* fmt, ...)
             std::fprintf(stderr,
                          "[VK-TRACE] vulkanBreadcrumb: cannot create log file "
                          "'%s'\n",
-                         path);
+                         fullPath.c_str());
         }
         return f;
     }();
