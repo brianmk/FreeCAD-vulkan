@@ -84,10 +84,11 @@ struct ScreenPreselectionPolicy
 struct PreselectionPriority
 {
     static constexpr int None = 0;
-    static constexpr int ConstraintDatumLabel = 100;
+    static constexpr int ConstraintDatumPresentation = 100;
     static constexpr int Axis = 300;
     static constexpr int ConstraintFallback = 350;
     static constexpr int Edge = 400;
+    static constexpr int ConstraintDatumAnnotation = 425;
     static constexpr int ConstraintIcon = 450;
     static constexpr int Point = 500;
 };
@@ -103,9 +104,11 @@ int preselectionPriority(const EditModeCoinManager::PreselectionResult& result)
             if (result.ConstraintKind == Result::ConstraintHitKind::Icon) {
                 return PreselectionPriority::ConstraintIcon;
             }
-            if (result.ConstraintKind == Result::ConstraintHitKind::DatumPresentation ||
-                result.ConstraintKind == Result::ConstraintHitKind::DatumAnnotation) {
-                return PreselectionPriority::ConstraintDatumLabel;
+            if (result.ConstraintKind == Result::ConstraintHitKind::DatumPresentation) {
+                return PreselectionPriority::ConstraintDatumPresentation;
+            }
+            if (result.ConstraintKind == Result::ConstraintHitKind::DatumAnnotation) {
+                return PreselectionPriority::ConstraintDatumAnnotation;
             }
             return PreselectionPriority::ConstraintFallback;
         case Result::HitKind::Edge:
@@ -1826,6 +1829,9 @@ void EditModeCoinManager::createEditModeInventorNodes()
 
     editModeScenegraphNodes.OriginPointMaterial = new SoMaterial;
     editModeScenegraphNodes.OriginPointMaterial->setName("OriginPointMaterial");
+    editModeScenegraphNodes.OriginPointMaterial->transparency.setValue(
+        drawingParameters.originTransparency
+    );
     visibleOrigin->addChild(editModeScenegraphNodes.OriginPointMaterial);
 
     editModeScenegraphNodes.OriginPointDrawStyle = new SoDrawStyle;
@@ -1922,6 +1928,9 @@ void EditModeCoinManager::createEditModeInventorNodes()
     editModeScenegraphNodes.OriginPointMaterialOccluded->setName("OriginPointMaterialOccluded");
     editModeScenegraphNodes.OriginPointMaterialOccluded->diffuseColor.setValue(
         drawingParameters.FullyConstraintElementColor
+    );
+    editModeScenegraphNodes.OriginPointMaterialOccluded->transparency.setValue(
+        drawingParameters.occludedAxisTransparency
     );
     occludedOverlayRoot->addChild(editModeScenegraphNodes.OriginPointMaterialOccluded);
 
@@ -2232,11 +2241,18 @@ void EditModeCoinManager::updateInventorNodeSizes()
         );
     }
 
+    // Respect the hollow/filled origin-marker state when regenerating the
+    // marker at the (possibly changed) size; otherwise a MarkerSize change
+    // while a drawing tool is active silently snaps the outline marker to the
+    // filled idle glyph.
+    const char* originMarkerName = originPointMarkerHollow ? "CIRCLE_LINE" : "CIRCLE_FILLED";
     editModeScenegraphNodes.OriginPointDrawStyle->pointSize = drawingParameters.markerBitmapSize;
-    editModeScenegraphNodes.OriginPointSet->markerIndex
-        = Gui::Inventor::MarkerBitmaps::getMarkerIndex("CIRCLE_FILLED", drawingParameters.markerSize);
+    editModeScenegraphNodes.OriginPointSet->markerIndex = Gui::Inventor::MarkerBitmaps::getMarkerIndex(
+        originMarkerName,
+        drawingParameters.markerSize
+    );
     editModeScenegraphNodes.OriginPointSetOccluded->markerIndex
-        = Gui::Inventor::MarkerBitmaps::getMarkerIndex("CIRCLE_FILLED", drawingParameters.markerSize);
+        = Gui::Inventor::MarkerBitmaps::getMarkerIndex(originMarkerName, drawingParameters.markerSize);
 
     editModeScenegraphNodes.RootCrossDrawStyle->lineWidth = drawingParameters.AxisLineWidth
         * drawingParameters.pixelScalingFactor;
