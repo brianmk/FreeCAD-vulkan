@@ -17,7 +17,9 @@
 #include <Inventor/actions/SoGLRenderAction.h>
 #ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/actions/SoIRRenderAction.h>
+#include <Inventor/rendering/SoRenderIR.h>
 #endif
+#include <Inventor/elements/SoCoordinateElement.h>
 #include <Inventor/elements/SoDepthBufferElement.h>
 #include <Inventor/elements/SoLazyElement.h>
 #include <Inventor/elements/SoLineWidthElement.h>
@@ -32,7 +34,7 @@
 #include <Inventor/nodes/SoIndexedFaceSet.h>
 #include <Inventor/nodes/SoIndexedLineSet.h>
 #include <Inventor/nodes/SoIndexedPointSet.h>
-#include <Inventor/rendering/SoRenderIR.h>
+#include <Inventor/nodes/SoVertexProperty.h>
 #include <Inventor/SbViewportRegion.h>
 
 #include <type_traits>
@@ -118,6 +120,57 @@ static inline void renderOverlayNode(SoIndexedFaceSet* node, SoGLRenderAction* a
     node->GLRender(action);
 }
 
+//! Bind a standalone overlay node to the coordinate element that is live on
+//! the current render state.  The base B-rep shape node reads its vertices from
+//! a preceding SoCoordinate3 in the scene graph, so its coordIndex indices are
+//! only meaningful against that vertex array.  The overlay node lives outside
+//! the scene graph (it is passed directly to renderOverlayNode), so it has no
+//! coordinate source of its own and would otherwise pick up whatever
+//! SoCoordinateElement happens to be live mid-traversal -- which, when the
+//! element is absent or belongs to a different/smaller array, makes the same
+//! coordIndex index past the buffer and emit triangles/lines whose vertices fly
+//! off to garbage positions (the "sail" artifacts).  Populate the overlay node's
+//! own SoVertexProperty from the state's coordinate element so it is always
+//! self-contained.
+//!
+//! The overlay is rendered unlit (BASE_COLOR light model, see
+//! applyOverlayPrimitiveState), so only the coordinates are needed; normals are
+//! deliberately left empty.  The binding is set once per node and refreshed only
+//! when the point count or pointer changes, so an unchanged shape does not
+//! re-upload every frame.
+template <typename Node>
+static void bindOverlayCoordinates(SoState* state, Node* node)
+{
+    if (!state || !node) {
+        return;
+    }
+    const SoCoordinateElement* coords = SoCoordinateElement::getInstance(state);
+    if (!coords) {
+        return;
+    }
+    const int num = coords->getNum();
+    const SbVec3f* ptr = coords->getArrayPtr3();
+    if (!ptr || num <= 0) {
+        return;
+    }
+
+    SoVertexProperty* vp = static_cast<SoVertexProperty*>(node->vertexProperty.getValue());
+    if (!vp) {
+        vp = new SoVertexProperty;
+        vp->ref();
+        node->vertexProperty.setValue(vp);
+        vp->unref();
+    }
+    if (vp->vertex.getNum() != num) {
+        vp->vertex.setNum(num);
+        SbVec3f* dst = vp->vertex.startEditing();
+        for (int i = 0; i < num; ++i) {
+            dst[i] = ptr[i];
+        }
+        vp->vertex.finishEditing();
+    }
+}
+
 //! Records/draws the overlay point set.  Templated on the render action so
 //! GLRender and IRRender stay compile-time identical.
 template <typename Action>
@@ -151,6 +204,8 @@ static void renderOverlayPoints(
 
     auto state = action->getState();
     state->push();
+
+    bindOverlayCoordinates(state, pointSet);
 
     applyOverlayPrimitiveState(state, pointSet);
     applyOverlayDepthState(state, depthMode);
@@ -216,6 +271,8 @@ static void renderOverlayLines(
 
     auto state = action->getState();
     state->push();
+
+    bindOverlayCoordinates(state, lineSet);
 
     applyOverlayPrimitiveState(state, lineSet);
     applyOverlayDepthState(state, depthMode);
@@ -355,13 +412,24 @@ static void renderOverlayFaces(
     auto state = action->getState();
     state->push();
 
+    bindOverlayCoordinates(state, faceSet);
+
     // Record the first draw-command index so that, on the IR (Vulkan) path,
     // the recorded overlay commands can be promoted to the OVERLAY pass below.
+    // isIR is compile-time: when the build has no IR render API (external/system
+    // Coin, HAVE_COIN_IR_RENDER_ACTION undefined) it is always false, so the
+    // SoIRRenderAction-only calls below compile out entirely.
+#ifdef HAVE_COIN_IR_RENDER_ACTION
     constexpr bool isIR = std::is_same_v<Action, SoIRRenderAction>;
+#else
+    constexpr bool isIR = false;
+#endif
     int firstCommand = -1;
+#ifdef HAVE_COIN_IR_RENDER_ACTION
     if constexpr (isIR) {
         firstCommand = action->getMutableDrawList().getNumCommands();
     }
+#endif
 
     applyOverlayPrimitiveState(state, faceSet);
 
@@ -403,6 +471,7 @@ static void renderOverlayFaces(
     // Promote the just-recorded commands to the OVERLAY pass, which the path
     // tracer skips, so the highlight is a separate raster layer on top of the
     // traced surface without re-tracing/re-denoising.
+#ifdef HAVE_COIN_IR_RENDER_ACTION
     if constexpr (isIR) {
         SoDrawList& list = action->getMutableDrawList();
         const int endCommand = list.getNumCommands();
@@ -422,6 +491,7 @@ static void renderOverlayFaces(
             cmd.state.raster.scissorHeight = vh;
         }
     }
+#endif
 
     state->pop();
 }

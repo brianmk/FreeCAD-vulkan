@@ -506,16 +506,22 @@ void Command::_invoke(int id, bool disablelog)
     }
     catch (Base::PyException& e) {
         e.reportException();
+        abortCommand();
     }
     catch (Py::Exception&) {
         Base::PyGILStateLocker lock;
         Base::PyException e;
         e.reportException();
+        abortCommand();
     }
     catch (Base::AbortException&) {
     }
     catch (Base::Exception& e) {
         e.reportException();
+        // The command failed mid-transaction: roll back the partial changes
+        // (e.g. a half-created feature with no profile) instead of leaking the
+        // open transaction and committing the broken state to the document.
+        abortCommand();
         // Pop-up a dialog for FreeCAD-specific exceptions
         QMessageBox::critical(Gui::getMainWindow(), QObject::tr("Exception"), QLatin1String(e.what()));
     }

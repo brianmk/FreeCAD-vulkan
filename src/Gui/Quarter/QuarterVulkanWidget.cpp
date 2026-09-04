@@ -36,9 +36,12 @@
 #include <QStringList>
 #include <QTimer>
 #include <QWheelEvent>
-#include <QtGui/6.11.2/QtGui/qpa/qwindowsysteminterface.h>
+#include <QtGui/qpa/qwindowsysteminterface.h>
+
+#include "Selection.h"
 
 #include <cstdarg>
+#include <cstdlib>
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -48,7 +51,61 @@ using namespace SIM::Coin3D::Quarter;
 
 namespace {
 
+// Fold the live Gui selection model into a revision number for the Vulkan
+// manager's retained-drawlist replay: FreeCAD renders selection and
+// preselection through SoFCSelectionRoot without guaranteeing a node-field
+// change, so the graph fingerprint alone would keep drawing a stale
+// highlight after a click or hover move.  Any change to the selection set
+// or the current preselection produces a different value.
+uint64_t mixRevision(uint64_t h, uint64_t v)
+{
+    h ^= v + 0x9E3779B97F4A7C15ULL + (h << 6) + (h >> 2);
+    return h;
+}
+
+uint64_t hashCString(uint64_t h, const char * s)
+{
+    for (; s && *s; ++s) {
+        h = mixRevision(h, static_cast<unsigned char>(*s));
+    }
+    return mixRevision(h, 0);
+}
+
+uint64_t selectionRevision()
+{
+    uint64_t h = 0xcbf29ce484222325ULL;
+    const Gui::SelectionSingleton & sel = Gui::Selection();
+    h = mixRevision(h, sel.hasSelection() ? 1u : 0u);
+    h = mixRevision(h, sel.size());
+    h = mixRevision(h, sel.hasPreselection() ? 1u : 0u);
+    if (sel.hasPreselection()) {
+        const Gui::SelectionChanges & pre = sel.getPreselection();
+        h = hashCString(h, pre.pObjectName);
+        h = hashCString(h, pre.pSubName);
+    }
+    if (sel.hasSelection() && sel.size() <= 64u) {
+        const auto objs = sel.getSelection();
+        for (const Gui::SelectionSingleton::SelObj & o : objs) {
+            h = mixRevision(h, reinterpret_cast<uintptr_t>(o.pObject));
+            h = hashCString(h, o.SubName);
+        }
+    }
+    return h;
+}
+
 #define VK_TAG "[Vulkan] "
+
+static bool vulkanPersistentResourcesEnabled()
+{
+    static const bool enabled = []() {
+        const char* value = std::getenv("FC_VULKAN_PERSISTENT_RESOURCES");
+        return !value
+            || (std::strcmp(value, "0") != 0
+                && std::strcmp(value, "false") != 0
+                && std::strcmp(value, "off") != 0);
+    }();
+    return enabled;
+}
 
 static void vkLog(const char * fmt, ...)
 {
@@ -98,14 +155,12 @@ public:
                           QVulkanWindow * window,
                           SoNode * scene,
                           SoCamera * camera,
-                          QuarterVulkanWidget * owner,
-                          bool rayTracing)
+                          QuarterVulkanWidget * owner)
         : m_instance(instance)
         , m_scene(scene)
         , m_camera(camera)
         , m_window(window)
         , m_owner(owner)
-        , m_rayTracing(rayTracing)
         , m_dumper(instance, window)
     {
     }
@@ -321,6 +376,15 @@ public:
         m_initContext.graphicsQueue = m_window->graphicsQueue();
         m_initContext.graphicsQueueFamilyIndex =
             m_window->graphicsQueueFamilyIndex();
+        // The async-compute queue requested at device creation (see
+        // configureDeviceFeatures).  The backend retrieves the handle itself
+        // with vkGetDeviceQueue() from this family+index.
+        if (m_owner->hasAsyncComputeQueue()) {
+            m_initContext.computeQueueFamilyIndex =
+                m_owner->asyncComputeQueueFamilyIndex();
+            m_initContext.computeQueueIndex =
+                m_owner->asyncComputeQueueIndex();
+        }
         if (props) {
             m_initContext.apiVersion = props->apiVersion;
         }
@@ -748,6 +812,9 @@ private:
         m_manager.setOverlaySceneGraph(frame.overlayScene);
         m_manager.setDecorationSceneGraph(frame.decorationScene);
         m_manager.setCamera(frame.camera);
+        // Publish the selection revision the graph fingerprint cannot see
+        // (see selectionRevision()).
+        m_manager.setExternalRevision(selectionRevision());
 
         // The hidden GL viewer's viewport region is not authoritative: the
         // Vulkan surface always covers the entire stacked-widget area, while
@@ -918,7 +985,6 @@ private:
     bool m_pointsOverlay = false;
     SbColor4f m_edgeColor = SbColor4f(0.05f, 0.05f, 0.05f, 1.0f);
     bool m_initialized = false;
-    bool m_rayTracing = false;
     // Path tracing state mirrored here: requested values are written from
     // the widget API, startNextFrame() applies them to the manager during
     // frame setup and reports the active status back.
@@ -1009,9 +1075,8 @@ public:
     QuarterVulkanWindow(QVulkanInstance * instance,
                         SoNode * scene,
                         SoCamera * camera,
-                        QuarterVulkanWidget * owner,
-                        bool rayTracing)
-        : m_renderer(new QuarterVulkanRenderer(instance, this, scene, camera, owner, rayTracing))
+                        QuarterVulkanWidget * owner)
+        : m_renderer(new QuarterVulkanRenderer(instance, this, scene, camera, owner))
     {
     }
 
@@ -1019,6 +1084,7 @@ public:
 
     QuarterVulkanRenderer * renderer() const { return m_renderer; }
 
+public:
     // Ray tracing feature structs referenced by the enabled-features
     // modifier (see QuarterVulkanWidget).  They must outlive the modifier
     // call: QVulkanWindowPrivate::init() uses the populated VkPhysical-
@@ -1029,6 +1095,28 @@ public:
     VkPhysicalDeviceAccelerationStructureFeaturesKHR rtAccelerationStructure {};
     VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtRayTracingPipeline {};
     VkPhysicalDeviceRayQueryFeaturesKHR rtRayQuery {};
+    // Timeline semaphores (Vulkan 1.2 core) let the async-compute queue signal
+    // the graphics queue -- and vice versa -- without a CPU-stalling fence /
+    // vkQueueWaitIdle.  Structured like the RT feature structs; chained onto
+    // the VkPhysicalDeviceFeatures2 pNext when the device is currently 1.2+.
+    VkPhysicalDeviceTimelineSemaphoreFeatures rtTimelineSemaphore {};
+    bool rtTimelineSemaphoreAvailable = false;
+
+    // Dedicated async-compute queue requested at device creation via
+    // setQueueCreateInfoModifier().  The modifier (in QuarterVulkanWidget::
+    // configureDeviceFeatures) scans the family properties for a
+    // VK_QUEUE_COMPUTE_BIT family -- preferring a compute-only one -- appends
+    // or extends a VkDeviceQueueCreateInfo, and records the chosen family
+    // and queue index here so the renderer can later vkGetDeviceQueue() it.
+    // computeQueueFamily is UINT32_MAX when no compute queue was requested.
+    uint32_t computeQueueFamily = ~0u;
+    uint32_t computeQueueIndex = 0;
+    bool hasComputeQueueRequest = false;
+    // Priorities array referenced from the appended/modified queue create
+    // info; must remain valid until vkCreateDevice (which happens after the
+    // modifier callback returns), so it is a long-lived member, not a lambda
+    // stack local.
+    float computeQueuePriorities[2] = {1.0f, 1.0f};
     // Whether the device supports VK_POLYGON_MODE_LINE/POINT
     // (fillModeNonSolid); the wireframe/points overlay pipelines need it
     // and requesting an unsupported core feature would fail device
@@ -1044,6 +1132,21 @@ public:
     // requesting the extension on a device without it would fail device
     // creation, so query it before adding it to the device extension set.
     bool rtExternalSemaphoreFdAvailable = false;
+    // Whether the selected device supports VK_KHR_external_memory_fd.  The
+    // CUDA/OptiX denoiser exports Vulkan memory as FDs through it, but unlike
+    // the ray-tracing extensions it is not implied by VK_KHR_acceleration_
+    // structure, so it must be probed too: requesting an extension the device
+    // does not expose fails vkCreateDevice and would take down the whole
+    // viewport, not just the denoiser.
+    bool rtExternalMemoryFdAvailable = false;
+    // Core features the raster path relies on.  Indices are uint32 (large
+    // BRep tessellations exceed 65535 vertices) and the blend factor mapping
+    // can select the SRC1_* factors; both require the corresponding feature
+    // to be enabled.  Query the physical device and request them only when
+    // present -- enabling an unsupported core feature also fails device
+    // creation, exactly like the fillModeNonSolid case below.
+    bool fullDrawIndexUint32 = false;
+    bool dualSrcBlend = false;
     // Whether the selected device advertises the optional capability
     // extensions the RTX backend uses to improve the path tracer.  These are
     // strictly optional (the backend falls back gracefully), so they are
@@ -1116,9 +1219,18 @@ QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent, bool rayTracing)
     this->ensureSharedInstance();
 
     d->vulkanWindow = new QuarterVulkanWindow(d->instance, d->scene, d->camera,
-                                              this, rayTracing);
+                                               this);
     d->window = d->vulkanWindow;
     d->window->setVulkanInstance(d->instance);
+
+    // Keep the Coin Vulkan backend alive across expose/hide cycles.  Without
+    // this, a document restore makes Qt reset the window's renderer resources
+    // repeatedly (hidden -> shown -> resize), which re-initializes the backend
+    // and runs multiple expensive scene passes during updateGui().  It must be
+    // set before the window is initialized/visible.
+    if (vulkanPersistentResourcesEnabled()) {
+        d->window->setFlags(d->window->flags() | QVulkanWindow::PersistentResources);
+    }
     d->renderer = d->vulkanWindow->renderer();
 
     this->selectPhysicalDevice();
@@ -1291,6 +1403,10 @@ void QuarterVulkanWidget::selectPhysicalDevice()
     bool bestFillMode = false;
     bool bestRt = false;
     bool bestExternalSemaphoreFd = false;
+    bool bestExternalMemoryFd = false;
+    bool bestFullDrawIndex = false;
+    bool bestDualSrcBlend = false;
+    bool bestTimelineSemaphore = false;
     for (uint32_t i = 0; i < devCount; ++i) {
         VkPhysicalDeviceProperties props {};
         f->vkGetPhysicalDeviceProperties(devs[i], &props);
@@ -1318,6 +1434,14 @@ void QuarterVulkanWidget::selectPhysicalDevice()
         const bool rtReady = this->deviceSupportsRayTracing(devs[i]);
         const bool extSemFd =
             this->deviceSupportsExtension(devs[i], "VK_KHR_external_semaphore_fd");
+        const bool extMemFd =
+            this->deviceSupportsExtension(devs[i], "VK_KHR_external_memory_fd");
+        const bool fullDrawIdx = devFeatures.fullDrawIndexUint32 ? true : false;
+        const bool dualSrcBlend = devFeatures.dualSrcBlend ? true : false;
+        // Timeline semaphores are a Vulkan 1.2 core feature; the RT backend
+        // already requires 1.2+, so a 1.2+ device supports them.
+        const bool timelineSem =
+            props.apiVersion >= VK_API_VERSION_1_2;
         // Tie-breakers stay below the discrete/integrated type gap (50) so a
         // dedicated GPU is always preferred over an integrated one that
         // happens to have more secondary features.
@@ -1334,12 +1458,25 @@ void QuarterVulkanWidget::selectPhysicalDevice()
             bestFillMode = fillMode;
             bestRt = rtReady;
             bestExternalSemaphoreFd = extSemFd;
+            bestExternalMemoryFd = extMemFd;
+            bestFullDrawIndex = fullDrawIdx;
+            bestDualSrcBlend = dualSrcBlend;
+            bestTimelineSemaphore = timelineSem;
         }
     }
 
     d->vulkanWindow->fillModeNonSolid = bestFillMode;
     d->vulkanWindow->rtRayTracingAvailable = bestRt;
     d->vulkanWindow->rtExternalSemaphoreFdAvailable = bestExternalSemaphoreFd;
+    d->vulkanWindow->rtExternalMemoryFdAvailable = bestExternalMemoryFd;
+    d->vulkanWindow->fullDrawIndexUint32 = bestFullDrawIndex;
+    d->vulkanWindow->dualSrcBlend = bestDualSrcBlend;
+    d->vulkanWindow->rtTimelineSemaphoreAvailable = bestTimelineSemaphore;
+    if (d->rayTracing && !bestExternalMemoryFd) {
+        vkWarn("QuarterVulkanWidget: the selected device lacks "
+               "VK_KHR_external_memory_fd; the CUDA/OptiX denoiser cannot "
+               "import Vulkan memory and will fall back to the other denoisers.");
+    }
     // Pin QVulkanWindow to the GPU we probed, so the feature/extensions
     // requested by configureDeviceFeatures() are guaranteed to be supported
     // by the device that is actually created.
@@ -1477,6 +1614,10 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
           [this](VkPhysicalDeviceFeatures2 & features) {
             features.features.fillModeNonSolid =
               d->vulkanWindow->fillModeNonSolid ? VK_TRUE : VK_FALSE;
+            features.features.fullDrawIndexUint32 =
+              d->vulkanWindow->fullDrawIndexUint32 ? VK_TRUE : VK_FALSE;
+            features.features.dualSrcBlend =
+              d->vulkanWindow->dualSrcBlend ? VK_TRUE : VK_FALSE;
           });
         return;
     }
@@ -1485,9 +1626,17 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
         QByteArrayLiteral("VK_KHR_acceleration_structure"),
         QByteArrayLiteral("VK_KHR_ray_tracing_pipeline"),
         QByteArrayLiteral("VK_KHR_ray_query"),
+        // VK_KHR_acceleration_structure requires VK_KHR_deferred_host_operations
+        // as a dependency extension, so it is implied by the ray-tracing probe.
         QByteArrayLiteral("VK_KHR_deferred_host_operations"),
-        QByteArrayLiteral("VK_KHR_external_memory_fd"),
     };
+    // VK_KHR_external_memory_fd is NOT implied by the ray-tracing extension
+    // set: only request it when the device actually exposes it, or vkCreateDevice
+    // fails and the viewport never comes up (the denoiser already degrades via
+    // the vkGetMemoryFdKHR entry-point probe).
+    if (d->vulkanWindow->rtExternalMemoryFdAvailable) {
+        deviceExt << QByteArrayLiteral("VK_KHR_external_memory_fd");
+    }
     if (d->vulkanWindow->rtExternalSemaphoreFdAvailable) {
         deviceExt << QByteArrayLiteral("VK_KHR_external_semaphore")
                   << QByteArrayLiteral("VK_KHR_external_semaphore_fd");
@@ -1511,9 +1660,78 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
         deviceExt << QByteArrayLiteral("VK_NV_ray_tracing_linear_swept_spheres");
     }
     d->window->setDeviceExtensions(deviceExt);
+    // Request a dedicated async-compute queue at device creation so the RT
+    // backend can overlap denoise/trace work on the compute queue while the
+    // graphics queue runs the next frame (no vkQueueWaitIdle stall).  Qt picks
+    // a single graphics queue by itself; QueueCreateInfoModifier is the
+    // official hook to inject extra VkDeviceQueueCreateInfo (Qt 5.15+).
+    d->window->setQueueCreateInfoModifier(
+      [this](const VkQueueFamilyProperties * families, uint32_t familyCount,
+             QVector<VkDeviceQueueCreateInfo> & queueCreateInfos) {
+        // Prefer a compute-ONLY family: its queues are statically dedicated to
+        // transfer/compute and overlap freely with the graphics queues.
+        int computeFamily = -1;
+        for (uint32_t i = 0; i < familyCount; ++i) {
+          if ((families[i].queueFlags & VK_QUEUE_COMPUTE_BIT) &&
+              !(families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
+            computeFamily = static_cast<int>(i);
+            break;
+          }
+        }
+        if (computeFamily < 0) {
+          // No compute-only family: extend the graphics-family request Qt is
+          // already issuing if that family also computes and has a spare queue.
+          for (int i = 0; i < queueCreateInfos.size(); ++i) {
+            const VkDeviceQueueCreateInfo & info = queueCreateInfos[i];
+            if (info.queueFamilyIndex >= familyCount) continue;
+            const VkQueueFamilyProperties & fp = families[info.queueFamilyIndex];
+            if ((fp.queueFlags & VK_QUEUE_COMPUTE_BIT) && fp.queueCount >= 2) {
+              computeFamily = static_cast<int>(info.queueFamilyIndex);
+              break;
+            }
+          }
+        }
+        if (computeFamily < 0) {
+          vkLog("QuarterVulkanWidget: no compute-capable queue family found; "
+                "async-compute unavailable");
+          return;
+        }
+        bool extended = false;
+        for (VkDeviceQueueCreateInfo & info : queueCreateInfos) {
+          if (info.queueFamilyIndex == static_cast<uint32_t>(computeFamily)) {
+            if (info.queueCount < 2) {
+              info.queueCount = 2;
+              info.pQueuePriorities = d->vulkanWindow->computeQueuePriorities;
+            }
+            d->vulkanWindow->computeQueueFamily =
+              static_cast<uint32_t>(computeFamily);
+            d->vulkanWindow->computeQueueIndex = 1;  // leave index 0 as graphics
+            d->vulkanWindow->hasComputeQueueRequest = true;
+            extended = true;
+            break;
+          }
+        }
+        if (!extended) {
+          VkDeviceQueueCreateInfo info {};
+          info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+          info.queueFamilyIndex = static_cast<uint32_t>(computeFamily);
+          info.queueCount = 1;
+          info.pQueuePriorities = d->vulkanWindow->computeQueuePriorities;
+          queueCreateInfos.append(info);
+          d->vulkanWindow->computeQueueFamily =
+            static_cast<uint32_t>(computeFamily);
+          d->vulkanWindow->computeQueueIndex = 0;
+          d->vulkanWindow->hasComputeQueueRequest = true;
+        }
+        vkLog("QuarterVulkanWidget: request async-compute queue family=%d "
+              "index=%u", computeFamily, d->vulkanWindow->computeQueueIndex);
+      });
     vkLog("QuarterVulkanWidget: request device ext: "
           "accel_structure, ray_tracing_pipeline, ray_query, "
-          "deferred_host_ops, external_memory_fd%s",
+          "deferred_host_ops%s%s",
+          d->vulkanWindow->rtExternalMemoryFdAvailable
+            ? ", external_memory_fd"
+            : "",
           d->vulkanWindow->rtExternalSemaphoreFdAvailable
             ? ", external_semaphore, external_semaphore_fd"
             : "");
@@ -1550,10 +1768,17 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
     d->vulkanWindow->rtRayQuery.sType =
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
     d->vulkanWindow->rtRayQuery.rayQuery = VK_TRUE;
+    d->vulkanWindow->rtTimelineSemaphore.sType =
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES;
+    d->vulkanWindow->rtTimelineSemaphore.timelineSemaphore = VK_TRUE;
     d->window->setEnabledFeaturesModifier(
       [this](VkPhysicalDeviceFeatures2 & features) {
         features.features.fillModeNonSolid =
           d->vulkanWindow->fillModeNonSolid ? VK_TRUE : VK_FALSE;
+        features.features.fullDrawIndexUint32 =
+          d->vulkanWindow->fullDrawIndexUint32 ? VK_TRUE : VK_FALSE;
+        features.features.dualSrcBlend =
+          d->vulkanWindow->dualSrcBlend ? VK_TRUE : VK_FALSE;
         d->vulkanWindow->rtRayQuery.pNext = features.pNext;
         d->vulkanWindow->rtRayTracingPipeline.pNext =
           &d->vulkanWindow->rtRayQuery;
@@ -1561,6 +1786,14 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
           &d->vulkanWindow->rtRayTracingPipeline;
         d->vulkanWindow->rtBufferDeviceAddress.pNext =
           &d->vulkanWindow->rtAccelerationStructure;
+        // Timeline semaphores for the async-compute path (see the queue
+        // modifier): only requested when the 1.2+ device reports them.
+        if (d->vulkanWindow->rtTimelineSemaphoreAvailable) {
+            d->vulkanWindow->rtTimelineSemaphore.pNext =
+                d->vulkanWindow->rtBufferDeviceAddress.pNext;
+            d->vulkanWindow->rtBufferDeviceAddress.pNext =
+                &d->vulkanWindow->rtTimelineSemaphore;
+        }
         // Chain the optional capability feature structs (each gated on its
         // extension being present) so the device enables them.  The driver
         // walks the whole pNext chain, so the order is cosmetic only.
@@ -1985,6 +2218,21 @@ bool QuarterVulkanWidget::getPathTracingEnabled() const
     return d->renderer->getPathTracingEnabled();
 }
 
+bool QuarterVulkanWidget::hasAsyncComputeQueue() const
+{
+    return d->vulkanWindow && d->vulkanWindow->hasComputeQueueRequest;
+}
+
+uint32_t QuarterVulkanWidget::asyncComputeQueueFamilyIndex() const
+{
+    return d->vulkanWindow ? d->vulkanWindow->computeQueueFamily : ~0u;
+}
+
+uint32_t QuarterVulkanWidget::asyncComputeQueueIndex() const
+{
+    return d->vulkanWindow ? d->vulkanWindow->computeQueueIndex : 0;
+}
+
 void QuarterVulkanWidget::setViewMode(RtxViewMode mode)
 {
     if (!d->renderer) {
@@ -2092,3 +2340,25 @@ QWidget * QuarterVulkanWidget::getNativeWidget()
 }
 
 #endif // FREECAD_USE_VULKAN
+
+#if !defined(FREECAD_USE_VULKAN)
+// This TU is compiled on all builds (Qt.moc still reflects Q_OBJECT in the
+// header), but the whole implementation is above.  When the Vulkan backend is
+// off, provide out-of-line definitions for the non-inline members that moc
+// references so the generated metaobject/vtable still satisfies the linker.
+// These are never called: the adapter that instantiates the widget is itself
+// guarded by FREECAD_USE_VULKAN.
+SIM::Coin3D::Quarter::QuarterVulkanWidget::QuarterVulkanWidget
+    (QWidget * parent, bool /*rayTracing*/)
+    : QWidget(parent)
+{
+}
+
+SIM::Coin3D::Quarter::QuarterVulkanWidget::~QuarterVulkanWidget() = default;
+
+bool SIM::Coin3D::Quarter::QuarterVulkanWidget::eventFilter
+    (QObject * watched, QEvent * event)
+{
+    return QWidget::eventFilter(watched, event);
+}
+#endif

@@ -35,8 +35,8 @@
 #include <Inventor/actions/SoHandleEventAction.h>
 #ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/actions/SoIRRenderAction.h>
-#endif
 #include <Inventor/rendering/SoRenderIR.h>
+#endif
 #include <Inventor/elements/SoViewportRegionElement.h>
 #include <Inventor/actions/SoWriteAction.h>
 #include <Inventor/bundles/SoMaterialBundle.h>
@@ -455,6 +455,12 @@ std::vector<SoFCUnifiedSelection::PickedInfo> SoFCUnifiedSelection::getPickedLis
             last_vp = vp;
         }
         ret.push_back(info);
+    }
+
+    // A selection gate rejected every hit. Treat this like an empty pick so the event can reach
+    // the active view provider without a rejected-selection notification.
+    if (!canFinalizeSinglePick(ret)) {
+        return {};
     }
 
     if (ret.size() <= 1) {
@@ -892,7 +898,6 @@ bool SoFCUnifiedSelection::setSelection(const std::vector<PickedInfo>& infos, bo
         }
     };
 
-    bool hasNext = false;
     const SoPickedPoint* pp = info.pp;
     const SoDetail* det = pp->getDetail();
     SoDetail* detNext = nullptr;
@@ -902,8 +907,6 @@ bool SoFCUnifiedSelection::setSelection(const std::vector<PickedInfo>& infos, bo
     auto preselectionMode = static_cast<SelectionModes>(this->preselectionMode.getValue());
     static char buf[513];
     auto subName = info.element;
-    std::string objectName = objname;
-
     if (ctrlDown) {
         if (Gui::Selection().isSelected(docname, objname, info.element.c_str(), ResolveMode::NoResolve)) {
             Gui::Selection().rmvSelection(docname, objname, info.element.c_str(), &sels);
@@ -928,7 +931,6 @@ bool SoFCUnifiedSelection::setSelection(const std::vector<PickedInfo>& infos, bo
             if (guard.expired()) {
                 return false;
             }
-
             if (ok && preselectionMode == OFF) {
                 snprintf(
                     buf,
@@ -949,9 +951,9 @@ bool SoFCUnifiedSelection::setSelection(const std::vector<PickedInfo>& infos, bo
                 && detailPath->getLength()) {
                 pPath = detailPath;
                 det = detNext;
-                FC_TRACE("select next " << objectName << ", " << subName);
+                FC_TRACE("select " << objname << ", " << subName);
                 if (ok) {
-                    type = hasNext ? SoSelectionElementAction::All : SoSelectionElementAction::Append;
+                    type = SoSelectionElementAction::Append;
                 }
                 else {
                     // don't apply any visual action when selection fails -
@@ -963,70 +965,14 @@ bool SoFCUnifiedSelection::setSelection(const std::vector<PickedInfo>& infos, bo
         }
     }
     else {
-        // Hierarchy ascending
-        //
-        // If the clicked subelement is already selected, check if there is an
-        // upper hierarchy, and select that hierarchy instead.
-        //
-        // For example, let's suppose PickedInfo above reports
-        // 'link.link2.box.Face1', and below Selection().getSelectedElement returns
-        // 'link.link2.box.', meaning that 'box' is the current selected hierarchy,
-        // and the user is clicking the box again.  So we shall go up one level,
-        // and select 'link.link2.'
-        //
-
-
-        // We need to convert the short name in the selection to a full element path to look it up
-        // Ex:  Body.Pad.Face9  to Body.Pad.;g3;SKT;:H12dc,E;FAC;:H12dc:4,F;:G0;XTR;:H12dc:8,F.Face9
         getFullSubElementName(subName);
-        const char* subSelected_cstr
-            = Gui::Selection().getSelectedElement(vpd->getObject(), subName.c_str());
-        std::string subSelected = subSelected_cstr == nullptr ? "" : subSelected_cstr;
-
-        FC_TRACE(
-            "select " << (!subSelected.empty() ? subSelected : "'null'") << ", " << objectName
-                      << ", " << subName
-        );
-        std::string newElement;
-        if (!subSelected.empty()) {
-            newElement = Data::newElementName(subSelected.c_str());
-            subSelected = newElement.c_str();
-            std::string nextsub;
-            size_t next = subSelected.rfind('.');
-            if (next != std::string::npos && next != 0) {
-                if (next == subSelected.size() - 1) {
-                    // The convention of dot separated SubName demands a mandatory
-                    // ending dot for every object name reference inside SubName.
-                    // The non-object sub-element, however, must not end with a dot.
-                    // So, next[1]==0 here means current selection is a whole object
-                    // selection (because no sub-element), so we shall search
-                    // upwards for the second last dot, which is the end of the
-                    // parent name of the current selected object
-                    next = subSelected.rfind('.', next - 1);
-                }
-                if (next != std::string::npos) {
-                    nextsub = subSelected.substr(0, next + 1);
-                }
-            }
-            if (!nextsub.empty() || !subSelected.empty()) {
-                hasNext = true;
-                subName = nextsub;
-                detailPath->truncate(0);
-                if (vpd->getDetailPath(subName.c_str(), detailPath, true, detNext)
-                    && detailPath->getLength()) {
-                    pPath = detailPath;
-                    det = detNext;
-                    FC_TRACE("select next " << objectName << ", " << subName);
-                }
-            }
-        }
 
         FC_TRACE("clearing selection");
         Gui::Selection().clearSelection();
         FC_TRACE("add selection");
         bool ok = Gui::Selection().addSelection(
             docname,
-            objectName.c_str(),
+            objname,
             subName.c_str(),
             pt[0],
             pt[1],
@@ -1036,7 +982,7 @@ bool SoFCUnifiedSelection::setSelection(const std::vector<PickedInfo>& infos, bo
             Gui::SelectionChanges::PickedPoint::Valid
         );
         if (ok) {
-            type = hasNext ? SoSelectionElementAction::All : SoSelectionElementAction::Append;
+            type = SoSelectionElementAction::Append;
         }
 
         if (preselectionMode == OFF) {
@@ -1045,7 +991,7 @@ bool SoFCUnifiedSelection::setSelection(const std::vector<PickedInfo>& infos, bo
                 512,
                 "Selected: %s.%s.%s (%g, %g, %g)",
                 docname,
-                objectName.c_str(),
+                objname,
                 subName.c_str(),
                 fabs(pt[0]) > 1e-7 ? pt[0] : 0.0,
                 fabs(pt[1]) > 1e-7 ? pt[1] : 0.0,
@@ -2914,9 +2860,9 @@ void SoFCPathAnnotation::GLRenderInPath(SoGLRenderAction* action)
     GLRenderBelowPath(action);
 }
 
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 void SoFCPathAnnotation::IRRender(SoIRRenderAction* action)
 {
-#ifdef HAVE_COIN_IR_RENDER_ACTION
     if (!path || !path->getLength()) {
         return;
     }
@@ -2957,10 +2903,8 @@ void SoFCPathAnnotation::IRRender(SoIRRenderAction* action)
         cmd.state.raster.scissorHeight = vh;
     }
     state->pop();
-#else
-    inherited::IRRender(action);
-#endif
 }
+#endif // HAVE_COIN_IR_RENDER_ACTION
 
 void SoFCPathAnnotation::setDetail(SoDetail* d)
 {

@@ -22,6 +22,14 @@
 
 #pragma once
 
+// MSVC marks the standard CRT <cstdlib>/<cstdio> functions (getenv, fopen,
+// snprintf) as "unsafe" and with /WX this C4996 ends the build.  The code
+// intentionally uses the portable standard functions everywhere rather than
+// the MSVC-only _s variants, so silence the deprecation for this header.
+#ifdef _MSC_VER
+#    pragma warning(disable : 4996)
+#endif
+
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>

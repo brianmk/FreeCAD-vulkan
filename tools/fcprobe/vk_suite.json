@@ -118,6 +118,211 @@
         "VUID-vkQueueSubmit-pSignalSemaphores-00067"
       ],
       "timeout": 300
+    },
+    {
+      "name": "rt-phase0",
+      "script": "vk_rt_phase0_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1",
+        "FC_VULKAN_DUMP_FRAME": "1",
+        "FC_VULKAN_DUMP_START": "0",
+        "FC_VULKAN_DUMP_END": "400"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 180
+    },
+    {
+      "name": "rt-toggle",
+      "script": "vk_rt_toggle_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1",
+        "FC_VULKAN_DUMP_FRAME": "1",
+        "FC_VULKAN_DUMP_START": "0",
+        "FC_VULKAN_DUMP_END": "400"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 180
+    },
+    {
+      "name": "pick",
+      "script": "vk_pick_probe.py",
+      "env": {
+        "FC_PICK_PROBE": "1"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 180
+    },
+    {
+      "name": "prefs",
+      "script": "vk_prefs_probe.py",
+      "env": {
+        "FC_VULKAN_BREADCRUMBS": "1",
+        "FC_VULKAN_DUMP_FRAME": "1",
+        "FC_VULKAN_DUMP_START": "0",
+        "FC_VULKAN_DUMP_END": "400"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 180
+    },
+    {
+      "name": "blas-multi",
+      "script": "vk_blas_multi_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 180
+    },
+    {
+      "name": "camera-anim",
+      "script": "vk_camera_anim_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1",
+        "FC_VULKAN_DUMP_FRAME": "1",
+        "FC_VULKAN_DUMP_START": "0",
+        "FC_VULKAN_DUMP_END": "400",
+        "FC_VULKAN_PT_STOP_FRACTION": "0",
+        "FC_VULKAN_PT_MAXSAMPLES": "64"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 180
+    },
+    {
+      "name": "points",
+      "script": "vk_points_probe.py",
+      "env": {
+        "FC_VULKAN_BREADCRUMBS": "1",
+        "FC_VULKAN_ROUND_POINTS": "1",
+        "FC_VULKAN_DUMP_FRAME": "1",
+        "FC_VULKAN_DUMP_START": "0",
+        "FC_VULKAN_DUMP_END": "400"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 180
+    },
+    {
+      "name": "alpha",
+      "script": "vk_alpha_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1",
+        "FC_VULKAN_DUMP_FRAME": "1",
+        "FC_VULKAN_DUMP_START": "0",
+        "FC_VULKAN_DUMP_END": "400"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 180
+    },
+    {
+      "name": "tlascull-on",
+      "script": "vk_tlascull_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1",
+        "FC_VULKAN_TLAS_CULL": "1",
+        "FC_VULKAN_TLAS_PIX": "8"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 180
+    },
+    {
+      "name": "tlascull-off",
+      "script": "vk_tlascull_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1",
+        "FC_VULKAN_TLAS_PIX": "8"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 180
+    },
+    {
+      "name": "aspack-on",
+      "script": "vk_aspack_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1",
+        "FC_VULKAN_AS_PACK": "1"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 180
+    },
+    {
+      "name": "aspack-off",
+      "script": "vk_aspack_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 180
+    },
+    {
+      "name": "ascompact-on",
+      "script": "vk_ascompact_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1",
+        "FC_VULKAN_AS_COMPACT": "1"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 180
+    },
+    {
+      "name": "profile",
+      "script": "vk_profile_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1",
+        "FC_VULKAN_FRAME_TIMING": "1"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 240
+    },
+    {
+      "name": "fullresolve",
+      "script": "vk_fullresolve_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 240
+    },
+    {
+      "name": "denoise-move",
+      "script": "vk_denoise_move_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1",
+        "FC_VULKAN_PT_DENOISE_TIMING": "1",
+        "FC_VULKAN_PT_MAXSAMPLES": "32"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 300
     }
   ]
 }

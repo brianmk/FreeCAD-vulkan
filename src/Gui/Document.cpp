@@ -2094,7 +2094,18 @@ void Document::slotFinishRestoreDocument(const App::Document& doc)
     if (!d->_restoredGuiDocument) {
         for (auto* mdiView : getMDIViews()) {
             if (auto* view3D = freecad_cast<View3DInventor*>(mdiView)) {
+                // Drive the fit without the camera animation so a restored
+                // document snaps to the framing immediately instead of
+                // spinning through the animated viewAll transition.
+                auto* viewer = view3D->getViewer();
+                const bool animation = viewer && viewer->isAnimationEnabled();
+                if (animation) {
+                    viewer->setAnimationEnabled(false);
+                }
                 view3D->viewAll();
+                if (animation) {
+                    viewer->setAnimationEnabled(true);
+                }
                 break;
             }
         }

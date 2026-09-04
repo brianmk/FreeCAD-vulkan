@@ -48,10 +48,6 @@ if(FREECAD_USE_3DCONNEXION_NAVLIB AND (MSVC OR APPLE))
     list(APPEND 3DCONNEXION_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/src/3rdParty/3Dconnexion/inc)
 endif(FREECAD_USE_3DCONNEXION_NAVLIB AND (MSVC OR APPLE))
 
-if (BUILD_VR)
-    add_definitions(-DBUILD_VR )
-endif(BUILD_VR)
-
 if (BUILD_ADDONMGR)
     add_definitions(-DBUILD_ADDONMGR )
 endif(BUILD_ADDONMGR)
@@ -140,6 +136,17 @@ if(FREECAD_USE_VULKAN)
     target_include_directories(FreeCADGui SYSTEM PRIVATE
         ${QtGui_INCLUDE_DIRS}
     )
+    # QuarterVulkanWidget.cpp includes the Qt QPA header
+    # <QtGui/qpa/qwindowsysteminterface.h> (for the Qt 6 MouseEvent/Expose
+    # sync helpers).  qpa/ headers live in the QT_VERSION-specific private
+    # include dir exposed by Qt6::GuiPrivate, not ${QtGui_INCLUDE_DIRS}
+    # (which is the public QtGui root).  Link GuiPrivate so the include
+    # resolves regardless of the installed Qt 6.x.y version; the source uses
+    # the version-agnostic <QtGui/qpa/...> path.
+    if(FREECAD_QT_MAJOR_VERSION EQUAL 6)
+        find_package(Qt6 REQUIRED COMPONENTS GuiPrivate)
+        list(APPEND FreeCADGui_LIBS Qt6::GuiPrivate)
+    endif()
 endif()
 
 if (TARGET Coin::Coin)
@@ -925,9 +932,7 @@ SET(View3D_CPP_SRCS
     View3DInventor.cpp
     View3DInventorSelection.cpp
     View3DInventorViewer.cpp
-    View3DInventorRiftViewer.cpp
     View3DSettings.cpp
-    CoinRiftWidget.cpp
     View3DPy.cpp
     View3DViewerPy.cpp
     NaviCube.cpp
@@ -948,9 +953,7 @@ SET(View3D_SRCS
     View3DInventorSelection.h
     View3DInventorViewer.h
     View3DPy.h
-    View3DInventorRiftViewer.h
     View3DSettings.h
-    CoinRiftWidget.h
     View3DViewerPy.h
     NaviCube.h
     VulkanViewportAdapter.h
@@ -989,8 +992,16 @@ SET(Navigation_SRCS
 SOURCE_GROUP("Navigation" FILES ${Navigation_SRCS})
 
 #quarter sources
+# QuarterVulkanWidget (and VulkanFrameDumper) only compile with the Vulkan
+# viewport; their sources include Qt/Vulkan headers that do not exist when
+# FREECAD_USE_VULKAN is OFF (e.g. QVulkanDeviceFunctions), so exclude them from
+# the unconditional Quarter glob unless the Vulkan renderer is enabled.
 FILE(GLOB_RECURSE Quarter_CPP_SRC RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} Quarter/*.cpp)
 FILE(GLOB_RECURSE Quarter_H_SRC RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} Quarter/*.h)
+if(NOT FREECAD_USE_VULKAN)
+    list(FILTER Quarter_CPP_SRC EXCLUDE REGEX "QuarterVulkanWidget\\.cpp$|VulkanFrameDumper\\.cpp$")
+    list(FILTER Quarter_H_SRC EXCLUDE REGEX "QuarterVulkanWidget\\.h$|VulkanFrameDumper\\.h$")
+endif()
 
 SET(Quarter_MOC_HDR
     Quarter/SignalThread.h
@@ -1001,8 +1012,10 @@ SET(Quarter_MOC_HDR
     Quarter/eventhandlers/DragDropHandler.h
     Quarter/eventhandlers/EventFilter.h
     Quarter/QuarterWidget.h
-    Quarter/QuarterVulkanWidget.h
 )
+if(FREECAD_USE_VULKAN)
+    list(APPEND Quarter_MOC_HDR Quarter/QuarterVulkanWidget.h)
+endif()
 
 qt_wrap_cpp(Quarter_MOC_SRCS ${Quarter_MOC_HDR})
 
@@ -1551,9 +1564,7 @@ if (MSVC)
     target_compile_options(FreeCADGui PRIVATE /wd4251 /wd4273 /wd4275)
 endif()
 
-if (FREECAD_WARN_ERROR)
-    target_compile_warn_error(FreeCADGui)
-endif()
+target_compile_warn_error(FreeCADGui)
 
 SET_BIN_DIR(FreeCADGui FreeCADGui)
 

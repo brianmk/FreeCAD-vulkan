@@ -31,8 +31,8 @@
 #include <Inventor/actions/SoHandleEventAction.h>
 #ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/actions/SoIRRenderAction.h>
-#endif
 #include <Inventor/rendering/SoRenderIR.h>
+#endif
 #include <Inventor/elements/SoViewportRegionElement.h>
 #include <Inventor/details/SoFaceDetail.h>
 #include <Inventor/details/SoLineDetail.h>
@@ -431,7 +431,7 @@ void SoFCSelection::handleEvent(SoHandleEventAction* action)
             }
         }
     }  // key press events
-    else if (event->isOfType(SoKeyboardEvent ::getClassTypeId())) {
+    else if (event->isOfType(SoKeyboardEvent::getClassTypeId())) {
         auto const e = static_cast<const SoKeyboardEvent*>(event);
         if (SoKeyboardEvent::isKeyPressEvent(e, SoKeyboardEvent::LEFT_SHIFT)
             || SoKeyboardEvent::isKeyPressEvent(e, SoKeyboardEvent::RIGHT_SHIFT)) {

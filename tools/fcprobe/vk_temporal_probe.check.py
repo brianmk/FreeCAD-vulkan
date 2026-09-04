@@ -70,6 +70,8 @@ def _windowed(lines):
             if ordv <= frame_ord and ordv > best_ord:
                 best = name
                 best_ord = ordv
+        if best_ord < 0 and ordinal_marks:
+            best = ordinal_marks[0][1]
         return best
 
     return [(phase_of(frame_ord), k, m) for (frame_ord, _), k, m in events]
