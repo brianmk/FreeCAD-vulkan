@@ -53,10 +53,16 @@ jobs:
     with:
       artifactBasename: Prepare-${{ github.run_id }}
 
+  # The fork's rendering layer requires the bundled Coin/Pivy (it uses
+  # bundled-coin-only APIs such as SoDevicePixelRatioElement, SoIRRenderAction
+  # and SoRenderIR), so the stock system-Coin job can never compile it.  Build
+  # against the bundled Coin with the Vulkan viewport enabled instead, which is
+  # the fork's real configuration and exercises the Vulkan renderer in the
+  # C++/GUI tests.
   Ubuntu:
     needs: [Prepare]
     if: "!startsWith(github.head_ref, 'refs/heads/backport-')"
-    uses: ./.github/workflows/sub_buildUbuntu.yml
+    uses: ./.github/workflows/sub_buildUbuntuVulkan.yml
     with:
       artifactBasename: Ubuntu-${{ github.run_id }}
 
