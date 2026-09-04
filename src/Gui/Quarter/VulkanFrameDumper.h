@@ -15,6 +15,7 @@
 #include <vulkan/vulkan.h>
 
 #include <Base/Console.h>
+#include <Base/FileInfo.h>
 
 namespace SIM {
 namespace Coin3D {
@@ -237,8 +238,11 @@ public:
                          static_cast<qsizetype>(m_size.width())
                              * m_bytesPerPixel,
                          m_qimageFormat);
+        // Use the OS temp dir (Base::FileInfo::getTempPath) rather than a
+        // hardcoded /tmp so dumps land somewhere writeable on Windows/macOS.
         const QString path =
-            QStringLiteral("/tmp/vk_frame_%1.png").arg(m_frameOrdinal);
+            QString::fromStdString(Base::FileInfo::getTempPath())
+            + QStringLiteral("vk_frame_%1.png").arg(m_frameOrdinal);
         if (!img.isNull() && img.save(path)) {
             Base::Console().log("[Vulkan] frame dump %d (ordinal %llu): "
                                 "%dx%d -> %s\n",

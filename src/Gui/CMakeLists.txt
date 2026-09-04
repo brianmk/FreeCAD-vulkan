@@ -957,6 +957,7 @@ SET(View3D_SRCS
     View3DViewerPy.h
     NaviCube.h
     VulkanViewportAdapter.h
+    VulkanViewSettings.h
 )
 SOURCE_GROUP("View3D" FILES ${View3D_SRCS})
 
