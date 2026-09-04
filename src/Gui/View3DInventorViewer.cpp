@@ -4448,6 +4448,17 @@ bool View3DInventorViewer::applyCameraState(const SoCamera& sourceCamera)
         }
     }
 
+    // Copy the camera fields shared by all camera types.
+    const auto copyCommon = [](SoCamera& target, const SoCamera& source) {
+        target.viewportMapping = source.viewportMapping;
+        target.position = source.position;
+        target.orientation = source.orientation;
+        target.nearDistance = source.nearDistance;
+        target.farDistance = source.farDistance;
+        target.focalDistance = source.focalDistance;
+        target.aspectRatio = source.aspectRatio;
+    };
+
     if (targetCamera->getTypeId() == SoPerspectiveCamera::getClassTypeId()) {
         auto* targetPerspective = static_cast<SoPerspectiveCamera*>(targetCamera);
         if (sourceCamera.getTypeId() != SoPerspectiveCamera::getClassTypeId()) {
@@ -4455,14 +4466,8 @@ bool View3DInventorViewer::applyCameraState(const SoCamera& sourceCamera)
         }
 
         const auto& sourcePerspective = static_cast<const SoPerspectiveCamera&>(sourceCamera);
-        targetPerspective->viewportMapping = sourcePerspective.viewportMapping;
-        targetPerspective->position = sourcePerspective.position;
-        targetPerspective->orientation = sourcePerspective.orientation;
-        targetPerspective->nearDistance = sourcePerspective.nearDistance;
-        targetPerspective->farDistance = sourcePerspective.farDistance;
-        targetPerspective->focalDistance = sourcePerspective.focalDistance;
+        copyCommon(*targetPerspective, sourcePerspective);
         targetPerspective->heightAngle = sourcePerspective.heightAngle;
-        targetPerspective->aspectRatio = sourcePerspective.aspectRatio;
     }
     else if (targetCamera->getTypeId() == SoOrthographicCamera::getClassTypeId()) {
         auto* targetOrthographic = static_cast<SoOrthographicCamera*>(targetCamera);
@@ -4471,13 +4476,7 @@ bool View3DInventorViewer::applyCameraState(const SoCamera& sourceCamera)
         }
 
         const auto& sourceOrthographic = static_cast<const SoOrthographicCamera&>(sourceCamera);
-        targetOrthographic->viewportMapping = sourceOrthographic.viewportMapping;
-        targetOrthographic->position = sourceOrthographic.position;
-        targetOrthographic->orientation = sourceOrthographic.orientation;
-        targetOrthographic->nearDistance = sourceOrthographic.nearDistance;
-        targetOrthographic->farDistance = sourceOrthographic.farDistance;
-        targetOrthographic->focalDistance = sourceOrthographic.focalDistance;
-        targetOrthographic->aspectRatio = sourceOrthographic.aspectRatio;
+        copyCommon(*targetOrthographic, sourceOrthographic);
         targetOrthographic->height = sourceOrthographic.height;
     }
     else {
@@ -5042,8 +5041,8 @@ void View3DInventorViewer::alignToSelection()
         }
 
         // Rotate the camera to align with directionZ by the smallest angle to align the z-axis
-        const SbRotation intermediateOrientation = cameraOrientation
-            * SbRotation(cameraZ, directionZ);
+        const SbRotation intermediateOrientation =
+            Camera::alignZAxis(cameraOrientation, directionZ);
 
         SbVec3f intermediateX;
         intermediateOrientation.multVec(SbVec3f(1, 0, 0), intermediateX);
@@ -5091,24 +5090,8 @@ void View3DInventorViewer::alignToSelection()
 
         const SbVec3f directionY = directionZ.cross(directionX);
 
-        const auto orientation = SbRotation(SbMatrix(
-            directionX[0],
-            directionX[1],
-            directionX[2],
-            0,
-            directionY[0],
-            directionY[1],
-            directionY[2],
-            0,
-            directionZ[0],
-            directionZ[1],
-            directionZ[2],
-            0,
-            0,
-            0,
-            0,
-            1
-        ));
+        const auto orientation =
+            Camera::rotationFromBasis(directionX, directionY, directionZ);
 
         setCameraOrientation(orientation);
     }

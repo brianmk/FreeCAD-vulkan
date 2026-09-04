@@ -500,7 +500,7 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
             // propagates through it).
             if (_vulkanAdapter) {
                 _vulkanAdapter->setPathTracingEnabled(false);
-                _vulkanAdapter->setViewMode(0);  // widget RtxViewMode::Interactive
+                _vulkanAdapter->setViewMode(0);  // RtxModeOff (raster)
             }
             break;
         case ViewRenderMode::AmbientOcclusion:

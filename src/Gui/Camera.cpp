@@ -26,6 +26,9 @@
 
 #include <App/Application.h>
 
+#include <Inventor/SbMatrix.h>
+#include <Inventor/SbVec3f.h>
+
 #include <cmath>
 
 using namespace Gui;
@@ -91,6 +94,40 @@ SbRotation Camera::trimetric()
     // While there are multiple ways to calculate the trimetric rotation,
     // we use one which is similar to other CAD applications.
     return {0.446015F, 0.119509F, 0.229575F, 0.856787F};
+}
+
+SbRotation Camera::rotationFromBasis(const SbVec3f& x, const SbVec3f& y, const SbVec3f& z)
+{
+    // The basis vectors become the rows of the matrix.
+    return SbRotation(SbMatrix(
+        x[0], x[1], x[2], 0.0f,
+        y[0], y[1], y[2], 0.0f,
+        z[0], z[1], z[2], 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f));
+}
+
+SbRotation Camera::faceOrientation(SbVec3f x, SbVec3f z, float rotZ)
+{
+    SbVec3f y = x.cross(-z);
+    x.normalize();
+    y.normalize();
+    z.normalize();
+
+    // Note the transposed (column) layout versus rotationFromBasis(); the
+    // final inverse() compensates for it.
+    SbMatrix R(
+        x[0], y[0], z[0], 0.0f,
+        x[1], y[1], z[1], 0.0f,
+        x[2], y[2], z[2], 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f);
+    return (SbRotation(R) * SbRotation(SbVec3f(0, 0, 1), rotZ)).inverse();
+}
+
+SbRotation Camera::alignZAxis(const SbRotation& cameraOrientation, const SbVec3f& targetZ)
+{
+    SbVec3f cameraZ;
+    cameraOrientation.multVec(SbVec3f(0, 0, 1), cameraZ);
+    return cameraOrientation * SbRotation(cameraZ, targetZ);
 }
 
 SbRotation Camera::rotation(Camera::Orientation view)
