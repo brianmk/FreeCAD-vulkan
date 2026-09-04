@@ -243,16 +243,15 @@ public:
     uint32_t asyncComputeQueueIndex() const;
 
     /*!
-      \brief Ray-traced view mode (AO preview vs full path tracing).
+      \brief Ray-traced view mode.
 
-      ModeAmbientOcclusion runs the single-sample real-time AO preview;
-      ModePathTrace is the accumulating multi-bounce path tracer.
-      ModeOff leaves the backend in its current state (raster is driven by
+      Passes the integer value of SoRTXRenderBackend::RtxViewMode (0 = off /
+      raster, 1 = ambient-occlusion preview, 2 = path tracing, 3 = environment).
+      \a mode 0 leaves the backend in its current state (raster is driven by
       setPathTracingEnabled(false)).
     */
-    enum class RtxViewMode { Interactive = 0, AmbientOcclusion, PathTracing, Environment };
-    void setViewMode(RtxViewMode mode);
-    RtxViewMode getViewMode() const;
+    void setViewMode(int mode);
+    int getViewMode() const;
 
     /*!
       \brief Select the "cubemap" environment preset (-1 = viewport

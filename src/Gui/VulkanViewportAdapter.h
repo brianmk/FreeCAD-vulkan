@@ -126,6 +126,18 @@ private:
     void onSurfaceSizeChanged(const QSize& surfaceSize);
     bool eventFilter(QObject* watched, QEvent* event) override;
 
+    /// Re-impose the Vulkan surface size as the hidden GL viewer's
+    /// render/event-manager viewport region (device pixels) and its DPR.
+    ///
+    /// The display-only GL viewer is hidden, so QuarterWidget::resizeEvent()
+    /// otherwise resets its render-manager region to the GL widget's own
+    /// (typically default 400x400) size whenever the widget is re-laid-out
+    /// (e.g. a document is created/opened).  That leaves SoRayPickAction
+    /// normalized coordinates mismatched against the surface, so picking
+    /// misses.  The surface is the single source of truth, so this is
+    /// re-applied on every size change and on any GL-widget resize.
+    void applySurfaceViewportToGL(const QSize& surfaceSize);
+
     /// Request one Vulkan frame from the widget (coalesced by Qt).  This is the
     /// single wake-up used by the change sensors below.
     void requestVulkanFrame();

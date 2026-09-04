@@ -155,6 +155,24 @@ void View3DInventorPy::init_type()
         "isPathTracingActive() -> bool: whether a progressive accumulation "
         "is running"
     );
+#ifdef FREECAD_USE_VULKAN
+    add_varargs_method(
+        "setRenderMode",
+        &View3DInventorPy::setRenderMode,
+        "setRenderMode(mode): set the view's render mode: 0 = Interactive "
+        "(raster Coin), 1 = Interactive (raster Vulkan), 2 = Wireframe, "
+        "3 = Ambient Occlusion, 4 = Ray Tracing, 5 = Environment.  "
+        "Ray-traced modes fall back to raster Vulkan on devices without "
+        "hardware ray tracing.  No-op for Vulkan modes when the view has "
+        "no Vulkan adapter (UseVulkanRenderer preference off)."
+    );
+    add_noargs_method(
+        "getRenderMode",
+        &View3DInventorPy::getRenderMode,
+        "getRenderMode() -> int: the view's current render mode (see "
+        "setRenderMode)"
+    );
+#endif
     add_noargs_method(
         "getVulkanFrameCount",
         &View3DInventorPy::getVulkanFrameCount,
@@ -1412,6 +1430,24 @@ Py::Object View3DInventorPy::isPathTracingActive()
 {
     return Py::Boolean(getView3DInventorPtr()->isPathTracingActive());
 }
+
+#ifdef FREECAD_USE_VULKAN
+Py::Object View3DInventorPy::setRenderMode(const Py::Tuple& args)
+{
+    int mode = -1;
+    if (!PyArg_ParseTuple(args.ptr(), "i", &mode)) {
+        throw Py::Exception();
+    }
+    getView3DInventorPtr()->setRenderMode(static_cast<ViewRenderMode>(mode));
+    return Py::None();
+}
+
+Py::Object View3DInventorPy::getRenderMode()
+{
+    return Py::Long(static_cast<long>(
+        static_cast<int>(getView3DInventorPtr()->getRenderMode())));
+}
+#endif
 
 Py::Object View3DInventorPy::getVulkanFrameCount()
 {
