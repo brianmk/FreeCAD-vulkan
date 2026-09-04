@@ -1107,6 +1107,18 @@ void SoFCUnifiedSelection::handleEvent(SoHandleEventAction* action)
     auto preselectionMode = static_cast<SelectionModes>(this->preselectionMode.getValue());
     const SoEvent* event = action->getEvent();
 
+    // Track whether a mouse button is held.  A held button distinguishes a
+    // visibility gesture (orbit/pan/zoom drag, rubber-band selection drag),
+    // where the cursor drives the gesture, from a free hover move, where the
+    // cursor should update the preselection highlight.  Only gate on the
+    // actual press/release state, so a drag that ends with the button still
+    // down (e.g. a pan gesture that the viewer consumes) re-arms the pick on
+    // the next released move.
+    if (event->isOfType(SoMouseButtonEvent::getClassTypeId())) {
+        const auto* e = static_cast<const SoMouseButtonEvent*>(event);
+        this->mouseButtonDown = (e->getState() == SoButtonEvent::DOWN);
+    }
+
     //
     // If this is a mouseMotion event, then check for preselected entities.
     //
@@ -1125,7 +1137,12 @@ void SoFCUnifiedSelection::handleEvent(SoHandleEventAction* action)
         // NOTE: If preselection is off then we do not check for a picked point because otherwise
         // this search may slow down extremely the system on really big data sets. In this case we
         // just check for a picked point if the data set has been selected.
-        if (preselectionMode == AUTO || preselectionMode == ON) {
+        // While a mouse button is down the cursor is driving a navigation /
+        // selection gesture, not hovering: skip the pick (a full scene ray
+        // traversal) so a camera drag over a heavy model does not run it on
+        // every frame.  The highlight re-evaluates on the first move after the
+        // button is released.
+        if ((preselectionMode == AUTO || preselectionMode == ON) && !this->mouseButtonDown) {
             // check to see if the mouse is over our geometry...
             auto infos = this->getPickedList(action, true);
             if (pickProbeEnabled()) {

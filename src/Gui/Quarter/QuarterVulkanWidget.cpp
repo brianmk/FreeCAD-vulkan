@@ -2233,23 +2233,22 @@ uint32_t QuarterVulkanWidget::asyncComputeQueueIndex() const
     return d->vulkanWindow ? d->vulkanWindow->computeQueueIndex : 0;
 }
 
-void QuarterVulkanWidget::setViewMode(RtxViewMode mode)
+void QuarterVulkanWidget::setViewMode(int mode)
 {
     if (!d->renderer) {
         return;
     }
-    VK_BREADCRUMB("[VK-TRACE] QuarterVulkanWidget::setViewMode mode=%d\n",
-                  static_cast<int>(mode));
-    d->renderer->setViewMode(static_cast<int>(mode));
+    VK_BREADCRUMB("[VK-TRACE] QuarterVulkanWidget::setViewMode mode=%d\n", mode);
+    d->renderer->setViewMode(mode);
     redraw();
 }
 
-QuarterVulkanWidget::RtxViewMode QuarterVulkanWidget::getViewMode() const
+int QuarterVulkanWidget::getViewMode() const
 {
     if (!d->renderer) {
-        return RtxViewMode::Interactive;
+        return 0;
     }
-    return static_cast<RtxViewMode>(d->renderer->getViewMode());
+    return d->renderer->getViewMode();
 }
 
 void QuarterVulkanWidget::setEnvMap(int index)

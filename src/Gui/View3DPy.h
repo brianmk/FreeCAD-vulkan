@@ -81,6 +81,10 @@ public:
     Py::Object isPathTracingEnabled();
     Py::Object startPathTracing();
     Py::Object isPathTracingActive();
+#ifdef FREECAD_USE_VULKAN
+    Py::Object setRenderMode(const Py::Tuple&);
+    Py::Object getRenderMode();
+#endif
     Py::Object getVulkanFrameCount();
     Py::Object requestVulkanRender();
     Py::Object getCamera();

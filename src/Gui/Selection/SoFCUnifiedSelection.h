@@ -169,6 +169,15 @@ private:
 
     // -1 = not handled, 0 = not selected, 1 = selected
     int32_t preSelection;
+    // True while a mouse button of any kind is held.  A held button is the
+    // signature of an active visibility gesture (orbit/pan/zoom drag, or a
+    // rubber-band selection drag); while it is down the per-mouse-move
+    // preselection ray-pick below is suppressed, because the cursor is driving
+    // the gesture rather than hovering.  Without this gate every drag frame
+    // would run a full scene SoRayPickAction on the GUI thread -- negligible on
+    // a small scene, but on a large CAD model (and especially under the RT
+    // viewport's continuous render loop) it stalls the frame.
+    SbBool mouseButtonDown = FALSE;
     SoColorPacker colorpacker;
 };
 
