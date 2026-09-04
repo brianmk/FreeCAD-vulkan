@@ -238,9 +238,9 @@ void SoGroundPlane::updateGrid(SoState* state)
         return std::ceil(value / step) * step;
     };
 
-    auto addLine = [step](std::vector<SbVec3f>& out,
-                          float x0,
-                          float y0,
+    auto addLine = [](std::vector<SbVec3f>& out,
+                      float x0,
+                      float y0,
                           float x1,
                           float y1,
                           bool crossesOriginX,
