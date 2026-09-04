@@ -1134,6 +1134,7 @@ void SoNaviCube::updateCube(const RenderParams& params) const
 
 void SoNaviCube::updateFillVisibility(const RenderParams& params) const
 {
+    (void)params;  // retained-render API signature; not used by the rebuild itself
     if (!cubeFaces || cubeCoordIndexData.empty()) {
         return;
     }

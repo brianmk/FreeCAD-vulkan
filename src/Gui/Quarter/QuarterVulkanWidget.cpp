@@ -36,7 +36,7 @@
 #include <QStringList>
 #include <QTimer>
 #include <QWheelEvent>
-#include <QtGui/6.11.2/QtGui/qpa/qwindowsysteminterface.h>
+#include <QtGui/qpa/qwindowsysteminterface.h>
 
 #include "Selection.h"
 
@@ -155,14 +155,12 @@ public:
                           QVulkanWindow * window,
                           SoNode * scene,
                           SoCamera * camera,
-                          QuarterVulkanWidget * owner,
-                          bool rayTracing)
+                          QuarterVulkanWidget * owner)
         : m_instance(instance)
         , m_scene(scene)
         , m_camera(camera)
         , m_window(window)
         , m_owner(owner)
-        , m_rayTracing(rayTracing)
         , m_dumper(instance, window)
     {
     }
@@ -987,7 +985,6 @@ private:
     bool m_pointsOverlay = false;
     SbColor4f m_edgeColor = SbColor4f(0.05f, 0.05f, 0.05f, 1.0f);
     bool m_initialized = false;
-    bool m_rayTracing = false;
     // Path tracing state mirrored here: requested values are written from
     // the widget API, startNextFrame() applies them to the manager during
     // frame setup and reports the active status back.
@@ -1078,9 +1075,8 @@ public:
     QuarterVulkanWindow(QVulkanInstance * instance,
                         SoNode * scene,
                         SoCamera * camera,
-                        QuarterVulkanWidget * owner,
-                        bool rayTracing)
-        : m_renderer(new QuarterVulkanRenderer(instance, this, scene, camera, owner, rayTracing))
+                        QuarterVulkanWidget * owner)
+        : m_renderer(new QuarterVulkanRenderer(instance, this, scene, camera, owner))
     {
     }
 
@@ -1223,7 +1219,7 @@ QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent, bool rayTracing)
     this->ensureSharedInstance();
 
     d->vulkanWindow = new QuarterVulkanWindow(d->instance, d->scene, d->camera,
-                                               this, rayTracing);
+                                               this);
     d->window = d->vulkanWindow;
     d->window->setVulkanInstance(d->instance);
 
