@@ -81,6 +81,8 @@
 #include "Inventor/SoFCBackgroundGradient.h"
 #include "Inventor/SoFCBoundingBox.h"
 #include "Inventor/SoNaviCube.h"
+#include "Inventor/SoAxisCrossOverlay.h"
+#include "Inventor/SoGroundPlane.h"
 #include "Inventor/SoMouseWheelEvent.h"
 #include "Inventor/SoFCTransform.h"
 #include "Inventor/SoToggleSwitch.h"
@@ -105,7 +107,12 @@ SbBool Gui::SoFCDB::isInitialized()
 void Gui::SoFCDB::init()
 {
     SoInteraction::init();
-    SoDevicePixelRatioElement::initClass();
+    // The bundled Coin registers SoDevicePixelRatioElement itself in
+    // SoElement::initClasses(); registering it again trips Coin's
+    // initClass() assertion in debug builds.
+    if (SoDevicePixelRatioElement::getClassTypeId().isBad()) {
+        SoDevicePixelRatioElement::initClass();
+    }
     SoGLRenderActionElement::initClass();
     SoFCInteractiveElement::initClass();
     SoGLWidgetElement::initClass();
@@ -146,6 +153,8 @@ void Gui::SoFCDB::init()
     SoRegPoint::initClass();
     SoDrawingGrid::initClass();
     SoNaviCube::initClass();
+    SoAxisCrossOverlay::initClass();
+    SoGroundPlane::initClass();
     SoFCTransform::initClass();
     SoAutoZoomTranslation::initClass();
     MarkerBitmaps::initClass();
