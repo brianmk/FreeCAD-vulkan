@@ -551,16 +551,9 @@ FaceType NaviCubeImplementation::getFaceType(PickId id) const
 
 SbRotation NaviCubeImplementation::getFaceRotation(PickId id) const
 {
-    const auto makeFaceRotation = [](SbVec3f x, SbVec3f z, float rotZ) {
-        SbVec3f y = x.cross(-z);
-        x.normalize();
-        y.normalize();
-        z.normalize();
-
-        SbMatrix R(x[0], y[0], z[0], 0, x[1], y[1], z[1], 0, x[2], y[2], z[2], 0, 0, 0, 0, 1);
-        return (SbRotation(R) * SbRotation(SbVec3f(0, 0, 1), rotZ)).inverse();
-    };
-
+    // The main faces share their orientation with the standard camera views
+    // (see Camera::rotation); the tests in tests/src/Gui/Camera.cpp pin the
+    // equivalence between these and the face-frame formula used below.
     const SbVec3f x(1.0F, 0.0F, 0.0F);
     const SbVec3f y(0.0F, 1.0F, 0.0F);
     const SbVec3f z(0.0F, 0.0F, 1.0F);
@@ -572,61 +565,61 @@ SbRotation NaviCubeImplementation::getFaceRotation(PickId id) const
 
         // Main faces
         case PickId::Top:
-            return makeFaceRotation(x, z, 0.0F);
+            return Camera::rotation(Camera::Top);
         case PickId::Front:
-            return makeFaceRotation(x, -y, 0.0F);
+            return Camera::rotation(Camera::Front);
         case PickId::Left:
-            return makeFaceRotation(-y, -x, 0.0F);
+            return Camera::rotation(Camera::Left);
         case PickId::Rear:
-            return makeFaceRotation(-x, y, 0.0F);
+            return Camera::rotation(Camera::Rear);
         case PickId::Right:
-            return makeFaceRotation(y, x, 0.0F);
+            return Camera::rotation(Camera::Right);
         case PickId::Bottom:
-            return makeFaceRotation(x, -z, 0.0F);
+            return Camera::rotation(Camera::Bottom);
 
         // Corner faces
         case PickId::FrontTopRight:
-            return makeFaceRotation(-x - y, x - y + z, pi);
+            return Camera::faceOrientation(-x - y, x - y + z, pi);
         case PickId::FrontTopLeft:
-            return makeFaceRotation(-x + y, -x - y + z, pi);
+            return Camera::faceOrientation(-x + y, -x - y + z, pi);
         case PickId::FrontBottomRight:
-            return makeFaceRotation(x + y, x - y - z, 0.0F);
+            return Camera::faceOrientation(x + y, x - y - z, 0.0F);
         case PickId::FrontBottomLeft:
-            return makeFaceRotation(x - y, -x - y - z, 0.0F);
+            return Camera::faceOrientation(x - y, -x - y - z, 0.0F);
         case PickId::RearTopRight:
-            return makeFaceRotation(x - y, x + y + z, pi);
+            return Camera::faceOrientation(x - y, x + y + z, pi);
         case PickId::RearTopLeft:
-            return makeFaceRotation(x + y, -x + y + z, pi);
+            return Camera::faceOrientation(x + y, -x + y + z, pi);
         case PickId::RearBottomRight:
-            return makeFaceRotation(-x + y, x + y - z, 0.0F);
+            return Camera::faceOrientation(-x + y, x + y - z, 0.0F);
         case PickId::RearBottomLeft:
-            return makeFaceRotation(-x - y, -x + y - z, 0.0F);
+            return Camera::faceOrientation(-x - y, -x + y - z, 0.0F);
 
         // Edge faces
         case PickId::FrontTop:
-            return makeFaceRotation(x, z - y, 0.0F);
+            return Camera::faceOrientation(x, z - y, 0.0F);
         case PickId::FrontBottom:
-            return makeFaceRotation(x, -z - y, 0.0F);
+            return Camera::faceOrientation(x, -z - y, 0.0F);
         case PickId::RearBottom:
-            return makeFaceRotation(x, y - z, pi);
+            return Camera::faceOrientation(x, y - z, pi);
         case PickId::RearTop:
-            return makeFaceRotation(x, y + z, pi);
+            return Camera::faceOrientation(x, y + z, pi);
         case PickId::RearRight:
-            return makeFaceRotation(z, x + y, pi / 2.0F);
+            return Camera::faceOrientation(z, x + y, pi / 2.0F);
         case PickId::FrontRight:
-            return makeFaceRotation(z, x - y, pi / 2.0F);
+            return Camera::faceOrientation(z, x - y, pi / 2.0F);
         case PickId::FrontLeft:
-            return makeFaceRotation(z, -x - y, pi / 2.0F);
+            return Camera::faceOrientation(z, -x - y, pi / 2.0F);
         case PickId::RearLeft:
-            return makeFaceRotation(z, y - x, pi / 2.0F);
+            return Camera::faceOrientation(z, y - x, pi / 2.0F);
         case PickId::TopLeft:
-            return makeFaceRotation(y, z - x, pi);
+            return Camera::faceOrientation(y, z - x, pi);
         case PickId::TopRight:
-            return makeFaceRotation(y, x + z, 0.0F);
+            return Camera::faceOrientation(y, x + z, 0.0F);
         case PickId::BottomRight:
-            return makeFaceRotation(y, x - z, 0.0F);
+            return Camera::faceOrientation(y, x - z, 0.0F);
         case PickId::BottomLeft:
-            return makeFaceRotation(y, -z - x, pi);
+            return Camera::faceOrientation(y, -z - x, pi);
 
         // Buttons (axis rotations; angle is scaled by caller)
         case PickId::ArrowNorth:
@@ -1025,9 +1018,6 @@ SbRotation NaviCubeImplementation::getNearestOrientation(PickId pickId)
     SbRotation cameraOrientation = viewer->getCameraOrientation();
     SbRotation standardOrientation = getFaceRotation(pickId);
 
-    SbVec3f cameraZ;
-    cameraOrientation.multVec(SbVec3f(0, 0, 1), cameraZ);
-
     SbVec3f standardZ;
     standardOrientation.multVec(SbVec3f(0, 0, 1), standardZ);
 
@@ -1040,7 +1030,7 @@ SbRotation NaviCubeImplementation::getNearestOrientation(PickId pickId)
     standardZ.normalize();
 
     // Rotate the camera to the selected face by the smallest angle to align the z-axis
-    SbRotation intermediateOrientation = cameraOrientation * SbRotation(cameraZ, standardZ);
+    SbRotation intermediateOrientation = Camera::alignZAxis(cameraOrientation, standardZ);
 
     // Find an axis and angle to go from the intermediateOrientation to the standardOrientation
     SbVec3f axis;

@@ -5,8 +5,10 @@
 #include <array>
 #include <cmath>
 
+#include <Inventor/SoDB.h>
 #include <Inventor/SbMatrix.h>
 #include <Inventor/SbRotation.h>
+#include <Inventor/SbVec3f.h>
 #include <Inventor/SbViewVolume.h>
 #include <Base/Converter.h>
 #include <Base/Tools.h>
@@ -236,4 +238,81 @@ TEST_F(CameraRotation, testTrimetricProjection)
     EXPECT_GT(std::abs(lengths[0] - lengths[1]), 1e-3);
     EXPECT_GT(std::abs(lengths[1] - lengths[2]), 1e-3);
     EXPECT_GT(std::abs(lengths[0] - lengths[2]), 1e-3);
+}
+
+
+class CameraHelpers: public ::testing::Test
+{
+protected:
+    static void SetUpTestSuite()
+    {
+        tests::initApplication();
+        // The helpers exercise Coin math (SbRotation from/to) that can post
+        // diagnostics; initialize Coin the same way the other Coin tests do.
+        SoDB::init();
+    }
+};
+
+TEST_F(CameraHelpers, rotationFromBasisIdentity)
+{
+    // The canonical basis is the identity rotation (Top view).
+    EXPECT_TRUE(Gui::Camera::rotationsMatch(
+        Gui::Camera::rotationFromBasis({1, 0, 0}, {0, 1, 0}, {0, 0, 1}),
+        Gui::Camera::top(),
+        1e-12F));
+}
+
+TEST_F(CameraHelpers, alignZAxisNoop)
+{
+    // An identity camera already looks with +Z along (0,0,1), so aligning to
+    // (0,0,1) must not change the orientation.
+    SbRotation identity;
+    EXPECT_TRUE(Gui::Camera::rotationsMatch(
+        Gui::Camera::alignZAxis(identity, {0, 0, 1}), identity, 1e-12F));
+}
+
+TEST_F(CameraHelpers, alignZAxisPointsZAtTarget)
+{
+    // After aligning an identity camera to (1,0,0), its +Z axis points at (1,0,0).
+    SbRotation identity;
+    const SbRotation result = Gui::Camera::alignZAxis(identity, {1, 0, 0});
+    SbVec3f z;
+    result.multVec(SbVec3f(0, 0, 1), z);
+    EXPECT_NEAR(z[0], 1.0f, 1e-5f);
+    EXPECT_NEAR(z[1], 0.0f, 1e-5f);
+    EXPECT_NEAR(z[2], 0.0f, 1e-5f);
+}
+
+TEST_F(CameraHelpers, naviCubeMainFacesMatchStandardViews)
+{
+    // These (x, z) face frames are the ones NaviCube::getFaceRotation maps its
+    // six main faces to. They must equal the standard camera views, so that a
+    // face click yields the same orientation as the corresponding View menu
+    // command. This pins the equivalence the NaviCube refactor relies on.
+    struct Face
+    {
+        SbVec3f x;
+        SbVec3f z;
+        Gui::Camera::Orientation view;
+    };
+    const Face faces[] = {
+        {{1, 0, 0}, {0, 0, 1}, Gui::Camera::Top},
+        {{1, 0, 0}, {0, -1, 0}, Gui::Camera::Front},
+        {{0, -1, 0}, {-1, 0, 0}, Gui::Camera::Left},
+        {{-1, 0, 0}, {0, 1, 0}, Gui::Camera::Rear},
+        {{0, 1, 0}, {1, 0, 0}, Gui::Camera::Right},
+        {{1, 0, 0}, {0, 0, -1}, Gui::Camera::Bottom},
+    };
+
+    for (const auto& f : faces) {
+        const SbRotation face = Gui::Camera::faceOrientation(f.x, f.z);
+        const SbRotation view = Gui::Camera::rotation(f.view);
+        EXPECT_TRUE(Gui::Camera::rotationsMatch(face, view, 1e-9F))
+            << "face frame x=(" << f.x[0] << ", " << f.x[1] << ", " << f.x[2]
+            << ") z=(" << f.z[0] << ", " << f.z[1] << ", " << f.z[2]
+            << ") face=" << face.getValue()[0] << " " << face.getValue()[1]
+            << " " << face.getValue()[2] << " " << face.getValue()[3]
+            << " view=" << view.getValue()[0] << " " << view.getValue()[1]
+            << " " << view.getValue()[2] << " " << view.getValue()[3];
+    }
 }
