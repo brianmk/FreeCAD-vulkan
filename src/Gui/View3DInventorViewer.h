@@ -126,7 +126,7 @@ class ViewerEventFilter;
 struct VulkanViewSettings
 {
     // Render mode: Gui::ViewRenderMode as int (0 RasterCoin, 1 RasterVulkan,
-    // 2 Wireframe, 3 AmbientOcclusion, 4 RayTracing, 5 Environment).
+    // 2 Wireframe, 3 RayTracing, 4 PathTracing, 5 Environment).
     // Defaults to the Vulkan raster viewport.
     int renderMode = 1;
     // Cubemap environment preset index (-1 = viewport gradient/background).

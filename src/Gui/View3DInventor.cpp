@@ -182,7 +182,7 @@ View3DInventor::View3DInventor(
         const int persistedRenderMode = viewGrp->GetInt(
             "VulkanRenderMode",
             viewGrp->GetBool("VulkanPathTracing", false)
-                ? static_cast<int>(ViewRenderMode::RayTracing)
+                ? static_cast<int>(ViewRenderMode::PathTracing)
                 : -1);
         ViewRenderMode initialMode = ViewRenderMode::RasterVulkan;
         if (persistedRenderMode >= 0
@@ -258,7 +258,7 @@ View3DInventor::View3DInventor(
         connect(_vulkanAdapter, &VulkanViewportAdapter::rayTracingUnavailable,
                 this, [this] {
                     if (_renderMode != ViewRenderMode::RayTracing
-                        && _renderMode != ViewRenderMode::AmbientOcclusion
+                        && _renderMode != ViewRenderMode::PathTracing
                         && _renderMode != ViewRenderMode::Environment) {
                         return;
                     }
@@ -454,8 +454,8 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
     // viewport and warn once instead of silently rendering raster under a
     // ray-traced label.  isRayTracingAvailable() is only trustworthy after the
     // renderer has probed the device, hence the isRayTracingProbed() gate.
-    const bool rayTraced = mode == ViewRenderMode::AmbientOcclusion
-        || mode == ViewRenderMode::RayTracing
+    const bool rayTraced = mode == ViewRenderMode::RayTracing
+        || mode == ViewRenderMode::PathTracing
         || mode == ViewRenderMode::Environment;
     if (rayTraced && _vulkanAdapter && _vulkanAdapter->isRayTracingProbed()
         && !_vulkanAdapter->isRayTracingAvailable()) {
@@ -503,18 +503,19 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
                 _vulkanAdapter->setViewMode(0);  // RtxModeOff (raster)
             }
             break;
-        case ViewRenderMode::AmbientOcclusion:
-            // Realtime single-sample ray AO: enable the RT backend (so the
-            // ray-query compute tracer renders) but never accumulate.  The
-            // view-mode value selects the AO shader path on the backend.
+        case ViewRenderMode::RayTracing:
+            // Realtime single-sample ray tracing (AO-style): enable the RT
+            // backend (so the ray-query compute tracer renders) but never
+            // accumulate.  The view-mode value selects the AO shader path on
+            // the backend -- this is the cheap RT mode for limited compute.
             if (_vulkanAdapter) {
                 _vulkanAdapter->setPathTracingEnabled(true);
-                _vulkanAdapter->setViewMode(1);  // widget AmbientOcclusion
+                _vulkanAdapter->setViewMode(1);  // widget RayTracing (AO shader)
                 _vulkanAdapter->setPathTracingStart(false);
             }
             break;
-        case ViewRenderMode::RayTracing:
-            // Full accumulating path tracer.
+        case ViewRenderMode::PathTracing:
+            // Full accumulating path tracer (multi-bounce GI + denoising).
             if (_vulkanAdapter) {
                 _vulkanAdapter->setPathTracingEnabled(true);
                 _vulkanAdapter->setViewMode(2);  // widget PathTracing
@@ -543,10 +544,19 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
             case ViewRenderMode::Wireframe:
                 _viewer->setOverrideMode("Wireframe");
                 break;
-            case ViewRenderMode::AmbientOcclusion:
             case ViewRenderMode::RayTracing:
+            case ViewRenderMode::PathTracing:
             case ViewRenderMode::Environment:
-                break;  // ray tracer ignores the raster draw style
+                // Reset any leftover raster draw-style override (e.g. the
+                // Wireframe set by a prior mode switch).  A ray-traced view must
+                // trace the model's solid triangles; leaving the override stale
+                // makes every Shape emit edges only, so the RT backend's
+                // geometry cache never sees the opaque triangles (cache=0) and
+                // nothing is traced -- the model disappears and only its edges
+                // render.  "As Is" restores the Shape's own draw style so the
+                // solid reaches the tracer.
+                _viewer->setOverrideMode("As Is");
+                break;
         }
     }
 #ifdef FREECAD_USE_VULKAN
