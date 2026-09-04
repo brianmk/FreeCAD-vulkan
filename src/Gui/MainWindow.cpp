@@ -654,10 +654,12 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
     d->viewModeCombo->addItem(tr("Interactive (raster Vulkan)"));
     //: Status-bar view render-mode entry: raster wireframe draw style
     d->viewModeCombo->addItem(tr("Wireframe"));
-    //: Status-bar view render-mode entry: single-sample ray ambient occlusion
-    d->viewModeCombo->addItem(tr("Ambient Occlusion"));
-    //: Status-bar view render-mode entry: accumulating ray path tracer
+    //: Status-bar view render-mode entry: single-sample ray tracing (cheap RT,
+    //: no progressive accumulation)
     d->viewModeCombo->addItem(tr("Ray Tracing"));
+    //: Status-bar view render-mode entry: accumulating ray path tracer
+    //: (multi-bounce global illumination + progressive accumulation + denoise)
+    d->viewModeCombo->addItem(tr("Path Tracing"));
     //: Status-bar view render-mode entry: single-sample environment/IBL preview
     d->viewModeCombo->addItem(tr("Environment"));
     addStatusBarItem(
