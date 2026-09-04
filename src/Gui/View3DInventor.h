@@ -48,18 +48,20 @@ class NaviCubeSettings;
 /// Ray-traced view render mode for a 3D view.
 /// 0 = Interactive (raster Coin) -- the default raster rendering, no ray
 /// tracing; 1 = Interactive (raster Vulkan) -- Vulkan raster viewport;
-/// 2 = Wireframe (raster); 3 = Ambient Occlusion (single-sample ray preview);
-/// 4 = Ray Tracing (accumulating path tracer); 5 = Environment (single-sample
-/// IBL preview).  Mirrored by the status-bar selector in the main window; each
-/// view keeps its own mode.  The two "Interactive" raster modes never enable
-/// path tracing, ray tracing, the denoiser or the edge/point overlays.
+/// 2 = Wireframe (raster); 3 = Ray Tracing (single-sample ray preview, no
+/// progressive accumulation -- the cheapest RT mode); 4 = Path Tracing
+/// (multi-bounce GI with progressive accumulation + denoising); 5 =
+/// Environment (single-sample IBL preview).  Mirrored by the status-bar
+/// selector in the main window; each view keeps its own mode.  The two
+/// "Interactive" raster modes never enable path tracing, ray tracing, the
+/// denoiser or the edge/point overlays.
 #ifdef FREECAD_USE_VULKAN
 enum class ViewRenderMode : int {
     RasterCoin = 0,     // Interactive (raster Coin): classic Coin/GL raster
     RasterVulkan = 1,   // Interactive (raster Vulkan): Vulkan raster viewport
     Wireframe = 2,
-    AmbientOcclusion = 3,
-    RayTracing = 4,
+    RayTracing = 3,     // single-sample ray preview (AO-style), no accumulate
+    PathTracing = 4,    // full path tracer: progressive accumulation + denoise
     Environment = 5,
 };
 #endif
