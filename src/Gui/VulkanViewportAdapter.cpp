@@ -378,8 +378,7 @@ void VulkanViewportAdapter::setViewMode(int mode)
 {
 #ifdef FREECAD_USE_VULKAN
     if (_vulkanViewer) {
-        _vulkanViewer->setViewMode(
-            static_cast<SIM::Coin3D::Quarter::QuarterVulkanWidget::RtxViewMode>(mode));
+        _vulkanViewer->setViewMode(mode);
     }
 #else
     Q_UNUSED(mode);
@@ -462,29 +461,18 @@ void VulkanViewportAdapter::requestVulkanRender()
 #endif
 }
 
-void VulkanViewportAdapter::onSurfaceSizeChanged(const QSize& surfaceSize)
+void VulkanViewportAdapter::applySurfaceViewportToGL(const QSize& surfaceSize)
 {
-#ifdef FREECAD_USE_VULKAN
-    if (!_vulkanViewer || !_viewer) {
-        return;
-    }
-    // The Vulkan swapchain size is in device pixels and is not a
-    // stable source for sizing the hidden GL widget: resizing a
-    // non-current QStackedWidget page changes the stack's sizeHint,
-    // which feeds back into the window and, in turn, the swapchain
-    // (this produced an oscillating surface size).  Size the hidden
-    // viewer to the visible Vulkan container instead.
-    //
-    // Event positions reach the hidden GL viewer already scaled to
-    // device pixels: EventFilter::trackPointerPosition() runs
-    // InputDevice::toDevicePixelPosition(), which multiplies the
-    // logical Qt position by the widget's device pixel ratio, and
-    // QuarterWidget::resizeEvent() sets the render/event manager
-    // viewport region to dpr * size (device pixels).  The viewport
-    // region must therefore be in the same device-pixel space for
-    // SoRayPickAction's normalized coordinates to match the ray;
-    // using the logical size would shift hover picking and
-    // navigation by the DPI factor on high-density displays.
+    // The hidden GL viewer is the picking/navigation authority, but it is
+    // never shown, so QuarterWidget::resizeEvent() resets its render/event
+    // manager viewport region to the GL widget's own (typically default
+    // 400x400) size whenever the widget is re-laid-out (e.g. a document is
+    // created or opened).  SoRayPickAction's normalized coordinates are
+    // computed from that region, so a stale 400x400 region makes every pick
+    // miss.  The Vulkan surface is the single source of truth, so re-impose
+    // its size here.  Called on every surface size change and on any GL
+    // widget resize (see eventFilter).
+    Q_UNUSED(surfaceSize);
     QWidget* container = _vulkanViewer->getNativeWidget();
     QWidget* glWidget = _viewer->getWidget();
     if (!container || !glWidget) {
@@ -508,6 +496,14 @@ void VulkanViewportAdapter::onSurfaceSizeChanged(const QSize& surfaceSize)
                   glSize[0], glSize[1],
                   glWidget->width(), glWidget->height(), dpr);
 
+    // Event positions reach the hidden GL viewer already scaled to device
+    // pixels: EventFilter::trackPointerPosition() runs
+    // InputDevice::toDevicePixelPosition(), which multiplies the logical Qt
+    // position by the widget's device pixel ratio, and QuarterWidget::
+    // resizeEvent() sets the region to dpr * size.  The viewport region must
+    // therefore be in the same device-pixel space for SoRayPickAction's
+    // normalized coordinates to match the ray; using the logical size would
+    // shift hover picking and navigation by the DPI factor.
     SbViewportRegion vp(static_cast<short>(pw), static_cast<short>(ph));
     _viewer->getSoRenderManager()->setViewportRegion(vp);
     _viewer->getSoEventManager()->setViewportRegion(vp);
@@ -521,6 +517,29 @@ void VulkanViewportAdapter::onSurfaceSizeChanged(const QSize& surfaceSize)
     // (e.g. 1.25) lines and points rendered 1/dpr too thin and, for the
     // NaviCube overlay, its edge/axis strokes and dots drifted off the cube.
     _viewer->getSoRenderManager()->setDevicePixelRatio(static_cast<float>(dpr));
+
+    // Keep the hidden GL widget sized to the visible Vulkan container so its
+    // own resizeEvent computes the same device-pixel region (rather than the
+    // default 400x400).  The swapchain size is NOT used directly: resizing a
+    // non-current QStackedWidget page changes the stack's sizeHint, which
+    // feeds back into the window and, in turn, the swapchain (this produced
+    // an oscillating surface size).  Size the hidden viewer to the container.
+    if (glWidget->sizePolicy()
+        != QSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored)) {
+        glWidget->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+    }
+    if (glWidget->size() != logical) {
+        glWidget->resize(logical);
+    }
+}
+
+void VulkanViewportAdapter::onSurfaceSizeChanged(const QSize& surfaceSize)
+{
+#ifdef FREECAD_USE_VULKAN
+    if (!_vulkanViewer || !_viewer) {
+        return;
+    }
+    applySurfaceViewportToGL(surfaceSize);
 
     // NOTE: Do NOT write the surface aspect into the shared camera's
     // aspectRatio field.  SoOrthographicCamera::getViewVolume() (and
@@ -539,7 +558,9 @@ void VulkanViewportAdapter::onSurfaceSizeChanged(const QSize& surfaceSize)
     // wrong viewport/aspect and framed the camera too close to the
     // scene.  Re-running it here (only on the first stable size)
     // repositions the camera outside the object.
-    if (!_initialVulkanFitDone && pw > 1 && ph > 1) {
+    QWidget* container = _vulkanViewer->getNativeWidget();
+    if (container && container->width() > 1 && container->height() > 1
+        && !_initialVulkanFitDone) {
         _initialVulkanFitDone = true;
         const bool animation = _viewer->isAnimationEnabled();
         if (animation) {
@@ -549,16 +570,6 @@ void VulkanViewportAdapter::onSurfaceSizeChanged(const QSize& surfaceSize)
         if (animation) {
             _viewer->setAnimationEnabled(true);
         }
-    }
-
-    // Prevent the hidden page from affecting the stack's sizeHint so
-    // this does not feed back into the window/swapchain size.
-    if (glWidget->sizePolicy()
-        != QSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored)) {
-        glWidget->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
-    }
-    if (glWidget->size() != logical) {
-        glWidget->resize(logical);
     }
 #else
     Q_UNUSED(surfaceSize);
@@ -608,6 +619,16 @@ bool VulkanViewportAdapter::eventFilter(QObject* watched, QEvent* event)
         auto* widget = qobject_cast<QWidget*>(watched);
         if (widget && _viewer && widget == _viewer->getWidget()) {
             _vulkanViewer->setCursor(widget->cursor());
+        }
+    }
+    // The hidden GL widget's resizeEvent resets its render-manager viewport
+    // region to the GL widget's own size (default 400x400 after a document
+    // re-layout).  Re-impose the surface size so picking/navigation stay
+    // calibrated (see applySurfaceViewportToGL).
+    if (_vulkanViewer && _viewer && event->type() == QEvent::Resize) {
+        auto* widget = qobject_cast<QWidget*>(watched);
+        if (widget && widget == _viewer->getWidget()) {
+            applySurfaceViewportToGL(QSize());
         }
     }
 #endif

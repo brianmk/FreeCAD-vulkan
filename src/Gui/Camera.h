@@ -24,6 +24,7 @@
 #pragma once
 
 #include <Inventor/SbRotation.h>
+#include <Inventor/SbVec3f.h>
 #include <Base/Rotation.h>
 #include <FCGlobal.h>
 
@@ -57,6 +58,16 @@ public:
     static SbRotation isometric();
     static SbRotation dimetric();
     static SbRotation trimetric();
+
+    /// Rotation that maps the canonical basis onto the given orthonormal axes
+    /// (the axes become the columns of the rotation matrix).
+    static SbRotation rotationFromBasis(const SbVec3f& x, const SbVec3f& y, const SbVec3f& z);
+    /// Camera orientation that displays the face whose local axes are (x, z)
+    /// (y is derived as x cross -z), optionally rolled in-plane by rotZ.
+    static SbRotation faceOrientation(SbVec3f x, SbVec3f z, float rotZ = 0.0f);
+    /// The camera orientation turned by the smallest angle that brings its
+    /// +Z axis onto targetZ. targetZ must be a unit vector.
+    static SbRotation alignZAxis(const SbRotation& cameraOrientation, const SbVec3f& targetZ);
 
     static SbRotation rotation(Orientation view);
     /// Return a named orientation, or the fallback orientation when the name is unknown.
