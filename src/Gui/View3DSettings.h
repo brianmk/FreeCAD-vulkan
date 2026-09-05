@@ -22,6 +22,11 @@
 
 #pragma once
 
+#include <functional>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include <Base/Parameter.h>
 #include <QApplication>
 
@@ -56,6 +61,22 @@ private:
     ParameterGrp::handle hLightSourcesGrp;
 
     std::vector<View3DInventorViewer*> _viewers;
+
+    // Data-driven preference table: one entry per handled pref with its
+    // apply-handler.  Built once per instance (handlers capture `this` to reach
+    // the viewer list and the ignore-* flags).  Single source of truth for both
+    // the runtime dispatch (OnChange) and the initial bootstrap (applySettings),
+    // so a new pref is added in exactly one place and the two historic hand
+    // lists can no longer drift apart.
+    struct PrefEntry {
+        const char* name;
+        bool light;                                   // in the LightSources sub-group
+        std::function<void(const ParameterGrp&)> apply;
+    };
+    void ensurePrefTable();
+    std::vector<PrefEntry> m_prefTable;
+    //! Behavior of the background-color catch-all (was the OnChange `else`).
+    void applyBackground(const ParameterGrp& rGrp);
 };
 
 class NaviCubeSettings
