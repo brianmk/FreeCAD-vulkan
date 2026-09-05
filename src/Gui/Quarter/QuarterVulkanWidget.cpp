@@ -2382,4 +2382,9 @@ bool SIM::Coin3D::Quarter::QuarterVulkanWidget::eventFilter
 {
     return QWidget::eventFilter(watched, event);
 }
+
+QWidget * SIM::Coin3D::Quarter::QuarterVulkanWidget::getNativeWidget()
+{
+    return nullptr;
+}
 #endif
