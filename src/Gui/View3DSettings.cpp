@@ -74,99 +74,71 @@ int View3DSettings::stopAnimatingIfDeactivated() const
 
 void View3DSettings::applySettings()
 {
-    // apply the user settings
-    OnChange(*hGrp, "EyeDistance");
-    OnChange(*hGrp, "CornerCoordSystem");
-    OnChange(*hGrp, "CornerCoordSystemSize");
-    OnChange(*hGrp, "AxisLetterColor");
-    OnChange(*hGrp, "ShowAxisCross");
-    OnChange(*hGrp, "ShowGroundPlane");
-    OnChange(*hGrp, "GroundPlaneOpacity");
-    OnChange(*hGrp, "UseNavigationAnimations");
-    OnChange(*hGrp, "UseSpinningAnimations");
-    OnChange(*hGrp, "Gradient");
-    OnChange(*hGrp, "RadialGradient");
-    OnChange(*hGrp, "BackgroundColor");
-    OnChange(*hGrp, "BackgroundColor2");
-    OnChange(*hGrp, "BackgroundColor3");
-    OnChange(*hGrp, "BackgroundColor4");
-    OnChange(*hGrp, "UseBackgroundColorMid");
-    OnChange(*hGrp, "ShowFPS");
-    OnChange(*hGrp, "ShowNaviCube");
-    OnChange(*hGrp, "AxisXColor");
-    OnChange(*hGrp, "AxisYColor");
-    OnChange(*hGrp, "AxisZColor");
-    OnChange(*hGrp, "UseVBO");
-    OnChange(*hGrp, "RenderCache");
-    OnChange(*hGrp, "MaxFrameRate");
-    OnChange(*hGrp, "Orthographic");
-    OnChange(*hGrp, "NavigationStyle");
-    OnChange(*hGrp, "OrbitStyle");
-    OnChange(*hGrp, "Sensitivity");
-    OnChange(*hGrp, "ResetCursorPosition");
-    // Navigation-style sub-settings + selection appearance: handled by the
-    // OnChange dispatch but not bootstrapped for initial state above (only
-    // applied on change).  Keep them here so a view opens matching the saved
-    // prefs rather than the framework default until the user toggles one.
-    OnChange(*hGrp, "InvertZoom");
-    OnChange(*hGrp, "ZoomAtCursor");
-    OnChange(*hGrp, "ZoomStep");
-    OnChange(*hGrp, "RotationMode");
-    OnChange(*hGrp, "EnablePreselection");
-    OnChange(*hGrp, "EnableSelection");
-    OnChange(*hGrp, "HighlightColor");
-    OnChange(*hGrp, "SelectionColor");
-    OnChange(*hGrp, "DimensionsVisible");
-    OnChange(*hGrp, "Dimensions3dVisible");
-    OnChange(*hGrp, "DimensionsDeltaVisible");
-    OnChange(*hGrp, "PickRadius");
-    OnChange(*hGrp, "PickRadiusScale");
-    OnChange(*hGrp, "TransparentObjectRenderType");
-    OnChange(*hGrp, "UseVulkanRenderer");
-    OnChange(*hGrp, "UseVulkanRayTracing");
-    // One representative "Vulkan*" display pref kicks applyVulkanSettings(),
-    // which reads the entire Vulkan display + path-tracing preference set via
-    // VulkanViewSettings::load() -- no need to re-enumerate every key here.
+    // Apply the user settings: dispatch every handled preference so a view
+    // opens matching the saved preferences (not the framework default).  This
+    // iterates the single preference table, so it can never drift from the
+    // runtime dispatch in OnChange().
+    ensurePrefTable();
+    for (const auto & entry : m_prefTable) {
+        const ParameterGrp::handle & group = entry.light ? hLightSourcesGrp : hGrp;
+        OnChange(*group, entry.name);
+    }
+    // The Vulkan display prefs are routed by a "Vulkan*" prefix rule rather
+    // than enumerated in the table; one representative kick loads the whole
+    // Vulkan preference set via applyVulkanSettings().
     OnChange(*hGrp, "VulkanRenderMode");
-    OnChange(*hGrp, "PreselectionMessageRate");
-
-    auto lightSourcesGrp = hGrp->GetGroup("LightSources");
-    OnChange(*lightSourcesGrp, "EnableHeadlight");
-    OnChange(*lightSourcesGrp, "HeadlightColor");
-    OnChange(*lightSourcesGrp, "HeadlightDirection");
-    OnChange(*lightSourcesGrp, "HeadlightIntensity");
-    OnChange(*lightSourcesGrp, "EnableBacklight");
-    OnChange(*lightSourcesGrp, "BacklightColor");
-    OnChange(*lightSourcesGrp, "BacklightDirection");
-    OnChange(*lightSourcesGrp, "BacklightIntensity");
-    OnChange(*lightSourcesGrp, "EnableFillLight");
-    OnChange(*lightSourcesGrp, "FillLightColor");
-    OnChange(*lightSourcesGrp, "FillLightDirection");
-    OnChange(*lightSourcesGrp, "FillLightIntensity");
-    OnChange(*lightSourcesGrp, "AmbientLightColor");
-    OnChange(*lightSourcesGrp, "AmbientLightIntensity");
 }
 
 void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::MessageType Reason)
 {
-    const ParameterGrp& rGrp = static_cast<ParameterGrp&>(rCaller);
-    if (strcmp(Reason, "EnableHeadlight") == 0) {
+    // Vulkan display prefs are a single prefix rule (kept out of the table so
+    // a new "Vulkan*" pref is picked up automatically and needs no table edit).
+    if (VulkanViewSettings::isDisplayPref(Reason)) {
+        for (auto _viewer : _viewers) {
+            _viewer->applyVulkanSettings();
+        }
+        return;
+    }
+    const ParameterGrp& rGrp = static_cast<const ParameterGrp&>(rCaller);
+    ensurePrefTable();
+    for (const auto & entry : m_prefTable) {
+        if (strcmp(entry.name, Reason) == 0) {
+            entry.apply(rGrp);
+            return;
+        }
+    }
+    // Any unrecognized pref in the view group preserves the old catch-all
+    // behavior (apply the background colors).
+    applyBackground(rGrp);
+}
+
+void View3DSettings::ensurePrefTable()
+{
+    if (!m_prefTable.empty()) {
+        return;
+    }
+    auto add = [](std::vector<PrefEntry>& out, const char * name, bool light,
+                  std::function<void(const ParameterGrp&)> fn) {
+        out.push_back(PrefEntry{name, light, std::move(fn)});
+    };
+
+    // ---- Light sources (sub-group) -------------------------------------
+    add(m_prefTable, "EnableHeadlight", true, [this](const ParameterGrp & rGrp) {
         bool enable = rGrp.GetBool("EnableHeadlight", true);
         for (auto _viewer : _viewers) {
             _viewer->setHeadlightEnabled(enable);
         }
-    }
-    else if (strcmp(Reason, "HeadlightColor") == 0) {
-        unsigned long headlight = rGrp.GetUnsigned("HeadlightColor", 0xFFFFFFFF);  // default color
-                                                                                   // (white)
+    });
+    add(m_prefTable, "HeadlightColor", true, [this](const ParameterGrp & rGrp) {
+        unsigned long headlight = rGrp.GetUnsigned("HeadlightColor", 0xFFFFFFFF);
         float transparency;
         SbColor headlightColor;
         headlightColor.setPackedValue((uint32_t)headlight, transparency);
         for (auto _viewer : _viewers) {
             _viewer->getHeadlight()->color.setValue(headlightColor);
         }
-    }
-    else if (strcmp(Reason, "HeadlightDirection") == 0) {
+    });
+    add(m_prefTable, "HeadlightDirection", true, [this](const ParameterGrp & rGrp) {
         try {
             std::string pos = rGrp.GetASCII("HeadlightDirection", defaultHeadLightDirection);
             if (!pos.empty()) {
@@ -179,19 +151,19 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
         catch (const std::exception&) {
             // ignore exception
         }
-    }
-    else if (strcmp(Reason, "HeadlightIntensity") == 0) {
+    });
+    add(m_prefTable, "HeadlightIntensity", true, [this](const ParameterGrp & rGrp) {
         long value = rGrp.GetInt("HeadlightIntensity", 90);
         for (auto _viewer : _viewers) {
             _viewer->getHeadlight()->intensity.setValue(Base::fromPercent(value));
         }
-    }
-    else if (strcmp(Reason, "EnableBacklight") == 0) {
+    });
+    add(m_prefTable, "EnableBacklight", true, [this](const ParameterGrp & rGrp) {
         for (auto _viewer : _viewers) {
             _viewer->setBacklightEnabled(rGrp.GetBool("EnableBacklight", true));
         }
-    }
-    else if (strcmp(Reason, "BacklightColor") == 0) {
+    });
+    add(m_prefTable, "BacklightColor", true, [this](const ParameterGrp & rGrp) {
         unsigned long backlight = rGrp.GetUnsigned("BacklightColor", 0xF5F5EEFF);
         float transparency;
         SbColor backlightColor;
@@ -199,8 +171,8 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
         for (auto _viewer : _viewers) {
             _viewer->getBacklight()->color.setValue(backlightColor);
         }
-    }
-    else if (strcmp(Reason, "BacklightDirection") == 0) {
+    });
+    add(m_prefTable, "BacklightDirection", true, [this](const ParameterGrp & rGrp) {
         try {
             std::string pos = rGrp.GetASCII("BacklightDirection", defaultBackLightDirection);
             if (!pos.empty()) {
@@ -213,29 +185,28 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
         catch (const std::exception&) {
             // ignore exception
         }
-    }
-    else if (strcmp(Reason, "BacklightIntensity") == 0) {
+    });
+    add(m_prefTable, "BacklightIntensity", true, [this](const ParameterGrp & rGrp) {
         long value = rGrp.GetInt("BacklightIntensity", 60);
         for (auto _viewer : _viewers) {
             _viewer->getBacklight()->intensity.setValue(Base::fromPercent(value));
         }
-    }
-    else if (strcmp(Reason, "EnableFillLight") == 0) {
+    });
+    add(m_prefTable, "EnableFillLight", true, [this](const ParameterGrp & rGrp) {
         for (auto _viewer : _viewers) {
             _viewer->setFillLightEnabled(rGrp.GetBool("EnableFillLight", true));
         }
-    }
-    else if (strcmp(Reason, "FillLightColor") == 0) {
-        unsigned long backlight = rGrp.GetUnsigned("FillLightColor", 0xE6FAFFFF);  // default color
-                                                                                   // (white)
+    });
+    add(m_prefTable, "FillLightColor", true, [this](const ParameterGrp & rGrp) {
+        unsigned long fill = rGrp.GetUnsigned("FillLightColor", 0xE6FAFFFF);
         float transparency;
-        SbColor backlightColor;
-        backlightColor.setPackedValue((uint32_t)backlight, transparency);
+        SbColor fillColor;
+        fillColor.setPackedValue((uint32_t)fill, transparency);
         for (auto _viewer : _viewers) {
-            _viewer->getFillLight()->color.setValue(backlightColor);
+            _viewer->getFillLight()->color.setValue(fillColor);
         }
-    }
-    else if (strcmp(Reason, "FillLightDirection") == 0) {
+    });
+    add(m_prefTable, "FillLightDirection", true, [this](const ParameterGrp & rGrp) {
         try {
             std::string pos = rGrp.GetASCII("FillLightDirection", defaultFillLightDirection);
             if (!pos.empty()) {
@@ -248,61 +219,62 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
         catch (const std::exception&) {
             // ignore exception
         }
-    }
-    else if (strcmp(Reason, "FillLightIntensity") == 0) {
+    });
+    add(m_prefTable, "FillLightIntensity", true, [this](const ParameterGrp & rGrp) {
         long value = rGrp.GetInt("FillLightIntensity", 40);
         for (auto _viewer : _viewers) {
             _viewer->getFillLight()->intensity.setValue(Base::fromPercent(value));
         }
-    }
-    else if (strcmp(Reason, "AmbientLightColor") == 0) {
+    });
+    add(m_prefTable, "AmbientLightColor", true, [this](const ParameterGrp & rGrp) {
         unsigned long color = rGrp.GetUnsigned("AmbientLightColor", 0xFFFFFFFF);
         float transparency;
-        SbColor backlightColor;
-        backlightColor.setPackedValue((uint32_t)color, transparency);
+        SbColor col;
+        col.setPackedValue((uint32_t)color, transparency);
         for (auto _viewer : _viewers) {
-            _viewer->getEnvironment()->ambientColor.setValue(backlightColor);
+            _viewer->getEnvironment()->ambientColor.setValue(col);
         }
-    }
-    else if (strcmp(Reason, "AmbientLightIntensity") == 0) {
+    });
+    add(m_prefTable, "AmbientLightIntensity", true, [this](const ParameterGrp & rGrp) {
         long value = rGrp.GetInt("AmbientLightIntensity", 20);
         for (auto _viewer : _viewers) {
             _viewer->getEnvironment()->ambientIntensity.setValue(Base::fromPercent(value));
         }
-    }
-    else if (strcmp(Reason, "EnablePreselection") == 0) {
-        const ParameterGrp& rclGrp = ((ParameterGrp&)rCaller);
-        SoFCEnablePreselectionAction cAct(rclGrp.GetBool("EnablePreselection", true));
+    });
+
+    // ---- Selection ----------------------------------------------------
+    add(m_prefTable, "EnablePreselection", false, [this](const ParameterGrp & rGrp) {
+        SoFCEnablePreselectionAction cAct(rGrp.GetBool("EnablePreselection", true));
         for (auto _viewer : _viewers) {
             cAct.apply(_viewer->getSceneGraph());
         }
-    }
-    else if (strcmp(Reason, "EnableSelection") == 0) {
-        const ParameterGrp& rclGrp = ((ParameterGrp&)rCaller);
-        SoFCEnableSelectionAction cAct(rclGrp.GetBool("EnableSelection", true));
+    });
+    add(m_prefTable, "EnableSelection", false, [this](const ParameterGrp & rGrp) {
+        SoFCEnableSelectionAction cAct(rGrp.GetBool("EnableSelection", true));
         for (auto _viewer : _viewers) {
             cAct.apply(_viewer->getSceneGraph());
         }
-    }
-    else if (strcmp(Reason, "HighlightColor") == 0) {
+    });
+    add(m_prefTable, "HighlightColor", false, [this](const ParameterGrp &) {
         SoSFColor col;
         col.setValue(SelectionColors::defaultHighlightColor());
         SoFCHighlightColorAction cAct(col);
         for (auto _viewer : _viewers) {
             cAct.apply(_viewer->getSceneGraph());
         }
-    }
-    else if (strcmp(Reason, "SelectionColor") == 0) {
+    });
+    add(m_prefTable, "SelectionColor", false, [this](const ParameterGrp &) {
         SoSFColor col;
         col.setValue(SelectionColors::defaultSelectionColor());
         SoFCSelectionColorAction cAct(col);
         for (auto _viewer : _viewers) {
             cAct.apply(_viewer->getSceneGraph());
         }
-    }
-    else if (strcmp(Reason, "NavigationStyle") == 0) {
-        if (!ignoreNavigationStyle) {
-            // check whether the simple or the full mouse model is used
+    });
+
+    // ---- Navigation ----------------------------------------------------
+    add(m_prefTable, "NavigationStyle", false, [this](const ParameterGrp & rGrp) {
+        if (!this->ignoreNavigationStyle) {
             std::string model = rGrp.GetASCII(
                 "NavigationStyle",
                 std::string {CADNavigationStyle::getClassTypeId().getName()}.c_str()
@@ -312,44 +284,44 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
                 _viewer->setNavigationType(type);
             }
         }
-    }
-    else if (strcmp(Reason, "OrbitStyle") == 0) {
+    });
+    add(m_prefTable, "OrbitStyle", false, [this](const ParameterGrp & rGrp) {
         int style = rGrp.GetInt("OrbitStyle", 4);
         for (auto _viewer : _viewers) {
             _viewer->navigationStyle()->setOrbitStyle(NavigationStyle::OrbitStyle(style));
         }
-    }
-    else if (strcmp(Reason, "Sensitivity") == 0) {
+    });
+    add(m_prefTable, "Sensitivity", false, [this](const ParameterGrp & rGrp) {
         float val = rGrp.GetFloat("Sensitivity", 2.0f);
         for (auto _viewer : _viewers) {
             _viewer->navigationStyle()->setSensitivity(val);
         }
-    }
-    else if (strcmp(Reason, "ResetCursorPosition") == 0) {
+    });
+    add(m_prefTable, "ResetCursorPosition", false, [this](const ParameterGrp & rGrp) {
         bool on = rGrp.GetBool("ResetCursorPosition", false);
         for (auto _viewer : _viewers) {
             _viewer->navigationStyle()->setResetCursorPosition(on);
         }
-    }
-    else if (strcmp(Reason, "InvertZoom") == 0) {
+    });
+    add(m_prefTable, "InvertZoom", false, [this](const ParameterGrp & rGrp) {
         bool on = rGrp.GetBool("InvertZoom", true);
         for (auto _viewer : _viewers) {
             _viewer->navigationStyle()->setZoomInverted(on);
         }
-    }
-    else if (strcmp(Reason, "ZoomAtCursor") == 0) {
+    });
+    add(m_prefTable, "ZoomAtCursor", false, [this](const ParameterGrp & rGrp) {
         bool on = rGrp.GetBool("ZoomAtCursor", true);
         for (auto _viewer : _viewers) {
             _viewer->navigationStyle()->setZoomAtCursor(on);
         }
-    }
-    else if (strcmp(Reason, "ZoomStep") == 0) {
+    });
+    add(m_prefTable, "ZoomStep", false, [this](const ParameterGrp & rGrp) {
         float val = rGrp.GetFloat("ZoomStep", 0.0f);
         for (auto _viewer : _viewers) {
             _viewer->navigationStyle()->setZoomStep(val);
         }
-    }
-    else if (strcmp(Reason, "RotationMode") == 0) {
+    });
+    add(m_prefTable, "RotationMode", false, [this](const ParameterGrp & rGrp) {
         long mode = rGrp.GetInt("RotationMode", 1);
         for (auto _viewer : _viewers) {
             if (mode == 0) {
@@ -370,58 +342,59 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
                 );
             }
         }
-    }
-    else if (strcmp(Reason, "EyeDistance") == 0) {
+    });
+
+    // ---- Main view ------------------------------------------------------
+    add(m_prefTable, "EyeDistance", false, [this](const ParameterGrp & rGrp) {
         for (auto _viewer : _viewers) {
             _viewer->getSoRenderManager()->setStereoOffset(rGrp.GetFloat("EyeDistance", 5.0));
         }
-    }
-    else if (strcmp(Reason, "CornerCoordSystem") == 0) {
+    });
+    add(m_prefTable, "CornerCoordSystem", false, [this](const ParameterGrp & rGrp) {
         for (auto _viewer : _viewers) {
             _viewer->setFeedbackVisibility(rGrp.GetBool("CornerCoordSystem", true));
         }
-    }
-    else if (strcmp(Reason, "CornerCoordSystemSize") == 0) {
+    });
+    add(m_prefTable, "CornerCoordSystemSize", false, [this](const ParameterGrp & rGrp) {
         for (auto _viewer : _viewers) {
             _viewer->setFeedbackSize(rGrp.GetInt("CornerCoordSystemSize", 10));
         }
-    }
-    else if (strcmp(Reason, "AxisLetterColor") == 0) {
-        unsigned long backlight = rGrp.GetUnsigned("AxisLetterColor", 0x00000000);  // default color
-                                                                                    // (black)
+    });
+    add(m_prefTable, "AxisLetterColor", false, [this](const ParameterGrp & rGrp) {
+        unsigned long color = rGrp.GetUnsigned("AxisLetterColor", 0x00000000);
         float transparency;
-        SbColor color;
-        color.setPackedValue((uint32_t)backlight, transparency);
+        SbColor col;
+        col.setPackedValue((uint32_t)color, transparency);
         for (auto _viewer : _viewers) {
-            _viewer->setAxisLetterColor(color);
+            _viewer->setAxisLetterColor(col);
         }
-    }
-    else if (strcmp(Reason, "ShowAxisCross") == 0) {
+    });
+    add(m_prefTable, "ShowAxisCross", false, [this](const ParameterGrp & rGrp) {
         for (auto _viewer : _viewers) {
             _viewer->setAxisCross(rGrp.GetBool("ShowAxisCross", false));
         }
-    }
-    else if (strcmp(Reason, "ShowGroundPlane") == 0) {
+    });
+    add(m_prefTable, "ShowGroundPlane", false, [this](const ParameterGrp & rGrp) {
         for (auto _viewer : _viewers) {
             _viewer->setGroundPlane(rGrp.GetBool("ShowGroundPlane", false));
         }
-    }
-    else if (strcmp(Reason, "GroundPlaneOpacity") == 0) {
+    });
+    add(m_prefTable, "GroundPlaneOpacity", false, [this](const ParameterGrp & rGrp) {
         for (auto _viewer : _viewers) {
             _viewer->setGroundPlaneOpacity(static_cast<float>(rGrp.GetFloat("GroundPlaneOpacity", 0.15)));
         }
-    }
-    else if (strcmp(Reason, "UseNavigationAnimations") == 0) {
+    });
+    add(m_prefTable, "UseNavigationAnimations", false, [this](const ParameterGrp & rGrp) {
         for (auto _viewer : _viewers) {
             _viewer->setAnimationEnabled(rGrp.GetBool("UseNavigationAnimations", true));
         }
-    }
-    else if (strcmp(Reason, "UseSpinningAnimations") == 0) {
+    });
+    add(m_prefTable, "UseSpinningAnimations", false, [this](const ParameterGrp & rGrp) {
         for (auto _viewer : _viewers) {
             _viewer->setSpinningAnimationEnabled(rGrp.GetBool("UseSpinningAnimations", false));
         }
-    }
-    else if (strcmp(Reason, "Gradient") == 0 || strcmp(Reason, "RadialGradient") == 0) {
+    });
+    add(m_prefTable, "Gradient", false, [this](const ParameterGrp & rGrp) {
         View3DInventorViewer::Background background = View3DInventorViewer::Background::NoGradient;
         if (rGrp.GetBool("Gradient", true)) {
             background = View3DInventorViewer::Background::LinearGradient;
@@ -432,49 +405,65 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
         for (auto _viewer : _viewers) {
             _viewer->setGradientBackground(background);
         }
-    }
-    else if (strcmp(Reason, "ShowFPS") == 0) {
+    });
+    add(m_prefTable, "RadialGradient", false, [this](const ParameterGrp & rGrp) {
+        View3DInventorViewer::Background background = View3DInventorViewer::Background::NoGradient;
+        if (rGrp.GetBool("Gradient", true)) {
+            background = View3DInventorViewer::Background::LinearGradient;
+        }
+        else if (rGrp.GetBool("RadialGradient", false)) {
+            background = View3DInventorViewer::Background::RadialGradient;
+        }
+        for (auto _viewer : _viewers) {
+            _viewer->setGradientBackground(background);
+        }
+    });
+    add(m_prefTable, "ShowFPS", false, [this](const ParameterGrp & rGrp) {
         for (auto _viewer : _viewers) {
             _viewer->setEnabledFPSCounter(rGrp.GetBool("ShowFPS", false));
         }
-    }
-    else if (strcmp(Reason, "ShowNaviCube") == 0) {
+    });
+    add(m_prefTable, "ShowNaviCube", false, [this](const ParameterGrp & rGrp) {
         for (auto _viewer : _viewers) {
             _viewer->setEnabledNaviCube(rGrp.GetBool("ShowNaviCube", true));
         }
-    }
-    else if (
-        strcmp(Reason, "AxisXColor") == 0 || strcmp(Reason, "AxisYColor") == 0
-        || strcmp(Reason, "AxisZColor") == 0
-    ) {
+    });
+    add(m_prefTable, "AxisXColor", false, [this](const ParameterGrp &) {
         for (auto _viewer : _viewers) {
             _viewer->updateColors();
         }
-    }
-    else if (strcmp(Reason, "UseVBO") == 0) {
-        if (!ignoreVBO) {
-            // Assume no value means "on" as Coin only disables
-            // VBOs for some (very old) drivers and hardware.
+    });
+    add(m_prefTable, "AxisYColor", false, [this](const ParameterGrp &) {
+        for (auto _viewer : _viewers) {
+            _viewer->updateColors();
+        }
+    });
+    add(m_prefTable, "AxisZColor", false, [this](const ParameterGrp &) {
+        for (auto _viewer : _viewers) {
+            _viewer->updateColors();
+        }
+    });
+    add(m_prefTable, "UseVBO", false, [this](const ParameterGrp & rGrp) {
+        if (!this->ignoreVBO) {
             const auto useVbo = rGrp.GetBool("UseVBO", true);
             for (auto _viewer : _viewers) {
                 _viewer->setEnabledVBO(useVbo);
             }
         }
-    }
-    else if (strcmp(Reason, "RenderCache") == 0) {
-        if (!ignoreRenderCache) {
+    });
+    add(m_prefTable, "RenderCache", false, [this](const ParameterGrp & rGrp) {
+        if (!this->ignoreRenderCache) {
             for (auto _viewer : _viewers) {
                 _viewer->setRenderCache(rGrp.GetInt("RenderCache", 0));
             }
         }
-    }
-    else if (strcmp(Reason, "MaxFrameRate") == 0) {
+    });
+    add(m_prefTable, "MaxFrameRate", false, [this](const ParameterGrp & rGrp) {
         for (auto _viewer : _viewers) {
             _viewer->setMaxFrameRate(static_cast<int>(rGrp.GetInt("MaxFrameRate", -1)));
         }
-    }
-    else if (strcmp(Reason, "Orthographic") == 0) {
-        // check whether a perspective or orthogrphic camera should be set
+    });
+    add(m_prefTable, "Orthographic", false, [this](const ParameterGrp & rGrp) {
         if (rGrp.GetBool("Orthographic", true)) {
             for (auto _viewer : _viewers) {
                 _viewer->setCameraType(SoOrthographicCamera::getClassTypeId());
@@ -485,9 +474,9 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
                 _viewer->setCameraType(SoPerspectiveCamera::getClassTypeId());
             }
         }
-    }
-    else if (strcmp(Reason, "DimensionsVisible") == 0) {
-        if (!ignoreDimensions) {
+    });
+    add(m_prefTable, "DimensionsVisible", false, [this](const ParameterGrp & rGrp) {
+        if (!this->ignoreDimensions) {
             if (rGrp.GetBool("DimensionsVisible", true)) {
                 for (auto _viewer : _viewers) {
                     _viewer->turnAllDimensionsOn();
@@ -499,9 +488,9 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
                 }
             }
         }
-    }
-    else if (strcmp(Reason, "Dimensions3dVisible") == 0) {
-        if (!ignoreDimensions) {
+    });
+    add(m_prefTable, "Dimensions3dVisible", false, [this](const ParameterGrp & rGrp) {
+        if (!this->ignoreDimensions) {
             if (rGrp.GetBool("Dimensions3dVisible", true)) {
                 for (auto _viewer : _viewers) {
                     _viewer->turn3dDimensionsOn();
@@ -513,9 +502,9 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
                 }
             }
         }
-    }
-    else if (strcmp(Reason, "DimensionsDeltaVisible") == 0) {
-        if (!ignoreDimensions) {
+    });
+    add(m_prefTable, "DimensionsDeltaVisible", false, [this](const ParameterGrp & rGrp) {
+        if (!this->ignoreDimensions) {
             if (rGrp.GetBool("DimensionsDeltaVisible", true)) {
                 for (auto _viewer : _viewers) {
                     _viewer->turnDeltaDimensionsOn();
@@ -527,19 +516,19 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
                 }
             }
         }
-    }
-    else if (strcmp(Reason, "PickRadius") == 0) {
+    });
+    add(m_prefTable, "PickRadius", false, [this](const ParameterGrp & rGrp) {
         for (auto _viewer : _viewers) {
             _viewer->setPickRadius(rGrp.GetFloat("PickRadius", 8.0f));
         }
-    }
-    else if (strcmp(Reason, "PickRadiusScale") == 0) {
+    });
+    add(m_prefTable, "PickRadiusScale", false, [this](const ParameterGrp & rGrp) {
         for (auto _viewer : _viewers) {
             _viewer->setPickRadiusScale(rGrp.GetFloat("PickRadiusScale", 1.0f));
         }
-    }
-    else if (strcmp(Reason, "TransparentObjectRenderType") == 0) {
-        if (!ignoreTransparent) {
+    });
+    add(m_prefTable, "TransparentObjectRenderType", false, [this](const ParameterGrp & rGrp) {
+        if (!this->ignoreTransparent) {
             long renderType = rGrp.GetInt("TransparentObjectRenderType", 0);
             if (renderType == 0) {
                 for (auto _viewer : _viewers) {
@@ -556,63 +545,61 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
                 }
             }
         }
-    }
-    else if (VulkanViewSettings::isDisplayPref(Reason)) {
-        // Vulkan-only display options are owned by the viewers; each viewer
-        // reloads them from the preferences and notifies its Vulkan viewport.
-        // A single "Vulkan*" prefix rule covers every display/tuning pref (and
-        // any added later), so this list cannot drift from what
-        // applyVulkanSettings() actually reads.
-        for (auto _viewer : _viewers) {
-            _viewer->applyVulkanSettings();
+    });
+
+    // ---- No-op backend-choice / throttle keys (kept so the dispatch table is
+    // ---- exhaustive; the old if/else ignored them) ----------------------
+    add(m_prefTable, "UseVulkanRenderer", false, [](const ParameterGrp &) {});
+    add(m_prefTable, "UseVulkanRayTracing", false, [](const ParameterGrp &) {});
+    add(m_prefTable, "PreselectionMessageRate", false, [](const ParameterGrp &) {});
+
+    // ---- Background colors (the old OnChange `else` catch-all) ----------
+    add(m_prefTable, "BackgroundColor", false,
+        [this](const ParameterGrp & rGrp) { this->applyBackground(rGrp); });
+    add(m_prefTable, "BackgroundColor2", false,
+        [this](const ParameterGrp & rGrp) { this->applyBackground(rGrp); });
+    add(m_prefTable, "BackgroundColor3", false,
+        [this](const ParameterGrp & rGrp) { this->applyBackground(rGrp); });
+    add(m_prefTable, "BackgroundColor4", false,
+        [this](const ParameterGrp & rGrp) { this->applyBackground(rGrp); });
+    add(m_prefTable, "UseBackgroundColorMid", false,
+        [this](const ParameterGrp & rGrp) { this->applyBackground(rGrp); });
+}
+
+void View3DSettings::applyBackground(const ParameterGrp& rGrp)
+{
+    unsigned long col1 = rGrp.GetUnsigned("BackgroundColor", 3940932863UL);
+    unsigned long col2 = rGrp.GetUnsigned("BackgroundColor2", 859006463UL);
+    unsigned long col3 = rGrp.GetUnsigned("BackgroundColor3", 2880160255UL);
+    unsigned long col4 = rGrp.GetUnsigned("BackgroundColor4", 1869583359UL);
+    float r1, g1, b1, r2, g2, b2, r3, g3, b3, r4, g4, b4;
+    r1 = ((col1 >> 24) & 0xff) / 255.0;
+    g1 = ((col1 >> 16) & 0xff) / 255.0;
+    b1 = ((col1 >> 8) & 0xff) / 255.0;
+    r2 = ((col2 >> 24) & 0xff) / 255.0;
+    g2 = ((col2 >> 16) & 0xff) / 255.0;
+    b2 = ((col2 >> 8) & 0xff) / 255.0;
+    r3 = ((col3 >> 24) & 0xff) / 255.0;
+    g3 = ((col3 >> 16) & 0xff) / 255.0;
+    b3 = ((col3 >> 8) & 0xff) / 255.0;
+    r4 = ((col4 >> 24) & 0xff) / 255.0;
+    g4 = ((col4 >> 16) & 0xff) / 255.0;
+    b4 = ((col4 >> 8) & 0xff) / 255.0;
+    for (auto _viewer : _viewers) {
+        _viewer->setBackgroundColor(QColor::fromRgbF(r1, g1, b1));
+        if (!rGrp.GetBool("UseBackgroundColorMid", false)) {
+            _viewer->setGradientBackgroundColor(SbColor(r2, g2, b2), SbColor(r3, g3, b3));
         }
-    }
-    else if (strcmp(Reason, "UseVulkanRenderer") == 0
-             || strcmp(Reason, "UseVulkanRayTracing") == 0) {
-        // The renderer backend is chosen when a view is created; existing
-        // views keep their backend until recreated.  Nothing to apply here.
-    }
-    else if (strcmp(Reason, "PreselectionMessageRate") == 0) {
-        // Consumed live by printPreselectionInfo()'s throttle; no
-        // per-viewer state to push.  Listed so it does not fall through to
-        // the background-color catch-all below.
-    }
-    else {
-        unsigned long col1 = rGrp.GetUnsigned("BackgroundColor", 3940932863UL);
-        unsigned long col2 = rGrp.GetUnsigned("BackgroundColor2", 859006463UL);   // default color
-                                                                                  // (dark blue)
-        unsigned long col3 = rGrp.GetUnsigned("BackgroundColor3", 2880160255UL);  // default color
-                                                                                  // (blue/grey)
-        unsigned long col4 = rGrp.GetUnsigned("BackgroundColor4", 1869583359UL);  // default color
-                                                                                  // (blue/grey)
-        float r1, g1, b1, r2, g2, b2, r3, g3, b3, r4, g4, b4;
-        r1 = ((col1 >> 24) & 0xff) / 255.0;
-        g1 = ((col1 >> 16) & 0xff) / 255.0;
-        b1 = ((col1 >> 8) & 0xff) / 255.0;
-        r2 = ((col2 >> 24) & 0xff) / 255.0;
-        g2 = ((col2 >> 16) & 0xff) / 255.0;
-        b2 = ((col2 >> 8) & 0xff) / 255.0;
-        r3 = ((col3 >> 24) & 0xff) / 255.0;
-        g3 = ((col3 >> 16) & 0xff) / 255.0;
-        b3 = ((col3 >> 8) & 0xff) / 255.0;
-        r4 = ((col4 >> 24) & 0xff) / 255.0;
-        g4 = ((col4 >> 16) & 0xff) / 255.0;
-        b4 = ((col4 >> 8) & 0xff) / 255.0;
-        for (auto _viewer : _viewers) {
-            _viewer->setBackgroundColor(QColor::fromRgbF(r1, g1, b1));
-            if (!rGrp.GetBool("UseBackgroundColorMid", false)) {
-                _viewer->setGradientBackgroundColor(SbColor(r2, g2, b2), SbColor(r3, g3, b3));
-            }
-            else {
-                _viewer->setGradientBackgroundColor(
-                    SbColor(r2, g2, b2),
-                    SbColor(r3, g3, b3),
-                    SbColor(r4, g4, b4)
-                );
-            }
+        else {
+            _viewer->setGradientBackgroundColor(
+                SbColor(r2, g2, b2),
+                SbColor(r3, g3, b3),
+                SbColor(r4, g4, b4)
+            );
         }
     }
 }
+
 
 // ----------------------------------------------------------------------------
 
