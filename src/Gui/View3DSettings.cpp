@@ -551,6 +551,8 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
     else if (strcmp(Reason, "VulkanShowEdges") == 0
              || strcmp(Reason, "VulkanShowPoints") == 0
              || strcmp(Reason, "VulkanEdgeColor") == 0
+             || strcmp(Reason, "VulkanRenderMode") == 0
+             || strcmp(Reason, "VulkanEnvironmentMap") == 0
              || strcmp(Reason, "VulkanPathTracing") == 0
              || strcmp(Reason, "VulkanPathTracingBounces") == 0
              || strcmp(Reason, "VulkanPathTracingSettle") == 0
