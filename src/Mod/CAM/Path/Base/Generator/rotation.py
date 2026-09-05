@@ -483,17 +483,6 @@ def _get_relangle_params(rotation_vector: FreeCAD.Vector) -> Tuple[FreeCAD.Vecto
         return FreeCAD.Vector(0, 0, 1), rotation_vector.normalize()
 
 
-def _solve_generic_2axis(
-    chain: List[RotaryAxis], desired_axis: FreeCAD.Vector, current_state: Dict[str, float]
-) -> List[Dict[str, float]]:
-    """Fallback generic 2-axis solve for non-standard configurations."""
-    axis1, axis2 = chain
-
-    # For now, return empty - will be implemented with numerical solver
-    Path.Log.info(f"Generic 2-axis solve not implemented for {axis1.name}-{axis2.name}")
-    return []
-
-
 def _solve_single_axis(
     chain: List[RotaryAxis], desired_axis: FreeCAD.Vector, current_state: Dict[str, float]
 ) -> List[Dict[str, float]]:

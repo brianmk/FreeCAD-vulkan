@@ -36,7 +36,6 @@
 
 
 using namespace MeshGui;
-using Mesh::Feature;
 
 PROPERTY_SOURCE(MeshGui::ViewProviderMeshTransform, MeshGui::ViewProviderMesh)
 

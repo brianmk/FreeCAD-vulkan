@@ -211,7 +211,6 @@ FC_LOG_LEVEL_INIT("App", true, true)
 
 using namespace App;
 namespace sp = std::placeholders;
-namespace fs = std::filesystem;
 
 namespace
 {

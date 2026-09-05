@@ -46,7 +46,6 @@
 
 Q_DECLARE_METATYPE(Materials::MaterialFilterPy*)
 
-using Base::Console;
 using namespace MatGui;
 
 /** Constructs a Material tree widget.

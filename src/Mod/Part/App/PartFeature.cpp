@@ -85,7 +85,6 @@
 #include "Tools.h"
 
 using namespace Part;
-namespace sp = std::placeholders;
 
 FC_LOG_LEVEL_INIT("Part", true, true)
 

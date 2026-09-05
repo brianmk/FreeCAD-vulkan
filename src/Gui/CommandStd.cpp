@@ -57,10 +57,7 @@
 #include "App/Annotation.h"
 
 
-using Base::Console;
-using Base::Sequencer;
 using namespace Gui;
-namespace sp = std::placeholders;
 
 
 //===========================================================================

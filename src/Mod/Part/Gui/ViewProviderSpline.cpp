@@ -52,7 +52,6 @@
 
 
 using namespace PartGui;
-namespace sp = std::placeholders;
 
 
 PROPERTY_SOURCE(PartGui::ViewProviderSpline, PartGui::ViewProviderPartExt)

@@ -57,7 +57,6 @@
 
 
 using namespace Inspection;
-namespace sp = std::placeholders;
 
 InspectActualMesh::InspectActualMesh(const Mesh::MeshObject& rMesh)
     : _mesh(rMesh.getKernel())

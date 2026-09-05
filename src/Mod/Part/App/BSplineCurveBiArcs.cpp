@@ -41,7 +41,6 @@
 
 
 using Part::BSplineCurveBiArcs;
-using Part::GeomBSplineCurve;
 using Part::Geometry;
 
 // Algorithm taken from HeeksCAD

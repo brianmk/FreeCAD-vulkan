@@ -135,33 +135,6 @@ def _get_hint_xyz_constrain():
     return []
 
 
-def _get_hint_relative():
-    pattern = re.compile("[A-Z]")
-    shortcut = _get_hint_in_cmd_shortcut("inCommandShortcutRelative")
-    if pattern.fullmatch(shortcut):
-        key = getattr(Gui.UserInput, "Key" + shortcut)
-        return [Gui.InputHint(translate("draft", "%1 toggle relative"), key)]
-    return []
-
-
-def _get_hint_global():
-    pattern = re.compile("[A-Z]")
-    shortcut = _get_hint_in_cmd_shortcut("inCommandShortcutGlobal")
-    if pattern.fullmatch(shortcut):
-        key = getattr(Gui.UserInput, "Key" + shortcut)
-        return [Gui.InputHint(translate("draft", "%1 toggle global"), key)]
-    return []
-
-
-def _get_hint_continue():
-    pattern = re.compile("[A-Z]")
-    shortcut = _get_hint_in_cmd_shortcut("inCommandShortcutContinue")
-    if pattern.fullmatch(shortcut):
-        key = getattr(Gui.UserInput, "Key" + shortcut)
-        return [Gui.InputHint(translate("draft", "%1 toggle continue"), key)]
-    return []
-
-
 def _get_hint_select_edge():
     mod_key = _HINT_MOD_KEYS[params.get_param("modalt")]
     pattern = re.compile("[A-Z]")
