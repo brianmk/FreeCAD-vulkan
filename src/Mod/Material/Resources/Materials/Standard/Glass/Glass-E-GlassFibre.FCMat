@@ -18,3 +18,12 @@ Models:
   Costs:
     UUID: '881df808-8726-4c2e-be38-688bb6cce466'
     ProductURL: "https://en.wikipedia.org/wiki/Glass_fiber"
+AppearanceModels:
+  Basic Rendering:
+    UUID: "f006c7e4-35b7-43d5-bbf9-c5d572309e6e"
+    AmbientColor: "(0.93, 0.94, 0.95, 1)"
+    DiffuseColor: "(0.88, 0.91, 0.93, 1)"
+    EmissiveColor: "(0, 0, 0, 1)"
+    Shininess: "0.4"
+    SpecularColor: "(1, 1, 1, 1)"
+    Transparency: "0.15"

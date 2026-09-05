@@ -12,11 +12,18 @@
 
 #include <Inventor/SbColor.h>
 #include <Inventor/SbColor4f.h>
+#include <Inventor/SbVec3f.h>
 #include <Inventor/SbViewportRegion.h>
 #include <Inventor/SoEventManager.h>
+#include <Inventor/actions/SoSearchAction.h>
 #include <Inventor/nodes/SoAnnotation.h>
 #include <Inventor/nodes/SoCamera.h>
+#include <Inventor/nodes/SoDirectionalLight.h>
+#include <Inventor/nodes/SoEnvironment.h>
+#include <Inventor/nodes/SoPointLight.h>
+#include <Inventor/nodes/SoSpotLight.h>
 #include <Inventor/SoRenderManager.h>
+#include <Inventor/rendering/SoRenderIR.h>
 #include <Inventor/sensors/SoNodeSensor.h>
 #include <Inventor/sensors/SoSensor.h>
 
@@ -217,44 +224,60 @@ void VulkanViewportAdapter::pushSettings()
     // persisted preferences asked for them -- the mode is the authority and
     // this gate keeps edges/path-tracing from leaking back into Interactive.
     const bool raster = settings.rasterOnly();
-    if (Base::envFlagEnabled("FC_VULKAN_BACKEND_DEBUG")) {
-        const bool effEdges = raster ? false : settings.showEdges;
-        const bool effPoints = raster ? false : settings.showPoints;
-        Base::Console().message("[VK-SET] pushSettings raster=%d edges=%d points=%d "
-                                "edgeColor=(%.2f,%.2f,%.2f,%.2f) pt=%d "
-                                "bounces=%d settle=%d "
-                                "(prefEdges=%d prefPoints=%d)\n",
-                                raster ? 1 : 0, effEdges ? 1 : 0,
-                                effPoints ? 1 : 0,
-                                settings.edgeColor[0], settings.edgeColor[1],
-                                settings.edgeColor[2], settings.edgeColor[3],
-                                !raster ? 1 : 0,
-                                settings.pathTracingBounces,
-                                settings.pathTracingSettleFrames,
-                                settings.showEdges ? 1 : 0,
-                                settings.showPoints ? 1 : 0);
-    }
-    _vulkanViewer->setWireframeOverlay(raster ? false : settings.showEdges);
-    _vulkanViewer->setPointsOverlay(raster ? false : settings.showPoints);
-    _vulkanViewer->setEdgeColor(settings.edgeColor);
-    // Cubemap environment preset (from the canonical settings struct).
-    _vulkanViewer->setEnvMap(settings.envMap);
 
-    // Path tracing toggle + tuning.  Enable only in a ray-traced mode; the
-    // start latch (kicking off a progressive render) is raised by the mode
-    // switch, not here -- camera moves reset to the live preview until the
-    // camera settles, then the accumulation auto-restarts.
-    _vulkanViewer->setPathTracingEnabled(!raster);
-    _vulkanViewer->setPathTracingBounces(settings.pathTracingBounces);
-    _vulkanViewer->setPathTracingSettleFrames(settings.pathTracingSettleFrames);
-    _vulkanViewer->setPathTracingMaxSamples(settings.pathTracingMaxSamples);
-    // Denoising is required for path tracing and is enabled automatically by
-    // the renderer; only the denoiser filter is selectable here.
-    if (!settings.pathTracingDenoiser.empty()) {
-        _vulkanViewer->setPathTracingDenoiser(settings.pathTracingDenoiser);
+    // Memoised push: the preferences signal that drives pushSettings() fires
+    // repeatedly with identical values (applyVulkanSettings() re-emits
+    // vulkanSettingsChanged on every call, not only on change).  Only re-apply
+    // to the renderer and emit the [VK-SET] diagnostic when the effective
+    // values actually differ; otherwise this is no-op and keeps the log quiet.
+    const bool effEdges = raster ? false : settings.showEdges;
+    const bool effPoints = raster ? false : settings.showPoints;
+
+    char sig[256];
+    std::snprintf(sig, sizeof(sig), "r=%d e=%d p=%d c=%.3g,%.3g,%.3g,%.3g "
+                                    "em=%d pt=%d bo=%d se=%d ms=%d dn=%s ds=%.3g",
+                  raster ? 1 : 0, effEdges ? 1 : 0, effPoints ? 1 : 0,
+                  settings.edgeColor[0], settings.edgeColor[1],
+                  settings.edgeColor[2], settings.edgeColor[3],
+                  settings.envMap, !raster ? 1 : 0,
+                  settings.pathTracingBounces, settings.pathTracingSettleFrames,
+                  settings.pathTracingMaxSamples,
+                  settings.pathTracingDenoiser.c_str(),
+                  settings.pathTracingDenoiserScale);
+    const bool changed = (sig != this->_pushedSettingsSig);
+    this->_pushedSettingsSig = sig;
+
+    if (changed) {
+        if (Base::envFlagEnabled("FC_VULKAN_BACKEND_DEBUG")) {
+            Base::Console().message("[VK-SET] pushSettings raster=%d edges=%d points=%d "
+                                    "edgeColor=(%.2f,%.2f,%.2f,%.2f) pt=%d "
+                                    "bounces=%d settle=%d "
+                                    "(prefEdges=%d prefPoints=%d)\n",
+                                    raster ? 1 : 0, effEdges ? 1 : 0,
+                                    effPoints ? 1 : 0,
+                                    settings.edgeColor[0], settings.edgeColor[1],
+                                    settings.edgeColor[2], settings.edgeColor[3],
+                                    !raster ? 1 : 0,
+                                    settings.pathTracingBounces,
+                                    settings.pathTracingSettleFrames,
+                                    settings.showEdges ? 1 : 0,
+                                    settings.showPoints ? 1 : 0);
+        }
+        _vulkanViewer->setWireframeOverlay(effEdges);
+        _vulkanViewer->setPointsOverlay(effPoints);
+        _vulkanViewer->setEdgeColor(settings.edgeColor);
+        _vulkanViewer->setEnvMap(settings.envMap);
+
+        _vulkanViewer->setPathTracingEnabled(!raster);
+        _vulkanViewer->setPathTracingBounces(settings.pathTracingBounces);
+        _vulkanViewer->setPathTracingSettleFrames(settings.pathTracingSettleFrames);
+        _vulkanViewer->setPathTracingMaxSamples(settings.pathTracingMaxSamples);
+        if (!settings.pathTracingDenoiser.empty()) {
+            _vulkanViewer->setPathTracingDenoiser(settings.pathTracingDenoiser);
+        }
+        _vulkanViewer->setPathTracingDenoiserScale(
+            settings.pathTracingDenoiserScale);
     }
-    _vulkanViewer->setPathTracingDenoiserScale(
-        settings.pathTracingDenoiserScale);
     // The RTX backend is always brought up when the device supports it
     // (independent of UseVulkanRayTracing), so path tracing can be toggled
     // live with the preference: no document reopen needed.  The only case
@@ -279,8 +302,71 @@ void VulkanViewportAdapter::pushSettings()
     else if (!rtUnavailable) {
         _pathTracingRtMismatchWarned = false;
     }
+
+    // GL-authoritative scene lighting -> RT backend.  The IR draw-list
+    // lighting capture (SoLightElement::getLights) is unreliable on the
+    // retained/replayed path tracer (the captured light count can drop to
+    // zero, rendering surfaces at ambient-only/near-black).  Gather the
+    // viewer headlight plus any document SoLight nodes and push the eye-space
+    // set so the RT backend always has the real lights.
+    this->pushSceneLights();
 #endif
 }
+void
+VulkanViewportAdapter::pushSceneLights()
+{
+#ifdef FREECAD_USE_VULKAN
+    if (!_vulkanViewer || !_viewer) {
+        return;
+    }
+
+    // Eye-space light set, matching the SoRenderIR::fillLightingFromState
+    // convention (view-fixed, GL's untransformed raw field values).  The RT
+    // shader converts the direction back to world via frame.u_viewInverse, so
+    // the headlight stays camera-fixed as the camera orbits.
+    std::vector<SoLightData> lights;
+    SbVec3f ambient(0.2f, 0.2f, 0.2f);
+
+    // Scene ambient from the environment node (so a scene lit purely by
+    // ambient still reads non-black).
+    if (SoRenderManager* rm = _viewer->getSoRenderManager()) {
+        if (SoNode* root = rm->getSceneGraph()) {
+            // Environment: ambient color * intensity (matches IR fill).
+            SoSearchAction sa;
+            sa.setType(SoEnvironment::getClassTypeId());
+            sa.setInterest(SoSearchAction::FIRST);
+            sa.apply(root);
+            if (SoEnvironment* env = static_cast<SoEnvironment*>(sa.getPath()
+                    ? sa.getPath()->getTail() : nullptr)) {
+                const SbColor& ac = env->ambientColor.getValue();
+                float ai = env->ambientIntensity.getValue();
+                ambient = SbVec3f(ac[0] * ai, ac[1] * ai, ac[2] * ai);
+            }
+        }
+    }
+
+    // The viewer headlight is the authoritative single light for the view.
+    if (SoDirectionalLight* hl = _viewer->getHeadlight()) {
+        if (hl->on.getValue()) {
+            SoLightData l;
+            l.type = SO_LIGHT_DIRECTIONAL;
+            const SbVec3f c = hl->color.getValue();
+            float i = hl->intensity.getValue();
+            l.color = SbVec3f(c[0] * i, c[1] * i, c[2] * i);
+            // Direction: light points from -direction (IR fill convention).
+            const SbVec3f d = hl->direction.getValue();
+            l.direction = SbVec3f(-d[0], -d[1], -d[2]);
+            if (l.direction.normalize() == 0.0f) {
+                l.direction = SbVec3f(0.0f, 0.0f, 1.0f);
+            }
+            lights.push_back(l);
+        }
+    }
+
+    _vulkanViewer->setSceneLights(lights, ambient);
+#endif
+}
+
 void
 VulkanViewportAdapter::redraw()
 {

@@ -323,6 +323,30 @@
         "VUID-vkQueueSubmit-pSignalSemaphores-00067"
       ],
       "timeout": 300
+    },
+    {
+      "name": "hover",
+      "script": "vk_hover_glass_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1",
+        "FC_VULKAN_RT_GEO": "1"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 240
+    },
+    {
+      "name": "matchange",
+      "script": "vk_matchange_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1",
+        "FC_VULKAN_RT_GEO": "1"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 240
     }
   ]
 }
