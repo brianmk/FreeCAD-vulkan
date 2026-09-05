@@ -92,13 +92,6 @@ def _ensure_statusbar_button(mw):
     sb.addPermanentWidget(btn)
 
 
-def _run_cmd(name, *a):
-    try:
-        FreeCADGui.runCommand(name)
-    except Exception:
-        pass
-
-
 def _schedule_default_layout():
     """Defer dock install until the GUI event loop settles; retry until the Tasks
     dock exists (it appears once a workbench with a task panel is active)."""

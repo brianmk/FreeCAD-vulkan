@@ -50,7 +50,6 @@
 
 
 using namespace PartDesignGui;
-namespace sp = std::placeholders;
 
 const char* PartDesignGui::ViewProviderBody::BodyModeEnum[] = {"Through", "Tip", nullptr};
 

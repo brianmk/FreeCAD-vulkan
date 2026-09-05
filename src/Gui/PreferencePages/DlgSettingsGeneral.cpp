@@ -59,7 +59,6 @@
 using namespace Gui;
 using namespace Gui::Dialog;
 namespace fs = std::filesystem;
-using Base::QuantityFormat;
 using Base::UnitsApi;
 
 /* TRANSLATOR Gui::Dialog::DlgSettingsGeneral */

@@ -47,7 +47,6 @@ else:
 
 
 _ocl = None
-_meshpart = None
 
 
 def _get_ocl():
@@ -71,20 +70,6 @@ def _get_ocl():
                 "https://github.com/aewallin/opencamlib"
             )
     return _ocl
-
-
-def _get_meshpart():
-    """Lazily import MeshPart."""
-    global _meshpart
-    if _meshpart is not None:
-        return _meshpart
-    try:
-        import MeshPart as meshpart
-
-        _meshpart = meshpart
-    except ImportError:
-        raise ImportError("MeshPart is required for shape tessellation")
-    return _meshpart
 
 
 # ---------------------------------------------------------------------------

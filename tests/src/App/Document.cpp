@@ -9,7 +9,6 @@
 #include "Base/Writer.h"
 #include <src/App/InitApplication.h>
 
-using ::testing::Eq;
 using ::testing::Ne;
 
 // NOLINTBEGIN(readability-magic-numbers)

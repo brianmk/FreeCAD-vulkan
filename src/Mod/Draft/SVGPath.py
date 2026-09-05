@@ -130,46 +130,6 @@ def _arc_end_to_center(lastvec, currentvec, rx, ry, x_rotation=0.0, correction=F
     return results, (rx, ry)
 
 
-def _arc_center_to_end(center, rx, ry, angle1, angledelta, xrotation=0.0):
-    """Calculate start and end points, and flags of an arc.
-
-    Calculate start and end points, and flags of an arc given in
-    ``center parametrization``.
-    See http://www.w3.org/TR/SVG/implnote.html#ArcImplementationNotes
-
-    Parameters
-    ----------
-    center : Base::Vector3
-        Coordinates of the center of the ellipse.
-    rx : float
-        Radius of the ellipse, semi-major axis in the X direction
-    ry : float
-        Radius of the ellipse, semi-minor axis in the Y direction
-    angle1 : float
-        Initial angle in radians
-    angledelta : float
-        Additional angle in radians
-    xrotation : float, optional
-        Default 0. Rotation around the Z axis
-
-    Returns
-    -------
-    v1, v2, largerc, sweep
-        Tuple indicating the end points of the arc, and two boolean values
-        indicating whether the arc is less than 180 degrees or not,
-        and whether the angledelta is negative.
-    """
-    vr1 = Vector(rx * math.cos(angle1), ry * math.sin(angle1), 0)
-    vr2 = Vector(rx * math.cos(angle1 + angledelta), ry * math.sin(angle1 + angledelta), 0)
-    mxrot = Matrix()
-    mxrot.rotateZ(xrotation)
-    v1 = mxrot.multiply(vr1).add(center)
-    v2 = mxrot.multiply(vr2).add(center)
-    fa = ((abs(angledelta) / math.pi) % 2) > 1  # < 180 deg
-    fs = angledelta < 0
-    return v1, v2, fa, fs
-
-
 def _approx_bspline(
     curve: BezierCurve,
     num: int = 10,

@@ -74,14 +74,6 @@ SCALARS_DIRECTORY = "Scalars"
 FRAMES_INFO = [None, Units.Unit(""), ""]
 
 
-def _getAllSubObjects(obj):
-    s = ["Solid" + str(i + 1) for i in range(len(obj.Shape.Solids))]
-    s.extend("Face" + str(i + 1) for i in range(len(obj.Shape.Faces)))
-    s.extend("Edge" + str(i + 1) for i in range(len(obj.Shape.Edges)))
-    s.extend("Vertex" + str(i + 1) for i in range(len(obj.Shape.Vertexes)))
-    return s
-
-
 class Writer:
 
     def __init__(self, solver, directory, testmode=False):

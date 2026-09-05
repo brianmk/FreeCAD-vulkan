@@ -94,14 +94,11 @@
 
 
 using namespace MeshGui;
-namespace sp = std::placeholders;
 
 using Mesh::Feature;
 using MeshCore::MeshFacet;
-using MeshCore::MeshFacetIterator;
 using MeshCore::MeshGeomFacet;
 using MeshCore::MeshKernel;
-using MeshCore::MeshPointIterator;
 
 // NOLINTBEGIN(readability-magic-numbers,cppcoreguidelines-pro-bounds*)
 void ViewProviderMeshBuilder::buildNodes(const App::Property* prop, std::vector<SoNode*>& nodes) const

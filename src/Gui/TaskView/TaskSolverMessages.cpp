@@ -35,7 +35,6 @@
 
 using namespace Gui;
 using namespace Gui::TaskView;
-namespace sp = std::placeholders;
 
 TaskSolverMessages::TaskSolverMessages(const QPixmap& icon, const QString& title)
     : TaskBox(icon, title, true, nullptr)

@@ -37,7 +37,6 @@
 #include "WorkflowManager.h"
 
 using namespace PartDesignGui;
-namespace sp = std::placeholders;
 
 #if 0  // needed for Qt's lupdate utility
     qApp->translate("Workbench", "&Sketch");

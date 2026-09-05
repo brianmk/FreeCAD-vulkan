@@ -50,7 +50,6 @@ FC_LOG_LEVEL_INIT("ViewProviderFeaturePython", true, true)
 
 
 using namespace Gui;
-namespace sp = std::placeholders;
 
 
 // ----------------------------------------------------------------------------

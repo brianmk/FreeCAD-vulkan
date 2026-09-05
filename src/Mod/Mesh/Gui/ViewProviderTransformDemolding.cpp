@@ -42,7 +42,6 @@
 #include "ViewProviderTransformDemolding.h"
 
 
-using Mesh::Feature;
 using MeshCore::MeshFacetIterator;
 using MeshCore::MeshGeomFacet;
 using MeshCore::MeshKernel;

@@ -94,8 +94,6 @@
 
 FC_LOG_LEVEL_INIT("App", true, true, true)
 
-using Base::Console;
-using Base::streq;
 using Base::Writer;
 using namespace App;
 using namespace boost;

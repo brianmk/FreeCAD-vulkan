@@ -237,11 +237,6 @@ font-size="12" fill="#5a6a80">{total} samples</text>
 """
 
 
-def _short_module(fl: str) -> str:
-    base = os.path.basename(fl)
-    return base
-
-
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="CPU flame graph from samplib stacks")
     p.add_argument("--stacks", required=True, help="FC_PROF_STACK_FILE output")

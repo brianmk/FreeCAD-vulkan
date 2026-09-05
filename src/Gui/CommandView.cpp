@@ -98,7 +98,6 @@
 
 using namespace Gui;
 using Gui::Dialog::DlgSettingsImageImp;
-namespace sp = std::placeholders;
 
 namespace
 {

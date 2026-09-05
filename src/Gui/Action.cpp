@@ -62,7 +62,6 @@
 
 using namespace Gui;
 using namespace Gui::Dialog;
-namespace sp = std::placeholders;
 
 /**
  * Constructs an action called \a name with parent \a parent. It also stores a pointer

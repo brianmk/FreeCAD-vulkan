@@ -33,7 +33,6 @@
 
 using Base::UnitsApi;
 using Base::UnitsSchema;
-using Base::UnitsSchemas;
 
 std::vector<std::string> UnitsApi::getDescriptions()
 {

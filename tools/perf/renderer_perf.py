@@ -244,14 +244,6 @@ def parse_frametiming(lines: Iterable[str]) -> ModeResult:
     return res
 
 
-def _parse_verdict(log_text: str) -> str:
-    for line in log_text.splitlines():
-        m = re.search(r"\[VERDICT\] (\S+) (PASS|FAIL)", line)
-        if m:
-            return m.group(2)
-    return "UNKNOWN"
-
-
 def bench(modes: list[int], grid: int, binary: str, out_dir: str,
           timeout: int, frames: int, samples: int, bounces: int) -> dict:
     os.makedirs(out_dir, exist_ok=True)
@@ -304,11 +296,6 @@ def bench(modes: list[int], grid: int, binary: str, out_dir: str,
 # ---------------------------------------------------------------------------
 # Flame graph (self-contained interactive SVG)
 # ---------------------------------------------------------------------------
-def _shared_bucket(bands: dict[str, float], total: float) -> float:
-    """Proportional throughput band for a flame-graph (px/sample) scaling."""
-    return total
-
-
 def flame_svg(title: str, root: dict[str, float], width: int = 1200,
               height: float = 260) -> str:
     """Render one modal frame's phase bands as an SVG flame graph.

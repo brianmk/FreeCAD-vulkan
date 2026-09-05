@@ -41,7 +41,6 @@
 
 
 using namespace Gui;
-namespace sp = std::placeholders;
 
 
 EXTENSION_PROPERTY_SOURCE(Gui::ViewProviderOriginGroupExtension, Gui::ViewProviderGeoFeatureGroupExtension)

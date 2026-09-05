@@ -33,7 +33,6 @@
 
 
 using namespace Gui;
-namespace sp = std::placeholders;
 
 namespace Gui
 {

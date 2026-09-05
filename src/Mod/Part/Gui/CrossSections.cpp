@@ -59,7 +59,6 @@
 
 
 using namespace PartGui;
-namespace sp = std::placeholders;
 #undef CS_FUTURE  // multi-threading causes some problems
 
 namespace PartGui
