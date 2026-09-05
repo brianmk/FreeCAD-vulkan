@@ -253,6 +253,8 @@ void VulkanViewportAdapter::pushSettings()
     if (!settings.pathTracingDenoiser.empty()) {
         _vulkanViewer->setPathTracingDenoiser(settings.pathTracingDenoiser);
     }
+    _vulkanViewer->setPathTracingDenoiserScale(
+        settings.pathTracingDenoiserScale);
     // The RTX backend is always brought up when the device supports it
     // (independent of UseVulkanRayTracing), so path tracing can be toggled
     // live with the preference: no document reopen needed.  The only case

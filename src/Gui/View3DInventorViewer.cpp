@@ -2097,6 +2097,9 @@ void View3DInventorViewer::applyVulkanSettings()
         case 3: vulkanSettings_.pathTracingDenoiser = "none"; break;
         default: vulkanSettings_.pathTracingDenoiser = "rtx"; break;
     }
+    vulkanSettings_.pathTracingDenoiserScale = std::clamp(
+        static_cast<float>(hGrp->GetFloat("VulkanPathTracingDenoiserScale", 1.0f)),
+        1.0f, 8.0f);
 
     Q_EMIT vulkanSettingsChanged();
 }

@@ -81,6 +81,9 @@ struct VulkanViewSettings
     // Denoising itself is required for path tracing and is enabled automatically
     // by the renderer; only the filter is configurable.
     std::string pathTracingDenoiser;
+    // Denoiser upscale factor (>= 1).  A factor > 1 runs the host-side
+    // denoiser at reduced resolution and the present pass upscales it back.
+    float pathTracingDenoiserScale = 1.0f;
 };
 
 } // namespace Gui

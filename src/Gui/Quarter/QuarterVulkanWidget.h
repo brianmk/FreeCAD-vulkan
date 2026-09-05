@@ -309,6 +309,11 @@ public:
     //! to the ray-tracing backend.
     void setPathTracingMaxSamples(int samples);
 
+    //! Denoiser upscale factor (>= 1).  A factor > 1 runs the host-side
+    //! denoiser at reduced internal resolution and the present pass upscales
+    //! the result back to the viewport.  Forwarded to the ray-tracing backend.
+    void setPathTracingDenoiserScale(float scale);
+
 protected:
     bool eventFilter(QObject * watched, QEvent * event) override;
 
