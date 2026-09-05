@@ -937,6 +937,7 @@ SET(View3D_CPP_SRCS
     View3DViewerPy.cpp
     NaviCube.cpp
     VulkanViewportAdapter.cpp
+    VulkanViewSettings.cpp
 )
 SET(View3D_SRCS
     ${View3D_CPP_SRCS}

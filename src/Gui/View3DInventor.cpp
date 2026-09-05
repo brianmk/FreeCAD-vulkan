@@ -454,9 +454,7 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
     // viewport and warn once instead of silently rendering raster under a
     // ray-traced label.  isRayTracingAvailable() is only trustworthy after the
     // renderer has probed the device, hence the isRayTracingProbed() gate.
-    const bool rayTraced = mode == ViewRenderMode::RayTracing
-        || mode == ViewRenderMode::PathTracing
-        || mode == ViewRenderMode::Environment;
+    const bool rayTraced = isRayTracedMode(static_cast<int>(mode));
     if (rayTraced && _vulkanAdapter && _vulkanAdapter->isRayTracingProbed()
         && !_vulkanAdapter->isRayTracingAvailable()) {
         if (!_rayTracingUnavailableWarned) {
@@ -472,9 +470,7 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
     }
 #endif
     _renderMode = mode;
-    const bool raster = mode == ViewRenderMode::RasterCoin
-        || mode == ViewRenderMode::RasterVulkan
-        || mode == ViewRenderMode::Wireframe;
+    const bool raster = isRasterMode(static_cast<int>(mode));
 #ifdef FREECAD_USE_VULKAN
     if (_vulkanAdapter) {
         // Pick the renderer backend for the raster modes: RasterCoin renders
@@ -500,7 +496,7 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
             // propagates through it).
             if (_vulkanAdapter) {
                 _vulkanAdapter->setPathTracingEnabled(false);
-                _vulkanAdapter->setViewMode(0);  // RtxModeOff (raster)
+                _vulkanAdapter->setViewMode(viewRenderModeToWidgetMode(mode));
             }
             break;
         case ViewRenderMode::RayTracing:
@@ -510,7 +506,7 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
             // the backend -- this is the cheap RT mode for limited compute.
             if (_vulkanAdapter) {
                 _vulkanAdapter->setPathTracingEnabled(true);
-                _vulkanAdapter->setViewMode(1);  // widget RayTracing (AO shader)
+                _vulkanAdapter->setViewMode(viewRenderModeToWidgetMode(mode));
                 _vulkanAdapter->setPathTracingStart(false);
             }
             break;
@@ -518,7 +514,7 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
             // Full accumulating path tracer (multi-bounce GI + denoising).
             if (_vulkanAdapter) {
                 _vulkanAdapter->setPathTracingEnabled(true);
-                _vulkanAdapter->setViewMode(2);  // widget PathTracing
+                _vulkanAdapter->setViewMode(viewRenderModeToWidgetMode(mode));
                 _vulkanAdapter->setPathTracingStart(true);
             }
             break;
@@ -528,7 +524,7 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
             // selects the environment shader path on the backend.
             if (_vulkanAdapter) {
                 _vulkanAdapter->setPathTracingEnabled(true);
-                _vulkanAdapter->setViewMode(3);  // widget Environment
+                _vulkanAdapter->setViewMode(viewRenderModeToWidgetMode(mode));
                 _vulkanAdapter->setPathTracingStart(false);
             }
             break;

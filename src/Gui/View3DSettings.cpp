@@ -36,6 +36,7 @@
 #include "SoFCSelectionAction.h"
 #include "View3DSettings.h"
 #include "View3DInventorViewer.h"
+#include "VulkanViewSettings.h"
 
 #include <Base/Tools.h>
 
@@ -103,6 +104,18 @@ void View3DSettings::applySettings()
     OnChange(*hGrp, "OrbitStyle");
     OnChange(*hGrp, "Sensitivity");
     OnChange(*hGrp, "ResetCursorPosition");
+    // Navigation-style sub-settings + selection appearance: handled by the
+    // OnChange dispatch but not bootstrapped for initial state above (only
+    // applied on change).  Keep them here so a view opens matching the saved
+    // prefs rather than the framework default until the user toggles one.
+    OnChange(*hGrp, "InvertZoom");
+    OnChange(*hGrp, "ZoomAtCursor");
+    OnChange(*hGrp, "ZoomStep");
+    OnChange(*hGrp, "RotationMode");
+    OnChange(*hGrp, "EnablePreselection");
+    OnChange(*hGrp, "EnableSelection");
+    OnChange(*hGrp, "HighlightColor");
+    OnChange(*hGrp, "SelectionColor");
     OnChange(*hGrp, "DimensionsVisible");
     OnChange(*hGrp, "Dimensions3dVisible");
     OnChange(*hGrp, "DimensionsDeltaVisible");
@@ -111,14 +124,10 @@ void View3DSettings::applySettings()
     OnChange(*hGrp, "TransparentObjectRenderType");
     OnChange(*hGrp, "UseVulkanRenderer");
     OnChange(*hGrp, "UseVulkanRayTracing");
-    OnChange(*hGrp, "VulkanShowEdges");
-    OnChange(*hGrp, "VulkanShowPoints");
-    OnChange(*hGrp, "VulkanEdgeColor");
-    OnChange(*hGrp, "VulkanPathTracing");
-    OnChange(*hGrp, "VulkanPathTracingBounces");
-    OnChange(*hGrp, "VulkanPathTracingSettle");
-    OnChange(*hGrp, "VulkanPathTracingMaxSamples");
-    OnChange(*hGrp, "VulkanPathTracingDenoiser");
+    // One representative "Vulkan*" display pref kicks applyVulkanSettings(),
+    // which reads the entire Vulkan display + path-tracing preference set via
+    // VulkanViewSettings::load() -- no need to re-enumerate every key here.
+    OnChange(*hGrp, "VulkanRenderMode");
     OnChange(*hGrp, "PreselectionMessageRate");
 
     auto lightSourcesGrp = hGrp->GetGroup("LightSources");
@@ -548,18 +557,12 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
             }
         }
     }
-    else if (strcmp(Reason, "VulkanShowEdges") == 0
-             || strcmp(Reason, "VulkanShowPoints") == 0
-             || strcmp(Reason, "VulkanEdgeColor") == 0
-             || strcmp(Reason, "VulkanRenderMode") == 0
-             || strcmp(Reason, "VulkanEnvironmentMap") == 0
-             || strcmp(Reason, "VulkanPathTracing") == 0
-             || strcmp(Reason, "VulkanPathTracingBounces") == 0
-             || strcmp(Reason, "VulkanPathTracingSettle") == 0
-             || strcmp(Reason, "VulkanPathTracingMaxSamples") == 0
-             || strcmp(Reason, "VulkanPathTracingDenoiser") == 0) {
+    else if (VulkanViewSettings::isDisplayPref(Reason)) {
         // Vulkan-only display options are owned by the viewers; each viewer
         // reloads them from the preferences and notifies its Vulkan viewport.
+        // A single "Vulkan*" prefix rule covers every display/tuning pref (and
+        // any added later), so this list cannot drift from what
+        // applyVulkanSettings() actually reads.
         for (auto _viewer : _viewers) {
             _viewer->applyVulkanSettings();
         }

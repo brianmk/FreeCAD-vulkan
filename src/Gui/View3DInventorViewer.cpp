@@ -2063,43 +2063,11 @@ void View3DInventorViewer::applyVulkanSettings()
                   hGrp->GetBool("VulkanShowEdges", false) ? 1 : 0,
                   hGrp->GetBool("VulkanShowPoints", false) ? 1 : 0);
 
-    // Render mode and environment preset: this is the single loader that
-    // seeds the canonical VulkanViewSettings, so every consumer (the raster
-    // gate, the status-bar selector, the backend push) reads the same value.
-    vulkanSettings_.renderMode = hGrp->GetInt("VulkanRenderMode", 1);
-    vulkanSettings_.envMap = hGrp->GetInt("VulkanEnvironmentMap", -1);
-
-    vulkanSettings_.showEdges = hGrp->GetBool("VulkanShowEdges", false);
-    vulkanSettings_.showPoints = hGrp->GetBool("VulkanShowPoints", false);
-
-    const unsigned long color = hGrp->GetUnsigned("VulkanEdgeColor", 0x050505FFUL);
-    vulkanSettings_.edgeColor = SbColor4f(
-        ((color >> 24) & 0xff) / 255.0f,
-        ((color >> 16) & 0xff) / 255.0f,
-        ((color >> 8) & 0xff) / 255.0f,
-        1.0f);
-
-    vulkanSettings_.pathTracing = hGrp->GetBool("VulkanPathTracing", false);
-
-    vulkanSettings_.pathTracingBounces =
-        std::clamp(static_cast<int>(hGrp->GetInt("VulkanPathTracingBounces", 4)),
-                   1, 16);
-    vulkanSettings_.pathTracingSettleFrames = std::clamp(
-        static_cast<int>(hGrp->GetInt("VulkanPathTracingSettle", 6)), 1, 120);
-    vulkanSettings_.pathTracingMaxSamples = std::clamp(
-        static_cast<int>(hGrp->GetInt("VulkanPathTracingMaxSamples", 256)),
-        1, 4096);
-    // Denoiser backend, stored as the combo index (0=RTX, 1=OIDN, 2=FSR,
-    // 3=None); map to the backend name the RT renderer expects.
-    switch (hGrp->GetInt("VulkanPathTracingDenoiser", 0)) {
-        case 1: vulkanSettings_.pathTracingDenoiser = "oidn"; break;
-        case 2: vulkanSettings_.pathTracingDenoiser = "fsr"; break;
-        case 3: vulkanSettings_.pathTracingDenoiser = "none"; break;
-        default: vulkanSettings_.pathTracingDenoiser = "rtx"; break;
-    }
-    vulkanSettings_.pathTracingDenoiserScale = std::clamp(
-        static_cast<float>(hGrp->GetFloat("VulkanPathTracingDenoiserScale", 1.0f)),
-        1.0f, 8.0f);
+    // Single source of truth: VulkanViewSettings::load() reads the whole
+    // Vulkan display + path-tracing preference set (key + type mapped beside
+    // the struct fields), so adding a setting updates one place instead of
+    // letting this method and the pref-change observer drift apart.
+    vulkanSettings_.load(hGrp);
 
     Q_EMIT vulkanSettingsChanged();
 }
