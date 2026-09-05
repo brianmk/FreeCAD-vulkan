@@ -9,6 +9,9 @@
 #include <string>
 
 #include <Inventor/SbColor4f.h>
+#include <Inventor/SbVec3f.h>
+#include <Inventor/rendering/SoRenderIR.h>
+#include <vector>
 
 #ifdef FREECAD_USE_VULKAN
 #include <vulkan/vulkan.h>
@@ -264,6 +267,18 @@ public:
     static int getEnvMapCount();
     //! Name of an environment preset index.
     static const char * getEnvMapName(int index);
+
+    /*!
+      \brief Provide the authoritative scene lighting (GL host -> RT backend).
+
+      \a lights is the effective eye-space light set and \a ambient the
+      intensity-scaled scene ambient.  Forwarded to SoVulkanRenderManager::
+      setSceneLights so the path tracer uses the host's lights instead of the
+      IR draw-list lighting capture, which can drop to zero on the retained/
+      replayed frame and render surfaces near-black.
+    */
+    void setSceneLights(const std::vector<SoLightData> & lights,
+                        const SbVec3f & ambient);
 
     /*!
       \brief Start flag for progressive path-tracing refinement.

@@ -7,6 +7,7 @@
 #include <QObject>
 
 #include <memory>
+#include <string>
 
 class QStackedWidget;
 class SoNodeSensor;
@@ -146,6 +147,13 @@ private:
     /// the tracked nodes changed.
     void attachSensors();
 
+    /// Gather the GL viewer's authoritative scene lighting (headlight +
+    /// document SoLight nodes) and push it to the RT backend.  The IR
+    /// draw-list lighting capture can drop to zero on the retained/replayed
+    /// path tracer, so this provides a reliable light source to keep the RT
+    /// scene lit.
+    void pushSceneLights();
+
     /// SoNodeSensor callbacks (Coin's auditor mechanism fires these on any
     /// field write / structural change of the tracked node).
     static void sceneChangedCB(void* data, SoSensor* sensor);
@@ -155,6 +163,12 @@ private:
     SIM::Coin3D::Quarter::QuarterVulkanWidget* _vulkanViewer = nullptr;
     bool _initialVulkanFitDone = false;
     bool _pathTracingRtMismatchWarned = false;
+    // Memoised signature of the last effective settings actually pushed.  The
+    // preferences signal that drives pushSettings() can fire many times per
+    // frame with identical values (e.g. repeated applyVulkanSettings() during
+    // document/view sync), so re-applying and re-logging every time is pure
+    // spam: pushSettings() is a no-op unless this signature changes.
+    std::string _pushedSettingsSig;
     std::unique_ptr<SoNodeSensor> _sceneSensor;
     std::unique_ptr<SoNodeSensor> _cameraSensor;
 };

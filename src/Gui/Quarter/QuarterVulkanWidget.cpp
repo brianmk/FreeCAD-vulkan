@@ -296,6 +296,19 @@ public:
         return m_envMap;
     }
 
+    // Staged authoritative scene lighting (GL host -> RT backend).  Like the
+    // env map, applied at the next startNextFrame() so every m_manager call
+    // stays inside frame setup.  The eye-space light data is camera-
+    // independent, so only the source set is stored here.
+    void setSceneLights(const std::vector<SoLightData> & lights,
+                        const SbVec3f & ambient)
+    {
+        QMutexLocker locker(&m_stateMutex);
+        m_sceneLights = lights;
+        m_sceneAmbient = ambient;
+        m_sceneLightsDirty = true;
+    }
+
     // Ray-tracing status mirrored from the manager (which only re-evaluates
     // device support during frame setup) so callers can query the cached
     // value from anywhere.
@@ -792,6 +805,16 @@ private:
             }
             m_appliedEnvMap = m_envMap;
         }
+        // Push the GL-authoritative scene lighting to the RT backend.  The
+        // IR draw-list lighting capture can drop to zero lights on the
+        // retained/replayed path tracer, so the RT backend consumes the
+        // host's own light set here instead.
+        if (m_sceneLightsDirty) {
+            if (m_rtxBackendBuilt) {
+                m_manager.setSceneLights(m_sceneLights, m_sceneAmbient);
+            }
+            m_sceneLightsDirty = false;
+        }
         if (m_pathTracingStart) {
             m_manager.setPathTracingStart(TRUE);
             m_pathTracingStart = false;
@@ -1014,6 +1037,12 @@ private:
     // use the viewport background gradient.
     int m_envMap = -1;
     int m_appliedEnvMap = -1;
+    // Staged authoritative scene lighting (GL host -> RT backend).  The eye-
+    // space data is camera-independent, so only a dirty flag (set on push /
+    // on an empty reset) triggers a re-push to the manager.
+    std::vector<SoLightData> m_sceneLights;
+    SbVec3f m_sceneAmbient = SbVec3f(0.2f, 0.2f, 0.2f);
+    bool m_sceneLightsDirty = false;
     bool m_appliedPathTracingEnabled = false;
     int m_pathTracingBounces = 4;
     int m_pathTracingSettleFrames = 6;
@@ -2272,6 +2301,16 @@ void QuarterVulkanWidget::setEnvMap(int index)
     VK_BREADCRUMB("[VK-TRACE] QuarterVulkanWidget::setEnvMap index=%d\n",
                   index);
     d->renderer->setEnvMap(index);
+    redraw();
+}
+
+void QuarterVulkanWidget::setSceneLights(const std::vector<SoLightData> & lights,
+                                         const SbVec3f & ambient)
+{
+    if (!d->renderer) {
+        return;
+    }
+    d->renderer->setSceneLights(lights, ambient);
     redraw();
 }
 

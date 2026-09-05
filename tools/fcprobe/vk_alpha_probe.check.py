@@ -18,7 +18,8 @@ import re
 
 PTSTATE = re.compile(
     r"\[RTDBG\] ptState frame=(\d+) viewChanged=(\d) sceneChanged=(\d) "
-    r"accum=(\d) frameIndex=(\d+) idle=(\d+) reproject=(\d)")
+    r"bgChanged=(\d) latch=(\d) accum=(\d) frameIndex=(\d+) idle=(\d+) "
+    r"reproject=(\d)")
 ALPHA_ENGAGED = re.compile(r"ALPHA phase=alpha material Transparency=([0-9.]+)")
 
 
@@ -27,7 +28,7 @@ def check(lines, report):
         report.add_error(msg)
 
     acc = [int(m.group(1)) for line in lines
-           for m in [PTSTATE.search(line)] if m and m.group(4) == "1"]
+           for m in [PTSTATE.search(line)] if m and m.group(6) == "1"]
     if not acc:
         err("no accumulating ptState frames (path tracing never accumulated)")
         return
