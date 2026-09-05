@@ -258,6 +258,11 @@ public:
         QMutexLocker locker(&m_stateMutex);
         m_pathTracingDenoiser = denoiser;
     }
+    void setPathTracingDenoiserScale(float scale)
+    {
+        QMutexLocker locker(&m_stateMutex);
+        m_pathTracingDenoiserScale = std::clamp(scale, 1.0f, 8.0f);
+    }
     bool getPathTracingEnabled() const
     {
         QMutexLocker locker(&m_stateMutex);
@@ -754,6 +759,12 @@ private:
                 m_manager.setPathTracingDenoiser(v.empty() ? nullptr : v.c_str());
             },
             reapplyPT);
+        applyPathTracingSetting(m_pathTracingDenoiserScale,
+            m_appliedPathTracingDenoiserScale,
+            [this](float v) {
+                m_manager.setPathTracingDenoiserScale(v);
+            },
+            reapplyPT);
         // Apply the ray-traced view mode (Interactive/AO/PathTracing) when it
         // changed, so the manager (and the shader's u_state.y) picks AO vs
         // multi-bounce.  The RT backend must be initialized first; the enable
@@ -1008,9 +1019,11 @@ private:
     int m_pathTracingSettleFrames = 6;
     int m_pathTracingMaxSamples = 256;
     std::string m_pathTracingDenoiser;   // "" = default (env/backend)
+    float m_pathTracingDenoiserScale = 1.0f;
     int m_appliedPathTracingBounces = 0;
     int m_appliedPathTracingSettleFrames = 0;
     int m_appliedPathTracingMaxSamples = 0;
+    float m_appliedPathTracingDenoiserScale = 1.0f;
     // The denoiser baseline must reflect the backend's REAL initial state, which
     // is ON (SoRTXRenderBackend::ptDenoise defaults to TRUE every engine create).
     // Initializing it to false made applyPathTracingSetting(false, false,
@@ -2330,6 +2343,15 @@ void QuarterVulkanWidget::setPathTracingDenoiser(const std::string & denoiser)
         return;
     }
     d->renderer->setPathTracingDenoiser(denoiser);
+    redraw();
+}
+
+void QuarterVulkanWidget::setPathTracingDenoiserScale(float scale)
+{
+    if (!d->renderer) {
+        return;
+    }
+    d->renderer->setPathTracingDenoiserScale(scale);
     redraw();
 }
 
