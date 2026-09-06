@@ -551,6 +551,12 @@ void VulkanViewportAdapter::requestVulkanRender()
 
 void VulkanViewportAdapter::applySurfaceViewportToGL(const QSize& surfaceSize)
 {
+    // In a non-Vulkan build the whole viewport is a no-op and calling
+    // _vulkanViewer->getNativeWidget() here would pull an undefined symbol
+    // (QuarterVulkanWidget.cpp is excluded from the build), so the body is
+    // compiled only with the Vulkan renderer.
+    Q_UNUSED(surfaceSize);
+#ifdef FREECAD_USE_VULKAN
     // The hidden GL viewer is the picking/navigation authority, but it is
     // never shown, so QuarterWidget::resizeEvent() resets its render/event
     // manager viewport region to the GL widget's own (typically default
@@ -560,7 +566,6 @@ void VulkanViewportAdapter::applySurfaceViewportToGL(const QSize& surfaceSize)
     // miss.  The Vulkan surface is the single source of truth, so re-impose
     // its size here.  Called on every surface size change and on any GL
     // widget resize (see eventFilter).
-    Q_UNUSED(surfaceSize);
     QWidget* container = _vulkanViewer->getNativeWidget();
     QWidget* glWidget = _viewer->getWidget();
     if (!container || !glWidget) {
@@ -619,6 +624,7 @@ void VulkanViewportAdapter::applySurfaceViewportToGL(const QSize& surfaceSize)
     if (glWidget->size() != logical) {
         glWidget->resize(logical);
     }
+#endif
 }
 
 void VulkanViewportAdapter::onSurfaceSizeChanged(const QSize& surfaceSize)

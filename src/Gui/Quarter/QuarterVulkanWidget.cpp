@@ -36,7 +36,9 @@
 #include <QStringList>
 #include <QTimer>
 #include <QWheelEvent>
+#ifdef HAVE_QT6_GUI_PRIVATE
 #include <QtGui/qpa/qwindowsysteminterface.h>
+#endif
 
 #include "Selection.h"
 
@@ -2038,6 +2040,7 @@ void QuarterVulkanWidget::pollInjectFile()
         if (type == QEvent::None) {
             continue;
         }
+#ifdef HAVE_QT6_GUI_PRIVATE
         const QPointF local(tok[1].toDouble(), tok[2].toDouble());
         const QPointF global = d->container->mapToGlobal(
             QPoint(int(local.x()), int(local.y())));
@@ -2053,6 +2056,7 @@ void QuarterVulkanWidget::pollInjectFile()
         QWindowSystemInterface::handleMouseEvent<QWindowSystemInterface::SynchronousDelivery>(
             d->window, local, QPointF(global.x(), global.y()), state, btn,
             type);
+#endif
         d->injectConsumed = i + 1;
     }
 }

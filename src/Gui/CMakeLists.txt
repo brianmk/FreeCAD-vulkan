@@ -138,14 +138,18 @@ if(FREECAD_USE_VULKAN)
     )
     # QuarterVulkanWidget.cpp includes the Qt QPA header
     # <QtGui/qpa/qwindowsysteminterface.h> (for the Qt 6 MouseEvent/Expose
-    # sync helpers).  qpa/ headers live in the QT_VERSION-specific private
-    # include dir exposed by Qt6::GuiPrivate, not ${QtGui_INCLUDE_DIRS}
-    # (which is the public QtGui root).  Link GuiPrivate so the include
-    # resolves regardless of the installed Qt 6.x.y version; the source uses
-    # the version-agnostic <QtGui/qpa/...> path.
+    # sync helpers, used only on the Qt6 QPA injection path).  qpa/ headers
+    # live in the QT_VERSION-specific private include dir exposed by
+    # Qt6::GuiPrivate.  That component is present on a normal Qt6 dev install,
+    # but NOT on the conda/pixi qt6-main, so probe for it and make it optional:
+    # when absent, QuarterVulkanWidget.cpp compiles the QPA injection out
+    # (HAVE_QT6_GUI_PRIVATE is unset).
     if(FREECAD_QT_MAJOR_VERSION EQUAL 6)
-        find_package(Qt6 REQUIRED COMPONENTS GuiPrivate)
-        list(APPEND FreeCADGui_LIBS Qt6::GuiPrivate)
+        find_package(Qt6 QUIET COMPONENTS GuiPrivate)
+        if(Qt6GuiPrivate_FOUND)
+            list(APPEND FreeCADGui_LIBS Qt6::GuiPrivate)
+            target_compile_definitions(FreeCADGui PRIVATE HAVE_QT6_GUI_PRIVATE=1)
+        endif()
     endif()
 endif()
 
