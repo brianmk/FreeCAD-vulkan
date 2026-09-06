@@ -862,7 +862,15 @@ def run_case(
         reader_thread.join(timeout=10)
 
         # Parse the unified event stream from stdout for the report.
+        # VK-VALIDATION events are appended once by the dedicated validation
+        # pass below (which also computes per-VUID counts and the allow-list);
+        # skipping them here avoids listing each Khronos diagnostic twice
+        # (every message is already one parse_event match, and re-appending it
+        # from extract_validation() doubled the validation entries in the
+        # report -- the "hundreds of semaphore warnings" symptom).
         for ev in iter_events(lines):
+            if ev["source"] == "VK-VALIDATION":
+                continue
             report.events.append(ev)
         if rc and rc != 0 and not probe_died:
             report.add_error("process exited with code %s", rc)
