@@ -173,7 +173,7 @@ jobs:
           "https://sdk.lunarg.com/sdk/download/${V}/windows/vulkan_sdk.exe?Human=true"
         MSYS_NO_PATHCONV=1 "./$exe" \
           --root C:/VulkanSDK \
-          --accept-licenses --default-answer --accept-messages --confirm-command \
+          --accept-licenses --default-answer --confirm-command \
           install
         # Locate the SDK root: --root may be used verbatim (Include at the top)
         # or the vendor may add a versioned subdir.
