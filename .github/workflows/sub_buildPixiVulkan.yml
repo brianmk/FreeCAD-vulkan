@@ -28,11 +28,12 @@
 # SoIRRenderAction / Vulkan-renderer code is compiled and, on Linux, exercised
 # by the C++ and GUI tests through a headless Mesa lavapipe software ICD.
 #
-# The Vulkan SDK itself is installed per-OS inside the job rather than as a
-# pixi dependency, so the pinned pixi.lock needs no regeneration: git submodule
-# Coin (bundled) consumes the SDK through CMake's find_package(Vulkan).  On
-# Linux that comes from apt (libvulkan-dev + lavapipe); on Windows from the
-# official Vulkan SDK.
+# The Vulkan SDK is installed per-OS inside the job rather than as a pixi
+# dependency (conda is optional and not required), so the pinned pixi.lock needs
+# no regeneration.  On Linux that comes from apt (libvulkan-dev + lavapipe); on
+# Windows from the official Vulkan SDK.  The bundled Coin consumes it through
+# CMake's find_package(Vulkan) -- on Windows the configure step passes the SDK's
+# Include/Lib paths explicitly so FindVulkan resolves them reliably.
 #
 # This only ADDS coverage; the stock sub_buildPixi.yml / sub_buildWindows.yml
 # approval lane is untouched and still builds with Vulkan OFF.  Windows is
@@ -158,6 +159,9 @@ jobs:
 
     - name: Install Vulkan SDK (Windows)
       if: runner.os == 'Windows' && !inputs.skipBuild
+      # Provides the Vulkan SDK on the Windows pixi build.  It writes VULKAN_SDK
+      # to GITHUB_ENV, which the CMake Configure step reads to pass the exact
+      # Include/Lib paths to find_package(Vulkan).
       uses: humbletim/install-vulkan-sdk@v1.2
 
     - name: Make needed directories, files and initializations
@@ -195,8 +199,20 @@ jobs:
 
     - name: CMake Configure
       if: "!inputs.skipBuild"
+      shell: bash
       run: |
-        pixi run configure-release -DFREECAD_USE_VULKAN=ON
+        VK_ARGS=()
+        # The Vulkan SDK action sets VULKAN_SDK; hand the exact Include/Lib dirs
+        # to CMake so find_package(Vulkan) cannot miss it (the Windows SDK uses
+        # the capitalised Include/Lib layout).  If VULKAN_SDK is unset fall back
+        # to find_package(Vulkan)'s own search.
+        if [[ -n "${VULKAN_SDK}" ]]; then
+          VK_ARGS=(
+            -DVulkan_INCLUDE_DIR="${VULKAN_SDK}/Include"
+            -DVulkan_LIBRARY="${VULKAN_SDK}/Lib/vulkan-1.lib"
+          )
+        fi
+        pixi run configure-release -DFREECAD_USE_VULKAN=ON "${VK_ARGS[@]}"
 
     - name: CMake Build
       if: "!inputs.skipBuild"
