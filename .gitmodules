@@ -9,7 +9,7 @@
 	url = https://github.com/FreeCAD/AddonManager.git
 [submodule "src/3rdParty/coin"]
 	path = src/3rdParty/coin
-	url = https://github.com/FreeCAD/coin.git
+	url = https://github.com/brianmk/coin.git
 	branch = freecad-master
 [submodule "src/3rdParty/pivy"]
 	path = src/3rdParty/pivy
