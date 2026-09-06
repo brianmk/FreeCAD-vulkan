@@ -201,6 +201,16 @@ jobs:
       if: "!inputs.skipBuild"
       shell: bash
       run: |
+        # Call cmake directly (not the pixi configure-release task) so we can
+        # pass multiple extra flags.  The task has a single declared arg, which
+        # pixi rejects when given several -D flags.
+        if [[ "${RUNNER_OS}" == "Windows" ]]; then
+          PRESET=conda-windows-release
+          GEN_ARGS=(-DCMAKE_GENERATOR_PLATFORM= -DCMAKE_GENERATOR_TOOLSET=)
+        else
+          PRESET=conda-linux-release
+          GEN_ARGS=()
+        fi
         VK_ARGS=()
         # The Vulkan SDK action sets VULKAN_SDK; hand the exact Include/Lib dirs
         # to CMake so find_package(Vulkan) cannot miss it (the Windows SDK uses
@@ -212,7 +222,8 @@ jobs:
             -DVulkan_LIBRARY="${VULKAN_SDK}/Lib/vulkan-1.lib"
           )
         fi
-        pixi run configure-release -DFREECAD_USE_VULKAN=ON "${VK_ARGS[@]}"
+        pixi run cmake --preset "${PRESET}" -DFREECAD_USE_VULKAN=ON \
+          "${GEN_ARGS[@]}" "${VK_ARGS[@]}"
 
     - name: CMake Build
       if: "!inputs.skipBuild"
