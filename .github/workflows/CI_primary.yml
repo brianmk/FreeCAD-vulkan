@@ -66,6 +66,17 @@ jobs:
     with:
       artifactBasename: Ubuntu-${{ github.run_id }}
 
+  # Fork-only: builds bundled Coin/Pivy with the Vulkan viewport on using the
+  # pixi conda presets (Linux clang -Werror and Windows MSVC /WX axes).  This
+  # is the fork's real configuration; the stock sub_buildPixi/sub_buildWindows
+  # approval lane stays Vulkan-off and untouched.
+  PixiVulkan:
+    needs: [Prepare]
+    if: "!startsWith(github.head_ref, 'refs/heads/backport-')"
+    uses: ./.github/workflows/sub_buildPixiVulkan.yml
+    with:
+      artifactBasename: PixiVulkan-${{ github.run_id }}
+
   Lint:
     needs: [Prepare]
     if: "!startsWith(github.head_ref, 'refs/heads/backport-')"
@@ -81,6 +92,7 @@ jobs:
     needs: [
         Prepare,
         Ubuntu,
+        PixiVulkan,
         Lint
       ]
     if: always()
