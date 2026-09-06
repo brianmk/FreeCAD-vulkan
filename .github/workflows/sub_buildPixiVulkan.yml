@@ -167,20 +167,30 @@ jobs:
       if: runner.os == 'Windows' && !inputs.skipBuild
       shell: bash
       run: |
-        # The LunarG installer extracts to <VULKAN_SDK>/VulkanSDK/<version>/.
-        # Point VULKAN_SDK at the real SDK root so CMake's FindVulkan sees the
-        # Include/Lib dirs, then verify they are actually present.
-        ROOT="$(ls -d "${VULKAN_SDK}"/VulkanSDK/*/ 2>/dev/null | head -1)"
-        if [[ -n "$ROOT" ]]; then
-          ROOT="${ROOT%/}"
-          echo "VULKAN_SDK=$ROOT" >> "$GITHUB_ENV"
-          echo "Repointed VULKAN_SDK to $ROOT"
+        set +e
+        # The LunarG installer may unpack flat into $VULKAN_SDK or into a
+        # versioned subdir.  Locate the real SDK root (the dir containing the
+        # Vulkan headers) so CMake's find_package(Vulkan) sees Include/Lib, then
+        # point VULKAN_SDK at it.  Do not assume a layout or a fixed case.
+        ROOT="${VULKAN_SDK}"
+        VH="$(find "${VULKAN_SDK}" -type f -name vulkan.h \
+                -path '*/vulkan/vulkan.h' 2>/dev/null | head -1)"
+        if [[ -n "$VH" ]]; then
+          ROOT="$(dirname "$(dirname "$(dirname "$VH")")")"   # strip include/vulkan/vulkan.h
+          if [[ "$ROOT" != "${VULKAN_SDK}" ]]; then
+            echo "VULKAN_SDK=$ROOT" >> "$GITHUB_ENV"
+            echo "Repointed VULKAN_SDK from ${VULKAN_SDK} to $ROOT"
+          fi
         fi
-        if [[ ! -d "${VULKAN_SDK}/Include" ]]; then
-          echo "::error::Vulkan SDK Include dir not found under ${VULKAN_SDK}"
-          ls -la "${VULKAN_SDK}" || true
+        echo "--- ${ROOT} top-level layout ---"
+        ls -la "${ROOT}" 2>/dev/null | head -30 || true
+        if [[ ! -f "${ROOT}/include/vulkan/vulkan.h" && \
+              ! -f "${ROOT}/Include/vulkan/vulkan.h" ]]; then
+          echo "::error::Vulkan headers not found under ${ROOT}"
+          echo "VULKAN_SDK was: ${VULKAN_SDK}"
           exit 1
         fi
+        echo "::notice::Vulkan SDK root = ${ROOT}"
 
     - name: Make needed directories, files and initializations
       if: "!inputs.skipBuild"
