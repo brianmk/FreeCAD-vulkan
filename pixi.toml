@@ -107,6 +107,13 @@ xcb-util-cursor = "==0.1.5"  ## hack to address https://github.com/FreeCAD/FreeC
 xorg-x11-server-common-cos7-x86_64 = "*"
 xorg-x11-server-xvfb-cos7-x86_64 = "*"
 xorg-xproto = "*"
+# The pixi/conda clang is isolated and does not search /usr/include, so the
+# apt-provided libvulkan-dev headers are invisible to the bundled Coin build.
+# Ship vulkan-headers in the env so <vulkan/vulkan.h> resolves.  The loader
+# (libvulkan) still comes from the system libvulkan-dev that the workflow
+# installs.  conda-forge has no vulkan-loader package, so win-64 keeps using
+# the Vulkan SDK action instead.
+vulkan-headers = "*"
 
 ## Linux Dependencies (aarch64)
 [target.linux-aarch64.dependencies]
