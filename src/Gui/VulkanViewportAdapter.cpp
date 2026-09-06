@@ -250,7 +250,8 @@ void VulkanViewportAdapter::pushSettings()
     char sig[512];
     std::snprintf(sig, sizeof(sig), "r=%d e=%d p=%d c=%.3g,%.3g,%.3g,%.3g "
                                     "em=%d pt=%d bo=%d se=%d ms=%d dn=%s ds=%.3g "
-                                    "bg=%d %.3g,%.3g,%.3g %.3g,%.3g,%.3g",
+                                    "bg=%d %.3g,%.3g,%.3g %.3g,%.3g,%.3g "
+                                    "%.3g,%.3g,%.3g",
                   raster ? 1 : 0, effEdges ? 1 : 0, effPoints ? 1 : 0,
                   settings.edgeColor[0], settings.edgeColor[1],
                   settings.edgeColor[2], settings.edgeColor[3],
