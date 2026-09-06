@@ -161,20 +161,29 @@ jobs:
       if: runner.os == 'Windows' && !inputs.skipBuild
       shell: bash
       run: |
-        # The Windows LunarG SDK ships only as an NSIS installer exe; extracting
-        # it with 7z (as humbletim/install-vulkan-sdk does) yields just Bin/.  We
-        # must RUN the installer silently; it installs to C:\VulkanSDK\<version>
-        # and drops Include/, Lib/, Bin/, Source/ etc.  MSYS_NO_PATHCONV stops
-        # git-bash rewriting the NSIS /S flag into a path.
+        # The Windows LunarG SDK ships only as a Qt Installer Framework binary
+        # (not NSIS): extracting it with 7z (as humbletim/install-vulkan-sdk
+        # does) yields just Bin/, and /S is not a valid flag.  Invoke it headless
+        # with `install` as the first positional command and --root to choose the
+        # SDK directory, which gets Include/, Lib/, Bin/, Source/ etc.
+        # MSYS_NO_PATHCONV stops git-bash rewriting the /--root path.
         V=1.4.357.0
         exe=vulkan_sdk.exe
         curl -sL --fail-with-body -o "$exe" \
           "https://sdk.lunarg.com/sdk/download/${V}/windows/vulkan_sdk.exe?Human=true"
-        MSYS_NO_PATHCONV=1 "./$exe" /S --accept-licenses --default-answer \
-          --confirm-command install
-        ROOT="$(ls -d /c/VulkanSDK/*/ 2>/dev/null | sort -V | tail -1 | sed 's:/*$::')"
+        MSYS_NO_PATHCONV=1 "./$exe" \
+          --root C:/VulkanSDK \
+          --accept-licenses --default-answer --accept-messages --confirm-command \
+          install
+        # Locate the SDK root: --root may be used verbatim (Include at the top)
+        # or the vendor may add a versioned subdir.
+        if [[ -d "/c/VulkanSDK/Include" ]]; then
+          ROOT=/c/VulkanSDK
+        else
+          ROOT="$(ls -d /c/VulkanSDK/*/ 2>/dev/null | sort -V | tail -1 | sed 's:/*$::')"
+        fi
         if [[ -z "$ROOT" || ! -d "${ROOT}/Include" ]]; then
-          echo "::error::Could not find Vulkan SDK install dir under /c/VulkanSDK"
+          echo "::error::Vulkan SDK not found under C:/VulkanSDK"
           ls -la /c/VulkanSDK 2>/dev/null || true
           exit 1
         fi
