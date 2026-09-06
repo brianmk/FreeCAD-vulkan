@@ -137,22 +137,11 @@ void VulkanViewportAdapter::syncViewer()
     _viewer->updateAxisCrossNodes();
     _vulkanViewer->setDecorationSceneGraph(_viewer->getAxisCrossOverlay());
     _vulkanViewer->setCamera(rm->getCamera());
-    _vulkanViewer->setBackgroundColor(rm->getBackgroundColor());
-    const View3DInventorViewer::Background gradient =
-        _viewer->getGradientBackground();
-    if (gradient != View3DInventorViewer::Background::NoGradient) {
-        SbColor from;
-        SbColor to;
-        _viewer->getGradientBackgroundColor(from, to);
-        _vulkanViewer->setBackgroundGradient(true,
-                                             SbColor4f(from[0], from[1], from[2], 1.0f),
-                                             SbColor4f(to[0], to[1], to[2], 1.0f));
-    }
-    else {
-        _vulkanViewer->setBackgroundGradient(false,
-                                             SbColor4f(0.0f, 0.0f, 0.0f, 1.0f),
-                                             SbColor4f(0.0f, 0.0f, 0.0f, 1.0f));
-    }
+    // The background (solid color + gradient + environment preset) is pushed
+    // by pushSettings(), the single source of truth derived from the hidden
+    // GL viewer.  syncViewer() only re-seeds scene/camera/overlays here and
+    // lets pushSettings() refresh the background, so a background change is
+    // pushed in exactly one place.
     pushSettings();
     // Track the scene/camera we just pushed so subsequent changes on the
     // (possibly new) nodes wake the Vulkan frame (idempotent).
@@ -233,9 +222,34 @@ void VulkanViewportAdapter::pushSettings()
     const bool effEdges = raster ? false : settings.showEdges;
     const bool effPoints = raster ? false : settings.showPoints;
 
-    char sig[256];
+    // Background is a single view of truth derived here from the hidden GL
+    // viewer (render-manager solid color + pcBackGround gradient) and pushed
+    // in one place along with the environment preset.  syncViewer() no longer
+    // sets the background directly; it only re-seeds scene/camera/overlays and
+    // lets pushSettings() refresh the background, so there is one push path
+    // and the solid/gradient/env state cannot drift between the two callers.
+    SbColor4f bgColor = SbColor4f(0.0f, 0.0f, 0.0f, 1.0f);
+    float bgTop[3] = {0.0f, 0.0f, 0.0f};
+    float bgBottom[3] = {0.0f, 0.0f, 0.0f};
+    bool bgGradient = false;
+    if (SoRenderManager* rm = _viewer->getSoRenderManager()) {
+        bgColor = rm->getBackgroundColor();
+        const View3DInventorViewer::Background gradient =
+            _viewer->getGradientBackground();
+        bgGradient = (gradient != View3DInventorViewer::Background::NoGradient);
+        if (bgGradient) {
+            SbColor from;
+            SbColor to;
+            _viewer->getGradientBackgroundColor(from, to);
+            bgTop[0] = from[0]; bgTop[1] = from[1]; bgTop[2] = from[2];
+            bgBottom[0] = to[0]; bgBottom[1] = to[1]; bgBottom[2] = to[2];
+        }
+    }
+
+    char sig[512];
     std::snprintf(sig, sizeof(sig), "r=%d e=%d p=%d c=%.3g,%.3g,%.3g,%.3g "
-                                    "em=%d pt=%d bo=%d se=%d ms=%d dn=%s ds=%.3g",
+                                    "em=%d pt=%d bo=%d se=%d ms=%d dn=%s ds=%.3g "
+                                    "bg=%d %.3g,%.3g,%.3g %.3g,%.3g,%.3g",
                   raster ? 1 : 0, effEdges ? 1 : 0, effPoints ? 1 : 0,
                   settings.edgeColor[0], settings.edgeColor[1],
                   settings.edgeColor[2], settings.edgeColor[3],
@@ -243,7 +257,11 @@ void VulkanViewportAdapter::pushSettings()
                   settings.pathTracingBounces, settings.pathTracingSettleFrames,
                   settings.pathTracingMaxSamples,
                   settings.pathTracingDenoiser.c_str(),
-                  settings.pathTracingDenoiserScale);
+                  settings.pathTracingDenoiserScale,
+                  bgGradient ? 1 : 0,
+                  bgColor[0], bgColor[1], bgColor[2],
+                  bgTop[0], bgTop[1], bgTop[2],
+                  bgBottom[0], bgBottom[1], bgBottom[2]);
     const bool changed = (sig != this->_pushedSettingsSig);
     this->_pushedSettingsSig = sig;
 
@@ -266,6 +284,15 @@ void VulkanViewportAdapter::pushSettings()
         _vulkanViewer->setWireframeOverlay(effEdges);
         _vulkanViewer->setPointsOverlay(effPoints);
         _vulkanViewer->setEdgeColor(settings.edgeColor);
+        // Background and environment preset are pushed together: both drive
+        // the frame's sky/miss radiance (see SoRenderParams::background* and
+        // SoRTXRenderBackend::setEnvMap), so updating them in one place keeps
+        // raster and ray-traced backgrounds in agreement.
+        _vulkanViewer->setBackgroundColor(bgColor);
+        _vulkanViewer->setBackgroundGradient(
+            bgGradient,
+            SbColor4f(bgTop[0], bgTop[1], bgTop[2], 1.0f),
+            SbColor4f(bgBottom[0], bgBottom[1], bgBottom[2], 1.0f));
         _vulkanViewer->setEnvMap(settings.envMap);
 
         _vulkanViewer->setPathTracingEnabled(!raster);
