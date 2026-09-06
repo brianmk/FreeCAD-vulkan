@@ -109,11 +109,12 @@ xorg-x11-server-xvfb-cos7-x86_64 = "*"
 xorg-xproto = "*"
 # The pixi/conda clang is isolated and does not search /usr/include, so the
 # apt-provided libvulkan-dev headers are invisible to the bundled Coin build.
-# Ship vulkan-headers in the env so <vulkan/vulkan.h> resolves.  The loader
-# (libvulkan) still comes from the system libvulkan-dev that the workflow
-# installs.  conda-forge has no vulkan-loader package, so win-64 keeps using
-# the Vulkan SDK action instead.
-vulkan-headers = "*"
+# Ship libvulkan-headers (conda-forge's current name; the legacy 'vulkan-headers'
+# caps at 1.3.x) in the env so <vulkan/vulkan.h> resolves and is new enough for
+# the KHR ray-tracing-position-fetch extension used by the Vulkan viewport.  It
+# matches the version conda's libvulkan-loader already requires, and win-64
+# installs the full LunarG SDK directly in the workflow instead.
+libvulkan-headers = "*"
 
 ## Linux Dependencies (aarch64)
 [target.linux-aarch64.dependencies]
