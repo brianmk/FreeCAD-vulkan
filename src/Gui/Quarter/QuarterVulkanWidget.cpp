@@ -986,7 +986,8 @@ private:
         // The overlay block's sub-rect depth clear is unaffected.
         const SbBool ok = m_manager.renderExternal(false, false,
                                                    cb,
-                                                   m_window->defaultRenderPass());
+                                                   m_window->defaultRenderPass(),
+                                                   m_window->currentFramebuffer());
         if (!ok) {
             vkErr("startNextFrame: renderExternal FAILED");
         }

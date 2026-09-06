@@ -17,6 +17,7 @@
 #include <Inventor/SoEventManager.h>
 #include <Inventor/actions/SoSearchAction.h>
 #include <Inventor/nodes/SoAnnotation.h>
+#include <Inventor/actions/SoGetMatrixAction.h>
 #include <Inventor/nodes/SoCamera.h>
 #include <Inventor/nodes/SoDirectionalLight.h>
 #include <Inventor/nodes/SoEnvironment.h>
@@ -339,6 +340,44 @@ void VulkanViewportAdapter::pushSettings()
     this->pushSceneLights();
 #endif
 }
+namespace {
+
+// Evaluate \a light's world-space "travel" direction (pointing TOWARD the
+// surfaces it lights, i.e. the negated SoDirectionalLight::direction field),
+// transformed by the light node's world/scene matrix the same way
+// SoRenderIR::fillLightingFromState does.  When the light cannot be located
+// in the scene graph it is treated as world-fixed (its raw direction used
+// directly), which is the convention for the viewer headlight/backlight.
+// The search action and the path it yields are kept in this scope: the path
+// is owned by the search action and freed when it goes out of scope, so it
+// must not be returned or used outside it.
+SbVec3f
+lightWorldDirection(SoRenderManager* rm, const SoNode* light)
+{
+    SbVec3f dir(0.0f, 0.0f, 0.0f);
+    if (light->isOfType(SoDirectionalLight::getClassTypeId())) {
+        const SbVec3f d =
+            static_cast<const SoDirectionalLight*>(light)->direction.getValue();
+        dir = SbVec3f(-d[0], -d[1], -d[2]);
+    }
+    if (rm) {
+        if (SoNode* root = rm->getSceneGraph()) {
+            SoSearchAction sa;
+            sa.setNode(const_cast<SoNode*>(light));
+            sa.setInterest(SoSearchAction::FIRST);
+            sa.apply(root);
+            if (SoPath* path = sa.getPath()) {
+                SoGetMatrixAction matrixAction(SbViewportRegion(1, 1));
+                matrixAction.apply(path);
+                matrixAction.getMatrix().multDirMatrix(dir, dir);
+            }
+        }
+    }
+    return dir;
+}
+
+} // namespace
+
 void
 VulkanViewportAdapter::pushSceneLights()
 {
@@ -347,47 +386,55 @@ VulkanViewportAdapter::pushSceneLights()
         return;
     }
 
-    // Eye-space light set, matching the SoRenderIR::fillLightingFromState
-    // convention (view-fixed, GL's untransformed raw field values).  The RT
-    // shader converts the direction back to world via frame.u_viewInverse, so
-    // the headlight stays camera-fixed as the camera orbits.
+    // World-space light set, matching the SoRenderIR::fillLightingFromState
+    // convention exactly: each directional light's world direction is its
+    // negated direction field transformed by the light node's scene matrix.
+    // The viewer headlight and backlight sit at the scene root (world-fixed),
+    // while the fill light hangs under an SoRotation connected to the camera
+    // orientation, so it follows the camera.  The RT shaders consume the
+    // fields directly in world space, giving raster/path-tracer parity.
     std::vector<SoLightData> lights;
+    lights.reserve(3);
     SbVec3f ambient(0.2f, 0.2f, 0.2f);
+
+    SoRenderManager* rm = _viewer->getSoRenderManager();
+    SoNode* root = rm ? rm->getSceneGraph() : nullptr;
 
     // Scene ambient from the environment node (so a scene lit purely by
     // ambient still reads non-black).
-    if (SoRenderManager* rm = _viewer->getSoRenderManager()) {
-        if (SoNode* root = rm->getSceneGraph()) {
-            // Environment: ambient color * intensity (matches IR fill).
-            SoSearchAction sa;
-            sa.setType(SoEnvironment::getClassTypeId());
-            sa.setInterest(SoSearchAction::FIRST);
-            sa.apply(root);
-            if (SoEnvironment* env = static_cast<SoEnvironment*>(sa.getPath()
-                    ? sa.getPath()->getTail() : nullptr)) {
-                const SbColor& ac = env->ambientColor.getValue();
-                float ai = env->ambientIntensity.getValue();
-                ambient = SbVec3f(ac[0] * ai, ac[1] * ai, ac[2] * ai);
-            }
+    if (root) {
+        SoSearchAction sa;
+        sa.setType(SoEnvironment::getClassTypeId());
+        sa.setInterest(SoSearchAction::FIRST);
+        sa.apply(root);
+        if (SoEnvironment* env = static_cast<SoEnvironment*>(
+                sa.getPath() ? sa.getPath()->getTail() : nullptr)) {
+            const SbColor& ac = env->ambientColor.getValue();
+            float ai = env->ambientIntensity.getValue();
+            ambient = SbVec3f(ac[0] * ai, ac[1] * ai, ac[2] * ai);
         }
     }
 
-    // The viewer headlight is the authoritative single light for the view.
-    if (SoDirectionalLight* hl = _viewer->getHeadlight()) {
-        if (hl->on.getValue()) {
-            SoLightData l;
-            l.type = SO_LIGHT_DIRECTIONAL;
-            const SbVec3f c = hl->color.getValue();
-            float i = hl->intensity.getValue();
-            l.color = SbVec3f(c[0] * i, c[1] * i, c[2] * i);
-            // Direction: light points from -direction (IR fill convention).
-            const SbVec3f d = hl->direction.getValue();
-            l.direction = SbVec3f(-d[0], -d[1], -d[2]);
-            if (l.direction.normalize() == 0.0f) {
-                l.direction = SbVec3f(0.0f, 0.0f, 1.0f);
-            }
-            lights.push_back(l);
+    // Push each enabled directional light with the same world-space
+    // convention the raster IR uses (headlight + backlight + fill, matching
+    // the GL viewer's three-point lighting).
+    const SoDirectionalLight* lightsL[] = {
+        _viewer->getHeadlight(), _viewer->getBacklight(), _viewer->getFillLight()};
+    for (const SoDirectionalLight* light : lightsL) {
+        if (!light || !light->on.getValue()) {
+            continue;
         }
+        SoLightData l;
+        l.type = SO_LIGHT_DIRECTIONAL;
+        const SbVec3f c = light->color.getValue();
+        float i = light->intensity.getValue();
+        l.color = SbVec3f(c[0] * i, c[1] * i, c[2] * i);
+        SbVec3f dir = lightWorldDirection(rm, light);
+        if (dir.normalize() == 0.0f) {
+            dir = SbVec3f(0.0f, 0.0f, 1.0f);
+        }
+        l.direction = dir;
+        lights.push_back(l);
     }
 
     _vulkanViewer->setSceneLights(lights, ambient);

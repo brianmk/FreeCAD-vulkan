@@ -42,6 +42,9 @@ COLS = 40
 ROWS = (TOTAL + COLS - 1) // COLS
 WARMUP = int(os.environ.get("FC_CUBES_WARMUP", "100"))
 MEASURE = int(os.environ.get("FC_CUBES_FRAMES", "200"))
+# Unique diffuse per box: defeats the instanced batch bucket so the frame
+# carries TOTAL distinct draw items (the M1d parallel-record workload).
+COLORS = os.environ.get("FC_CUBES_COLORS", "0") == "1"
 
 
 def log(msg):
@@ -84,7 +87,15 @@ def draw_one():
     orbit(0.3)
     view = FreeCADGui.ActiveDocument.ActiveView
     if USE_VULKAN:
+        # Synchronous: wait until the requested frame is actually rendered so
+        # the timed window covers record + submit + present like GL redraw().
+        before = view.getVulkanFrameCount()
         view.requestVulkanRender()
+        deadline = time.perf_counter() + 2.0
+        while view.getVulkanFrameCount() <= before and \
+                time.perf_counter() < deadline:
+            QtGui.QApplication.processEvents()
+            time.sleep(0.001)
     else:
         view.redraw()
     QtGui.QApplication.processEvents()
@@ -139,6 +150,11 @@ def step():
                 b.Height = 6
                 b.Placement.Base = FreeCAD.Vector((i % COLS) * 10.0,
                                                   (i // COLS) * 10.0, 0.0)
+                if COLORS:
+                    hue = (i * 0.618034) % 1.0  # golden-ratio hue sweep
+                    rgb = QtGui.QColor.fromHsvF(hue, 0.6, 0.9)
+                    b.ViewObject.ShapeColor = (
+                        rgb.redF(), rgb.greenF(), rgb.blueF(), 1.0)
             doc[0].recompute()
             log("created=%d" % len(doc[0].Objects))
             FreeCADGui.SendMsgToActiveView("ViewFit")
