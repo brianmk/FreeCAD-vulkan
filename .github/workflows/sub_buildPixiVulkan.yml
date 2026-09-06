@@ -160,9 +160,27 @@ jobs:
     - name: Install Vulkan SDK (Windows)
       if: runner.os == 'Windows' && !inputs.skipBuild
       # Provides the Vulkan SDK on the Windows pixi build.  It writes VULKAN_SDK
-      # to GITHUB_ENV, which the CMake Configure step reads to pass the exact
-      # Include/Lib paths to find_package(Vulkan).
+      # to GITHUB_ENV and is consumed by CMake's find_package(Vulkan).
       uses: humbletim/install-vulkan-sdk@v1.2
+
+    - name: Repoint VULKAN_SDK to the extracted SDK root (Windows)
+      if: runner.os == 'Windows' && !inputs.skipBuild
+      shell: bash
+      run: |
+        # The LunarG installer extracts to <VULKAN_SDK>/VulkanSDK/<version>/.
+        # Point VULKAN_SDK at the real SDK root so CMake's FindVulkan sees the
+        # Include/Lib dirs, then verify they are actually present.
+        ROOT="$(ls -d "${VULKAN_SDK}"/VulkanSDK/*/ 2>/dev/null | head -1)"
+        if [[ -n "$ROOT" ]]; then
+          ROOT="${ROOT%/}"
+          echo "VULKAN_SDK=$ROOT" >> "$GITHUB_ENV"
+          echo "Repointed VULKAN_SDK to $ROOT"
+        fi
+        if [[ ! -d "${VULKAN_SDK}/Include" ]]; then
+          echo "::error::Vulkan SDK Include dir not found under ${VULKAN_SDK}"
+          ls -la "${VULKAN_SDK}" || true
+          exit 1
+        fi
 
     - name: Make needed directories, files and initializations
       if: "!inputs.skipBuild"
@@ -211,19 +229,11 @@ jobs:
           PRESET=conda-linux-release
           GEN_ARGS=()
         fi
-        VK_ARGS=()
-        # The Vulkan SDK action sets VULKAN_SDK; hand the exact Include/Lib dirs
-        # to CMake so find_package(Vulkan) cannot miss it (the Windows SDK uses
-        # the capitalised Include/Lib layout).  If VULKAN_SDK is unset fall back
-        # to find_package(Vulkan)'s own search.
-        if [[ -n "${VULKAN_SDK}" ]]; then
-          VK_ARGS=(
-            -DVulkan_INCLUDE_DIR="${VULKAN_SDK}/Include"
-            -DVulkan_LIBRARY="${VULKAN_SDK}/Lib/vulkan-1.lib"
-          )
-        fi
+        # Vulkan is found by CMake's find_package(Vulkan) via VULKAN_SDK
+        # (Windows SDK action / repoint step) or the conda vulkan-headers on
+        # Linux.  Do not hardcode Include/Lib: the SDK layout is versioned.
         pixi run cmake --preset "${PRESET}" -DFREECAD_USE_VULKAN=ON \
-          "${GEN_ARGS[@]}" "${VK_ARGS[@]}"
+          "${GEN_ARGS[@]}"
 
     - name: CMake Build
       if: "!inputs.skipBuild"
