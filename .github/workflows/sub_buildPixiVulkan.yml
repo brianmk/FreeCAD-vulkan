@@ -158,7 +158,7 @@ jobs:
 
     - name: Install Vulkan SDK (Windows)
       if: runner.os == 'Windows' && !inputs.skipBuild
-      uses: sarcasm/install-vulkan-sdk@v1.2.0
+      uses: humbletim/install-vulkan-sdk@v1.2
 
     - name: Make needed directories, files and initializations
       if: "!inputs.skipBuild"
