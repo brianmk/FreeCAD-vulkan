@@ -159,38 +159,34 @@ jobs:
 
     - name: Install Vulkan SDK (Windows)
       if: runner.os == 'Windows' && !inputs.skipBuild
-      # Provides the Vulkan SDK on the Windows pixi build.  It writes VULKAN_SDK
-      # to GITHUB_ENV and is consumed by CMake's find_package(Vulkan).
-      uses: humbletim/install-vulkan-sdk@v1.2
-
-    - name: Repoint VULKAN_SDK to the extracted SDK root (Windows)
-      if: runner.os == 'Windows' && !inputs.skipBuild
       shell: bash
       run: |
-        set +e
-        # The LunarG installer may unpack flat into $VULKAN_SDK or into a
-        # versioned subdir.  Locate the real SDK root (the dir containing the
-        # Vulkan headers) so CMake's find_package(Vulkan) sees Include/Lib, then
-        # point VULKAN_SDK at it.  Do not assume a layout or a fixed case.
-        ROOT="${VULKAN_SDK}"
-        VH="$(find "${VULKAN_SDK}" -type f -name vulkan.h \
-                -path '*/vulkan/vulkan.h' 2>/dev/null | head -1)"
-        if [[ -n "$VH" ]]; then
-          ROOT="$(dirname "$(dirname "$(dirname "$VH")")")"   # strip include/vulkan/vulkan.h
-          if [[ "$ROOT" != "${VULKAN_SDK}" ]]; then
-            echo "VULKAN_SDK=$ROOT" >> "$GITHUB_ENV"
-            echo "Repointed VULKAN_SDK from ${VULKAN_SDK} to $ROOT"
-          fi
-        fi
-        echo "--- ${ROOT} top-level layout ---"
-        ls -la "${ROOT}" 2>/dev/null | head -30 || true
-        if [[ ! -f "${ROOT}/include/vulkan/vulkan.h" && \
-              ! -f "${ROOT}/Include/vulkan/vulkan.h" ]]; then
-          echo "::error::Vulkan headers not found under ${ROOT}"
-          echo "VULKAN_SDK was: ${VULKAN_SDK}"
+        # The Windows LunarG SDK ships only as an NSIS installer exe; extracting
+        # it with 7z (as humbletim/install-vulkan-sdk does) yields just Bin/.  We
+        # must RUN the installer silently; it installs to C:\VulkanSDK\<version>
+        # and drops Include/, Lib/, Bin/, Source/ etc.  MSYS_NO_PATHCONV stops
+        # git-bash rewriting the NSIS /S flag into a path.
+        V=1.4.357.0
+        exe=vulkan_sdk.exe
+        curl -sL --fail-with-body -o "$exe" \
+          "https://sdk.lunarg.com/sdk/download/${V}/windows/vulkan_sdk.exe?Human=true"
+        MSYS_NO_PATHCONV=1 "./$exe" /S --accept-licenses --default-answer \
+          --confirm-command install
+        ROOT="$(ls -d /c/VulkanSDK/*/ 2>/dev/null | sort -V | tail -1 | sed 's:/*$::')"
+        if [[ -z "$ROOT" || ! -d "${ROOT}/Include" ]]; then
+          echo "::error::Could not find Vulkan SDK install dir under /c/VulkanSDK"
+          ls -la /c/VulkanSDK 2>/dev/null || true
           exit 1
         fi
-        echo "::notice::Vulkan SDK root = ${ROOT}"
+        test -f "${ROOT}/Include/vulkan/vulkan.h" || { echo "::error::vulkan.h missing"; exit 1; }
+        test -f "${ROOT}/Lib/vulkan-1.lib"        || { echo "::error::vulkan-1.lib missing"; exit 1; }
+        # git-bash paths (/c/...) are wrong for CMake on Windows; emit the
+        # mixed C:/... form that find_package(Vulkan) accepts.
+        WIN_ROOT="$(cygpath -m "$ROOT")"
+        echo "VULKAN_SDK=$WIN_ROOT" >> "$GITHUB_ENV"
+        echo "VULKAN_SDK_VERSION=$V" >> "$GITHUB_ENV"
+        echo "=== ${ROOT} top-level ==="
+        ls -la "${ROOT}" | head -30
 
     - name: Make needed directories, files and initializations
       if: "!inputs.skipBuild"
