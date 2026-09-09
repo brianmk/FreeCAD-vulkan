@@ -415,6 +415,16 @@ private Q_SLOTS:
      * current edge-hidden state.
      */
     void syncEdgeOverlayButton();
+    /**
+     * Applies the status-bar tessellation-edges debug toggle to the active
+     * 3D view.
+     */
+    void onTessEdgesToggled(bool checked);
+    /**
+     * Re-synchronises the status-bar tessellation-edges button to the active
+     * view's current debug-overlay state.
+     */
+    void syncTessEdgesButton();
 #endif
     /**
      * Close tab at position index.

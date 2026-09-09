@@ -188,6 +188,11 @@ public Q_SLOTS:
     /// mirrored by the status-bar edge-overlay button.
     bool getShowEdges() const;
     void setShowEdges(bool enabled);
+    /// Debug overlay: whether the raw tessellation (triangle) edges are drawn
+    /// on top of the shaded geometry.  Backed by VulkanShowTessEdges and
+    /// mirrored by the status-bar tessellation button.
+    bool getShowTessEdges() const;
+    void setShowTessEdges(bool enabled);
 #endif
 
     /// Ordinal of the Vulkan viewport's last presented frame (see

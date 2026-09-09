@@ -112,6 +112,10 @@ struct VulkanViewSettings
 
     bool showEdges = false;
     bool showPoints = false;
+    // Debug overlay: draw the raw triangle tessellation edges on top of the
+    // shaded geometry.  Not a persisted user preference -- a session toggle
+    // for mesh inspection (see VulkanShowTessEdges).
+    bool showTessEdges = false;
     SbColor4f edgeColor = SbColor4f(0.05f, 0.05f, 0.05f, 1.0f);
     bool pathTracing = false;
     // Path-tracing tuning (see the View preferences dialog).
