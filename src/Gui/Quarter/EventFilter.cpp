@@ -87,9 +87,12 @@ public:
     this->globalmousepos = event->globalPos();
 #endif
 
+    const SbVec2s windowLogical = quarterwidget->vulkanDevicePixels()
+        ? effectiveWindowSize(quarterwidget)
+        : this->windowsize;
     SbVec2s mousepos = InputDevice::toDevicePixelPosition(
         getLocalPosition(event),
-        effectiveWindowSize(quarterwidget),
+        windowLogical,
         quarterwidget->devicePixelRatio());
     // Duplicate of InputDevice::toDevicePixelPosition's own trace; the helper
     // already logs the dpr/window mapping once, so log this around the same

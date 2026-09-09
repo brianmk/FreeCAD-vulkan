@@ -1125,6 +1125,7 @@ SET(Inventor_CPP_SRCS
     Inventor/SoFCBackgroundGradient.cpp
     Inventor/SoFCBoundingBox.cpp
     Inventor/SoNaviCube.cpp
+    Inventor/SoNaviCubeVulkan.cpp
     Inventor/SoGroundPlane.cpp
     Inventor/SoAxisCrossOverlay.cpp
     Inventor/SoMouseWheelEvent.cpp
@@ -1168,6 +1169,7 @@ SET(Inventor_SRCS
     Inventor/SoFCBackgroundGradient.h
     Inventor/SoFCBoundingBox.h
     Inventor/SoNaviCube.h
+    Inventor/SoNaviCubeVulkan.h
     Inventor/SoGroundPlane.h
     Inventor/SoAxisCrossOverlay.h
     Inventor/SoMouseWheelEvent.h
