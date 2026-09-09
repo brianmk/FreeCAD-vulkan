@@ -114,6 +114,7 @@ public:
     */
     void setWireframeOverlay(bool enabled);
     void setPointsOverlay(bool enabled);
+    void setTessellationOverlay(bool enabled);
     void setEdgeColor(const SbColor4f & color);
 
     /*!

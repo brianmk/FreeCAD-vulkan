@@ -229,6 +229,11 @@ public:
         QMutexLocker locker(&m_stateMutex);
         m_viewSettings.pointsOverlay = enabled;
     }
+    void setTessellationOverlay(bool enabled)
+    {
+        QMutexLocker locker(&m_stateMutex);
+        m_viewSettings.tessellationOverlay = enabled;
+    }
     void setEdgeColor(const SbColor4f & color)
     {
         QMutexLocker locker(&m_stateMutex);
@@ -397,6 +402,7 @@ public:
 
     void initResources() override
     {
+        VK_BREADCRUMB("[VKINIT] QuarterVulkanWidget initResources enter\n");
         vkLog("initResources: creating Vulkan backend");
         const VkPhysicalDeviceProperties * props = m_window->physicalDeviceProperties();
         if (props) {
@@ -485,10 +491,15 @@ public:
         else {
             vkErr("initResources: backend initialize FAILED");
         }
+        VK_BREADCRUMB("[VKINIT] QuarterVulkanWidget initResources DONE "
+                      "initialized=%d rtxBuilt=%d\n",
+                      m_initialized ? 1 : 0, m_rtxBackendBuilt ? 1 : 0);
     }
 
     void initSwapChainResources() override
     {
+        VK_BREADCRUMB("[VKFLOW] QVulkanRenderer initSwapChainResources enter "
+                      "(swapchain recreate)\n");
         m_manager.setRenderTarget(&m_target);
         // QVulkanWindow may keep up to its swapchain image count frames in
         // flight; give the backend one extra ring slot of margin.
@@ -1855,6 +1866,12 @@ void QuarterVulkanWidget::setWireframeOverlay(bool enabled)
 void QuarterVulkanWidget::setPointsOverlay(bool enabled)
 {
     d->renderer->setPointsOverlay(enabled);
+    redraw();
+}
+
+void QuarterVulkanWidget::setTessellationOverlay(bool enabled)
+{
+    d->renderer->setTessellationOverlay(enabled);
     redraw();
 }
 

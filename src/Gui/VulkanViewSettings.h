@@ -113,6 +113,10 @@ struct VulkanViewSettings
     //! Wireframe (edge) overlay and point overlay for the raster backend.
     bool wireframe = false;
     bool showPoints = false;
+    // Debug overlay: draw the raw triangle tessellation edges on top of the
+    // shaded geometry.  Persisted via VulkanShowTessEdges like the other
+    // overlay toggles; raster-backend only (gated in pushSettings()).
+    bool showTessEdges = false;
     SbColor4f edgeColor = SbColor4f(0.05f, 0.05f, 0.05f, 1.0f);
     // Path-tracing tuning (see the View preferences dialog).
     int pathTracingBounces = 4;

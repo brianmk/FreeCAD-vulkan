@@ -429,6 +429,7 @@ struct MainWindowP
     QComboBox* viewModeCombo = nullptr;
     QComboBox* envMapCombo = nullptr;
     QToolButton* wireframeButton = nullptr;
+    QToolButton* tessEdgesButton = nullptr;
 #endif
     std::vector<StatusBarItem> statusBarItems;
     ParameterGrp::handle hStatusBar;
@@ -731,6 +732,28 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
     );
     connect(d->wireframeButton, &QToolButton::toggled,
             this, &MainWindow::onWireframeToggled);
+
+    // Debug toggle: draw the raw tessellation (triangle) edges on top of the
+    // shaded geometry in the Vulkan viewport.  Lives next to the wireframe
+    // overlay button; persisted via the VulkanShowTessEdges preference.
+    d->tessEdgesButton = new QToolButton(statusBar());
+    d->tessEdgesButton->setObjectName(QStringLiteral("TessellationEdgesButton"));
+    d->tessEdgesButton->setCheckable(true);
+    d->tessEdgesButton->setAutoRaise(true);
+    d->tessEdgesButton->setIcon(BitmapFactory().iconFromTheme("DrawStyleWireFrame"));
+    d->tessEdgesButton->setToolTip(tr("Toggle the tessellation edges overlay (debug)"));
+    addStatusBarItem(
+        d->tessEdgesButton,
+        {.id = "tessEdgesButton",
+         //: A context menu action used to show or hide the tessellation edges
+         //: debug overlay in the status bar
+         .title = tr("Tessellation Edges"),
+         .slot = StatusBarSlot::Right,
+         .order = 254,
+         .persistentVisibility = true}
+    );
+    connect(d->tessEdgesButton, &QToolButton::toggled,
+            this, &MainWindow::onTessEdgesToggled);
 #endif // FREECAD_USE_VULKAN
 
     auto* groundPlaneWidget = new GroundPlaneWidget(statusBar());
@@ -1667,6 +1690,8 @@ void MainWindow::addWindow(MDIView* view)
                 this, &MainWindow::syncViewModeCombo);
         connect(v3, &View3DInventor::renderModeChanged,
                 this, &MainWindow::syncWireframeButton);
+        connect(v3, &View3DInventor::renderModeChanged,
+                this, &MainWindow::syncTessEdgesButton);
 #endif
     }
 
@@ -1706,6 +1731,8 @@ void MainWindow::removeWindow(Gui::MDIView* view, bool close)
                    this, &MainWindow::syncViewModeCombo);
         disconnect(v3, &View3DInventor::renderModeChanged,
                    this, &MainWindow::syncWireframeButton);
+        disconnect(v3, &View3DInventor::renderModeChanged,
+                   this, &MainWindow::syncTessEdgesButton);
 #endif
     }
 
@@ -1835,6 +1862,7 @@ void MainWindow::setActiveWindow(MDIView* view)
     syncViewModeCombo();
     syncEnvMapCombo();
     syncWireframeButton();
+    syncTessEdgesButton();
 #endif
 
     // activate/remember workbench by tab (if enabled)
@@ -1933,6 +1961,15 @@ void MainWindow::onWireframeToggled(bool checked)
     view->setWireframe(checked);
 }
 
+void MainWindow::onTessEdgesToggled(bool checked)
+{
+    View3DInventor* view = dynamic_cast<View3DInventor*>(d->activeView.data());
+    if (!view) {
+        return;
+    }
+    view->setShowTessEdges(checked);
+}
+
 void MainWindow::syncWireframeButton()
 {
     if (!d->wireframeButton) {
@@ -1943,6 +1980,18 @@ void MainWindow::syncWireframeButton()
     const bool wireframe = vecView ? vecView->getWireframe() : false;
     QSignalBlocker blocker(d->wireframeButton);
     d->wireframeButton->setChecked(wireframe);
+}
+
+void MainWindow::syncTessEdgesButton()
+{
+    if (!d->tessEdgesButton) {
+        return;
+    }
+    // Checked state mirrors the active view's tessellation-overlay flag.
+    View3DInventor* vecView = dynamic_cast<View3DInventor*>(d->activeView.data());
+    const bool showTess = vecView ? vecView->getShowTessEdges() : false;
+    QSignalBlocker blocker(d->tessEdgesButton);
+    d->tessEdgesButton->setChecked(showTess);
 }
 #endif // FREECAD_USE_VULKAN
 

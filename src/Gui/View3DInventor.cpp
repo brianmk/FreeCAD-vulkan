@@ -622,6 +622,28 @@ void View3DInventor::setWireframe(bool enabled)
         _viewer->applyVulkanSettings();
     }
 }
+
+bool View3DInventor::getShowTessEdges() const
+{
+    // Backed by the persisted VulkanShowTessEdges preference (loaded into
+    // the view settings), so the status-bar button state survives a
+    // view re-load.
+    return _viewer && _viewer->getVulkanViewSettings().showTessEdges;
+}
+
+void View3DInventor::setShowTessEdges(bool enabled)
+{
+    if (getShowTessEdges() == enabled) {
+        return;
+    }
+    if (auto grp = App::GetApplication().GetParameterGroupByPath(
+            "User parameter:BaseApp/Preferences/View")) {
+        grp->SetBool("VulkanShowTessEdges", enabled);
+    }
+    if (_viewer) {
+        _viewer->applyVulkanSettings();
+    }
+}
 #endif // FREECAD_USE_VULKAN
 
 void View3DInventor::onRename(Gui::Document* pDoc)

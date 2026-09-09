@@ -51,13 +51,17 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
     if (!_viewer) {
         return;
     }
+    VK_BREADCRUMB("[VKFLOW] ctor enter viewer=%p useRayTracing=%d\n",
+                  static_cast<void*>(_viewer), int(useRayTracing));
     _vulkanViewer = new SIM::Coin3D::Quarter::QuarterVulkanWidget(stack, useRayTracing);
+    VK_BREADCRUMB("[VKFLOW] ctor QuarterVulkanWidget created ptr=%p\n",
+                  static_cast<void*>(_vulkanViewer));
     _vulkanViewer->setSampleCount(View3DInventorViewer::getNumSamples());
     // QVulkanWindow::grab() only converts 8-bit swapchain formats;
     // request B8G8R8A8_UNORM so screenshot tests read exact pixels.
     _vulkanViewer->setPreferredColorFormat(VK_FORMAT_B8G8R8A8_UNORM);
     stack->addWidget(_vulkanViewer);
-    VK_BREADCRUMB("[VK-TRACE] View3DInventor: QuarterVulkanWidget created\n");
+    VK_BREADCRUMB("[VKFLOW] ctor widget added to stack\n");
     syncViewer();
     // The viewer replaces its camera node whenever the projection type
     // changes (menu toggle, Python setCameraType, camera restore on
@@ -116,6 +120,7 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
     connect(_vulkanViewer,
             &SIM::Coin3D::Quarter::QuarterVulkanWidget::surfaceSizeChanged,
             this, &VulkanViewportAdapter::onSurfaceSizeChanged);
+    VK_BREADCRUMB("[VKFLOW] ctor connect surfaceSizeChanged<->onSurfaceSizeChanged\n");
     // Relay a ray-tracing-unavailable drop so the view can fall back to a
     // raster render mode (feature detection for non path-tracing hardware).
     connect(_vulkanViewer,
@@ -138,23 +143,36 @@ void VulkanViewportAdapter::syncViewer()
     if (!rm) {
         return;
     }
+    VK_BREADCRUMB("[VKFLOW] syncViewer enter glScene=%p glCam=%p\n",
+                  static_cast<void*>(rm->getSceneGraph()),
+                  static_cast<void*>(rm->getCamera()));
     _vulkanViewer->setSceneGraph(rm->getSceneGraph());
     _vulkanViewer->setOverlaySceneGraph(_viewer->getNaviCubeAnnotation());
+    VK_BREADCRUMB("[VKFLOW] syncViewer scene=%p overlay=(navcube=%p) set\n",
+                  static_cast<void*>(rm->getSceneGraph()),
+                  static_cast<void*>(_viewer->getNaviCubeAnnotation()));
     // The hidden GL viewer's frame loop never runs, so the axis cross
     // overlay nodes are refreshed here for the IR (Vulkan) render path.
     _viewer->updateAxisCrossNodes();
     _vulkanViewer->setDecorationSceneGraph(_viewer->getAxisCrossOverlay());
+    VK_BREADCRUMB("[VKFLOW] syncViewer decoration(axis-cross)=%p set\n",
+                  static_cast<void*>(_viewer->getAxisCrossOverlay()));
     _vulkanViewer->setCamera(rm->getCamera());
+    VK_BREADCRUMB("[VKFLOW] syncViewer camera=%p set\n",
+                  static_cast<void*>(rm->getCamera()));
     // The background (solid color + gradient + environment preset) is pushed
     // by pushSettings(), the single source of truth derived from the hidden
     // GL viewer.  syncViewer() only re-seeds scene/camera/overlays here and
     // lets pushSettings() refresh the background, so a background change is
     // pushed in exactly one place.
     pushSettings();
+    VK_BREADCRUMB("[VKFLOW] syncViewer pushSettings() done\n");
     // Track the scene/camera we just pushed so subsequent changes on the
     // (possibly new) nodes wake the Vulkan frame (idempotent).
     attachSensors();
+    VK_BREADCRUMB("[VKFLOW] syncViewer attachSensors() done\n");
     _vulkanViewer->redraw();
+    VK_BREADCRUMB("[VKFLOW] syncViewer redraw() done (init complete)\n");
 #endif
 }
 
@@ -203,6 +221,7 @@ void VulkanViewportAdapter::useVulkanViewport(bool vulkan)
     if (host->currentWidget() == target) {
         return;
     }
+    VK_BREADCRUMB("[VKFLOW] useVulkanViewport(toggle) -> %s\n", vulkan ? "vulkan" : "gl");
     // The GL viewer drives navigation/picking and is the scene-graph authority;
     // before the Vulkan surface is shown again, push its current
     // scene/camera/background back in so the switch does not leave a stale
@@ -232,6 +251,18 @@ void VulkanViewportAdapter::useVulkanViewport(bool vulkan)
         }
     }
     host->setCurrentWidget(target);
+    VK_BREADCRUMB("[VKFLOW] useVulkanViewport setCurrentWidget(%s)\n",
+                  vulkan ? "vulkan" : "gl");
+    // The GL widget is the picking/navigation authority in every mode, so its
+    // event handling must know which pixel space its viewport region is in:
+    // device pixels (Vulkan surface active) or logical pixels (classic GL).
+    // Set it synchronously here so a switch to Vulkan doesn't leave a stale
+    // flag and drop hover/select picking (the surfaceSizeChanged/GL-resize
+    // driven applySurfaceViewportToGL may lag or not fire if the surface is
+    // already sized).
+    if (auto* quarter = dynamic_cast<Quarter::QuarterWidget*>(_viewer->getWidget())) {
+        quarter->setVulkanDevicePixels(vulkan);
+    }
     if (vulkan) {
         _vulkanViewer->redraw();
     }
@@ -247,6 +278,8 @@ void VulkanViewportAdapter::pushSettings()
         return;
     }
     const VulkanViewSettings& settings = _viewer->getVulkanViewSettings();
+    VK_BREADCRUMB("[VKFLOW] pushSettings enter r=1 e=%d p=%d\n",
+                  settings.wireframe ? 1 : 0, settings.showPoints ? 1 : 0);
     // The raster gate is DERIVED here from the single-source settings
     // struct (VulkanViewSettings::rasterOnly()), not passed in separately.
     // In a raster render mode the viewport must never enable path tracing,
@@ -269,6 +302,8 @@ void VulkanViewportAdapter::pushSettings()
     // VulkanShowPoints preferences unreachable.
     const bool effWireframe = raster ? settings.wireframe : false;
     const bool effPoints = raster ? settings.showPoints : false;
+    // Debug tessellation overlay: same raster-backend feature, same gate.
+    const bool effTess = raster ? settings.showTessEdges : false;
 
     // Background is a single view of truth derived here from the hidden GL
     // viewer (render-manager solid color + pcBackGround gradient) and pushed
@@ -320,18 +355,21 @@ void VulkanViewportAdapter::pushSettings()
     vs.backgroundBottom = SbColor4f(bgBottom[0], bgBottom[1], bgBottom[2], 1.0f);
     vs.wireframeOverlay = effWireframe;
     vs.pointsOverlay = effPoints;
+    vs.tessellationOverlay = effTess;
     vs.edgeColor = settings.edgeColor;
 
     if (Base::envFlagEnabled("FC_VULKAN_BACKEND_DEBUG")) {
         Base::Console().message(
-            "[VK-SET] pushSettings raster=%d wireframe=%d points=%d "
+            "[VK-SET] pushSettings raster=%d wireframe=%d points=%d tess=%d "
             "edgeColor=(%.2f,%.2f,%.2f,%.2f) pt=%d bounces=%d settle=%d "
-            "(prefWireframe=%d prefPoints=%d)\n",
+            "(prefWireframe=%d prefPoints=%d prefTess=%d)\n",
             raster ? 1 : 0, effWireframe ? 1 : 0, effPoints ? 1 : 0,
+            effTess ? 1 : 0,
             settings.edgeColor[0], settings.edgeColor[1],
             settings.edgeColor[2], settings.edgeColor[3], !raster ? 1 : 0,
             settings.pathTracingBounces, settings.pathTracingSettleFrames,
-            settings.wireframe ? 1 : 0, settings.showPoints ? 1 : 0);
+            settings.wireframe ? 1 : 0, settings.showPoints ? 1 : 0,
+            settings.showTessEdges ? 1 : 0);
     }
     _vulkanViewer->setViewSettings(vs);
     // Enable/disable the ray tracer (stateful backend lifecycle).
@@ -470,6 +508,7 @@ VulkanViewportAdapter::redraw()
 void VulkanViewportAdapter::requestVulkanFrame()
 {
 #ifdef FREECAD_USE_VULKAN
+    VK_BREADCRUMB_SAMPLED(50, "[VKFLOW] requestVulkanFrame (redraw)\n");
     if (_vulkanViewer) {
         // Refresh the authoritative light set first: the viewer lights are
         // camera-anchored (see pushSceneLights), so a camera move must
@@ -485,6 +524,7 @@ void VulkanViewportAdapter::requestVulkanFrame()
 
 void VulkanViewportAdapter::sceneChangedCB(void* data, SoSensor* /*sensor*/)
 {
+    VK_BREADCRUMB("[VKFLOW] sceneChangedCB fired\n");
     static_cast<VulkanViewportAdapter*>(data)->requestVulkanFrame();
 }
 
@@ -537,6 +577,9 @@ void VulkanViewportAdapter::attachSensors()
             _cameraSensor->attach(camera);
         }
     }
+    VK_BREADCRUMB("[VKFLOW] attachSensors sceneSensor->%p cameraSensor->%p\n",
+                  _sceneSensor ? static_cast<void*>(_sceneSensor->getAttachedNode()) : nullptr,
+                  _cameraSensor ? static_cast<void*>(_cameraSensor->getAttachedNode()) : nullptr);
 #endif
 }
 
@@ -670,7 +713,26 @@ void VulkanViewportAdapter::applySurfaceViewportToGL(const QSize& surfaceSize)
     if (!container || !glWidget) {
         return;
     }
-    const QSize logical = container->size();
+    // In the Vulkan render modes the Vulkan surface is the display and the
+    // single source of truth for size; the hidden GL viewer only drives
+    // picking/navigation, so it is re-imposed to the surface size.  But in the
+    // classic RasterCoin mode the GL widget itself is the visible page (the
+    // Vulkan container is hidden and carries a stale/tiny size), so the GL
+    // widget must drive its own render-manager viewport.  Using the Vulkan
+    // container there made the main scene render into the tiny stale rect --
+    // only the self-sizing NavCube showed -- and resizing the visible GL
+    // widget to it squeezed the whole viewport into a small rectangle.
+    auto* stack = qobject_cast<QStackedWidget*>(_vulkanViewer->parentWidget());
+    const bool vulkanActive = stack && stack->currentWidget() == _vulkanViewer;
+    // Tell the GL widget which pixel space its viewport region uses so the event
+    // handling in Mouse/EventFilter converts cursor positions in the matching
+    // space (live ratio + region normalized for Vulkan; cached ratio + the
+    // widget's own logical size for classic GL).
+    if (auto* quarter = qobject_cast<Quarter::QuarterWidget*>(glWidget)) {
+        quarter->setVulkanDevicePixels(vulkanActive);
+    }
+    QWidget* source = vulkanActive ? container : glWidget;
+    const QSize logical = source->size();
     if (logical.width() <= 0 || logical.height() <= 0) {
         return;
     }
@@ -680,13 +742,13 @@ void VulkanViewportAdapter::applySurfaceViewportToGL(const QSize& surfaceSize)
     const SbVec2s glSize =
         _viewer->getSoRenderManager()->getViewportRegion().getViewportSizePixels();
     VK_BREADCRUMB("[VK-TRACE] surfaceSizeChanged surface=%dx%d "
-                  "container=%dx%d logical=%dx%d glViewport(before)=%dx%d "
-                  "glWidgetSize=%dx%d dpr=%.3f\n",
+                  "source=%dx%d container=%dx%d glViewport(before)=%dx%d "
+                  "glWidgetSize=%dx%d dpr=%.3f vulkan=%d\n",
                   surfaceSize.width(), surfaceSize.height(),
+                  source->width(), source->height(),
                   container->width(), container->height(),
-                  logical.width(), logical.height(),
                   glSize[0], glSize[1],
-                  glWidget->width(), glWidget->height(), dpr);
+                  glWidget->width(), glWidget->height(), dpr, vulkanActive ? 1 : 0);
 
     // Event positions reach the hidden GL viewer already scaled to device
     // pixels: EventFilter::trackPointerPosition() runs
@@ -710,18 +772,23 @@ void VulkanViewportAdapter::applySurfaceViewportToGL(const QSize& surfaceSize)
     // NaviCube overlay, its edge/axis strokes and dots drifted off the cube.
     _viewer->getSoRenderManager()->setDevicePixelRatio(static_cast<float>(dpr));
 
-    // Keep the hidden GL widget sized to the visible Vulkan container so its
-    // own resizeEvent computes the same device-pixel region (rather than the
-    // default 400x400).  The swapchain size is NOT used directly: resizing a
-    // non-current QStackedWidget page changes the stack's sizeHint, which
-    // feeds back into the window and, in turn, the swapchain (this produced
-    // an oscillating surface size).  Size the hidden viewer to the container.
-    if (glWidget->sizePolicy()
-        != QSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored)) {
-        glWidget->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
-    }
-    if (glWidget->size() != logical) {
-        glWidget->resize(logical);
+    // Only in the Vulkan render modes keep the hidden GL widget calibrated to
+    // the Vulkan container so its own resizeEvent computes the same device-
+    // pixel region (rather than a default 400x400).  The swapchain size is NOT
+    // used directly: resizing a non-current QStackedWidget page changes the
+    // stack's sizeHint, which feeds back into the window and, in turn, the
+    // swapchain (this produced an oscillating surface size).  In RasterCoin
+    // mode the GL widget is the visible page and must keep its own layout and
+    // size policy -- forcing Ignored and resizing it to the hidden container
+    // collapses the whole viewport into the small rectangle.
+    if (vulkanActive) {
+        if (glWidget->sizePolicy()
+            != QSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored)) {
+            glWidget->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+        }
+        if (glWidget->size() != logical) {
+            glWidget->resize(logical);
+        }
     }
 #endif
 }
@@ -732,6 +799,8 @@ void VulkanViewportAdapter::onSurfaceSizeChanged(const QSize& surfaceSize)
     if (!_vulkanViewer || !_viewer) {
         return;
     }
+    VK_BREADCRUMB("[VKFLOW] onSurfaceSizeChanged size=%dx%d\n",
+                  surfaceSize.width(), surfaceSize.height());
     applySurfaceViewportToGL(surfaceSize);
 
     // NOTE: Do NOT write the surface aspect into the shared camera's
@@ -759,6 +828,7 @@ void VulkanViewportAdapter::onSurfaceSizeChanged(const QSize& surfaceSize)
         if (animation) {
             _viewer->setAnimationEnabled(false);
         }
+        VK_BREADCRUMB("[VKFLOW] onSurfaceSizeChanged first stable size -> viewAll()\n");
         _viewer->viewAll();
         if (animation) {
             _viewer->setAnimationEnabled(true);
