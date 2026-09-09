@@ -33,7 +33,7 @@ set(Assembly_Scripts
     CommandExportASMT.py
     TestAssemblyWorkbench.py
     JointObject.py
-    Preferences.py
+    AssemblyPreferences.py
     AssemblyImport.py
     SoSwitchMarker.py
     UtilsAssembly.py
