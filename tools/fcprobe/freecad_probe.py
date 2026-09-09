@@ -2088,6 +2088,87 @@ class Session:
     def recompute(self, doc: Any = None) -> None:
         (doc or self.active_document()).recompute()
 
+    def build_document(self, name: str = "ProbeScene", shapes: Optional[list] = None,
+                       workbench: str = "PartWorkbench", view: str = "viewTop",
+                       fit: bool = True, recompute: bool = True) -> list:
+        """Create a new document and populate it with Part primitives.
+
+        ``shapes`` is a list; each element is either a primitive type string
+        (``"Box"``, ``"Cylinder"``, ``"Sphere"``, ``"Cone"``, ``"Torus"``,
+        ``"Wedge"``) or a dict of the form::
+
+            {"type": "Box", "name": "B", "Length": 10, "Width": 12,
+             "Height": 8, "Base": (0, 0, 0)}
+
+        Any key other than ``type``/``name``/``Base`` is set as an attribute on
+        the created Part object (property), so you can pass ``Radius``,
+        ``Height``, ``Length``, ``Angle``, etc.  ``Base`` sets
+        ``Placement.Base``.  Returns the list of created objects.
+
+        This mirrors "File > New + add objects" so probes can reproduce the
+        document-open render path (active document with content).
+        """
+        doc = self.new_document(name)
+        objs: list = []
+        for i, spec in enumerate(list(shapes or [])):
+            if isinstance(spec, str):
+                spec = {"type": spec}
+            spec = dict(spec)
+            type_ = spec.pop("type", "Box")
+            obj_name = spec.pop("name", None) or f"{type_}{i}"
+            base = spec.pop("Base", None)
+            obj = doc.addObject(f"Part::{type_}", obj_name)
+            if base is not None:
+                obj.Placement.Base = self._FreeCAD.Vector(*base)
+            for k, v in spec.items():
+                try:
+                    setattr(obj, k, v)
+                except Exception as exc:
+                    self.add_error(f"build_document: setting {obj_name}.{k}={v!r} "
+                                   f"failed: {exc}")
+            objs.append(obj)
+        if recompute:
+            doc.recompute()
+        if workbench:
+            try:
+                self.activate_workbench(workbench)
+            except Exception:
+                pass
+        v = self.active_view()
+        if v is not None and self.available:
+            if view:
+                try:
+                    getattr(v, view)()
+                except Exception:
+                    pass
+            if fit:
+                try:
+                    v.fitAll()
+                except Exception:
+                    pass
+        return objs
+
+    def open_document(self, path: str, fit: bool = True) -> Any:
+        """Open a saved .FCStd document like File > Open (mimics the renderer
+        re-initialising when a document becomes active)."""
+        doc = None
+        try:
+            doc = self._Gui.openDocument(path)
+        except Exception:
+            try:
+                doc = self._FreeCAD.openDocument(path)
+            except Exception as exc:
+                self.add_error(f"open_document: failed to open {path!r}: {exc}")
+                return None
+        if fit:
+            v = self.active_view()
+            if v is not None:
+                try:
+                    v.fitAll()
+                except Exception:
+                    pass
+        return doc
+
     def eval(self, expr: str) -> Any:
         """Evaluate a FreeCAD Python expression and return the result."""
         return eval(expr, {"FreeCAD": self._FreeCAD, "Gui": self._Gui,
