@@ -132,7 +132,6 @@ private:
 
     float vulkanScale {1.0F};
     mutable bool sceneBuilt {false};
-    mutable int lastHiliteFaceIndex {-1};
 };
 
 }  // namespace Gui
