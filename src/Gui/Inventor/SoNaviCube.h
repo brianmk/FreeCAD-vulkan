@@ -58,7 +58,6 @@ class SoOrthographicCamera;
 class SoPerspectiveCamera;
 class SoTransform;
 class SoVertexProperty;
-class SoIRRenderAction;
 namespace Gui
 {
 
@@ -127,12 +126,30 @@ public:
     [[nodiscard]] PickId pickAt(const SbVec2s& point) const;
 
 protected:
+    //! Accessor for the Vulkan/IR navcube: the label quad (4 verts) and its
+    //! texture for a face label.  Returns false when the label slot is empty
+    //! (no texture assigned yet) or the quad is not a full 4-point rectangle.
+    [[nodiscard]] bool getLabelQuad(
+        PickId id, std::array<SbVec3f, 4>& quad, const SoTexture2*& texture) const;
+    //! Accessor for the Vulkan/IR navcube: the screen-space button geometry for
+    //! one of the navigation buttons (arrows / home / backside / view menu).
+    //! verts are normalized overlay coordinates; triangles is the fill index
+    //! list and outline is the contour polyline index list.  Returns false when
+    //! the button has no recorded geometry.
+    [[nodiscard]] bool getButtonGeom(
+        PickId id,
+        std::vector<SbVec3f>& verts,
+        std::vector<int>& triangles,
+        std::vector<std::int32_t>& outline) const;
+    static constexpr size_t labelIndex(PickId id)
+    {
+        return static_cast<size_t>(id);
+    }
+
+protected:
     ~SoNaviCube() override;
 
     void GLRender(SoGLRenderAction* action) override;
-#ifdef HAVE_COIN_IR_RENDER_ACTION
-    void IRRender(SoIRRenderAction* action) override;
-#endif
     void generatePrimitives(SoAction* action) override;
     void computeBBox(SoAction* action, SbBox3f& box, SbVec3f& center) override;
 
@@ -160,7 +177,6 @@ private:
     };
 
     void renderCoin(SoGLRenderAction* action);
-    void renderOverlayIR(SoIRRenderAction* action);
     void ensureSceneGraph() const;
     void rebuildSceneGraph() const;
     void resetSceneGraph() const;
@@ -174,8 +190,6 @@ private:
     void updateCameraAndTransform(const RenderParams& params) const;
     void updateCube(const RenderParams& params) const;
     void updateEdges(const RenderParams& params) const;
-    void updateEdgeVisibility() const;
-    void updateFillVisibility(const RenderParams& params) const;
     void updateAxes(const RenderParams& params) const;
     void updateButtons(const RenderParams& params) const;
     void updateLabels(const RenderParams& params) const;
@@ -216,7 +230,6 @@ private:
     struct LabelNodes
     {
         SoSeparator* sep {nullptr};
-        SoSwitch* visSwitch {nullptr};
         SoMaterial* material {nullptr};
         SoTexture2* texture {nullptr};
         SoVertexProperty* vertexProperty {nullptr};
@@ -261,20 +274,10 @@ private:
     {
         int lastHiliteFaceIndex {-1};
         PickId lastHilitePick {PickId::None};
-        bool cubeMatValid {false};
-        SbColor lastBaseRgb {0.0F, 0.0F, 0.0F};
-        SbColor lastHiliteRgb {0.0F, 0.0F, 0.0F};
-        float lastBaseTr {0.0F};
-        float lastHiliteTr {0.0F};
-        bool edgesValid {false};
-        SbColor lastEmphRgb {0.0F, 0.0F, 0.0F};
-        float lastEmphTr {0.0F};
-        float lastBw {0.0F};
         PickId lastButtonsHilitePick {PickId::None};
         bool buttonDirty {true};
         bool labelDirty {true};
         bool axisDirty {true};
-        uint32_t faceVisMask {0};
         SbColor buttonsBaseRgb {0.0F, 0.0F, 0.0F};
         SbColor buttonsHiliteRgb {0.0F, 0.0F, 0.0F};
         SbColor buttonsOutlineRgb {0.0F, 0.0F, 0.0F};
@@ -307,25 +310,6 @@ private:
     mutable std::vector<std::int32_t> cubeCoordIndexData;
     mutable std::vector<SbVec3f> edgeCoordsData;
     mutable std::vector<std::int32_t> edgeCoordIndexData;
-    // Per-face ranges into edgeCoordIndexData so updateEdgeVisibility() can
-    // rebuild the live line indices to include only camera-facing faces' edge
-    // outlines (hiding the back-facing faces through the translucent shell).
-    mutable std::array<std::int32_t, kPickIdCount> edgeIndexBegin {};
-    mutable std::array<std::int32_t, kPickIdCount> edgeIndexEnd {};
-    mutable std::int32_t edgeFaceMask {-1};
-    // Per-face ranges into cubeCoordIndexData so updateFillVisibility() can
-    // rebuild the fill indices to include only camera-facing faces, hiding the
-    // back faces through the translucent shell (GPU back-face culling can't be
-    // used: the faceted faces are not uniformly wound).
-    mutable std::array<std::int32_t, kPickIdCount> cubeIndexBegin {};
-    mutable std::array<std::int32_t, kPickIdCount> cubeIndexEnd {};
-    mutable std::int32_t fillFaceMask {-1};
-    // Per-face material id (0=base, 1=hilite) keyed by position in
-    // kCubeFacePickOrder.  updateCube() writes the hover highlight here and
-    // updateFillVisibility() packs it into cubeFaces->materialIndex in draw
-    // order (the render-time index array is rebuilt/shrunk per camera, so it
-    // cannot double as the source of truth).
-    mutable std::array<int, kPickIdCount> faceMaterials {};
     mutable std::array<LabelSlot, kPickIdCount> labelSlots;
     int labelTextureCount {0};
 

@@ -29,16 +29,12 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <limits>
 #include <memory>
 #include <numbers>
 
 #include <Inventor/actions/SoGLRenderAction.h>
-#ifdef HAVE_COIN_IR_RENDER_ACTION
-#include <Inventor/actions/SoIRRenderAction.h>
-#endif
 #include <Inventor/actions/SoRayPickAction.h>
 #include <Inventor/details/SoFaceDetail.h>
 #include <Inventor/lists/SoPickedPointList.h>
@@ -71,9 +67,6 @@
 #include <Inventor/nodes/SoTransform.h>
 #include <Inventor/nodes/SoTexture2.h>
 #include <Inventor/nodes/SoVertexProperty.h>
-#ifdef HAVE_COIN_IR_RENDER_ACTION
-#include <Inventor/rendering/SoRenderIR.h>
-#endif
 #include <Inventor/SbVec2f.h>
 #include <Inventor/SbVec4f.h>
 #include <Inventor/SbViewVolume.h>
@@ -482,6 +475,45 @@ void SoNaviCube::clearLabelTextures()
     sceneDirty = true;
 }
 
+bool SoNaviCube::getLabelQuad(
+    PickId id, std::array<SbVec3f, 4>& quad, const SoTexture2*& texture) const
+{
+    // Ensure the label quads are built (they are populated lazily by
+    // rebuildGeometry() -> setLabelQuad()).  A Vulkan navcube may render
+    // before any pickAt()/GL render popped the geometry, so build it here.
+    this->ensureGeometry();
+    const LabelSlot& slot = labelSlots[this->pickIndex(id)];
+    if (!slot.texture || slot.quad.size() != 4) {
+        texture = nullptr;
+        return false;
+    }
+    for (std::size_t i = 0; i < 4; ++i) {
+        quad[i] = slot.quad[i];
+    }
+    texture = slot.texture;
+    return true;
+}
+
+bool SoNaviCube::getButtonGeom(
+    PickId id, std::vector<SbVec3f>& verts, std::vector<int>& triangles,
+    std::vector<std::int32_t>& outline) const
+{
+    // Ensure the button geometry is built (populated lazily by rebuildGeometry()
+    // -> rebuildButtonFaces()), exactly like the label quads above.
+    this->ensureGeometry();
+    const size_t index = this->pickIndex(id);
+    if (this->buttonOverlayVerts[index].empty()) {
+        verts.clear();
+        triangles.clear();
+        outline.clear();
+        return false;
+    }
+    verts = this->buttonOverlayVerts[index];
+    triangles = this->buttonTriangleIndices[index];
+    outline = this->buttonOutlineIndices[index];
+    return true;
+}
+
 void SoNaviCube::ensureSceneGraph() const
 {
     if (!sceneRoot) {
@@ -643,16 +675,10 @@ void SoNaviCube::buildCubeSection() const
         offset->on = TRUE;
         cubeSep->addChild(offset);
 
-        // Consistent front-face orientation.  Keep the fill two-sided (non-SOLID):
-        // the faceted faces have per-face winding that is not uniformly outward,
-        // so GPU back-face culling would drop the wrong faces.  Instead the
-        // camera-facing faces are selected per-frame by updateFillVisibility()
-        // (which rebuilds the indices to include only front-facing faces), and
-        // updateEdgeVisibility() hides the back-facing edges, giving a clean
-        // translucent shell with no interior structure showing through.
+        // Ensure consistent front-face orientation and enable solid face culling for the cube.
         auto* hints = new SoShapeHints;
         hints->vertexOrdering = SoShapeHints::COUNTERCLOCKWISE;
-        hints->shapeType = SoShapeHints::UNKNOWN_SHAPE_TYPE;
+        hints->shapeType = SoShapeHints::SOLID;
         hints->faceType = SoShapeHints::CONVEX;
         cubeSep->addChild(hints);
     }
@@ -733,11 +759,6 @@ void SoNaviCube::buildCubeSection() const
         offset->on = TRUE;
         labelsGroup->addChild(offset);
 
-        // Do NOT rely on back-face culling here: label quad winding is
-        // inconsistent across the six faces, so SOLID hints would cull the
-        // wrong labels.  Visibility is decided per-frame by updateLabels()
-        // via the visSwitch (faces facing the camera), which is
-        // winding-agnostic.
         auto* hints = new SoShapeHints;
         hints->vertexOrdering = SoShapeHints::UNKNOWN_ORDERING;
         hints->shapeType = SoShapeHints::UNKNOWN_SHAPE_TYPE;
@@ -775,15 +796,7 @@ void SoNaviCube::buildCubeSection() const
         }
         nodes.sep->addChild(nodes.face);
 
-        // Winding-agnostic visibility: each label is wrapped in a switch so
-        // updateLabels() can hide the labels of faces that face away from the
-        // camera, independent of quad winding.  (SoShapeHints culling is
-        // unreliable for the label quads, and half-clipping the cube would
-        // expose the hollow interior at some angles.)
-        nodes.visSwitch = new SoSwitch;
-        nodes.visSwitch->whichChild = 0;
-        nodes.visSwitch->addChild(nodes.sep);
-        labelsGroup->addChild(nodes.visSwitch);
+        labelsGroup->addChild(nodes.sep);
         labelNodes[pickIndex(pickId)] = nodes;
     }
 }
@@ -1067,13 +1080,7 @@ void SoNaviCube::updateCameraAndTransform(const RenderParams& params) const
 
 void SoNaviCube::updateCube(const RenderParams& params) const
 {
-    const bool cubeMatChanged = !style.cubeMatValid
-        || !nearlyEqual(params.baseRgb, style.lastBaseRgb)
-        || !nearlyEqual(params.hiliteRgb, style.lastHiliteRgb)
-        || !nearlyEqual(params.baseTr, style.lastBaseTr)
-        || !nearlyEqual(params.hiliteTr, style.lastHiliteTr);
-
-    if (cubeMaterial && cubeMatChanged) {
+    if (cubeMaterial) {
         cubeMaterial->diffuseColor.setNum(2);
         cubeMaterial->diffuseColor.set1Value(0, params.baseRgb);
         cubeMaterial->diffuseColor.set1Value(1, params.hiliteRgb);
@@ -1087,193 +1094,44 @@ void SoNaviCube::updateCube(const RenderParams& params) const
     }
 
     const int count = static_cast<int>(kCubeFacePickOrder.size());
-    bool faceMatChanged = false;
-
-    if (params.hilitePick != style.lastHilitePick) {
-        const int newHiliteIndex = (params.hilitePick == PickId::None)
-            ? -1
-            : cubeFaceIndex(params.hilitePick);
-
-        if (newHiliteIndex != style.lastHiliteFaceIndex) {
-            if (style.lastHiliteFaceIndex >= 0 && style.lastHiliteFaceIndex < count) {
-                faceMaterials[static_cast<size_t>(style.lastHiliteFaceIndex)] = 0;
-            }
-            if (newHiliteIndex >= 0 && newHiliteIndex < count) {
-                faceMaterials[static_cast<size_t>(newHiliteIndex)] = 1;
-            }
-            style.lastHiliteFaceIndex = newHiliteIndex;
-            faceMatChanged = true;
+    if (cubeFaces->materialIndex.getNum() != count) {
+        cubeFaces->materialIndex.setNum(count);
+        for (int i = 0; i < count; ++i) {
+            cubeFaces->materialIndex.set1Value(i, 0);
         }
-        style.lastHilitePick = params.hilitePick;
+        style.lastHiliteFaceIndex = -1;
+        style.lastHilitePick = PickId::None;
     }
 
-    // The IR/Vulkan pipeline retains the shape's tessellated geometry (with
-    // baked material indices) and only rebuilds it when the node notifies;
-    // SoMF::set1Value writes the field without notifying, so the recorded
-    // draw commands kept the pre-hilite material index and the highlight
-    // never reached the GPU.  Notify the touched nodes explicitly.
-    if (cubeMatChanged || faceMatChanged) {
-        if (cubeMaterial) {
-            cubeMaterial->touch();
-        }
-        if (faceMatChanged) {
-            cubeFaces->touch();
-        }
-        style.lastBaseRgb = params.baseRgb;
-        style.lastHiliteRgb = params.hiliteRgb;
-        style.lastBaseTr = params.baseTr;
-        style.lastHiliteTr = params.hiliteTr;
-        style.cubeMatValid = true;
-    }
-
-    updateFillVisibility(params);
-}
-
-void SoNaviCube::updateFillVisibility(const RenderParams& params) const
-{
-    (void)params;  // retained-render API signature; not used by the rebuild itself
-    if (!cubeFaces || cubeCoordIndexData.empty()) {
+    if (params.hilitePick == style.lastHilitePick) {
         return;
     }
-    // Rebuild the fill indices to include only faces pointing toward the
-    // camera (outward normal ~ normalised face centroid, rotated into the
-    // sub-scene camera frame where +Z is toward the viewer).  A face is shown
-    // when its transformed outward normal has a positive +Z component.  This
-    // hides the back faces through the translucent shell so it reads as a
-    // clean glass cube instead of seeing the interior faces.
-    const SbRotation inv = cameraOrientation.getValue().inverse();
-    std::int32_t mask = 0;
-    std::int32_t bit = 1;
-    for (PickId pickId : kCubeFacePickOrder) {
-        const auto& verts = faces[pickIndex(pickId)];
-        if (verts.size() >= 3) {
-            SbVec3f n(0.0F, 0.0F, 0.0F);
-            for (const SbVec3f& p : verts) {
-                n += p;
-            }
-            n /= static_cast<float>(verts.size());
-            if (n.normalize() != 0.0F) {
-                SbVec3f wn;
-                inv.multVec(n, wn);
-                if (wn[2] > 0.0F) {
-                    mask |= bit;
-                }
-            }
-        }
-        bit <<= 1;
-    }
-    fillFaceMask = mask;
 
-    std::vector<std::int32_t> liveIndex;
-    std::vector<std::int32_t> liveMat;
-    liveIndex.reserve(cubeCoordIndexData.size());
-    liveMat.reserve(kCubeFacePickOrder.size());
-    bit = 1;
-    for (PickId pickId : kCubeFacePickOrder) {
-        if (mask & bit) {
-            const int i = pickIndex(pickId);
-            const std::int32_t b = cubeIndexBegin[i];
-            const std::int32_t e = cubeIndexEnd[i];
-            if (e > b) {
-                for (std::int32_t j = b; j < e; ++j) {
-                    liveIndex.push_back(cubeCoordIndexData[static_cast<size_t>(j)]);
-                }
-                liveMat.push_back(faceMaterials[static_cast<size_t>(i)]);
-            }
+    const int newHiliteIndex = (params.hilitePick == PickId::None)
+        ? -1
+        : cubeFaceIndex(params.hilitePick);
+
+    if (newHiliteIndex != style.lastHiliteFaceIndex) {
+        if (style.lastHiliteFaceIndex >= 0 && style.lastHiliteFaceIndex < count) {
+            cubeFaces->materialIndex.set1Value(style.lastHiliteFaceIndex, 0);
         }
-        bit <<= 1;
+        if (newHiliteIndex >= 0 && newHiliteIndex < count) {
+            cubeFaces->materialIndex.set1Value(newHiliteIndex, 1);
+        }
+        style.lastHiliteFaceIndex = newHiliteIndex;
     }
-    cubeFaces->coordIndex.setNum(static_cast<int>(liveIndex.size()));
-    cubeFaces->coordIndex.setValues(0, static_cast<int>(liveIndex.size()),
-                                    liveIndex.empty() ? nullptr : liveIndex.data());
-    cubeFaces->materialIndex.setNum(static_cast<int>(liveMat.size()));
-    for (std::size_t k = 0; k < liveMat.size(); ++k) {
-        cubeFaces->materialIndex.set1Value(static_cast<int>(k), liveMat[k]);
-    }
-    // SoMF::setValues/setNum write the field without notifying; the retained
-    // IR geometry is only re-recorded when the node is touched.
-    cubeFaces->touch();
+    style.lastHilitePick = params.hilitePick;
 }
 
 void SoNaviCube::updateEdges(const RenderParams& params) const
 {
-    // Hide the edge outlines of faces that point away from the camera so the
-    // translucent shell does not expose the interior facet cage.
-    updateEdgeVisibility();
-
-    const bool changed = !style.edgesValid
-        || !nearlyEqual(params.emphRgb, style.lastEmphRgb)
-        || !nearlyEqual(params.emphTr, style.lastEmphTr)
-        || !nearlyEqual(params.bw, style.lastBw);
-    if (!changed) {
-        return;
-    }
     if (edgeMaterial) {
         edgeMaterial->diffuseColor.setValue(params.emphRgb);
         edgeMaterial->transparency = params.emphTr;
-        edgeMaterial->touch();
     }
     if (edgeDrawStyle) {
         edgeDrawStyle->lineWidth = params.bw;
-        edgeDrawStyle->touch();
     }
-    style.lastEmphRgb = params.emphRgb;
-    style.lastEmphTr = params.emphTr;
-    style.lastBw = params.bw;
-    style.edgesValid = true;
-}
-
-void SoNaviCube::updateEdgeVisibility() const
-{
-    if (!edges || edgeCoordIndexData.empty()) {
-        return;
-    }
-    // A face is front-facing when its outward normal (≈ the normalised
-    // face centroid, valid for a convex polyhedron centred at the origin)
-    // points back toward the sub-scene camera.  The sub-scene camera looks
-    // down -Z and the cube is rotated by cameraOrientation.inverse(), so a
-    // face is visible when the rotated normal has a positive +Z component.
-    const SbRotation inv = cameraOrientation.getValue().inverse();
-    std::int32_t mask = 0;
-    std::int32_t bit = 1;
-    for (PickId pickId : kCubeFacePickOrder) {
-        const auto& verts = faces[pickIndex(pickId)];
-        if (verts.size() >= 3) {
-            SbVec3f n(0.0F, 0.0F, 0.0F);
-            for (const SbVec3f& p : verts) {
-                n += p;
-            }
-            n /= static_cast<float>(verts.size());
-            if (n.normalize() != 0.0F) {
-                SbVec3f wn;
-                inv.multVec(n, wn);
-                if (wn[2] > 0.0F) {
-                    mask |= bit;
-                }
-            }
-        }
-        bit <<= 1;
-    }
-    edgeFaceMask = mask;
-
-    std::vector<std::int32_t> live;
-    live.reserve(edgeCoordIndexData.size());
-    bit = 1;
-    for (PickId pickId : kCubeFacePickOrder) {
-        if (mask & bit) {
-            const int i = pickIndex(pickId);
-            for (int j = edgeIndexBegin[i]; j < edgeIndexEnd[i]; ++j) {
-                live.push_back(edgeCoordIndexData[static_cast<size_t>(j)]);
-            }
-        }
-        bit <<= 1;
-    }
-    edges->coordIndex.setNum(static_cast<int>(live.size()));
-    edges->coordIndex.setValues(0, static_cast<int>(live.size()),
-                                live.empty() ? nullptr : live.data());
-    // SoMF::setValues writes the field without notifying; touch the node so the
-    // retained IR line geometry is re-recorded with the filtered indices.
-    edges->touch();
 }
 
 void SoNaviCube::updateAxes(const RenderParams& params) const
@@ -1301,12 +1159,10 @@ void SoNaviCube::updateAxes(const RenderParams& params) const
         if (nodes.material) {
             nodes.material->diffuseColor.setValue(params.axisRgb[static_cast<size_t>(axis)]);
             nodes.material->transparency = params.axisTr;
-            nodes.material->touch();
         }
         if (nodes.drawStyle) {
             nodes.drawStyle->lineWidth = params.bw * 2.0F;
             nodes.drawStyle->pointSize = params.bw * 2.0F;
-            nodes.drawStyle->touch();
         }
     }
 
@@ -1381,56 +1237,8 @@ void SoNaviCube::updateButtons(const RenderParams& params) const
     }
 }
 
-namespace {
-// Outward face normal (in the NavCube's local frame) for each labeled face.
-// The sub-scene camera looks down -Z and the cube is rotated by
-// cameraOrientation.inverse(); a face is visible when its transformed normal
-// points back toward the camera (+Z), i.e. the face is front-facing.
-SbVec3f labelFaceNormal(SoNaviCube::PickId id)
-{
-    using P = SoNaviCube::PickId;
-    switch (id) {
-        case P::Top: return SbVec3f(0.0F, 0.0F, 1.0F);
-        case P::Front: return SbVec3f(0.0F, -1.0F, 0.0F);
-        case P::Left: return SbVec3f(-1.0F, 0.0F, 0.0F);
-        case P::Rear: return SbVec3f(0.0F, 1.0F, 0.0F);
-        case P::Right: return SbVec3f(1.0F, 0.0F, 0.0F);
-        case P::Bottom: return SbVec3f(0.0F, 0.0F, -1.0F);
-        default: return SbVec3f(0.0F, 0.0F, 1.0F);
-    }
-}
-}  // namespace
-
 void SoNaviCube::updateLabels(const RenderParams& params) const
 {
-    // Hide labels on faces that point away from the camera.  This is the
-    // definitive "disappear faces not visible from camera" fix: it is
-    // winding-agnostic and, unlike half-clipping the cube, never exposes the
-    // hollow interior at steep angles.
-    const SbRotation inv = cameraOrientation.getValue().inverse();
-    uint32_t mask = 0;
-    uint32_t bit = 1;
-    for (PickId pickId : kLabelPickIds) {
-        SbVec3f n = labelFaceNormal(pickId);
-        SbVec3f wn;
-        inv.multVec(n, wn);
-        if (wn[2] > 0.0F) {
-            mask |= bit;
-        }
-        bit <<= 1;
-    }
-    if (mask != style.faceVisMask) {
-        bit = 1;
-        for (PickId pickId : kLabelPickIds) {
-            LabelNodes& nodes = labelNodes[pickIndex(pickId)];
-            if (nodes.visSwitch) {
-                nodes.visSwitch->whichChild = (mask & bit) ? 0 : SO_SWITCH_NONE;
-            }
-            bit <<= 1;
-        }
-        style.faceVisMask = mask;
-    }
-
     const bool labelsStyleChanged = style.labelDirty || !nearlyEqual(style.labelsRgb, params.emphRgb)
         || !nearlyEqual(style.labelsTr, params.emphTr);
 
@@ -1592,83 +1400,6 @@ void SoNaviCube::GLRender(SoGLRenderAction* action)
     }
     renderCoin(action);
 }
-
-#ifdef HAVE_COIN_IR_RENDER_ACTION
-void SoNaviCube::IRRender(SoIRRenderAction* action)
-{
-    if (!action) {
-        return;
-    }
-    renderOverlayIR(action);
-}
-
-void SoNaviCube::renderOverlayIR(SoIRRenderAction* action)
-{
-    const SbVec4f& rect = viewportRect.getValue();
-    const int viewportX = static_cast<int>(std::lround(rect[0]));
-    const int viewportY = static_cast<int>(std::lround(rect[1]));
-    const int viewportWidth = static_cast<int>(std::lround(rect[2]));
-    const int viewportHeight = static_cast<int>(std::lround(rect[3]));
-
-    if (viewportWidth <= 0 || viewportHeight <= 0) {
-        return;
-    }
-
-
-    SoState* state = action->getState();
-    if (!state) {
-        return;
-    }
-
-    ensureGeometry();
-    ensureSceneGraph();
-    const RenderParams params = makeRenderParams();
-    updateSceneGraph(params);
-
-    SoDrawList& list = action->getMutableDrawList();
-    const int firstCommand = list.getNumCommands();
-
-    state->push();
-
-    // Scope the overlay scene to the NaviCube's corner viewport (Coin
-    // bottom-left origin; the backend flips it into Vulkan coordinates).
-    SbViewportRegion vp = SoViewportRegionElement::get(state);
-    vp.setViewportPixels(viewportX, viewportY, viewportWidth, viewportHeight);
-    SoViewportRegionElement::set(state, vp);
-
-    // Like the GL overlay pass, force BASE_COLOR lighting so viewer overrides
-    // and headlight state cannot tint the cube.
-    SoLightModelElement::set(state, this, SoLightModelElement::BASE_COLOR);
-    SoShapeStyleElement::setLightModel(state, SoLazyElement::BASE_COLOR);
-    SoLazyElement::setLightModel(state, SoLazyElement::BASE_COLOR);
-
-    // The sub-scene contains its own orthographic camera, so its commands
-    // carry the overlay projection/view matrices.
-    sceneRoot->IRRender(action);
-
-    // Promote the recorded commands to the overlay pass and scope them to the
-    // NaviCube rect: the backend draws this pass last, clearing the rect's
-    // depth first so the cube self-occludes independently of the main scene.
-    const int count = list.getNumCommands();
-    for (int i = firstCommand; i < count; ++i) {
-        SoRenderCommand& cmd = list.getCommand(i);
-        cmd.pass = SO_RENDERPASS_OVERLAY;
-        cmd.state.raster.viewportEnabled = TRUE;
-        cmd.state.raster.viewportX = viewportX;
-        cmd.state.raster.viewportY = viewportY;
-        cmd.state.raster.viewportWidth = viewportWidth;
-        cmd.state.raster.viewportHeight = viewportHeight;
-        cmd.state.raster.scissorEnabled = TRUE;
-        cmd.state.raster.scissorX = viewportX;
-        cmd.state.raster.scissorY = viewportY;
-        cmd.state.raster.scissorWidth = viewportWidth;
-        cmd.state.raster.scissorHeight = viewportHeight;
-    }
-
-
-    state->pop();
-}
-#endif
 
 void SoNaviCube::computeBBox(SoAction*, SbBox3f& box, SbVec3f& center)
 {
@@ -1885,19 +1616,13 @@ void SoNaviCube::rebuildGeometry() const
         for (PickId pickId : kCubeFacePickOrder) {
             const auto& verts = faces[pickIndex(pickId)];
             if (verts.size() < 3) {
-                cubeIndexBegin[pickIndex(pickId)] = 0;
-                cubeIndexEnd[pickIndex(pickId)] = 0;
                 continue;
             }
-            cubeIndexBegin[pickIndex(pickId)] =
-                static_cast<std::int32_t>(cubeCoordIndexData.size());
             for (const SbVec3f& p : verts) {
                 cubeCoordsData.push_back(p);
                 cubeCoordIndexData.push_back(base++);
             }
             cubeCoordIndexData.push_back(-1);
-            cubeIndexEnd[pickIndex(pickId)] =
-                static_cast<std::int32_t>(cubeCoordIndexData.size());
         }
 
         size_t edgeVerts = 0;
@@ -1915,8 +1640,6 @@ void SoNaviCube::rebuildGeometry() const
             const auto& verts = faces[pickIndex(pickId)];
             const size_t n = verts.size();
             if (n < 2) {
-                edgeIndexBegin[pickIndex(pickId)] = 0;
-                edgeIndexEnd[pickIndex(pickId)] = 0;
                 continue;
             }
 
@@ -1924,15 +1647,11 @@ void SoNaviCube::rebuildGeometry() const
                 edgeCoordsData.push_back(p);
             }
 
-            edgeIndexBegin[pickIndex(pickId)] =
-                static_cast<std::int32_t>(edgeCoordIndexData.size());
             for (size_t i = 0; i + 1 < n; i += 2) {
                 edgeCoordIndexData.push_back(edgeBase + static_cast<std::int32_t>(i));
                 edgeCoordIndexData.push_back(edgeBase + static_cast<std::int32_t>(i + 1));
                 edgeCoordIndexData.push_back(-1);
             }
-            edgeIndexEnd[pickIndex(pickId)] =
-                static_cast<std::int32_t>(edgeCoordIndexData.size());
             edgeBase += static_cast<std::int32_t>(n);
         }
     }
@@ -1979,13 +1698,6 @@ void SoNaviCube::rebuildGeometry() const
 
     geometryDirty = false;
     sceneDirty = true;
-    // A geometry rebuild regenerates the face ranges (cubeIndexBegin/End,
-    // edgeIndexBegin/End), so the per-camera fill/edge masks computed against
-    // the old geometry must be invalidated to force a consistent re-index of
-    // coordIndex+materialIndex on the next render (otherwise the two can fall
-    // out of sync and the retained IR geometry reads past the material array).
-    fillFaceMask = -1;
-    edgeFaceMask = -1;
 }
 
 void SoNaviCube::addCubeFace(const SbVec3f& x, const SbVec3f& z, CubeFaceKind kind, PickId pickId) const

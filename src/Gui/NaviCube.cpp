@@ -66,6 +66,7 @@
 #include "Navigation/NavigationAnimation.h"
 #include "Navigation/NavigationStyle.h"
 #include "Inventor/SoNaviCube.h"
+#include "Inventor/SoNaviCubeVulkan.h"
 #include "View3DInventorViewer.h"
 #include "View3DInventor.h"
 #include "ViewParams.h"
@@ -390,7 +391,13 @@ NaviCubeImplementation::NaviCubeImplementation(Gui::View3DInventorViewer* viewer
     , emphaseColor {0, 0, 0}
     , hiliteColor {170, 226, 255}
 {
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    // The Vulkan fork consolidates all navcube retained-render (IR) code in the
+    // SoNaviCubeVulkan subclass; the base SoNaviCube stays a vanilla GL node.
+    soNaviCube = new Gui::SoNaviCubeVulkan();
+#else
     soNaviCube = new Gui::SoNaviCube();
+#endif
     soNaviCube->ref();
 
     coinRoot = new SoSeparator();
