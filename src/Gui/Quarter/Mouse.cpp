@@ -80,6 +80,19 @@ public:
 
   void resizeEvent(QResizeEvent * event);
 
+  // The logical window size the cursor positions are normalized against.  The
+  // Vulkan-driven widget keeps a device-pixel viewport region (pinned to the
+  // Vulkan surface) with an unreliable hidden-widget own size, so the region
+  // must be reduced back to logical (effectiveWindowSize).  Classic GL keeps a
+  // logical region sized by the visible widget, so use the widget's own size
+  // and the cached DPR (upstream behavior) -- applying the live ratio to a
+  // logical region is what shifted hover/select picking by 1/dpr.
+  SbVec2s logicalWindowSize() const {
+    return publ->quarter->vulkanDevicePixels()
+      ? effectiveWindowSize(publ->quarter)
+      : this->windowsize;
+  }
+
   class SoLocation2Event * location2;
   class SoMouseButtonEvent * mousebutton;
   class SoMouseWheelEvent * wheel;
@@ -173,7 +186,7 @@ MouseP::mouseMoveEvent(QMouseEvent * event)
   assert(this->windowsize[1] != -1);
   SbVec2s pos = InputDevice::toDevicePixelPosition(
       getLocalPosition(event),
-      effectiveWindowSize(publ->quarter),
+      logicalWindowSize(),
       publ->quarter->devicePixelRatio());
   this->location2->setPosition(pos);
   this->mousebutton->setPosition(pos);
@@ -186,7 +199,7 @@ MouseP::mouseWheelEvent(QWheelEvent * event)
   PUBLIC(this)->setModifiers(this->wheel, event);
   SbVec2s pos = InputDevice::toDevicePixelPosition(
       getLocalPosition(event),
-      effectiveWindowSize(PUBLIC(this)->quarter),
+      logicalWindowSize(),
       publ->quarter->devicePixelRatio());
   this->location2->setPosition(pos); //I don't know why location2 is assigned here, I assumed it important  --DeepSOIC
   this->wheel->setPosition(pos);
@@ -208,7 +221,7 @@ MouseP::mouseButtonEvent(QMouseEvent * event)
   PUBLIC(this)->setModifiers(this->mousebutton, event);
   SbVec2s pos = InputDevice::toDevicePixelPosition(
       getLocalPosition(event),
-      effectiveWindowSize(PUBLIC(this)->quarter),
+      logicalWindowSize(),
       publ->quarter->devicePixelRatio());
   this->location2->setPosition(pos);
   this->mousebutton->setPosition(pos);

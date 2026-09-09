@@ -26,6 +26,7 @@
 #include <Base/VulkanBreadcrumbs.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
 #include <Inventor/SoFCPlacementIndicatorKit.h>
@@ -197,6 +198,13 @@ private:
 
 namespace
 {
+// Age (ms) since the active view's camera pose last changed.  Space-Mouse
+// rotation mutates the camera continuously; the hover-pick path reads this to
+// skip the costly full-scene SoRayPickAction while the camera is actively
+// rotating (the highlight a pick would produce is stale anyway).
+std::chrono::steady_clock::time_point gNavCamMoveT0 =
+    std::chrono::steady_clock::now() - std::chrono::hours(1);
+
 constexpr qint64 DimensionPaneUpdateIntervalMs = 100;
 
 struct DimensionPaneState
@@ -749,6 +757,18 @@ OverlayAxisCrossState& overlayAxisCrossState()
 }
 
 }  // namespace
+
+// See the header comment: age (ms) since the active view's camera pose last
+// changed, used by the hover-pick path to skip picks during camera rotation.
+namespace Gui
+{
+double navigationCameraMoveAgeMs()
+{
+    return std::chrono::duration<double, std::milli>(
+               std::chrono::steady_clock::now() - gNavCamMoveT0)
+        .count();
+}
+}
 
 /*!
 As ProgressBar has no chance to control the incoming Qt events of Quarter so we need to stop
@@ -3771,6 +3791,7 @@ bool View3DInventorViewer::processSoEvent(const SoEvent* ev)
     if (cam && cam == getCamera()
         && (cam->position.getValue() != camPosBefore
             || cam->orientation.getValue() != camOriBefore)) {
+        gNavCamMoveT0 = std::chrono::steady_clock::now();
         Q_EMIT cameraMoved();
     }
     return result;

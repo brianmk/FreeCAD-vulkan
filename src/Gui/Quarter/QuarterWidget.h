@@ -212,6 +212,18 @@ private:
   friend class QuarterWidgetP;
   class QuarterWidgetP * pimpl;
   bool initialized;
+
+public:
+  //! True when this widget's render-manager viewport region is in DEVICE
+  //! pixels, pinned to a Vulkan surface (the hidden GL viewer driving picking).
+  //! Classic GL mode keeps a logical region and the widget's own size; the
+  //! event/DPR handling only uses the live ratio + region normalization in the
+  //! Vulkan case, so GL picking stays in logical space (no 1/dpr drift).
+  void setVulkanDevicePixels(bool on) { _vulkanDevicePixels = on; }
+  bool vulkanDevicePixels() const { return _vulkanDevicePixels; }
+
+private:
+  bool _vulkanDevicePixels = false;
 };
 
 /*!

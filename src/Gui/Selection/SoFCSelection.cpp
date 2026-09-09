@@ -45,6 +45,8 @@
 #include <Inventor/events/SoMouseButtonEvent.h>
 #include <Inventor/misc/SoState.h>
 
+#include <chrono>
+
 
 #include <Base/UnitsApi.h>
 #include <Base/VulkanBreadcrumbs.h>
@@ -74,6 +76,46 @@ void printPreselectionInfo(
 }
 
 SoFullPath* Gui::SoFCSelection::currenthighlight = nullptr;
+
+
+// Preselection-pick throttle.  The full-scene SoRayPickAction is O(triangles)
+// and is triggered lazily the first time getPickedPoint() -> getPickedPointList()
+// runs within an event.  While the Space-Mouse rotates the camera under a moving
+// cursor, hops across a dense mesh (e.g. a high-tessellation sphere) re-run this
+// pick on every mouse move at full cost and never settle.  We rate-limit the
+// re-pick (min cursor delta + min interval) and reuse the last result, so the
+// SoRayPickAction is skipped entirely on throttled events.  Disable with
+// FC_VULKAN_PICK_THROTTLE_PX=0 and FC_VULKAN_PICK_THROTTLE_MS=0.
+namespace
+{
+struct PickThrottle
+{
+    const SoHandleEventAction* lastEvent = nullptr;
+    bool cacheValid = false;
+    SoPickedPoint* cachePoint = nullptr;   // owned copy for cross-event reuse
+    SbVec2s cachePos {0, 0};
+    std::chrono::steady_clock::time_point cacheTime;
+};
+PickThrottle g_pickThrottle;
+
+int pickThrottleDeltaPx()
+{
+    static const int v = []() {
+        const char* e = std::getenv("FC_VULKAN_PICK_THROTTLE_PX");
+        return e ? std::atoi(e) : 3;
+    }();
+    return v;
+}
+
+int pickThrottleIntervalMs()
+{
+    static const int v = []() {
+        const char* e = std::getenv("FC_VULKAN_PICK_THROTTLE_MS");
+        return e ? std::atoi(e) : 12;
+    }();
+    return v;
+}
+}  // namespace
 
 
 // *************************************************************************
@@ -335,34 +377,81 @@ int SoFCSelection::getPriority(const SoPickedPoint* p)
 
 const SoPickedPoint* SoFCSelection::getPickedPoint(SoHandleEventAction* action) const
 {
+    // Same-event reuse: within one SoHandleEventAction traversal the picked point
+    // is shared across every SoFCSelection node.  Compute/reuse it once and let
+    // the remaining nodes of this event see the same result, so the expensive
+    // SoRayPickAction (first getPickedPointList() call) never runs per node.
+    if (action == g_pickThrottle.lastEvent) {
+        return g_pickThrottle.cacheValid ? g_pickThrottle.cachePoint : nullptr;
+    }
+    g_pickThrottle.lastEvent = action;
+
+    // Cross-event throttle: if the cursor has barely moved since the last pick,
+    // or the moves are arriving faster than the rate cap, reuse the cached pick
+    // and SKIP the SoRayPickAction entirely.  This is the Space-Mouse storm
+    // case: the camera rotates under a near-stationary (or fast-moving) cursor,
+    // so the previous pick is still a good answer and we avoid an O(triangles)
+    // traversal every mouse move.
+    const SoEvent* ev = action->getEvent();
+    const bool throttled =
+        ev && g_pickThrottle.cacheValid
+        && (pickThrottleDeltaPx() > 0 || pickThrottleIntervalMs() > 0);
+    if (throttled) {
+        const int deltaPx = pickThrottleDeltaPx();
+        const int intervalMs = pickThrottleIntervalMs();
+        const SbVec2s pos = ev->getPosition();
+        const int dx = pos[0] - g_pickThrottle.cachePos[0];
+        const int dy = pos[1] - g_pickThrottle.cachePos[1];
+        const bool tinyMove = deltaPx > 0 && (dx * dx + dy * dy) < (deltaPx * deltaPx);
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - g_pickThrottle.cacheTime)
+                            .count();
+        const bool tooSoon = intervalMs > 0 && ms < intervalMs;
+        if (tinyMove || tooSoon) {
+            return g_pickThrottle.cachePoint;
+        }
+    }
+
     // To identify the picking of lines in a concave area we have to
     // get all intersection points. If we have two or more intersection
     // points where the first is of a face and the second of a line with
     // almost similar coordinates we use the second point, instead.
     const SoPickedPointList& points = action->getPickedPointList();
+    const SoPickedPoint* picked;
     if (points.getLength() == 0) {
-        return nullptr;
+        picked = nullptr;
     }
     else if (points.getLength() == 1) {
-        return points[0];
+        picked = points[0];
     }
+    else {
+        picked = points[0];
 
-    const SoPickedPoint* picked = points[0];
+        int picked_prio = getPriority(picked);
+        const SbVec3f& picked_pt = picked->getPoint();
 
-    int picked_prio = getPriority(picked);
-    const SbVec3f& picked_pt = picked->getPoint();
+        for (int i = 1; i < points.getLength(); i++) {
+            const SoPickedPoint* cur = points[i];
+            int cur_prio = getPriority(cur);
+            const SbVec3f& cur_pt = cur->getPoint();
 
-
-    for (int i = 1; i < points.getLength(); i++) {
-        const SoPickedPoint* cur = points[i];
-        int cur_prio = getPriority(cur);
-        const SbVec3f& cur_pt = cur->getPoint();
-
-        if ((cur_prio > picked_prio) && picked_pt.equals(cur_pt, 0.01f)) {
-            picked = cur;
-            picked_prio = cur_prio;
+            if ((cur_prio > picked_prio) && picked_pt.equals(cur_pt, 0.01f)) {
+                picked = cur;
+                picked_prio = cur_prio;
+            }
         }
     }
+
+    // Refresh the cross-event cache (owned copy) so the next throttled event can
+    // reuse this pick without re-running the SoRayPickAction.
+    delete g_pickThrottle.cachePoint;
+    g_pickThrottle.cachePoint = picked ? new SoPickedPoint(*picked) : nullptr;
+    g_pickThrottle.cacheValid = (picked != nullptr);
+    if (ev) {
+        g_pickThrottle.cachePos = ev->getPosition();
+    }
+    g_pickThrottle.cacheTime = std::chrono::steady_clock::now();
+
     return picked;
 }
 
@@ -380,11 +469,23 @@ void SoFCSelection::handleEvent(SoHandleEventAction* action)
 
     // mouse move events for preselection
     if (event->isOfType(SoLocation2Event::getClassTypeId())) {
+        static int selPickDiag = 0;
+        const bool diag = ::Base::envFlagEnabled("FC_VULKAN_BREADCRUMBS") && (selPickDiag++ % 60 == 0);
         // NOTE: If preselection is off then we do not check for a picked point because otherwise
         // this search may slow down extremely the system on really big data sets. In this case we
         // just check for a picked point if the data set has been selected.
         if (mymode == AUTO || mymode == ON) {
+            auto pickT0 = std::chrono::steady_clock::now();
             const SoPickedPoint* pp = this->getPickedPoint(action);
+            if (diag) {
+                auto pickT1 = std::chrono::steady_clock::now();
+                std::fprintf(stderr,
+                    "[VK-PICK] SoFCSelection::handleEvent pick_t=%.3fms "
+                    "mymode=%d pp=%d hl=%d\n",
+                    std::chrono::duration<double, std::milli>(pickT1 - pickT0).count(),
+                    static_cast<int>(mymode), pp ? 1 : 0, highlighted ? 1 : 0);
+                std::fflush(stderr);
+            }
             if (pp && pp->getPath()->containsPath(action->getCurPath())) {
                 if (!highlighted) {
                     if (Gui::Selection().setPreselect(

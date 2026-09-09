@@ -114,6 +114,13 @@ class SoGroundPlane;
 class SoShapeScale;
 class ViewerEventFilter;
 
+// Age in milliseconds since the active view's camera pose last changed (Space-Mouse
+// rotation or navigation).  The hover-pick path (SoFCUnifiedSelection /
+// SoFCSelection) reads this to skip the full-scene SoRayPickAction while the
+// camera is actively rotating, cutting the pick storm from hovering during a
+// Space-Mouse rotation.
+double navigationCameraMoveAgeMs();
+
 /** GUI view into a 3D scene provided by View3DInventor
  *
  */

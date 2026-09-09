@@ -83,6 +83,7 @@
 #include <QOpenGLWidget>
 
 #include <cstdlib>
+#include <chrono>
 #include <iomanip>
 #include <sstream>
 
@@ -102,6 +103,7 @@
 #include "SoFCInteractiveElement.h"
 #include "SoFCSelectionAction.h"
 #include "ViewParams.h"
+#include "View3DInventorViewer.h"
 #include "ViewProvider.h"
 #include "ViewProviderDocumentObject.h"
 
@@ -112,6 +114,48 @@ using namespace Gui;
 
 namespace Gui
 {
+// Preselection-pick throttle for the new (unified) selection model.  Mirrors
+// the throttle in SoFCSelection.cpp (legacy path): the full-scene SoRayPickAction
+// is O(triangles) and is triggered lazily by getPickedList() ->
+// getPickedPointList() on the first mouse move of an event.  While the
+// Space-Mouse rotates the camera under a moving cursor, hovering can never
+// settle, so re-running this pick on every mouse move hammers a dense mesh.
+// We skip the pick when the cursor has moved < delta px since the last one or
+// moves are arriving faster than a rate cap, keeping the previous highlight.
+// Disable with FC_VULKAN_PICK_THROTTLE_PX=0 and FC_VULKAN_PICK_THROTTLE_MS=0.
+namespace
+{
+struct UnifiedPickThrottle
+{
+    bool valid = false;
+    SbVec2s cachePos {0, 0};
+    std::chrono::steady_clock::time_point cacheTime;
+};
+UnifiedPickThrottle g_unifiedPickThrottle;
+
+// If the camera pose changed within this many ms, the scene is being actively
+// rotated (Space-Mouse) and hover picks would be stale; skip them until it stops.
+constexpr int kPickCameraMotionSkipMs = 50;
+
+int pickThrottleDeltaPx()
+{
+    static const int v = []() {
+        const char* e = std::getenv("FC_VULKAN_PICK_THROTTLE_PX");
+        return e ? std::atoi(e) : 3;
+    }();
+    return v;
+}
+
+int pickThrottleIntervalMs()
+{
+    static const int v = []() {
+        const char* e = std::getenv("FC_VULKAN_PICK_THROTTLE_MS");
+        return e ? std::atoi(e) : 12;
+    }();
+    return v;
+}
+}  // namespace
+
 void printPreselectionInfo(
     const char* documentName,
     const char* objectName,
@@ -1143,25 +1187,66 @@ void SoFCUnifiedSelection::handleEvent(SoHandleEventAction* action)
         // every frame.  The highlight re-evaluates on the first move after the
         // button is released.
         if ((preselectionMode == AUTO || preselectionMode == ON) && !this->mouseButtonDown) {
-            // check to see if the mouse is over our geometry...
-            auto infos = this->getPickedList(action, true);
-            if (pickProbeEnabled()) {
-                logPickProbeEvent("hover",
-                                  event,
-                                  infos.empty() ? nullptr : infos[0].pp,
-                                  infos.empty() ? nullptr : infos[0].vpd,
-                                  infos.empty() ? std::string() : infos[0].element);
+            // Preselection-pick throttle: the Space-Mouse can rotate the camera
+            // under a moving cursor, so hovering never settles and each mouse
+            // move re-runs the full-scene SoRayPickAction (O(triangles), painful
+            // on a dense sphere).  Skip the pick when the cursor has barely moved
+            // or when moves arrive faster than the rate cap, keeping the previous
+            // highlight (reuse) until the next real pick.
+            bool skipPick = false;
+
+            // While the camera is actively rotating (Space-Mouse), the point
+            // under the cursor is moving due to the camera, so any pick is stale
+            // and each one costs a full O(triangles) traversal.  Skip the pick
+            // entirely until the camera settles; the highlight resumes on the
+            // first mouse move after the camera stops.
+            if (navigationCameraMoveAgeMs() < static_cast<double>(kPickCameraMotionSkipMs)) {
+                skipPick = true;
             }
-            if (!infos.empty()) {
-                setPreselect(infos[0]);
+
+            const int deltaPx = pickThrottleDeltaPx();
+            const int intervalMs = pickThrottleIntervalMs();
+            if (!skipPick && (deltaPx > 0 || intervalMs > 0)) {
+                const SbVec2s pos = event->getPosition();
+                const int dx = pos[0] - g_unifiedPickThrottle.cachePos[0];
+                const int dy = pos[1] - g_unifiedPickThrottle.cachePos[1];
+                const bool tinyMove = deltaPx > 0 && g_unifiedPickThrottle.valid
+                    && (dx * dx + dy * dy) < (deltaPx * deltaPx);
+                const auto now = std::chrono::steady_clock::now();
+                const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     now - g_unifiedPickThrottle.cacheTime)
+                                     .count();
+                const bool tooSoon = intervalMs > 0
+                    && g_unifiedPickThrottle.valid && ms < intervalMs;
+                skipPick = tinyMove || tooSoon;
+                if (!skipPick) {
+                    g_unifiedPickThrottle.valid = true;
+                    g_unifiedPickThrottle.cachePos = pos;
+                    g_unifiedPickThrottle.cacheTime = now;
+                }
             }
-            else {
-                setPreselect(PickedInfo());
-                if (this->preSelection > 0) {
-                    this->preSelection = 0;
-                    // touch() makes sure to call GLRenderBelowPath so that the cursor can be updated
-                    // because only from there the SoGLWidgetElement delivers the OpenGL window
-                    this->touch();
+
+            if (!skipPick) {
+                // check to see if the mouse is over our geometry...
+                auto infos = this->getPickedList(action, true);
+                if (pickProbeEnabled()) {
+                    logPickProbeEvent("hover",
+                                      event,
+                                      infos.empty() ? nullptr : infos[0].pp,
+                                      infos.empty() ? nullptr : infos[0].vpd,
+                                      infos.empty() ? std::string() : infos[0].element);
+                }
+                if (!infos.empty()) {
+                    setPreselect(infos[0]);
+                }
+                else {
+                    setPreselect(PickedInfo());
+                    if (this->preSelection > 0) {
+                        this->preSelection = 0;
+                        // touch() makes sure to call GLRenderBelowPath so that the cursor can be updated
+                        // because only from there the SoGLWidgetElement delivers the OpenGL window
+                        this->touch();
+                    }
                 }
             }
         }

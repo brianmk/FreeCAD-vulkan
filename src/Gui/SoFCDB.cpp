@@ -81,6 +81,7 @@
 #include "Inventor/SoFCBackgroundGradient.h"
 #include "Inventor/SoFCBoundingBox.h"
 #include "Inventor/SoNaviCube.h"
+#include "Inventor/SoNaviCubeVulkan.h"
 #include "Inventor/SoAxisCrossOverlay.h"
 #include "Inventor/SoGroundPlane.h"
 #include "Inventor/SoMouseWheelEvent.h"
@@ -153,6 +154,9 @@ void Gui::SoFCDB::init()
     SoRegPoint::initClass();
     SoDrawingGrid::initClass();
     SoNaviCube::initClass();
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    SoNaviCubeVulkan::initClass();
+#endif
     SoAxisCrossOverlay::initClass();
     SoGroundPlane::initClass();
     SoFCTransform::initClass();

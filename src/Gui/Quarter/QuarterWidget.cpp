@@ -600,20 +600,18 @@ the widget is located within, and updated whenever any change occurs, emitting a
 qreal
 QuarterWidget::devicePixelRatio() const
 {
-  // Return the *live* ratio (devicePixelRatioF(), from the window/screen)
-  // rather than the snapshot cached by updateDevicePixelRatio().  The cached
-  // value goes stale on a hidden, non-current stack-page widget: it starts at
-  // 1.0 and only refreshes on a real paint/resize, so on a fractional-scaling
-  // display (e.g. 1.25) the render viewport region is sized at the live ratio
-  // while this accessor still reported 1.0.  In Coin mode events reach the GL
-  // viewer directly (no Vulkan forward-rescale), so EventFilter/Mouse convert
-  // cursor positions with this value against a device-pixel viewport region --
-  // a stale 1.0 shifted hover/click picking by the DPI factor (1/dpr).  Using
-  // the live ratio in every consumer keeps the picked coordinates in the same
-  // pixel space as the (physical) viewport region.  Call QWidget's
-  // implementation rather than devicePixelRatioF(): that helper forwards to the
-  // virtual devicePixelRatio(), which would recurse back into this override.
-  return this->QWidget::devicePixelRatio();
+  // Live ratio only for the Vulkan-driven (device-pixel viewport) widget --
+  // i.e. the hidden GL viewer that navigates off the Vulkan surface.  For the
+  // classic GL widget the render-manager viewport region is kept LOGICAL (the
+  // visible widget's own size) and the event position must stay in that same
+  // logical space, so return the cached snapshot that upstream used (no live
+  // ratio -> no 1/dpr drift).  Live ratio via QWidget's implementation rather
+  // than devicePixelRatioF(): that helper forwards to the virtual
+  // devicePixelRatio(), recursing back into this override.
+  if (this->_vulkanDevicePixels) {
+    return this->QWidget::devicePixelRatio();
+  }
+  return PRIVATE(this)->device_pixel_ratio;
 }
 
 /*!
