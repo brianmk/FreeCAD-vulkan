@@ -72,6 +72,15 @@ constexpr float kOverlayFovScale = 1.1F;
 constexpr float kOverlayCubeZ = -5.1F;
 constexpr float kOverlayButtonZ = -4.0F;  // in front of the cube (cube at ~-5.1)
 
+// The 8 unit-cube corners, shared by the cube fill and the edge line-set.
+static const std::array<SbVec3f, 8> kCubeCorners = {{
+    SbVec3f(-1.0F, -1.0F, -1.0F), SbVec3f(1.0F, -1.0F, -1.0F),
+    SbVec3f(1.0F, 1.0F, -1.0F),  SbVec3f(-1.0F, 1.0F, -1.0F),
+    SbVec3f(-1.0F, -1.0F, 1.0F), SbVec3f(1.0F, -1.0F, 1.0F),
+    SbVec3f(1.0F, 1.0F, 1.0F),   SbVec3f(-1.0F, 1.0F, 1.0F),
+}};
+
+
 float toTransparency(float alpha)
 {
     alpha = std::clamp(alpha, 0.0F, 1.0F);
@@ -289,13 +298,7 @@ void SoNaviCubeVulkan::ensureScene() const
         cubeFaces->vertexProperty = cubeVertexProperty;
 
         // Unit cube corners.
-        const SbVec3f corners[8] = {
-            SbVec3f(-1.0F, -1.0F, -1.0F), SbVec3f(1.0F, -1.0F, -1.0F),
-            SbVec3f(1.0F, 1.0F, -1.0F),  SbVec3f(-1.0F, 1.0F, -1.0F),
-            SbVec3f(-1.0F, -1.0F, 1.0F), SbVec3f(1.0F, -1.0F, 1.0F),
-            SbVec3f(1.0F, 1.0F, 1.0F),   SbVec3f(-1.0F, 1.0F, 1.0F),
-        };
-        cubeVertexProperty->vertex.setValues(0, 8, corners);
+        cubeVertexProperty->vertex.setValues(0, 8, kCubeCorners.data());
 
         // Base SoNaviCube face convention: Top=+Z, Bottom=-Z, Front=-Y,
         // Rear=+Y, Right=+X, Left=-X.  The base label quads, pickAt() and the
@@ -339,13 +342,7 @@ void SoNaviCubeVulkan::ensureScene() const
 
         edgeVertexProperty = new SoVertexProperty;
         edgeVertexProperty->vertex.setNum(8);
-        const SbVec3f corners[8] = {
-            SbVec3f(-1.0F, -1.0F, -1.0F), SbVec3f(1.0F, -1.0F, -1.0F),
-            SbVec3f(1.0F, 1.0F, -1.0F),  SbVec3f(-1.0F, 1.0F, -1.0F),
-            SbVec3f(-1.0F, -1.0F, 1.0F), SbVec3f(1.0F, -1.0F, 1.0F),
-            SbVec3f(1.0F, 1.0F, 1.0F),   SbVec3f(-1.0F, 1.0F, 1.0F),
-        };
-        edgeVertexProperty->vertex.setValues(0, 8, corners);
+        edgeVertexProperty->vertex.setValues(0, 8, kCubeCorners.data());
         edges->vertexProperty = edgeVertexProperty;
 
         // 12 edges of the cube.

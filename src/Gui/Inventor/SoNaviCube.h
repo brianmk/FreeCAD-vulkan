@@ -217,6 +217,8 @@ private:
         return static_cast<size_t>(id);
     }
 
+protected:
+    //! Node-group structs shared by the GL navcube and the Vulkan (IR) subclass.
     struct AxisNodes
     {
         SoSeparator* sep {nullptr};
@@ -249,6 +251,7 @@ private:
         SoIndexedLineSet* outline {nullptr};
     };
 
+private:
     mutable SoSeparator* sceneRoot {nullptr};
     mutable SoSwitch* cameraSwitch {nullptr};
     mutable SoOrthographicCamera* orthoCamera {nullptr};

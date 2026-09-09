@@ -90,37 +90,8 @@ private:
     //! Map a PickId (as int) to the cube's 6-face material index, or -1.
     static int faceIndex(int pickId);
 
-    struct AxisNodes
-    {
-        SoSeparator* sep {nullptr};
-        SoMaterial* material {nullptr};
-        SoDrawStyle* drawStyle {nullptr};
-        SoVertexProperty* vertexProperty {nullptr};
-        SoIndexedLineSet* line {nullptr};
-        SoPointSet* points {nullptr};
-    };
-
-    struct LabelNodes
-    {
-        SoSeparator* sep {nullptr};
-        SoMaterial* material {nullptr};
-        SoTexture2* texture {nullptr};
-        SoVertexProperty* vertexProperty {nullptr};
-        SoFaceSet* face {nullptr};
-    };
-
-    struct ButtonNodes
-    {
-        SoSeparator* sep {nullptr};
-        SoMaterial* fillMaterial {nullptr};
-        SoSwitch* coordsSwitch {nullptr};
-        SoVertexProperty* vertexOrtho {nullptr};
-        SoVertexProperty* vertexPersp {nullptr};
-        SoIndexedFaceSet* fill {nullptr};
-        SoMaterial* outlineMaterial {nullptr};
-        SoDrawStyle* outlineDrawStyle {nullptr};
-        SoIndexedLineSet* outline {nullptr};
-    };
+    // AxisNodes / LabelNodes / ButtonNodes are inherited from the base
+    // SoNaviCube (protected) to avoid duplicating the node-group structs.
 
     //! Build the face-label quads (textured) into a labelsSep under the group.
     void buildLabels(SoSeparator* cubeGroup) const;
