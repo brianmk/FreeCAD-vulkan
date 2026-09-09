@@ -300,7 +300,52 @@ static void renderOverlayLines(
     int32_t* coordIndex = lineSet->coordIndex.startEditing();
     std::copy(lineIndices.begin(), lineIndices.end(), coordIndex);
     lineSet->coordIndex.finishEditing();
+
+    // Record the first draw-command index so that, on the IR (Vulkan) path,
+    // the recorded overlay line commands can be promoted to the OVERLAY pass
+    // below.  isIR is compile-time: when the build has no IR render API it is
+    // always false, so the SoIRRenderAction-only calls compile out entirely.
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    constexpr bool isIR = std::is_same_v<Action, SoIRRenderAction>;
+#else
+    constexpr bool isIR = false;
+#endif
+    int firstCommand = -1;
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    if constexpr (isIR) {
+        firstCommand = action->getMutableDrawList().getNumCommands();
+    }
+#endif
     renderOverlayNode(lineSet, action);
+
+    // The IR path records the highlight/selection edge lines as a plain opaque
+    // draw command, so they land inside the OPAQUE set alongside the base
+    // geometry.  A committed selection (RespectDepth) is coplanar with the
+    // base face it borders and loses the depth test there, so the selected
+    // edges vanish.  Promote the just-recorded commands to the OVERLAY pass --
+    // the same layer renderOverlayFaces() uses -- which the backend draws on
+    // top (depth cleared, frame camera) so the selected edges stay visible.
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    if constexpr (isIR) {
+        SoDrawList& list = action->getMutableDrawList();
+        const int endCommand = list.getNumCommands();
+        SoState* s = action->getState();
+        SbViewportRegion vp = SoViewportRegionElement::get(s);
+        const short vx = std::max(0, (int)vp.getViewportOriginPixels()[0]);
+        const short vy = std::max(0, (int)vp.getViewportOriginPixels()[1]);
+        const short vw = std::max(1, (int)vp.getViewportSizePixels()[0]);
+        const short vh = std::max(1, (int)vp.getViewportSizePixels()[1]);
+        for (int i = firstCommand; i < endCommand; ++i) {
+            SoRenderCommand& cmd = list.getCommand(i);
+            cmd.pass = SO_RENDERPASS_OVERLAY;
+            cmd.state.raster.scissorEnabled = TRUE;
+            cmd.state.raster.scissorX = vx;
+            cmd.state.raster.scissorY = vy;
+            cmd.state.raster.scissorWidth = vw;
+            cmd.state.raster.scissorHeight = vh;
+        }
+    }
+#endif
 
     state->pop();
 }

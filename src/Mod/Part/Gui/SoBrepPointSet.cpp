@@ -85,6 +85,35 @@ SoBrepPointSet::~SoBrepPointSet()
     }
 }
 
+// Optional overlay rendering for deterministic tests (and programmatic
+// usage): identical for the GL and IR paths, so it is shared.
+template <typename Action>
+void SoBrepPointSet::renderTestOverlay(Action* action)
+{
+    const int hlNum = highlightCoordIndex.getNum();
+    if (hlNum > 0) {
+        renderOverlayPoints(
+            action,
+            overlayPointSet,
+            highlightCoordIndex.getValues(0),
+            hlNum,
+            highlightColor.getValue(),
+            OverlayDepthMode::DrawOnTop
+        );
+    }
+    const int selNum = selectionCoordIndex.getNum();
+    if (selNum > 0) {
+        renderOverlayPoints(
+            action,
+            overlayPointSet,
+            selectionCoordIndex.getValues(0),
+            selNum,
+            selectionColor.getValue(),
+            OverlayDepthMode::DrawOnTop
+        );
+    }
+}
+
 void SoBrepPointSet::GLRender(SoGLRenderAction* action)
 {
     auto state = action->getState();
@@ -199,29 +228,7 @@ void SoBrepPointSet::GLRender(SoGLRenderAction* action)
     }
     // #endif
 
-    // Optional overlay rendering for deterministic tests (and programmatic usage).
-    const int hlNum = highlightCoordIndex.getNum();
-    if (hlNum > 0) {
-        renderOverlayPoints(
-            action,
-            overlayPointSet,
-            highlightCoordIndex.getValues(0),
-            hlNum,
-            highlightColor.getValue(),
-            OverlayDepthMode::DrawOnTop
-        );
-    }
-    const int selNum = selectionCoordIndex.getNum();
-    if (selNum > 0) {
-        renderOverlayPoints(
-            action,
-            overlayPointSet,
-            selectionCoordIndex.getValues(0),
-            selNum,
-            selectionColor.getValue(),
-            OverlayDepthMode::DrawOnTop
-        );
-    }
+    renderTestOverlay(action);
 }
 
 #ifdef HAVE_COIN_IR_RENDER_ACTION
@@ -320,29 +327,7 @@ void SoBrepPointSet::IRRender(SoIRRenderAction* action)
         renderSelectionIR(action, ctx2);
     }
 
-    // Optional overlay rendering for deterministic tests (and programmatic usage).
-    const int hlNum = highlightCoordIndex.getNum();
-    if (hlNum > 0) {
-        renderOverlayPoints(
-            action,
-            overlayPointSet,
-            highlightCoordIndex.getValues(0),
-            hlNum,
-            highlightColor.getValue(),
-            OverlayDepthMode::DrawOnTop
-        );
-    }
-    const int selNum = selectionCoordIndex.getNum();
-    if (selNum > 0) {
-        renderOverlayPoints(
-            action,
-            overlayPointSet,
-            selectionCoordIndex.getValues(0),
-            selNum,
-            selectionColor.getValue(),
-            OverlayDepthMode::DrawOnTop
-        );
-    }
+    renderTestOverlay(action);
 }
 #endif
 
@@ -457,7 +442,8 @@ static bool collectSelectionPoints(const SoBrepPointSet* node,
     return true;
 }
 
-void SoBrepPointSet::renderHighlight(SoGLRenderAction* action, SelContextPtr ctx)
+template <typename Action>
+void SoBrepPointSet::renderHighlightCommon(Action* action, SelContextPtr ctx)
 {
     std::vector<int32_t> pointIndices;
     if (!collectHighlightPoints(this, action->getState(), ctx, pointIndices)) {
@@ -468,7 +454,8 @@ void SoBrepPointSet::renderHighlight(SoGLRenderAction* action, SelContextPtr ctx
                         ctx->highlightColor, OverlayDepthMode::DrawOnTop);
 }
 
-void SoBrepPointSet::renderSelection(SoGLRenderAction* action, SelContextPtr ctx, bool /*push*/)
+template <typename Action>
+void SoBrepPointSet::renderSelectionCommon(Action* action, SelContextPtr ctx)
 {
     std::vector<int32_t> pointIndices;
     if (!collectSelectionPoints(this, action->getState(), ctx, pointIndices)) {
@@ -477,29 +464,27 @@ void SoBrepPointSet::renderSelection(SoGLRenderAction* action, SelContextPtr ctx
     renderOverlayPoints(action, overlayPointSet, pointIndices.data(),
                         static_cast<int>(pointIndices.size()),
                         ctx->selectionColor, OverlayDepthMode::RespectDepth);
+}
+
+void SoBrepPointSet::renderHighlight(SoGLRenderAction* action, SelContextPtr ctx)
+{
+    renderHighlightCommon(action, ctx);
+}
+
+void SoBrepPointSet::renderSelection(SoGLRenderAction* action, SelContextPtr ctx, bool /*push*/)
+{
+    renderSelectionCommon(action, ctx);
 }
 
 #ifdef HAVE_COIN_IR_RENDER_ACTION
 void SoBrepPointSet::renderHighlightIR(SoIRRenderAction* action, SelContextPtr ctx)
 {
-    std::vector<int32_t> pointIndices;
-    if (!collectHighlightPoints(this, action->getState(), ctx, pointIndices)) {
-        return;
-    }
-    renderOverlayPoints(action, overlayPointSet, pointIndices.data(),
-                        static_cast<int>(pointIndices.size()),
-                        ctx->highlightColor, OverlayDepthMode::DrawOnTop);
+    renderHighlightCommon(action, ctx);
 }
 
 void SoBrepPointSet::renderSelectionIR(SoIRRenderAction* action, SelContextPtr ctx)
 {
-    std::vector<int32_t> pointIndices;
-    if (!collectSelectionPoints(this, action->getState(), ctx, pointIndices)) {
-        return;
-    }
-    renderOverlayPoints(action, overlayPointSet, pointIndices.data(),
-                        static_cast<int>(pointIndices.size()),
-                        ctx->selectionColor, OverlayDepthMode::RespectDepth);
+    renderSelectionCommon(action, ctx);
 }
 #endif
 

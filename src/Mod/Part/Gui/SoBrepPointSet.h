@@ -82,6 +82,15 @@ private:
     void renderSelectionIR(SoIRRenderAction* action, SelContextPtr);
 #endif
 
+    // Shared GL/IR implementations: the GL and IR render paths are identical
+    // apart from the action type, so they funnel through these templates.
+    template <typename Action>
+    void renderHighlightCommon(Action* action, SelContextPtr ctx);
+    template <typename Action>
+    void renderSelectionCommon(Action* action, SelContextPtr ctx);
+    template <typename Action>
+    void renderTestOverlay(Action* action);
+
 private:
     SelContextPtr selContext;
     SelContextPtr selContext2;
