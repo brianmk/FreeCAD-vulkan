@@ -220,6 +220,11 @@ public:
         QMutexLocker locker(&m_stateMutex);
         m_pointsOverlay = enabled;
     }
+    void setTessellationOverlay(bool enabled)
+    {
+        QMutexLocker locker(&m_stateMutex);
+        m_tessellationOverlay = enabled;
+    }
     void setEdgeColor(const SbColor4f & color)
     {
         QMutexLocker locker(&m_stateMutex);
@@ -379,6 +384,7 @@ public:
 
     void initResources() override
     {
+        VK_BREADCRUMB("[VKINIT] QuarterVulkanWidget initResources enter\n");
         vkLog("initResources: creating Vulkan backend");
         const VkPhysicalDeviceProperties * props = m_window->physicalDeviceProperties();
         if (props) {
@@ -463,10 +469,15 @@ public:
         else {
             vkErr("initResources: backend initialize FAILED");
         }
+        VK_BREADCRUMB("[VKINIT] QuarterVulkanWidget initResources DONE "
+                      "initialized=%d rtxBuilt=%d\n",
+                      m_initialized ? 1 : 0, m_rtxBackendBuilt ? 1 : 0);
     }
 
     void initSwapChainResources() override
     {
+        VK_BREADCRUMB("[VKFLOW] QVulkanRenderer initSwapChainResources enter "
+                      "(swapchain recreate)\n");
         m_manager.setRenderTarget(&m_target);
         // QVulkanWindow may keep up to its swapchain image count frames in
         // flight; give the backend one extra ring slot of margin.
@@ -635,6 +646,7 @@ private:
         bool backgroundGradient = false;
         bool wireframeOverlay = false;
         bool pointsOverlay = false;
+        bool tessellationOverlay = false;
         bool pathTracingEnabled = false;
         int pathTracingBounces = 4;
         int pathTracingSettleFrames = 6;
@@ -684,6 +696,7 @@ private:
         frame.backgroundGradient = m_backgroundGradient;
         frame.wireframeOverlay = m_wireframeOverlay;
         frame.pointsOverlay = m_pointsOverlay;
+        frame.tessellationOverlay = m_tessellationOverlay;
         frame.pathTracingEnabled = m_pathTracingEnabled;
         frame.pathTracingBounces = m_pathTracingBounces;
         frame.pathTracingSettleFrames = m_pathTracingSettleFrames;
@@ -883,6 +896,7 @@ private:
                                         frame.backgroundBottom);
         m_manager.setWireframeOverlay(frame.wireframeOverlay);
         m_manager.setPointsOverlay(frame.pointsOverlay);
+        m_manager.setTessellationOverlay(frame.tessellationOverlay);
         m_manager.setEdgeColor(frame.edgeColor);
         if (Base::envFlagEnabled("FC_VULKAN_BACKEND_DEBUG")) {
             static int syncLog = 0;
@@ -1020,6 +1034,7 @@ private:
     SbColor4f m_backgroundBottom = SbColor4f(0.0f, 0.0f, 0.0f, 1.0f);
     bool m_wireframeOverlay = false;
     bool m_pointsOverlay = false;
+    bool m_tessellationOverlay = false;
     SbColor4f m_edgeColor = SbColor4f(0.05f, 0.05f, 0.05f, 1.0f);
     bool m_initialized = false;
     // Path tracing state mirrored here: requested values are written from
@@ -1632,6 +1647,16 @@ bool QuarterVulkanWidget::deviceSupportsExtension(VkPhysicalDevice device,
 // keeps the RTX backend always available so path tracing can be toggled live
 // (raster <-> RT) with a preference change, instead of forcing a document
 // reopen.  The construction `rayTracing` flag only influences the log below.
+void QuarterVulkanWidget::applyBaseDeviceFeatures(VkPhysicalDeviceFeatures2 & features)
+{
+    features.features.fillModeNonSolid =
+      d->vulkanWindow->fillModeNonSolid ? VK_TRUE : VK_FALSE;
+    features.features.fullDrawIndexUint32 =
+      d->vulkanWindow->fullDrawIndexUint32 ? VK_TRUE : VK_FALSE;
+    features.features.dualSrcBlend =
+      d->vulkanWindow->dualSrcBlend ? VK_TRUE : VK_FALSE;
+}
+
 void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
 {
     // Tell the renderer whether the selected device advertises the
@@ -1657,12 +1682,7 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
         // pipelines.
         d->window->setEnabledFeaturesModifier(
           [this](VkPhysicalDeviceFeatures2 & features) {
-            features.features.fillModeNonSolid =
-              d->vulkanWindow->fillModeNonSolid ? VK_TRUE : VK_FALSE;
-            features.features.fullDrawIndexUint32 =
-              d->vulkanWindow->fullDrawIndexUint32 ? VK_TRUE : VK_FALSE;
-            features.features.dualSrcBlend =
-              d->vulkanWindow->dualSrcBlend ? VK_TRUE : VK_FALSE;
+            this->applyBaseDeviceFeatures(features);
           });
         return;
     }
@@ -1818,12 +1838,7 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
     d->vulkanWindow->rtTimelineSemaphore.timelineSemaphore = VK_TRUE;
     d->window->setEnabledFeaturesModifier(
       [this](VkPhysicalDeviceFeatures2 & features) {
-        features.features.fillModeNonSolid =
-          d->vulkanWindow->fillModeNonSolid ? VK_TRUE : VK_FALSE;
-        features.features.fullDrawIndexUint32 =
-          d->vulkanWindow->fullDrawIndexUint32 ? VK_TRUE : VK_FALSE;
-        features.features.dualSrcBlend =
-          d->vulkanWindow->dualSrcBlend ? VK_TRUE : VK_FALSE;
+        this->applyBaseDeviceFeatures(features);
         d->vulkanWindow->rtRayQuery.pNext = features.pNext;
         d->vulkanWindow->rtRayTracingPipeline.pNext =
           &d->vulkanWindow->rtRayQuery;
@@ -1982,6 +1997,12 @@ void QuarterVulkanWidget::setWireframeOverlay(bool enabled)
 void QuarterVulkanWidget::setPointsOverlay(bool enabled)
 {
     d->renderer->setPointsOverlay(enabled);
+    redraw();
+}
+
+void QuarterVulkanWidget::setTessellationOverlay(bool enabled)
+{
+    d->renderer->setTessellationOverlay(enabled);
     redraw();
 }
 

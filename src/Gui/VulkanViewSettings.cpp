@@ -24,6 +24,7 @@ VulkanViewSettings::load(const ParameterGrp::handle & hGrp)
 
     this->showEdges = hGrp->GetBool("VulkanShowEdges", false);
     this->showPoints = hGrp->GetBool("VulkanShowPoints", false);
+    this->showTessEdges = hGrp->GetBool("VulkanShowTessEdges", false);
     // Colors are stored as Unsigned (0xAABBGGRR) to survive INT_MAX; the
     // alpha is pinned to 1 (the edge overlay is opaque).
     const unsigned long color = hGrp->GetUnsigned("VulkanEdgeColor", 0x050505FFUL);

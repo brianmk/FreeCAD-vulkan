@@ -112,6 +112,7 @@ public:
     */
     void setWireframeOverlay(bool enabled);
     void setPointsOverlay(bool enabled);
+    void setTessellationOverlay(bool enabled);
     void setEdgeColor(const SbColor4f & color);
 
     /*!
@@ -356,6 +357,9 @@ private:
     bool deviceSupportsRayTracing(VkPhysicalDevice device);
     bool deviceSupportsExtension(VkPhysicalDevice device, const char * name);
     void configureDeviceFeatures(bool rayTracing);
+    // Copy the probe results for the base raster features (wireframe fill,
+    // 32-bit indices, dual-source blend) into a device feature struct.
+    void applyBaseDeviceFeatures(VkPhysicalDeviceFeatures2 & features);
     void logSupportedSampleCounts();
 #endif
 
