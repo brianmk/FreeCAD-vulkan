@@ -411,7 +411,8 @@ void SoBrepFaceSet::doAction(SoAction* action)
     inherited::doAction(action);
 }
 
-void SoBrepFaceSet::renderHighlight(SoGLRenderAction* action, SelContextPtr ctx)
+template <typename Action>
+void SoBrepFaceSet::renderHighlightCommon(Action* action, SelContextPtr ctx, bool onTop)
 {
     const int32_t* partCounts = this->partIndex.getValues(0);
     const int partCount = this->partIndex.getNum();
@@ -424,14 +425,11 @@ void SoBrepFaceSet::renderHighlight(SoGLRenderAction* action, SelContextPtr ctx)
         return;
     }
     buildOverlayCoordIndex(overlayCoordIndex, ci, ciCount, partCounts, partCount, parts, selectAll);
-
-    const bool onTop = Gui::Selection().isClarifySelectionActive()
-        && Gui::SoDelayedAnnotationsElement::isProcessingDelayedPaths;
-
     renderOverlayFaces(action, overlayFaceSet, overlayCoordIndex, ctx->highlightColor, onTop);
 }
 
-void SoBrepFaceSet::renderSelection(SoGLRenderAction* action, SelContextPtr ctx, bool /*push*/)
+template <typename Action>
+void SoBrepFaceSet::renderSelectionCommon(Action* action, SelContextPtr ctx)
 {
     const int32_t* partCounts = this->partIndex.getValues(0);
     const int partCount = this->partIndex.getNum();
@@ -445,6 +443,18 @@ void SoBrepFaceSet::renderSelection(SoGLRenderAction* action, SelContextPtr ctx,
     }
     buildOverlayCoordIndex(overlayCoordIndex, ci, ciCount, partCounts, partCount, parts, selectAll);
     renderOverlayFaces(action, overlayFaceSet, overlayCoordIndex, ctx->selectionColor, false);
+}
+
+void SoBrepFaceSet::renderHighlight(SoGLRenderAction* action, SelContextPtr ctx)
+{
+    const bool onTop = Gui::Selection().isClarifySelectionActive()
+        && Gui::SoDelayedAnnotationsElement::isProcessingDelayedPaths;
+    renderHighlightCommon(action, ctx, onTop);
+}
+
+void SoBrepFaceSet::renderSelection(SoGLRenderAction* action, SelContextPtr ctx, bool /*push*/)
+{
+    renderSelectionCommon(action, ctx);
 }
 
 #ifdef HAVE_COIN_IR_RENDER_ACTION
@@ -454,18 +464,6 @@ void SoBrepFaceSet::renderHighlightIR(SoIRRenderAction* action, SelContextPtr ct
                           "[VK-TRACE] SoBrepFaceSet::renderHighlightIR ctx=%p hlIdx=%d\n",
                           ctx.get(), ctx ? ctx->highlightIndex : -2);
 
-    const int32_t* partCounts = this->partIndex.getValues(0);
-    const int partCount = this->partIndex.getNum();
-    const int32_t* ci = this->coordIndex.getValues(0);
-    const int ciCount = this->coordIndex.getNum();
-
-    std::set<int> parts;
-    bool selectAll = false;
-    if (!collectHighlightParts(ctx, partCount, parts, selectAll)) {
-        return;
-    }
-    buildOverlayCoordIndex(overlayCoordIndex, ci, ciCount, partCounts, partCount, parts, selectAll);
-
     // Match GLRender(): the highlight is drawn on top (depth test off,
     // blended) only for the clarify-selection on-top pass.  GL detects that
     // pass with SoDelayedAnnotationsElement::isProcessingDelayedPaths; the
@@ -474,24 +472,12 @@ void SoBrepFaceSet::renderHighlightIR(SoIRRenderAction* action, SelContextPtr ct
     // the depth element marks the same condition.
     const bool onTop = Gui::Selection().isClarifySelectionActive()
         && !SoDepthBufferElement::getTestEnable(action->getState());
-
-    renderOverlayFaces(action, overlayFaceSet, overlayCoordIndex, ctx->highlightColor, onTop);
+    renderHighlightCommon(action, ctx, onTop);
 }
 
 void SoBrepFaceSet::renderSelectionIR(SoIRRenderAction* action, SelContextPtr ctx)
 {
-    const int32_t* partCounts = this->partIndex.getValues(0);
-    const int partCount = this->partIndex.getNum();
-    const int32_t* ci = this->coordIndex.getValues(0);
-    const int ciCount = this->coordIndex.getNum();
-
-    std::set<int> parts;
-    bool selectAll = false;
-    if (!collectSelectionParts(ctx, partCount, parts, selectAll)) {
-        return;
-    }
-    buildOverlayCoordIndex(overlayCoordIndex, ci, ciCount, partCounts, partCount, parts, selectAll);
-    renderOverlayFaces(action, overlayFaceSet, overlayCoordIndex, ctx->selectionColor, false);
+    renderSelectionCommon(action, ctx);
 }
 #endif
 

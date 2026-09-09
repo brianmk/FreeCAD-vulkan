@@ -142,6 +142,14 @@ private:
     void renderSelectionIR(SoIRRenderAction* action, SelContextPtr);
 #endif
 
+    // Shared GL/IR implementations.  renderHighlightCommon takes `onTop` as a
+    // parameter because GL and IR detect the clarify-selection on-top pass
+    // differently (delayed-annotations flag vs depth-test-disabled).
+    template <typename Action>
+    void renderHighlightCommon(Action* action, SelContextPtr ctx, bool onTop);
+    template <typename Action>
+    void renderSelectionCommon(Action* action, SelContextPtr ctx);
+
     bool overrideMaterialBinding(SoGLRenderAction* action, SelContextPtr ctx, SelContextPtr ctx2);
     bool overrideMaterialBindingCommon(SoState* state, SelContextPtr ctx, SelContextPtr ctx2);
 

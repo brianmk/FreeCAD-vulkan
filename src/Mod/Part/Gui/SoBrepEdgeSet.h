@@ -123,6 +123,15 @@ private:
     void renderHighlightIR(SoIRRenderAction* action, SelContextPtr);
     void renderSelectionIR(SoIRRenderAction* action, SelContextPtr);
 #endif
+
+    // Shared GL/IR implementations: identical apart from the action type.
+    template <typename Action>
+    void renderHighlightCommon(Action* action, SelContextPtr ctx);
+    template <typename Action>
+    void renderSelectionCommon(Action* action, SelContextPtr ctx);
+    template <typename Action>
+    void renderTestOverlay(Action* action);
+
     bool collectHighlightLines(SoState*, SelContextPtr, OverlayLines&) const;
     bool collectSelectionLines(SoState*, SelContextPtr, OverlayLines&) const;
     bool validIndexes(const SoCoordinateElement*, const std::vector<int32_t>&) const;

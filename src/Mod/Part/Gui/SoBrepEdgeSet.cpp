@@ -103,6 +103,35 @@ SoBrepEdgeSet::~SoBrepEdgeSet()
     }
 }
 
+// Optional overlay rendering for deterministic tests (and programmatic
+// usage): identical for the GL and IR paths, so it is shared.
+template <typename Action>
+void SoBrepEdgeSet::renderTestOverlay(Action* action)
+{
+    const int hlNum = highlightCoordIndex.getNum();
+    if (hlNum > 0) {
+        renderOverlayLines(
+            action,
+            overlayLineSet,
+            highlightCoordIndex.getValues(0),
+            hlNum,
+            highlightColor.getValue(),
+            OverlayDepthMode::DrawOnTop
+        );
+    }
+    const int selNum = selectionCoordIndex.getNum();
+    if (selNum > 0) {
+        renderOverlayLines(
+            action,
+            overlayLineSet,
+            selectionCoordIndex.getValues(0),
+            selNum,
+            selectionColor.getValue(),
+            OverlayDepthMode::DrawOnTop
+        );
+    }
+}
+
 void SoBrepEdgeSet::GLRender(SoGLRenderAction* action)
 {
     auto state = action->getState();
@@ -244,29 +273,7 @@ void SoBrepEdgeSet::GLRender(SoGLRenderAction* action)
     }
     // #endif
 
-    // Optional overlay rendering for deterministic tests (and programmatic usage).
-    const int hlNum = highlightCoordIndex.getNum();
-    if (hlNum > 0) {
-        renderOverlayLines(
-            action,
-            overlayLineSet,
-            highlightCoordIndex.getValues(0),
-            hlNum,
-            highlightColor.getValue(),
-            OverlayDepthMode::DrawOnTop
-        );
-    }
-    const int selNum = selectionCoordIndex.getNum();
-    if (selNum > 0) {
-        renderOverlayLines(
-            action,
-            overlayLineSet,
-            selectionCoordIndex.getValues(0),
-            selNum,
-            selectionColor.getValue(),
-            OverlayDepthMode::DrawOnTop
-        );
-    }
+    renderTestOverlay(action);
 }
 
 #ifdef HAVE_COIN_IR_RENDER_ACTION
@@ -390,29 +397,7 @@ void SoBrepEdgeSet::IRRender(SoIRRenderAction* action)
         renderSelectionIR(action, ctx2);
     }
 
-    // Optional overlay rendering for deterministic tests (and programmatic usage).
-    const int hlNum = highlightCoordIndex.getNum();
-    if (hlNum > 0) {
-        renderOverlayLines(
-            action,
-            overlayLineSet,
-            highlightCoordIndex.getValues(0),
-            hlNum,
-            highlightColor.getValue(),
-            OverlayDepthMode::DrawOnTop
-        );
-    }
-    const int selNum = selectionCoordIndex.getNum();
-    if (selNum > 0) {
-        renderOverlayLines(
-            action,
-            overlayLineSet,
-            selectionCoordIndex.getValues(0),
-            selNum,
-            selectionColor.getValue(),
-            OverlayDepthMode::DrawOnTop
-        );
-    }
+    renderTestOverlay(action);
 }
 #endif
 
@@ -536,7 +521,8 @@ bool SoBrepEdgeSet::collectSelectionLines(SoState* state,
     return true;
 }
 
-void SoBrepEdgeSet::renderHighlight(SoGLRenderAction* action, SelContextPtr ctx)
+template <typename Action>
+void SoBrepEdgeSet::renderHighlightCommon(Action* action, SelContextPtr ctx)
 {
     OverlayLines overlay;
     if (!collectHighlightLines(action->getState(), ctx, overlay)) {
@@ -546,7 +532,8 @@ void SoBrepEdgeSet::renderHighlight(SoGLRenderAction* action, SelContextPtr ctx)
                        overlay.color, overlay.depthMode);
 }
 
-void SoBrepEdgeSet::renderSelection(SoGLRenderAction* action, SelContextPtr ctx, bool /*push*/)
+template <typename Action>
+void SoBrepEdgeSet::renderSelectionCommon(Action* action, SelContextPtr ctx)
 {
     OverlayLines overlay;
     if (!collectSelectionLines(action->getState(), ctx, overlay)) {
@@ -554,27 +541,27 @@ void SoBrepEdgeSet::renderSelection(SoGLRenderAction* action, SelContextPtr ctx,
     }
     renderOverlayLines(action, overlayLineSet, overlay.indices, overlay.count,
                        overlay.color, overlay.depthMode);
+}
+
+void SoBrepEdgeSet::renderHighlight(SoGLRenderAction* action, SelContextPtr ctx)
+{
+    renderHighlightCommon(action, ctx);
+}
+
+void SoBrepEdgeSet::renderSelection(SoGLRenderAction* action, SelContextPtr ctx, bool /*push*/)
+{
+    renderSelectionCommon(action, ctx);
 }
 
 #ifdef HAVE_COIN_IR_RENDER_ACTION
 void SoBrepEdgeSet::renderHighlightIR(SoIRRenderAction* action, SelContextPtr ctx)
 {
-    OverlayLines overlay;
-    if (!collectHighlightLines(action->getState(), ctx, overlay)) {
-        return;
-    }
-    renderOverlayLines(action, overlayLineSet, overlay.indices, overlay.count,
-                         overlay.color, overlay.depthMode);
+    renderHighlightCommon(action, ctx);
 }
 
 void SoBrepEdgeSet::renderSelectionIR(SoIRRenderAction* action, SelContextPtr ctx)
 {
-    OverlayLines overlay;
-    if (!collectSelectionLines(action->getState(), ctx, overlay)) {
-        return;
-    }
-    renderOverlayLines(action, overlayLineSet, overlay.indices, overlay.count,
-                         overlay.color, overlay.depthMode);
+    renderSelectionCommon(action, ctx);
 }
 #endif
 

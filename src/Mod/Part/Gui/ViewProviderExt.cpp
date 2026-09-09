@@ -87,6 +87,13 @@
 #include <Mod/Part/App/ShapeMapHasher.h>
 #include <Mod/Part/App/Tools.h>
 
+#include <algorithm>
+#include <cmath>
+#include <functional>
+#include <map>
+#include <tuple>
+#include <vector>
+
 #include "ViewProviderExt.h"
 #include "ViewProviderPartExtPy.h"
 #include "SoBrepEdgeSet.h"
@@ -313,21 +320,11 @@ void ViewProviderPartExt::onChanged(const App::Property* prop)
     // https://forum.freecad.org/viewtopic.php?f=3&t=24912&p=195613
     if (prop == &Deviation) {
         lastRenderedShape = {};
-        if (isUpdateForced() || Visibility.getValue()) {
-            updateVisual();
-        }
-        else {
-            VisualTouched = true;
-        }
+        updateVisualIfVisible();
     }
     if (prop == &AngularDeflection) {
         lastRenderedShape = {};
-        if (isUpdateForced() || Visibility.getValue()) {
-            updateVisual();
-        }
-        else {
-            VisualTouched = true;
-        }
+        updateVisualIfVisible();
     }
     if (prop == &LineWidth) {
         pcLineStyle->lineWidth = LineWidth.getValue();
@@ -967,17 +964,22 @@ void ViewProviderPartExt::reload()
     }
 }
 
+void ViewProviderPartExt::updateVisualIfVisible()
+{
+    if (isUpdateForced() || Visibility.getValue()) {
+        updateVisual();
+    }
+    else {
+        VisualTouched = true;
+    }
+}
+
 void ViewProviderPartExt::updateData(const App::Property* prop)
 {
     const char* propName = prop->getName();
     if (propName && (strcmp(propName, "Shape") == 0 || strstr(propName, "Touched"))) {
         // calculate the visual only if visible
-        if (isUpdateForced() || Visibility.getValue()) {
-            updateVisual();
-        }
-        else {
-            VisualTouched = true;
-        }
+        updateVisualIfVisible();
 
         if (!VisualTouched) {
             if (this->faceset->partIndex.getNum() > this->pcShapeMaterial->diffuseColor.getNum()) {
@@ -1049,6 +1051,181 @@ void ViewProviderPartExt::unsetEdit(int ModNum)
     }
 }
 
+namespace {
+
+// OCCT's BRepMesh never inserts interior nodes on a planar face.  Its size
+// field is effectively infinite across a flat cap (the deflection bound is
+// already met by the boundary polygon), so the mesher only ear-clips the
+// boundary ring.  For a convex planar cap that ear-clip degenerates into a
+// few long, cross-disk diagonal triangles plus a dense ring of near-collinear
+// slivers hugging the rim (area ratio > 1000:1).  The raster/GL path hides
+// this because it shades smooth per-vertex normals, but the ray-traced
+// backend shades flat, one triangle normal at a time: the needles fan out
+// radially and the rim slivers pick up numerically noisy normals and self-
+// shadow (the fixed 0.001 ray offset is larger than the sliver width).
+//
+// Rather than tune OCCT knobs (AllowQualityDecrease, MinSize, Relative,
+// InternalVerticesMode all have no effect here), rebuild such a cap as a
+// centroid fan: one node at the area centroid, one triangle per boundary
+// edge.  This is the minimal geometry the surface actually needs and gives
+// uniform, well-shaped, coplanar triangles (all normals identical).
+//
+// Restrictions (all must hold, otherwise the original mesh is kept):
+//   * the face mesh is planar (all nodes coplanar) -- only caps qualify;
+//   * every mesh node lies on a single closed boundary loop (no interior
+//     nodes, no holes);
+//   * the boundary loop is convex -- a centroid fan of a concave polygon
+//     or a washer would overhang or cross a hole.
+//
+// On success returns true and fills \a boundary with the rim node numbers
+// (1-based) in cyclic order, and \a centroid with the 2D area centroid
+// placed on the face plane.
+bool refanPlanarBoundaryConvex(const Handle(Poly_Triangulation) & mesh,
+                               std::vector<Standard_Integer> & boundary,
+                               gp_Pnt & centroid)
+{
+    const Standard_Integer nN = mesh->NbNodes();
+    if (nN < 3) {
+        return false;
+    }
+
+    // Planarity: all nodes within a small tolerance of the face plane.  Use
+    // the first non-degenerate face normal (cross of a triangle) as the plane
+    // normal so this also works for arbitrarily oriented planar faces (not
+    // just the axis-aligned z==const caps).
+    gp_Pnt P0 = mesh->Node(1);
+    gp_Vec planeNormal(0, 0, 0);
+    for (Standard_Integer t = 1; t <= mesh->NbTriangles() && planeNormal.SquareMagnitude() < 1e-16; ++t) {
+        Standard_Integer n1, n2, n3;
+        mesh->Triangle(t).Get(n1, n2, n3);
+        gp_Vec e1(mesh->Node(n1), mesh->Node(n2));
+        gp_Vec e2(mesh->Node(n1), mesh->Node(n3));
+        planeNormal = e1.Crossed(e2);
+    }
+    if (planeNormal.SquareMagnitude() < 1e-16) {
+        return false;
+    }
+    planeNormal.Normalize();
+    const double planeTol = 1e-4;
+    for (Standard_Integer k = 1; k <= nN; ++k) {
+        if (std::abs(gp_Vec(P0, mesh->Node(k)).Dot(planeNormal)) > planeTol) {
+            return false;  // not planar
+        }
+    }
+
+    // Edge-use count: an edge shared by exactly one triangle is a boundary
+    // edge.  Build the boundary adjacency graph from boundary edges.
+    std::map<std::pair<Standard_Integer, Standard_Integer>, int> edgeCount;
+    for (Standard_Integer t = 1; t <= mesh->NbTriangles(); ++t) {
+        Standard_Integer n1, n2, n3;
+        mesh->Triangle(t).Get(n1, n2, n3);
+        const std::pair<Standard_Integer, Standard_Integer> edges[3] = {
+            {std::min(n1, n2), std::max(n1, n2)},
+            {std::min(n2, n3), std::max(n2, n3)},
+            {std::min(n3, n1), std::max(n3, n1)}};
+        for (const auto & e : edges) {
+            ++edgeCount[e];
+        }
+    }
+    std::map<Standard_Integer, std::vector<Standard_Integer>> boundaryAdj;
+    for (const auto & [e, count] : edgeCount) {
+        if (count == 1) {
+            boundaryAdj[e.first].push_back(e.second);
+            boundaryAdj[e.second].push_back(e.first);
+        }
+    }
+    // A boundary-only triangulation has every node with exactly two boundary
+    // neighbours, and a single component (a washer/ring has two loops and is
+    // rejected below because the walk cannot return every node).
+    for (Standard_Integer k = 1; k <= nN; ++k) {
+        const auto it = boundaryAdj.find(k);
+        if (it == boundaryAdj.end() || it->second.size() != 2) {
+            return false;
+        }
+    }
+
+    // Walk the boundary loop in cyclic order starting from node 1.
+    boundary.clear();
+    Standard_Integer prev = 0;
+    Standard_Integer cur = 1;
+    bool first = true;
+    while (true) {
+        boundary.push_back(cur);
+        const std::vector<Standard_Integer> & nbrs = boundaryAdj[cur];
+        Standard_Integer next = (nbrs[0] == prev) ? nbrs[1] : nbrs[0];
+        prev = cur;
+        cur = next;
+        if (cur == 1 && !first) {
+            break;
+        }
+        if (boundary.size() > static_cast<size_t>(nN)) {
+            return false;  // multi-loop / not a simple cycle
+        }
+        first = false;
+    }
+    if (boundary.size() != static_cast<size_t>(nN)) {
+        return false;
+    }
+
+    // Convexity: the signed cross product of consecutive boundary-edge
+    // directions must not change sign (otherwise a centroid fan overhangs).
+    auto cross2D = [&](Standard_Integer a, Standard_Integer b, Standard_Integer c) {
+        const gp_Pnt & pa = mesh->Node(a);
+        const gp_Pnt & pb = mesh->Node(b);
+        const gp_Pnt & pc = mesh->Node(c);
+        return (pb.X() - pa.X()) * (pc.Y() - pb.Y()) -
+               (pb.Y() - pa.Y()) * (pc.X() - pb.X());
+    };
+    double sign = 0.0;
+    for (size_t k = 0; k < boundary.size(); ++k) {
+        const Standard_Integer a = boundary[k];
+        const Standard_Integer b = boundary[(k + 1) % boundary.size()];
+        const Standard_Integer c = boundary[(k + 2) % boundary.size()];
+        const double cr = cross2D(a, b, c);
+        if (std::abs(cr) < 1e-12) {
+            continue;
+        }
+        if (sign == 0.0) {
+            sign = cr;
+        }
+        else if ((cr > 0) != (sign > 0)) {
+            return false;  // concave
+        }
+    }
+    if (sign == 0.0) {
+        return false;
+    }
+
+    // Area centroid of the boundary polygon, computed in 3D as the area-
+    // weighted mean of the triangle centroids of a fan from the first node.
+    // This lands exactly on the (arbitrarily oriented) face plane because the
+    // boundary is planar and the fan triangles all lie in it.
+    const gp_Pnt & c0 = mesh->Node(boundary[0]);
+    double cx = 0.0, cy = 0.0, cz = 0.0, aSum = 0.0;
+    for (size_t k = 1; k + 1 < boundary.size(); ++k) {
+        const gp_Pnt & pa = mesh->Node(boundary[k]);
+        const gp_Pnt & pb = mesh->Node(boundary[k + 1]);
+        gp_Vec e1(c0, pa);
+        gp_Vec e2(c0, pb);
+        gp_Vec cr = e1.Crossed(e2);
+        const double area2 = cr.Magnitude();
+        gp_Vec centroid3 = (gp_Vec(c0.XYZ()) + gp_Vec(pa.XYZ()) +
+                            gp_Vec(pb.XYZ())) /
+                           3.0;
+        cx += centroid3.X() * area2;
+        cy += centroid3.Y() * area2;
+        cz += centroid3.Z() * area2;
+        aSum += area2;
+    }
+    if (aSum < 1e-12) {
+        return false;
+    }
+    centroid = gp_Pnt(cx / aSum, cy / aSum, cz / aSum);
+    return true;
+}
+
+}  // namespace
+
 void ViewProviderPartExt::setupCoinGeometry(
     TopoDS_Shape shape,
     SoCoordinate3* coords,
@@ -1078,9 +1255,11 @@ void ViewProviderPartExt::setupCoinGeometry(
     // real BRep edge but is geometrically invisible: both sides lie on the
     // same smooth surface.  In the RT view we skip these seam edges so they
     // do not appear as a phantom line across the face.  The standard raster
-    // GL path keeps them (matching classic Coin/FreeCAD wire behaviour), so
-    // the seam only disappears in the path-traced view.
-    const bool rtvActive = rtvSeamSuppressionEnabled();
+    // GL path keeps them (matching classic Coin/FreeCAD wire behaviour).  The
+    // Vulkan raster edge overlay draws B-Rep feature edges, so it must also
+    // suppress the parametric seam (otherwise a smooth sphere/cylinder shows a
+    // phantom meridian line cutting through the surface).
+    const bool rtvActive = seamSuppressionEnabled();
 
     // time measurement and book keeping
     Base::TimeElapsed startTime;
@@ -1132,6 +1311,21 @@ void ViewProviderPartExt::setupCoinGeometry(
     // count triangles and nodes in the mesh
     TopTools_IndexedMapOfShape faceMap;
     TopExp::MapShapes(shape, TopAbs_FACE, faceMap);
+
+    // Per-face cache of the cap re-fan (see refanPlanarBoundaryConvex).  A
+    // planar convex cap that OCCT ear-clipped into needles+rim-slivers is
+    // rebuilt as a clean centroid fan; the rim nodes keep their original mesh
+    // indices (the edge-line pass indexes them) and one centroid node is
+    // appended.  When refanValid[i] is true, refanBoundary[i] holds the rim
+    // node numbers in cyclic order and refanCentroid[i] the centroid on the
+    // face plane.  Computed once here (sizing) and reused in the fill pass so
+    // the two agree on triangle/node counts.
+    std::vector<bool> refanValid(static_cast<size_t>(faceMap.Extent()) + 1,
+                                 false);
+    std::vector<std::vector<Standard_Integer>> refanBoundary(
+        static_cast<size_t>(faceMap.Extent()) + 1);
+    std::vector<gp_Pnt> refanCentroid(static_cast<size_t>(faceMap.Extent()) + 1);
+
     for (int i = 1; i <= faceMap.Extent(); i++) {
         Handle(Poly_Triangulation) mesh = BRep_Tool::Triangulation(TopoDS::Face(faceMap(i)), aLoc);
 
@@ -1141,9 +1335,20 @@ void ViewProviderPartExt::setupCoinGeometry(
 
         // Note: we must also count empty faces
         if (!mesh.IsNull()) {
-            numTriangles += mesh->NbTriangles();
-            numNodes += mesh->NbNodes();
-            numNorms += mesh->NbNodes();
+            if (refanPlanarBoundaryConvex(mesh, refanBoundary[i],
+                                          refanCentroid[i])) {
+                refanValid[i] = true;
+                // one triangle per boundary edge + one centroid node appended
+                // to the (boundary-only) rim nodes.
+                numTriangles += static_cast<int>(refanBoundary[i].size());
+                numNodes += static_cast<int>(refanBoundary[i].size() + 1);
+                numNorms += static_cast<int>(refanBoundary[i].size() + 1);
+            }
+            else {
+                numTriangles += mesh->NbTriangles();
+                numNodes += mesh->NbNodes();
+                numNorms += mesh->NbNodes();
+            }
         }
 
         TopExp_Explorer xp;
@@ -1285,7 +1490,115 @@ void ViewProviderPartExt::setupCoinGeometry(
         // check orientation
         TopAbs_Orientation orient = actFace.Orientation();
 
+        // A planar convex cap may have been re-fanned (see the sizing pass and
+        // refanPlanarBoundaryConvex): OCCT's ear-clip turns such a flat face
+        // into a few cross-disk needles plus a ring of near-collinear rim
+        // slivers, which the ray-traced backend shades one flat normal at a
+        // time.  Rebuild it as a clean centroid fan: the rim nodes keep their
+        // original mesh indices (so the B-Rep edge-line pass below still
+        // resolves them via PolygonOnTriangulation) and one centroid node is
+        // appended after them.  nbNodesInFace/nbTriInFace are set to match so
+        // the per-face offset advance stays in sync with the sizing pass.
+        bool refanned = (i <= static_cast<int>(refanValid.size()) &&
+                         refanValid[i]);
+        if (refanned) {
+            const std::vector<Standard_Integer>& bnd = refanBoundary[i];
+            nbTriInFace = static_cast<int>(bnd.size());
+            nbNodesInFace = static_cast<int>(bnd.size()) + 1;  // rim + centroid
+            const int centroidIdx = static_cast<int>(bnd.size());  // appended
+            const int centroidNode = faceNodeOffset + centroidIdx;
+
+            // Reference outward face normal from the first non-degenerate
+            // mesh triangle (orientation already baked in by OCCT).  The cap
+            // is planar so every node shares this normal.
+            gp_Vec planeN(0, 0, 0);
+            for (int g = 1; g <= static_cast<int>(mesh->NbTriangles()) &&
+                            planeN.SquareMagnitude() < 1e-16;
+                 ++g) {
+                Standard_Integer a, b2, c2;
+                mesh->Triangle(g).Get(a, b2, c2);
+                gp_Vec e1(mesh->Node(a), mesh->Node(b2));
+                gp_Vec e2(mesh->Node(a), mesh->Node(c2));
+                planeN = e1.Crossed(e2);
+            }
+            if (planeN.SquareMagnitude() < 1e-16) {
+                planeN = gp_Vec(0, 0, 1);
+            }
+            planeN.Normalize();
+            if (orient != TopAbs_FORWARD) {
+                planeN.Reverse();
+            }
+            if (!identity) {
+                planeN.Transform(myTransf);
+                planeN.Normalize();
+            }
+            const SbVec3f sbn(static_cast<float>(planeN.X()),
+                              static_cast<float>(planeN.Y()),
+                              static_cast<float>(planeN.Z()));
+
+            // Write the rim nodes (at their original mesh indices) and the
+            // appended centroid node.
+            for (size_t k = 0; k < bnd.size(); ++k) {
+                gp_Pnt V = mesh->Node(bnd[k]);
+                if (!identity) {
+                    V.Transform(myTransf);
+                }
+                int slot = faceNodeOffset + bnd[k] - 1;
+                verts[slot] = Base::convertTo<SbVec3f>(V);
+                norms[slot] += sbn;
+            }
+            {
+                gp_Pnt C = refanCentroid[i];
+                if (!identity) {
+                    C.Transform(myTransf);
+                }
+                verts[centroidNode] = Base::convertTo<SbVec3f>(C);
+                norms[centroidNode] += sbn;
+            }
+
+             // Emit one fan triangle per boundary edge: (b[k], b[k+1], c).
+             // The boundary walk direction is arbitrary (it follows the
+             // mesh's internal node numbering, not the face orientation),
+             // so force the emitted winding to agree with the outward
+             // plane normal computed above.  The raster backend culls back
+             // faces for BRep parts (COUNTERCLOCKWISE/SOLID shape hints)
+             // and the RT backend derives its flat per-triangle normals
+             // from the winding, so an inverted fan reads as a missing or
+             // inside-lit face (e.g. a box lit on its bottom).
+             bool swapRim = false;
+             {
+                 gp_Pnt P0 = mesh->Node(bnd[0]);
+                 gp_Pnt P1 = mesh->Node(bnd[1]);
+                 gp_Pnt C0 = refanCentroid[i];
+                 if (!identity) {
+                     P0.Transform(myTransf);
+                     P1.Transform(myTransf);
+                     C0.Transform(myTransf);
+                 }
+                 const gp_Vec fanCross =
+                     gp_Vec(P0, P1).Crossed(gp_Vec(P0, C0));
+                 if (fanCross.Dot(planeN) < 0.0) {
+                     swapRim = true;
+                 }
+             }
+             for (int g = 0; g < nbTriInFace; ++g) {
+                 int n1 = faceNodeOffset + bnd[g] - 1;
+                 int n2 = faceNodeOffset + bnd[(g + 1) % bnd.size()] - 1;
+                 if (swapRim) {
+                     const int tmp = n1;
+                     n1 = n2;
+                     n2 = tmp;
+                 }
+                 int n3 = centroidNode;
+                index[faceTriaOffset * 4 + 4 * g] = n1;
+                index[faceTriaOffset * 4 + 4 * g + 1] = n2;
+                index[faceTriaOffset * 4 + 4 * g + 2] = n3;
+                index[faceTriaOffset * 4 + 4 * g + 3] = SO_END_FACE_INDEX;
+            }
+        }
+
         // cycling through the poly mesh
+        if (!refanned) {
 #if OCC_VERSION_HEX < 0x070600
         const Poly_Array1OfTriangle& Triangles = mesh->Triangles();
         const TColgp_Array1OfPnt& Nodes = mesh->Nodes();
@@ -1367,6 +1680,7 @@ void ViewProviderPartExt::setupCoinGeometry(
             index[faceTriaOffset * 4 + 4 * (g - 1) + 2] = faceNodeOffset + N3 - 1;
             index[faceTriaOffset * 4 + 4 * (g - 1) + 3] = SO_END_FACE_INDEX;
         }
+        }  // !refanned: standard triangle loop
 
         parts[ii] = nbTriInFace;  // new part
 
@@ -1482,6 +1796,61 @@ void ViewProviderPartExt::setupCoinGeometry(
         norms[i].normalize();
     }
 
+    // Weld positionally-coincident nodes so seam/pole duplicates share one
+    // smooth normal.  A UV sphere carries split duplicates along the meridian
+    // seam and at each pole; each copy is accumulated over a different
+    // triangle fan, so the copies end up with slightly different normals.
+    // Per-fragment lighting interpolates the normal, so that discontinuity
+    // shows as a visible seam ring.  GL (Gouraud) shades per-vertex and hides
+    // it; the Vulkan per-fragment path exposes it.
+    //
+    // Only weld a group if the copies genuinely agree.  The coherence is
+    // |sum(n_i)| / N: ~1.0 for a tight smooth seam/pole cluster, but drops
+    // sharply for a real hard crease (two perpendicular face normals give
+    // 0.707; a box corner 0.577).  The threshold is set to Blender's "Smooth
+    // by Angle" default: an edge stays sharp when the angle between its two
+    // adjacent face normals exceeds 30 degrees.  For unit normals at angle
+    // theta the coherence is cos(theta/2), so 30 degrees corresponds to
+    // cos(15 deg) = 0.9659.  This keeps flat faces and hard bevels crisp while
+    // welding only the smooth-curve seams.
+    {
+        std::map<std::tuple<int, int, int>, std::vector<int> > posToNodes;
+        for (int i = 0; i < numNorms; i++) {
+            const SbVec3f& p = verts[i];
+            auto key = std::make_tuple(
+                static_cast<int>(std::lround(p[0] * 1000.0f)),
+                static_cast<int>(std::lround(p[1] * 1000.0f)),
+                static_cast<int>(std::lround(p[2] * 1000.0f)));
+            posToNodes[key].push_back(i);
+        }
+        // cos(15 deg) = Blender's 30-degree Smooth-by-Angle threshold.
+        constexpr float kCoherenceMin = 0.966f;
+        for (auto& kv : posToNodes) {
+            if (kv.second.size() < 2) {
+                continue;
+            }
+            SbVec3f sum(0.0f, 0.0f, 0.0f);
+            for (int idx : kv.second) {
+                sum += norms[idx];
+            }
+            // Copies are already unit length, so |sum|/N is the coherence.
+            const float ratio =
+                sum.length() / static_cast<float>(kv.second.size());
+            if (ratio < kCoherenceMin) {
+                continue;  // a genuine hard crease; leave flat shading intact
+            }
+            SbVec3f avg = sum;
+            if (avg.normalize() == 0.0f) {
+                // Perfectly cancelling copies (e.g. opposite pole normals);
+                // fall back to the first copy so we never emit a zero normal.
+                avg = norms[kv.second.front()];
+            }
+            for (int idx : kv.second) {
+                norms[idx] = avg;
+            }
+        }
+    }
+
     // lineSetMap only holds entries for edges that actually produced a polyline
     // (an edge whose Poly_PolygonOnTriangulation is null is skipped above, and the
     // free-edge pass only rescues edges belonging to no face). The emitted polyline
@@ -1532,18 +1901,24 @@ void ViewProviderPartExt::setupCoinGeometry(
 }
 
 bool
-ViewProviderPartExt::rtvSeamSuppressionEnabled()
+ViewProviderPartExt::seamSuppressionEnabled()
 {
-    // The RT viewport is wired when the Vulkan renderer and ray tracing are
-    // both enabled.  Same preference group the renderer reads (see
+    // Suppress parametric seam edges (a sphere/cylinder's 0->2pi wrap) that
+    // would otherwise show as a phantom line across a smooth face.  The
+    // seam is a parameterization artifact, not a feature edge: the classic
+    // GL view keeps it for legacy wire behaviour, but the Vulkan views drop
+    // it -- the ray-traced viewport composites BRep edge lines over the
+    // traced surface (where the meridian reads as a scratch), and the
+    // Vulkan raster view draws the same edge set in Flat Lines mode (where
+    // the seam shows as a dark band down the sphere/cylinder).
+    // Same preference group the renderer reads (see
     // View3DInventorViewer::applyVulkanSettings / View3DInventor).
     auto hGrp = App::GetApplication().GetParameterGroupByPath(
         "User parameter:BaseApp/Preferences/View");
     if (!hGrp) {
         return false;
     }
-    return hGrp->GetBool("UseVulkanRenderer", false) &&
-           hGrp->GetBool("UseVulkanRayTracing", false);
+    return hGrp->GetBool("UseVulkanRenderer", false);
 }
 
 void ViewProviderPartExt::setupCoinGeometry(

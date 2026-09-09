@@ -210,6 +210,10 @@ protected:
     void onChanged(const App::Property* prop) override;
     bool loadParameter();
     void updateVisual();
+    /// Rebuild the visual immediately when the object is visible (or an
+    /// update is forced); otherwise mark it touched so it refreshes on the
+    /// next visibility change.
+    void updateVisualIfVisible();
     void handleChangedPropertyName(
         Base::XMLReader& reader,
         const char* TypeName,
@@ -218,7 +222,7 @@ protected:
 
     /// Whether the Vulkan ray-traced viewport is active (drives seam-edge
     /// suppression).  Reads the same view preference group the renderer uses.
-    static bool rtvSeamSuppressionEnabled();
+    static bool seamSuppressionEnabled();
 
     // nodes for the data representation
     SoMaterialBinding* pcFaceBind;
