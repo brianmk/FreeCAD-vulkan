@@ -33,7 +33,7 @@ if App.GuiUp:
     from PySide.QtWidgets import QPushButton, QMenu
 
 import UtilsAssembly
-import Preferences
+import AssemblyPreferences
 from functools import partial
 
 __title__ = "Assembly Command Create Bill of Materials"
@@ -112,7 +112,7 @@ class TaskAssemblyCreateBom(QtCore.QObject):
 
         self.form.helpButton.clicked.connect(self.showHelpDialog)
 
-        pref = Preferences.preferences()
+        pref = AssemblyPreferences.preferences()
 
         if bomObj:
             Gui.ActiveDocument.openCommand("Edit Bill Of Materials")
@@ -166,7 +166,7 @@ class TaskAssemblyCreateBom(QtCore.QObject):
         return True
 
     def deactivate(self):
-        pref = Preferences.preferences()
+        pref = AssemblyPreferences.preferences()
         pref.SetBool("BOMOnlyParts", self.form.CheckBox_onlyParts.isChecked())
         pref.SetBool("BOMDetailParts", self.form.CheckBox_detailParts.isChecked())
         pref.SetBool("BOMDetailSubAssemblies", self.form.CheckBox_detailSubAssemblies.isChecked())
