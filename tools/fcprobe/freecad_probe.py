@@ -587,10 +587,17 @@ def _parse_tagged(source: str, body: str, known: set[str]) -> dict[str, Any]:
     # Recompute: kind = everything before the first k=v token.
     first_kv = next((i for i, t in enumerate(tokens) if "=" in t), len(tokens))
     ev["kind"] = " ".join(tokens[:first_kv]) if first_kv else (tokens[0] if tokens else "")
+    current_key: Optional[str] = None
     for token in tokens[first_kv:]:
         kv = _split_kv(token)
         if kv:
             ev["fields"][kv[0]] = kv[1]
+            current_key = kv[0]
+        elif current_key is not None:
+            # A bare token after a key=value is a continuation of that value
+            # (messages contain spaces): join it back so e.g.
+            # `msg=FreeCAD console PrintError: boom` keeps the whole message.
+            ev["fields"][current_key] += " " + token
         else:
             ev["fields"].setdefault("_extra", [])
             ev["fields"]["_extra"].append(token)  # type: ignore[union-attr]
@@ -875,6 +882,15 @@ def run_case(
         if rc and rc != 0 and not probe_died:
             report.add_error("process exited with code %s", rc)
 
+    # A session-recorded failure ([HARNESS] error: a failed expect, a raised
+    # probe exception, or a captured FreeCAD console/report-view error) is a
+    # real failure -- surface its message in report.errors, not just events.
+    for ev in report.events:
+        if ev["source"] == "HARNESS" and ev.get("kind") == "error":
+            msg = ev.get("fields", {}).get("msg")
+            if msg:
+                report.add_error("probe error: %s", msg)
+
     # Fold the breadcrumb trace events into the report too.
     trace_lines: List[str] = []
     if os.path.exists(trace_path):
@@ -1002,11 +1018,15 @@ def _is_terminal_error(line: str) -> bool:
     """True if a streamed line means the probe can no longer continue.
 
     FreeCAD prints ``Exception while processing file: <script>`` when a probe
-    dies at load/exec time.  At that point the probe is dead, so the run is
-    useless and the idle GUI should be closed immediately rather than wait out
-    the whole timeout.
+    dies at load/exec time, and the harness Session emits ``[HARNESS] error``
+    whenever it records a failure -- including a captured ``Base::Console`` /
+    report-view error.  At that point the probe is dead, so the run is useless
+    and the idle GUI should be closed immediately rather than wait out the
+    whole timeout.
     """
-    return any(m in line for m in ("Exception while processing file:",))
+    if "Exception while processing file:" in line:
+        return True
+    return line.startswith("[HARNESS] error")
 
 
 def _console_errors(lines: Iterable[str]) -> list[str]:
@@ -1105,17 +1125,8 @@ def _cli(argv: List[str]) -> int:
     if args.command == "lint":
         return _cli_lint(args)
     if args.command == "run":
-        if getattr(args, "lint", False):
-            pre = lint_script(args.script, binary=args.binary, smoke=True)
-            errors = [e for e in pre if e[0] == "ERROR"]
-            for level, lineno, msg in pre:
-                if level == "ERROR":
-                    print(_print_lint(args.script, level, lineno, msg))
-            if errors:
-                print(f"[lint] pre-flight FAILED for {args.script} "
-                      "(not launching FreeCAD)")
-                return 1
-            print(f"[lint] pre-flight OK for {args.script}")
+        if not _cli_preflight(args, args.script):
+            return 1
         report = run_case(
             script=args.script,
             binary=args.binary,
@@ -1162,6 +1173,8 @@ def _cli(argv: List[str]) -> int:
     if args.command == "report":
         return _cli_report(args)
     if args.command == "matrix":
+        if not _cli_preflight(args, args.script):
+            return 1
         profiles = [p.strip() for p in args.profiles.split(",") if p.strip()]
         result = run_matrix(
             script=args.script, profiles=profiles, out_dir=args.out,
@@ -1184,6 +1197,8 @@ def _cli(argv: List[str]) -> int:
         print(f"[compare] {'DIFF' if errors else 'MATCH'}")
         return 1 if errors else 0
     if args.command == "soak":
+        if not _cli_preflight(args, args.script):
+            return 1
         result = run_to_fail(
             script=args.script, max_runs=args.max_runs, out_dir=args.out,
             binary=args.binary, profile=args.profile,
@@ -1261,6 +1276,9 @@ def _cli_suite(args: Any) -> int:
         allow = list(case.get("allow_vuid") or [])
         timeout = int(case.get("timeout", args.timeout))
         print(f"[SUITE] {i}/{len(manifest['cases'])} {case.get('name', script)}")
+        if not _cli_preflight(args, script):
+            failed += 1
+            continue
         try:
             report = run_case(
                 script=script,
@@ -1563,6 +1581,112 @@ def _print_lint(path: str, level: str, lineno: int, msg: str) -> str:
     return f"[lint] {level} {loc} -- {msg}"
 
 
+def harness_selftest() -> list[tuple[str, int, str]]:
+    """Compile the harness module itself so a syntax error in the probe
+    architecture fails before any FreeCAD launch.  Returns the same
+    ``[(level, lineno, message), ...]`` shape as :func:`static_check`."""
+    import py_compile
+    import tempfile
+
+    path = os.path.abspath(__file__)
+    cfile = os.path.join(tempfile.gettempdir(), "fcprobe_harness_selftest.pyc")
+    try:
+        py_compile.compile(path, cfile=cfile, doraise=True)
+    except py_compile.PyCompileError as exc:
+        lineno = getattr(exc, "lineno", 0) or 0
+        msg = getattr(exc, "msg", None) or str(exc)
+        return [("ERROR", lineno, f"harness self-test (py_compile): {msg}")]
+    except (OSError, ValueError) as exc:
+        return [("ERROR", 0, f"harness self-test (py_compile): {exc}")]
+    return []
+
+
+def preflight(
+    script: str,
+    binary: str = _DEFAULT_FREECAD,
+    smoke: bool = True,
+    selftest: bool = True,
+    lint: bool = True,
+) -> list[tuple[str, str, int, str]]:
+    """Fail-fast gate run before launching FreeCAD.
+
+    Returns ``[(path, level, lineno, message), ...]``: the harness self-test
+    (``py_compile``) plus the probe lint (static scan + import smoke).  Any
+    ``ERROR`` means the caller must abort instead of launching FreeCAD.
+    """
+    findings: list[tuple[str, str, int, str]] = []
+    if selftest:
+        harness = os.path.abspath(__file__)
+        findings += [(harness, lv, ln, m) for lv, ln, m in harness_selftest()]
+    if lint and script and script.endswith(".py") and os.path.isfile(script):
+        findings += [
+            (script, lv, ln, m)
+            for lv, ln, m in lint_script(script, binary=binary, smoke=smoke)
+        ]
+    return findings
+
+
+def _preflight_gate(
+    script: str,
+    binary: str = _DEFAULT_FREECAD,
+    smoke: bool = True,
+    selftest: bool = True,
+    lint: bool = True,
+) -> bool:
+    """Run :func:`preflight`, print findings, and return False on any ERROR."""
+    findings = preflight(script, binary=binary, smoke=smoke,
+                         selftest=selftest, lint=lint)
+    errors = [f for f in findings if f[1] == "ERROR"]
+    for path, level, lineno, msg in findings:
+        if level == "ERROR":
+            print(_print_lint(path, level, lineno, msg))
+    if errors:
+        print(f"[selftest] pre-flight FAILED for {script} "
+              "(not launching FreeCAD)")
+        return False
+    print(f"[selftest] pre-flight OK for {script}")
+    return True
+
+
+def _add_preflight_args(parser: Any) -> None:
+    """Attach the shared pre-flight escape hatches to a run-like subcommand."""
+    parser.add_argument(
+        "--no-preflight",
+        action="store_true",
+        help="skip the fail-fast pre-flight (harness py_compile + probe lint) "
+             "and launch FreeCAD directly",
+    )
+    parser.add_argument(
+        "--no-selftest",
+        action="store_true",
+        help="skip the harness py_compile self-test (keep the probe lint)",
+    )
+    parser.add_argument(
+        "--no-lint",
+        action="store_true",
+        help="skip the probe lint (static scan + import smoke)",
+    )
+    parser.add_argument(
+        "--no-smoke",
+        action="store_true",
+        help="probe lint does the static scan only; skip the FreeCADCmd "
+             "import smoke",
+    )
+
+
+def _cli_preflight(args: Any, script: str) -> bool:
+    """Gate ``run``/``matrix``/``soak`` on the shared pre-flight."""
+    if getattr(args, "no_preflight", False):
+        return True
+    return _preflight_gate(
+        script,
+        binary=getattr(args, "binary", _DEFAULT_FREECAD),
+        smoke=not getattr(args, "no_smoke", False),
+        selftest=not getattr(args, "no_selftest", False),
+        lint=not getattr(args, "no_lint", False),
+    )
+
+
 def _cli_lint(args: Any) -> int:
     files = _expand_lint_paths(args.paths)
     if not files:
@@ -1672,9 +1796,10 @@ def _build_parser() -> Any:
     run.add_argument(
         "--lint",
         action="store_true",
-        help="run pre-flight checks (static + FreeCADCmd import smoke) and "
-             "abort before launching FreeCAD if any ERROR is found",
+        help="(deprecated; the pre-flight now always runs) run pre-flight "
+             "checks and abort before launching FreeCAD if any ERROR is found",
     )
+    _add_preflight_args(run)
     lint = sub.add_parser(
         "lint",
         help="pre-flight check a probe before running it in the GUI "
@@ -1713,6 +1838,7 @@ def _build_parser() -> Any:
         "--env", action="append", default=[], metavar="K=V",
         help="extra environment variable, repeatable",
     )
+    _add_preflight_args(mtx)
 
     cmp_ = sub.add_parser("compare", help="diff two run bundles (report.json + pick traces)")
     cmp_.add_argument("a", help="first artifact dir")
@@ -1733,6 +1859,7 @@ def _build_parser() -> Any:
                       help="enable the Khronos Vulkan validation layer")
     soak.add_argument("--env", action="append", default=[], metavar="K=V",
                       help="extra environment variable, repeatable")
+    _add_preflight_args(soak)
 
     chk = sub.add_parser("check", help="re-run a probe's .check.py against an artifact dir")
     chk.add_argument("artifact_dir", help="path to a run bundle (report.json)")
@@ -1746,6 +1873,7 @@ def _build_parser() -> Any:
     suite.add_argument("--out", default="/tmp/opencode/runs", help="artifact parent dir")
     suite.add_argument("--timeout", type=int, default=300,
                        help="default seconds per case (cases may override)")
+    _add_preflight_args(suite)
     return p
 
 
@@ -1779,6 +1907,25 @@ def _cmd_dialog_timeout_ms() -> int:
         return int(_os.environ.get("FC_CMD_DIALOG_TIMEOUT_MS", "1500"))
     except (TypeError, ValueError):
         return 1500
+
+
+def _out(text: str) -> None:
+    """Write one harness record to stdout, unbuffered.
+
+    FreeCAD leaves Python's ``sys.stdout`` block-buffered when it is not a TTY,
+    so ``print(..., flush=True)`` does not reach the host until the process
+    exits -- which defeats the host's terminal-error detection (a failed probe
+    would idle until the timeout).  Write fd 1 directly so ``[HARNESS] error``
+    is seen at once, falling back to ``print`` if that fails.
+    """
+    line = text if text.endswith("\n") else text + "\n"
+    try:
+        os.write(1, line.encode("utf-8", "replace"))
+    except OSError:
+        try:
+            print(text, flush=True)
+        except Exception:
+            pass
 
 
 class Session:
@@ -1822,6 +1969,57 @@ class Session:
             self.height = self.container.height()
         else:
             self.width = self.height = 0
+        self._install_console_capture()
+
+    # FreeCAD.Console methods that map to a report-view severity.  Monkeypatching
+    # them is the only Python-level hook into Base::Console (there is no exposed
+    # ILogger observer): C++-originated messages still bypass it, but any
+    # FreeCAD.Console.Print* call -- the common probe path -- is captured.
+    _CONSOLE_ERROR_METHODS = (
+        "PrintError", "PrintCritical", "PrintUserError",
+        "PrintDeveloperError", "PrintTranslatedUserError",
+    )
+    _CONSOLE_WARN_METHODS = (
+        "PrintWarning", "PrintUserWarning", "PrintDeveloperWarning",
+        "PrintTranslatedUserWarning",
+    )
+
+    def _install_console_capture(self) -> None:
+        """Route ``FreeCAD.Console`` error/warning output into the session.
+
+        A report-view error would otherwise just sit in the log while the probe
+        hangs.  Capturing it records a session error (which fails the verdict
+        and closes FreeCAD) and emits a ``[HARNESS] console`` record the host
+        can see.  Installed when the session is created -- i.e. after FreeCAD
+        has started -- so startup noise before the probe is not captured.
+        """
+        if getattr(self, "_console_captured", False):
+            return
+        self._console_captured = True
+        self._console_originals: dict[str, Any] = {}
+        console = self._FreeCAD.Console
+        for name in self._CONSOLE_ERROR_METHODS + self._CONSOLE_WARN_METHODS:
+            orig = getattr(console, name, None)
+            if orig is None or not callable(orig):
+                continue
+            self._console_originals[name] = orig
+            level = "error" if name in self._CONSOLE_ERROR_METHODS else "warning"
+
+            def make(name: str = name, orig: Any = orig, level: str = level) -> Any:
+                def wrapper(*args: Any, **kwargs: Any) -> Any:
+                    result = orig(*args, **kwargs)
+                    try:
+                        msg = " ".join(str(a) for a in args).strip()
+                    except Exception:
+                        msg = ""
+                    self.emit("console", level=level, method=name, msg=msg)
+                    if level == "error":
+                        self.error("FreeCAD console %s: %s" % (name, msg))
+                    return result
+
+                return wrapper
+
+            setattr(console, name, make())
 
     def _relocate_viewport(self) -> None:
         """Re-locate the 3D viewport container now that a document/view exists.
@@ -2378,7 +2576,7 @@ class Session:
         line = " ".join(
             [kind] + [f"{k}={v}" for k, v in fields.items()]
         )
-        print(f"[HARNESS] {line}", flush=True)
+        _out(f"[HARNESS] {line}")
 
     def frame_phase(self, name: str) -> None:
         """Mark a phase boundary so the host can correlate frame dumps to the
@@ -2400,7 +2598,7 @@ class Session:
         """Set a FreeCAD parameter (group is a full path) and record it.
 
         Writing to a parameter group fires the ParameterObserver, so View prefs
-        like ``VulkanShowEdges`` trigger ``View3DSettings::OnChange`` ->
+        like ``VulkanWireframe`` trigger ``View3DSettings::OnChange`` ->
         ``applyVulkanSettings`` automatically.  Emits a ``[HARNESS] pref`` record.
         """
         import FreeCAD
@@ -2455,7 +2653,7 @@ class Session:
         result = "PASS" if ok else "FAIL"
         if not ok:
             self.errors.append(detail)
-        print(f"[VERDICT] {self.name} {result}", flush=True)
+        _out(f"[VERDICT] {self.name} {result}")
 
     def finish(self, detail: str = "") -> None:
         """Print a verdict derived from all recorded errors/invariants so far —
@@ -2466,6 +2664,23 @@ class Session:
         msg = fmt % args if args else fmt
         self.errors.append(msg)
         self.emit("error", msg=msg)
+        self.exit_on_error()
+
+    def exit_on_error(self) -> None:
+        """Close FreeCAD now that the probe has failed.
+
+        A probe that records an error (a failed ``expect``, a raised exception,
+        or a captured FreeCAD console/report-view error) has nothing left to
+        prove, so close the GUI instead of idling until the harness timeout.
+        Idempotent: only the first error schedules the close.
+        """
+        if getattr(self, "_exit_scheduled", False):
+            return
+        self._exit_scheduled = True
+        try:
+            self.schedule(self._close_now, 250)
+        except Exception:
+            pass
 
     # -- API authoring/safety helpers --------------------------------------
     def api_dump(self, obj: Any, name: str = "obj") -> None:
@@ -2494,7 +2709,7 @@ class Session:
                 members.append(f"{m}:{kind}")
         self.emit("api", obj=name, count=len(members))
         for m in members:
-            print(f"    {m}", flush=True)
+            _out(f"    {m}")
 
         if hasattr(obj, "getTypeId"):
             try:
@@ -2517,7 +2732,7 @@ class Session:
             self.emit("api", obj=name, prop=prop, count=
                       getattr(sub, "__len__", lambda: -1)())
             for s in seq:
-                print(f"    {prop}[{s}]", flush=True)
+                _out(f"    {prop}[{s}]")
 
     def try_call(self, obj: Any, name: str, *args: Any,
                  default: Any = None) -> Any:
@@ -2640,7 +2855,7 @@ class Session:
             try:
                 session = cls(name)
             except Exception as exc:  # pragma: no cover - guest-only path
-                print(f"[HARNESS] boot failed: {exc!r}", flush=True)
+                _out(f"[HARNESS] boot failed: {exc!r}")
                 return
             try:
                 run_fn(session)
