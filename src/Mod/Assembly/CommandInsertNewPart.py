@@ -34,7 +34,7 @@ if App.GuiUp:
     from PySide.QtCore import QTimer
 
 import UtilsAssembly
-import Preferences
+import AssemblyPreferences
 import JointObject
 
 translate = App.Qt.translate
@@ -118,7 +118,7 @@ class TaskAssemblyNewPart(JointObject.TaskAssemblyCreateJoint):
         )
         mainLayout.addWidget(self.createInNewFileCheck)
         self.createInNewFileCheck.setChecked(
-            Preferences.preferences().GetBool("PartInNewFile", True)
+            AssemblyPreferences.preferences().GetBool("PartInNewFile", True)
         )
 
         # Wrap the joint creation UI in a groupbox
@@ -213,7 +213,7 @@ class TaskAssemblyNewPart(JointObject.TaskAssemblyCreateJoint):
         return True
 
     def deactivate(self):
-        Preferences.preferences().SetBool("PartInNewFile", self.createInNewFileCheck.isChecked())
+        AssemblyPreferences.preferences().SetBool("PartInNewFile", self.createInNewFileCheck.isChecked())
         super().deactivate()
 
 
