@@ -183,11 +183,11 @@ public Q_SLOTS:
     int getEnvMap() const;
     void setEnvMap(int index);
 
-    /// Whether the black edge overlay (BRep edges) is drawn on top of objects
-    /// in the Vulkan viewport.  Backed by the VulkanShowEdges preference and
-    /// mirrored by the status-bar edge-overlay button.
-    bool getShowEdges() const;
-    void setShowEdges(bool enabled);
+    /// Whether the wireframe (edge) overlay is drawn on top of objects in the
+    /// Vulkan raster viewport.  Backed by the VulkanWireframe preference and
+    /// mirrored by the status-bar wireframe button.
+    bool getWireframe() const;
+    void setWireframe(bool enabled);
 #endif
 
     /// Ordinal of the Vulkan viewport's last presented frame (see

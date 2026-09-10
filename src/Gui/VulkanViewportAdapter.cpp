@@ -12,12 +12,11 @@
 
 #include <Inventor/SbColor.h>
 #include <Inventor/SbColor4f.h>
+#include <Inventor/SbRotation.h>
 #include <Inventor/SbVec3f.h>
 #include <Inventor/SbViewportRegion.h>
 #include <Inventor/SoEventManager.h>
-#include <Inventor/actions/SoSearchAction.h>
 #include <Inventor/nodes/SoAnnotation.h>
-#include <Inventor/actions/SoGetMatrixAction.h>
 #include <Inventor/nodes/SoCamera.h>
 #include <Inventor/nodes/SoDirectionalLight.h>
 #include <Inventor/nodes/SoEnvironment.h>
@@ -25,12 +24,14 @@
 #include <Inventor/nodes/SoSpotLight.h>
 #include <Inventor/SoRenderManager.h>
 #include <Inventor/rendering/SoRenderIR.h>
+#include <Inventor/rendering/SoVulkanViewSettings.h>
 #include <Inventor/sensors/SoNodeSensor.h>
 #include <Inventor/sensors/SoSensor.h>
 
 #include <QEvent>
 #include <QSizePolicy>
 #include <QStackedWidget>
+#include <QTimer>
 #include <QWidget>
 
 #ifdef FREECAD_USE_VULKAN
@@ -90,7 +91,13 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
     // Vulkan widget whenever preferences change.
     connect(_viewer, &View3DInventorViewer::vulkanSettingsChanged,
             this, [this] { pushSettings(); });
-    stack->setCurrentWidget(_vulkanViewer);
+    // Do NOT make the Vulkan page current here.  QVulkanWindow creates its
+    // VkDevice on first expose, so leaving the hidden GL page current keeps the
+    // device out of the document-open path: a view opened in RasterCoin mode
+    // never creates a device, and a RasterVulkan view creates it on the first
+    // useVulkanViewport(true) below (deferred one event-loop turn).  setRenderMode()
+    // calls useVulkanViewport() right after construction, so the intended page
+    // is selected there.
     // The Vulkan widget is display-only; relay its viewport input events
     // to the (hidden) OpenGL viewer so navigation and picking still work.
     // The container<->viewer coordinate scale is derived live from both
@@ -175,6 +182,18 @@ void VulkanViewportAdapter::useVulkanViewport(bool vulkan)
     if (!_vulkanViewer || !_viewer) {
         return;
     }
+    _wantVulkanViewport = vulkan;
+    // The hidden GL viewer drives picking/navigation, but its own geometry is
+    // unreliable (it is never shown, so it keeps a stale/default size).  The
+    // render-manager viewport region is the single source of truth and is
+    // pinned to the Vulkan surface (device pixels) by applySurfaceViewportToGL,
+    // so tell the event/DPR conversion to normalize cursor positions against
+    // that region (effectiveWindowSize) instead of the widget's own size.
+    // Without this the Y-flip used the stale hidden-widget height and hover/
+    // click picks landed far off the cursor.  In the classic GL page the
+    // region tracks the visible widget, so the flag is cleared and the cached
+    // logical size is used (upstream behavior).
+    _viewer->setVulkanDevicePixels(vulkan);
     auto* host = qobject_cast<QStackedWidget*>(_vulkanViewer->parentWidget());
     if (!host) {
         return;
@@ -190,6 +209,27 @@ void VulkanViewportAdapter::useVulkanViewport(bool vulkan)
     // frame on top.
     if (vulkan) {
         syncViewer();
+        if (!_vulkanActivated) {
+            // First activation: defer making the page current by one event-loop
+            // turn.  QVulkanWindow creates its VkDevice on first expose, so this
+            // keeps the one-time device creation off the document-open critical
+            // path (the surface paints a moment later instead).  `this` is the
+            // timer context, so a destroyed adapter cancels the show.
+            _vulkanActivated = true;
+            QTimer::singleShot(0, this, [this] {
+                if (!_wantVulkanViewport || !_vulkanViewer || !_viewer) {
+                    return;
+                }
+                auto* h = qobject_cast<QStackedWidget*>(
+                    _vulkanViewer->parentWidget());
+                if (!h) {
+                    return;
+                }
+                h->setCurrentWidget(_vulkanViewer);
+                _vulkanViewer->redraw();
+            });
+            return;
+        }
     }
     host->setCurrentWidget(target);
     if (vulkan) {
@@ -210,9 +250,8 @@ void VulkanViewportAdapter::pushSettings()
     // The raster gate is DERIVED here from the single-source settings
     // struct (VulkanViewSettings::rasterOnly()), not passed in separately.
     // In a raster render mode the viewport must never enable path tracing,
-    // ray tracing, the denoiser or the edge/point overlays, even when the
-    // persisted preferences asked for them -- the mode is the authority and
-    // this gate keeps edges/path-tracing from leaking back into Interactive.
+    // ray tracing or the denoiser, even when the persisted preferences asked
+    // for them -- the mode is the authority.
     const bool raster = settings.rasterOnly();
 
     // Memoised push: the preferences signal that drives pushSettings() fires
@@ -220,8 +259,16 @@ void VulkanViewportAdapter::pushSettings()
     // vulkanSettingsChanged on every call, not only on change).  Only re-apply
     // to the renderer and emit the [VK-SET] diagnostic when the effective
     // values actually differ; otherwise this is no-op and keeps the log quiet.
-    const bool effEdges = raster ? false : settings.showEdges;
-    const bool effPoints = raster ? false : settings.showPoints;
+    //
+    // The edge/point (wireframe) overlay is the one raster-only feature: it is
+    // drawn by the raster backend's overlay fill-mode re-draw (see
+    // SoVulkanRenderBackendFrame), which only the raster path applies -- the
+    // RTX backend never consumes it.  So it must be ALLOWED in the raster modes
+    // and disabled in the ray-traced modes.  Gating it by `raster` the other
+    // way round (like path tracing / the denoiser) made the VulkanWireframe /
+    // VulkanShowPoints preferences unreachable.
+    const bool effWireframe = raster ? settings.wireframe : false;
+    const bool effPoints = raster ? settings.showPoints : false;
 
     // Background is a single view of truth derived here from the hidden GL
     // viewer (render-manager solid color + pcBackGround gradient) and pushed
@@ -247,66 +294,48 @@ void VulkanViewportAdapter::pushSettings()
         }
     }
 
-    char sig[512];
-    std::snprintf(sig, sizeof(sig), "r=%d e=%d p=%d c=%.3g,%.3g,%.3g,%.3g "
-                                    "em=%d pt=%d bo=%d se=%d ms=%d dn=%s ds=%.3g "
-                                    "bg=%d %.3g,%.3g,%.3g %.3g,%.3g,%.3g "
-                                    "%.3g,%.3g,%.3g",
-                  raster ? 1 : 0, effEdges ? 1 : 0, effPoints ? 1 : 0,
-                  settings.edgeColor[0], settings.edgeColor[1],
-                  settings.edgeColor[2], settings.edgeColor[3],
-                  settings.envMap, !raster ? 1 : 0,
-                  settings.pathTracingBounces, settings.pathTracingSettleFrames,
-                  settings.pathTracingMaxSamples,
-                  settings.pathTracingDenoiser.c_str(),
-                  settings.pathTracingDenoiserScale,
-                  bgGradient ? 1 : 0,
-                  bgColor[0], bgColor[1], bgColor[2],
-                  bgTop[0], bgTop[1], bgTop[2],
-                  bgBottom[0], bgBottom[1], bgBottom[2]);
-    const bool changed = (sig != this->_pushedSettingsSig);
-    this->_pushedSettingsSig = sig;
+    // One settings blob for the whole display/tuning state.  The render
+    // manager diffs it and re-applies only on change, so this is safe to call
+    // repeatedly (the preferences signal that drives pushSettings() fires
+    // often with identical values).  The stateful path-tracing enable/start
+    // latch remains a separate call.
+    SoVulkanViewSettings vs;
+    vs.viewMode = viewRenderModeToWidgetMode(
+        static_cast<ViewRenderMode>(settings.renderMode));
+    vs.envMap = settings.envMap;
+    // Denoising is required for path tracing, so it tracks the raster gate.
+    vs.pathTracingDenoise = !raster;
+    vs.pathTracingBounces = settings.pathTracingBounces;
+    vs.pathTracingSettleFrames = settings.pathTracingSettleFrames;
+    vs.pathTracingMaxSamples = settings.pathTracingMaxSamples;
+    vs.pathTracingDenoiser = settings.pathTracingDenoiser;
+    vs.pathTracingDenoiserScale = settings.pathTracingDenoiserScale;
+    // Background and environment preset travel together: both drive the
+    // frame's sky/miss radiance (see SoRenderParams::background* and
+    // SoRTXRenderBackend::setEnvMap), so one push keeps raster and ray-traced
+    // backgrounds in agreement.
+    vs.backgroundColor = bgColor;
+    vs.backgroundGradient = bgGradient;
+    vs.backgroundTop = SbColor4f(bgTop[0], bgTop[1], bgTop[2], 1.0f);
+    vs.backgroundBottom = SbColor4f(bgBottom[0], bgBottom[1], bgBottom[2], 1.0f);
+    vs.wireframeOverlay = effWireframe;
+    vs.pointsOverlay = effPoints;
+    vs.edgeColor = settings.edgeColor;
 
-    if (changed) {
-        if (Base::envFlagEnabled("FC_VULKAN_BACKEND_DEBUG")) {
-            Base::Console().message("[VK-SET] pushSettings raster=%d edges=%d points=%d "
-                                    "edgeColor=(%.2f,%.2f,%.2f,%.2f) pt=%d "
-                                    "bounces=%d settle=%d "
-                                    "(prefEdges=%d prefPoints=%d)\n",
-                                    raster ? 1 : 0, effEdges ? 1 : 0,
-                                    effPoints ? 1 : 0,
-                                    settings.edgeColor[0], settings.edgeColor[1],
-                                    settings.edgeColor[2], settings.edgeColor[3],
-                                    !raster ? 1 : 0,
-                                    settings.pathTracingBounces,
-                                    settings.pathTracingSettleFrames,
-                                    settings.showEdges ? 1 : 0,
-                                    settings.showPoints ? 1 : 0);
-        }
-        _vulkanViewer->setWireframeOverlay(effEdges);
-        _vulkanViewer->setPointsOverlay(effPoints);
-        _vulkanViewer->setEdgeColor(settings.edgeColor);
-        // Background and environment preset are pushed together: both drive
-        // the frame's sky/miss radiance (see SoRenderParams::background* and
-        // SoRTXRenderBackend::setEnvMap), so updating them in one place keeps
-        // raster and ray-traced backgrounds in agreement.
-        _vulkanViewer->setBackgroundColor(bgColor);
-        _vulkanViewer->setBackgroundGradient(
-            bgGradient,
-            SbColor4f(bgTop[0], bgTop[1], bgTop[2], 1.0f),
-            SbColor4f(bgBottom[0], bgBottom[1], bgBottom[2], 1.0f));
-        _vulkanViewer->setEnvMap(settings.envMap);
-
-        _vulkanViewer->setPathTracingEnabled(!raster);
-        _vulkanViewer->setPathTracingBounces(settings.pathTracingBounces);
-        _vulkanViewer->setPathTracingSettleFrames(settings.pathTracingSettleFrames);
-        _vulkanViewer->setPathTracingMaxSamples(settings.pathTracingMaxSamples);
-        if (!settings.pathTracingDenoiser.empty()) {
-            _vulkanViewer->setPathTracingDenoiser(settings.pathTracingDenoiser);
-        }
-        _vulkanViewer->setPathTracingDenoiserScale(
-            settings.pathTracingDenoiserScale);
+    if (Base::envFlagEnabled("FC_VULKAN_BACKEND_DEBUG")) {
+        Base::Console().message(
+            "[VK-SET] pushSettings raster=%d wireframe=%d points=%d "
+            "edgeColor=(%.2f,%.2f,%.2f,%.2f) pt=%d bounces=%d settle=%d "
+            "(prefWireframe=%d prefPoints=%d)\n",
+            raster ? 1 : 0, effWireframe ? 1 : 0, effPoints ? 1 : 0,
+            settings.edgeColor[0], settings.edgeColor[1],
+            settings.edgeColor[2], settings.edgeColor[3], !raster ? 1 : 0,
+            settings.pathTracingBounces, settings.pathTracingSettleFrames,
+            settings.wireframe ? 1 : 0, settings.showPoints ? 1 : 0);
     }
+    _vulkanViewer->setViewSettings(vs);
+    // Enable/disable the ray tracer (stateful backend lifecycle).
+    _vulkanViewer->setPathTracingEnabled(!raster);
     // The RTX backend is always brought up when the device supports it
     // (independent of UseVulkanRayTracing), so path tracing can be toggled
     // live with the preference: no document reopen needed.  The only case
@@ -332,52 +361,15 @@ void VulkanViewportAdapter::pushSettings()
         _pathTracingRtMismatchWarned = false;
     }
 
-    // GL-authoritative scene lighting -> RT backend.  The IR draw-list
-    // lighting capture (SoLightElement::getLights) is unreliable on the
-    // retained/replayed path tracer (the captured light count can drop to
-    // zero, rendering surfaces at ambient-only/near-black).  Gather the
-    // viewer headlight plus any document SoLight nodes and push the eye-space
-    // set so the RT backend always has the real lights.
+    // GL-authoritative scene lighting -> both Vulkan backends.  The IR
+    // draw-list lighting capture (SoLightElement::getLights) is unreliable on
+    // the retained/replayed path tracer (the captured light count can drop to
+    // zero, rendering surfaces at ambient-only/near-black).  Gather the viewer
+    // three-point lights and push the camera-anchored world-space set so both
+    // backends always have the real, view-following lights.
     this->pushSceneLights();
 #endif
 }
-namespace {
-
-// Evaluate \a light's world-space "travel" direction (pointing TOWARD the
-// surfaces it lights, i.e. the negated SoDirectionalLight::direction field),
-// transformed by the light node's world/scene matrix the same way
-// SoRenderIR::fillLightingFromState does.  When the light cannot be located
-// in the scene graph it is treated as world-fixed (its raw direction used
-// directly), which is the convention for the viewer headlight/backlight.
-// The search action and the path it yields are kept in this scope: the path
-// is owned by the search action and freed when it goes out of scope, so it
-// must not be returned or used outside it.
-SbVec3f
-lightWorldDirection(SoRenderManager* rm, const SoNode* light)
-{
-    SbVec3f dir(0.0f, 0.0f, 0.0f);
-    if (light->isOfType(SoDirectionalLight::getClassTypeId())) {
-        const SbVec3f d =
-            static_cast<const SoDirectionalLight*>(light)->direction.getValue();
-        dir = SbVec3f(-d[0], -d[1], -d[2]);
-    }
-    if (rm) {
-        if (SoNode* root = rm->getSceneGraph()) {
-            SoSearchAction sa;
-            sa.setNode(const_cast<SoNode*>(light));
-            sa.setInterest(SoSearchAction::FIRST);
-            sa.apply(root);
-            if (SoPath* path = sa.getPath()) {
-                SoGetMatrixAction matrixAction(SbViewportRegion(1, 1));
-                matrixAction.apply(path);
-                matrixAction.getMatrix().multDirMatrix(dir, dir);
-            }
-        }
-    }
-    return dir;
-}
-
-} // namespace
 
 void
 VulkanViewportAdapter::pushSceneLights()
@@ -387,38 +379,44 @@ VulkanViewportAdapter::pushSceneLights()
         return;
     }
 
-    // World-space light set, matching the SoRenderIR::fillLightingFromState
-    // convention exactly: each directional light's world direction is its
-    // negated direction field transformed by the light node's scene matrix.
-    // The viewer headlight and backlight sit at the scene root (world-fixed),
-    // while the fill light hangs under an SoRotation connected to the camera
-    // orientation, so it follows the camera.  The RT shaders consume the
-    // fields directly in world space, giving raster/path-tracer parity.
-    std::vector<SoLightData> lights;
-    lights.reserve(3);
-    SbVec3f ambient(0.2f, 0.2f, 0.2f);
+    // World-space light set.  The GL viewer's three-point lighting is
+    // VIEW-RELATIVE: the headlight and backlight are traversed before the
+    // camera node (so glLightfv sees an identity modelview and their raw
+    // direction is applied in eye space), and the fill light hangs under an
+    // SoRotation connected to the camera orientation, which also makes it
+    // eye-space-fixed.  Reproduce that here by taking each light's eye-space
+    // travel direction (the negated direction field) and rotating it into
+    // world space by the current camera orientation, so the backends -- which
+    // shade in world space -- keep the highlights following the camera exactly
+    // as Coin GL does.  Without the camera rotation the head/back lights would
+    // stay world-fixed in Vulkan and the reflections would not track the view.
+    SoLightingData lighting;
 
     SoRenderManager* rm = _viewer->getSoRenderManager();
-    SoNode* root = rm ? rm->getSceneGraph() : nullptr;
+    SbRotation camRot;
+    // World <- eye rotation for the current camera: the camera orientation is
+    // the inverse of the view rotation, i.e. exactly what SoRenderIR::
+    // lightToWorld() expects.  The eye<->world convention lives in SoRenderIR
+    // instead of being re-derived here.
+    SbMatrix eyeToWorld;
+    if (SoCamera* cam = rm ? rm->getCamera() : nullptr) {
+        camRot = cam->orientation.getValue();
+        camRot.getValue(eyeToWorld);
+    }
 
-    // Scene ambient from the environment node (so a scene lit purely by
-    // ambient still reads non-black).
-    if (root) {
-        SoSearchAction sa;
-        sa.setType(SoEnvironment::getClassTypeId());
-        sa.setInterest(SoSearchAction::FIRST);
-        sa.apply(root);
-        if (SoEnvironment* env = static_cast<SoEnvironment*>(
-                sa.getPath() ? sa.getPath()->getTail() : nullptr)) {
-            const SbColor& ac = env->ambientColor.getValue();
-            float ai = env->ambientIntensity.getValue();
-            ambient = SbVec3f(ac[0] * ai, ac[1] * ai, ac[2] * ai);
-        }
+    // Scene ambient from the viewer's environment node (so a scene lit purely
+    // by ambient still reads non-black).
+    if (SoEnvironment* env = _viewer->getEnvironment()) {
+        const SbColor& ac = env->ambientColor.getValue();
+        float ai = env->ambientIntensity.getValue();
+        lighting.ambient = SbVec3f(ac[0] * ai, ac[1] * ai, ac[2] * ai);
     }
 
     // Push each enabled directional light with the same world-space
     // convention the raster IR uses (headlight + backlight + fill, matching
-    // the GL viewer's three-point lighting).
+    // the GL viewer's three-point lighting), but anchored to the camera so
+    // the Vulkan backends follow the view like Coin GL.
+    lighting.lights.reserve(3);
     const SoDirectionalLight* lightsL[] = {
         _viewer->getHeadlight(), _viewer->getBacklight(), _viewer->getFillLight()};
     for (const SoDirectionalLight* light : lightsL) {
@@ -430,15 +428,32 @@ VulkanViewportAdapter::pushSceneLights()
         const SbVec3f c = light->color.getValue();
         float i = light->intensity.getValue();
         l.color = SbVec3f(c[0] * i, c[1] * i, c[2] * i);
-        SbVec3f dir = lightWorldDirection(rm, light);
-        if (dir.normalize() == 0.0f) {
-            dir = SbVec3f(0.0f, 0.0f, 1.0f);
+        SbVec3f eyeDir = -light->direction.getValue();
+        if (eyeDir.normalize() == 0.0f) {
+            eyeDir = SbVec3f(0.0f, 0.0f, 1.0f);
         }
-        l.direction = dir;
-        lights.push_back(l);
+        l.direction = eyeDir;
+        lighting.lights.push_back(SoRenderIR::lightToWorld(l, eyeToWorld));
     }
 
-    _vulkanViewer->setSceneLights(lights, ambient);
+    if (Base::envFlagEnabled("FC_LIGHT_TRACE")) {
+        static int _n = 0;
+        if (_n++ < 400) {
+            SoCamera* cam = rm ? rm->getCamera() : nullptr;
+            fprintf(stderr,
+                    "[LTRACE] pushSceneLights n=%d cam=%p rot=(%.4f,%.4f,%.4f,%.4f) nlights=%zu\n",
+                    _n, static_cast<void*>(cam), camRot[0], camRot[1], camRot[2], camRot[3],
+                    lighting.lights.size());
+            for (size_t i = 0; i < lighting.lights.size(); ++i) {
+                fprintf(stderr, "[LTRACE]   light[%zu] dir=(%.4f,%.4f,%.4f) col=(%.3f,%.3f,%.3f)\n",
+                        i, lighting.lights[i].direction[0], lighting.lights[i].direction[1],
+                        lighting.lights[i].direction[2], lighting.lights[i].color[0],
+                        lighting.lights[i].color[1], lighting.lights[i].color[2]);
+            }
+        }
+    }
+
+    _vulkanViewer->setSceneLights(lighting);
 #endif
 }
 
@@ -456,6 +471,10 @@ void VulkanViewportAdapter::requestVulkanFrame()
 {
 #ifdef FREECAD_USE_VULKAN
     if (_vulkanViewer) {
+        // Refresh the authoritative light set first: the viewer lights are
+        // camera-anchored (see pushSceneLights), so a camera move must
+        // re-derive their world directions before the frame is drawn.
+        pushSceneLights();
         // Qt coalesces repeated update()/redraw() requests into one repaint, so
         // a burst of sensor triggers (e.g. every animation tick) costs one frame
         // per shown frame rather than one per field write.
@@ -471,6 +490,12 @@ void VulkanViewportAdapter::sceneChangedCB(void* data, SoSensor* /*sensor*/)
 
 void VulkanViewportAdapter::cameraChangedCB(void* data, SoSensor* /*sensor*/)
 {
+    if (Base::envFlagEnabled("FC_LIGHT_TRACE")) {
+        static int _n = 0;
+        if (_n++ < 400) {
+            fprintf(stderr, "[LTRACE] cameraChangedCB n=%d\n", _n);
+        }
+    }
     static_cast<VulkanViewportAdapter*>(data)->requestVulkanFrame();
 }
 
@@ -537,7 +562,7 @@ void VulkanViewportAdapter::setPathTracingStart(bool start)
 #endif
 }
 
-void VulkanViewportAdapter::setViewMode(int mode)
+void VulkanViewportAdapter::setViewMode(SoVulkanViewMode mode)
 {
 #ifdef FREECAD_USE_VULKAN
     if (_vulkanViewer) {
@@ -548,14 +573,13 @@ void VulkanViewportAdapter::setViewMode(int mode)
 #endif
 }
 
-int VulkanViewportAdapter::getViewMode() const
+SoVulkanViewMode VulkanViewportAdapter::getViewMode() const
 {
 #ifdef FREECAD_USE_VULKAN
-    return _vulkanViewer
-        ? static_cast<int>(_vulkanViewer->getViewMode())
-        : 0;
+    return _vulkanViewer ? _vulkanViewer->getViewMode()
+                         : SoVulkanViewMode::RtxModeOff;
 #else
-    return 0;
+    return SoVulkanViewMode::RtxModeOff;
 #endif
 }
 

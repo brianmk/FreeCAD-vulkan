@@ -6,6 +6,8 @@
 
 #include <QObject>
 
+#include <Inventor/rendering/SoVulkanViewMode.h>
+
 #include <memory>
 #include <string>
 
@@ -99,11 +101,10 @@ Q_SIGNALS:
     void rayTracingUnavailable();
 
 public:
-    /// Set the ray-traced view mode (0 = Interactive/raster, 1 = Ambient
-    /// Occlusion, 2 = Path Tracing).  Mirrors QuarterVulkanWidget::setViewMode.
-    void setViewMode(int mode);
+    /// Set the ray-traced view mode.  Mirrors QuarterVulkanWidget::setViewMode.
+    void setViewMode(SoVulkanViewMode mode);
     /// Current ray-traced view mode (see setViewMode).
-    int getViewMode() const;
+    SoVulkanViewMode getViewMode() const;
     /// Set the "cubemap" environment preset (-1 = viewport background).
     /// Mirrors QuarterVulkanWidget::setEnvMap.
     void setEnvMap(int index);
@@ -123,6 +124,13 @@ public:
     /// Application::onUpdate() route that would otherwise request one.
     void requestVulkanRender();
 
+    /// Request one Vulkan frame from the widget (coalesced by Qt).  This is the
+    /// single wake-up used by the change sensors and by interactive camera
+    /// moves: it re-derives the camera-anchored scene lights before redrawing,
+    /// so a navigation that only mutates the camera node still updates the
+    /// lighting (a bare redraw() would reuse the previous frame's lights).
+    void requestVulkanFrame();
+
 private:
     void onSurfaceSizeChanged(const QSize& surfaceSize);
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -139,19 +147,18 @@ private:
     /// re-applied on every size change and on any GL-widget resize.
     void applySurfaceViewportToGL(const QSize& surfaceSize);
 
-    /// Request one Vulkan frame from the widget (coalesced by Qt).  This is the
-    /// single wake-up used by the change sensors below.
-    void requestVulkanFrame();
     /// (Re)attach the scene-graph and camera change sensors to the viewer's
     /// current render manager.  Safe to call repeatedly; re-attaches only when
     /// the tracked nodes changed.
     void attachSensors();
 
-    /// Gather the GL viewer's authoritative scene lighting (headlight +
-    /// document SoLight nodes) and push it to the RT backend.  The IR
+    /// Gather the GL viewer's authoritative scene lighting (headlight,
+    /// backlight, fill light) and push it to the Vulkan backends.  The IR
     /// draw-list lighting capture can drop to zero on the retained/replayed
-    /// path tracer, so this provides a reliable light source to keep the RT
-    /// scene lit.
+    /// path tracer, so this provides a reliable light source to keep the
+    /// scene lit.  The viewer lights are camera-anchored (Coin GL applies
+    /// them in eye space), so their directions are re-derived from the
+    /// current camera orientation on every call to follow the view.
     void pushSceneLights();
 
     /// SoNodeSensor callbacks (Coin's auditor mechanism fires these on any
@@ -161,14 +168,22 @@ private:
 
     View3DInventorViewer* _viewer = nullptr;
     SIM::Coin3D::Quarter::QuarterVulkanWidget* _vulkanViewer = nullptr;
+    //! True once the Vulkan page has been made current at least once.  The
+    //! first activation is deferred one event-loop turn so the one-time Vulkan
+    //! device creation it triggers is not paid on the document-open critical
+    //! path.  A view that never activates the Vulkan viewport (RasterCoin mode)
+    //! therefore never creates a device at all.
+    bool _vulkanActivated = false;
+    //! Whether the Vulkan viewport is currently the desired page.  Guards the
+    //! deferred first activation against a switch back to RasterCoin before the
+    //! queued show runs.
+    bool _wantVulkanViewport = false;
     bool _initialVulkanFitDone = false;
     bool _pathTracingRtMismatchWarned = false;
-    // Memoised signature of the last effective settings actually pushed.  The
-    // preferences signal that drives pushSettings() can fire many times per
-    // frame with identical values (e.g. repeated applyVulkanSettings() during
-    // document/view sync), so re-applying and re-logging every time is pure
-    // spam: pushSettings() is a no-op unless this signature changes.
-    std::string _pushedSettingsSig;
+    // No memoised settings signature: the render manager now diffs the whole
+    // settings blob (SoVulkanRenderManager::setViewSettings), so re-pushing
+    // identical values from the repeatedly-firing preferences signal is a
+    // cheap no-op there.
     std::unique_ptr<SoNodeSensor> _sceneSensor;
     std::unique_ptr<SoNodeSensor> _cameraSensor;
 };

@@ -9,9 +9,9 @@
 // the one handling input (the hidden OpenGL viewer).
 //
 // The VK_BREADCRUMB macros guard each call site with an environment check so
-// the log volume stays zero unless FC_VULKAN_BREADCRUMBS is set.  The check
-// itself is cached on first use, so enabled or not the per-call cost is a
-// single predictable branch:
+// the log volume stays zero unless FC_VULKAN_BREADCRUMBS is set.  The check is
+// cached per call site (see the macros below), so enabled or not the per-call
+// cost is a single predictable branch:
 //
 //   VK_BREADCRUMB(fmt, ...)          log every call
 //   VK_BREADCRUMB_ONCE(fmt, ...)     log only the first call at this site
@@ -41,28 +41,53 @@
 
 namespace Base {
 
-//! True when \a name is present in the environment.  The lookup is cached on
-//! first use: these helpers sit on hot paths (per-frame setup, per-mouse-event
-//! filtering) and the environment does not change during a process lifetime.
+//! Single choke point for every FC_VULKAN_* / FC_GUI_* environment read in the
+//! Gui/Base side, mirroring SoVulkanShared's helpers inside Coin.  The two
+//! libraries are independent (Base is built before Coin and cannot include its
+//! headers), so the policy is duplicated by necessity but kept identical.
+//!
+//! NOTE: these functions deliberately do NOT cache in a function-local
+//! `static`: such a static is initialized once for the whole program, so the
+//! first name passed would be returned for every later, different name.  The
+//! VK_BREADCRUMB macros cache the result at each call site instead.
+
+//! True when \a name is present in the environment (any value, including "0").
 inline bool envFlagEnabled(const char* name)
 {
-    static const bool enabled = std::getenv(name) != nullptr;
-    return enabled;
+    return std::getenv(name) != nullptr;
 }
 
 //! Like envFlagEnabled() but treats the values "0", "false" and "off" as
 //! disabled, matching the boolean switch convention of the FC_* env vars.
-inline bool envFlagTruthy(const char* name)
+//! Returns \a defaultValue when the variable is unset or empty.
+inline bool envFlagTruthy(const char* name, bool defaultValue = false)
 {
-    static const bool enabled = [name]() {
-        const char* value = std::getenv(name);
-        if (!value || !*value) {
-            return false;
-        }
-        return std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0
-            && std::strcmp(value, "off") != 0;
-    }();
-    return enabled;
+    const char* value = std::getenv(name);
+    if (!value || !*value) {
+        return defaultValue;
+    }
+    return std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0
+        && std::strcmp(value, "off") != 0;
+}
+
+//! Raw value (or nullptr); \a name set to any value counts as set.
+inline const char* envString(const char* name)
+{
+    return std::getenv(name);
+}
+
+//! Integer value, or \a defaultValue when unset/empty.
+inline int envInt(const char* name, int defaultValue = 0)
+{
+    const char* value = std::getenv(name);
+    return value ? std::atoi(value) : defaultValue;
+}
+
+//! Floating-point value, or \a defaultValue when unset/empty.
+inline float envFloat(const char* name, float defaultValue = 0.0f)
+{
+    const char* value = std::getenv(name);
+    return value ? static_cast<float>(std::atof(value)) : defaultValue;
 }
 
 //! Append a formatted breadcrumb to the trace log.
@@ -120,17 +145,24 @@ inline void vulkanBreadcrumb(const char* fmt, ...)
 
 }  // namespace Base
 
+// The gate is resolved once per call site (not per call): the environment is
+// fixed for the process lifetime, and these macros sit on per-frame / per-event
+// hot paths.
 #define VK_BREADCRUMB(...)                                                     \
     do {                                                                       \
-        if (::Base::envFlagEnabled("FC_VULKAN_BREADCRUMBS")) {                 \
+        static const bool vk_breadcrumbs_enabled_ =                            \
+            ::Base::envFlagEnabled("FC_VULKAN_BREADCRUMBS");                   \
+        if (vk_breadcrumbs_enabled_) {                                         \
             ::Base::vulkanBreadcrumb(__VA_ARGS__);                             \
         }                                                                      \
     } while (0)
 
 #define VK_BREADCRUMB_ONCE(...)                                                \
     do {                                                                       \
+        static const bool vk_breadcrumbs_enabled_ =                            \
+            ::Base::envFlagEnabled("FC_VULKAN_BREADCRUMBS");                   \
         static bool logged_ = false;                                           \
-        if (!logged_ && ::Base::envFlagEnabled("FC_VULKAN_BREADCRUMBS")) {     \
+        if (!logged_ && vk_breadcrumbs_enabled_) {                             \
             logged_ = true;                                                    \
             ::Base::vulkanBreadcrumb(__VA_ARGS__);                             \
         }                                                                      \
@@ -138,9 +170,10 @@ inline void vulkanBreadcrumb(const char* fmt, ...)
 
 #define VK_BREADCRUMB_LIMITED(limit, ...)                                      \
     do {                                                                       \
+        static const bool vk_breadcrumbs_enabled_ =                            \
+            ::Base::envFlagEnabled("FC_VULKAN_BREADCRUMBS");                   \
         static int logged_ = 0;                                                \
-        if (logged_ < (limit)                                                  \
-            && ::Base::envFlagEnabled("FC_VULKAN_BREADCRUMBS")) {              \
+        if (logged_ < (limit) && vk_breadcrumbs_enabled_) {                    \
             ++logged_;                                                         \
             ::Base::vulkanBreadcrumb(__VA_ARGS__);                             \
         }                                                                      \
@@ -151,9 +184,10 @@ inline void vulkanBreadcrumb(const char* fmt, ...)
 // per event or only the first N calls.  The counter is per call site.
 #define VK_BREADCRUMB_SAMPLED(stride, ...)                                     \
     do {                                                                       \
+        static const bool vk_breadcrumbs_enabled_ =                            \
+            ::Base::envFlagEnabled("FC_VULKAN_BREADCRUMBS");                   \
         static int count_ = 0;                                                 \
-        if ((++count_ % (stride)) == 0                                         \
-            && ::Base::envFlagEnabled("FC_VULKAN_BREADCRUMBS")) {              \
+        if ((++count_ % (stride)) == 0 && vk_breadcrumbs_enabled_) {           \
             ::Base::vulkanBreadcrumb(__VA_ARGS__);                             \
         }                                                                      \
     } while (0)

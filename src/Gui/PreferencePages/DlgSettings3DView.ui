@@ -630,12 +630,12 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
        </widget>
       </item>
       <item>
-       <widget class="Gui::PrefCheckBox" name="CheckBox_VulkanShowEdges">
+       <widget class="Gui::PrefCheckBox" name="CheckBox_VulkanWireframe">
         <property name="text">
-         <string>Show edges (wireframe overlay)</string>
+         <string>Show wireframe (edge overlay)</string>
         </property>
         <property name="prefEntry" stdset="0">
-         <cstring>VulkanShowEdges</cstring>
+         <cstring>VulkanWireframe</cstring>
         </property>
         <property name="prefPath" stdset="0">
          <cstring>View</cstring>
@@ -656,18 +656,12 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
        </widget>
       </item>
        <item>
-        <widget class="Gui::PrefCheckBox" name="CheckBox_VulkanPathTracing">
+        <widget class="QCheckBox" name="CheckBox_VulkanPathTracing">
          <property name="text">
           <string>Path tracing (global illumination)</string>
          </property>
          <property name="toolTip">
           <string>Render with the Vulkan ray-tracing path tracer: multi-bounce global illumination with shadow rays, progressive accumulation and edge-stopping denoising.  Enabling starts a progressive render; camera moves drop back to a live preview and the accumulation auto-restarts once the camera settles.  Requires UseVulkanRenderer and UseVulkanRayTracing and a ray-tracing capable GPU.  Also available from Python as startPathTracing() on the view.</string>
-         </property>
-         <property name="prefEntry" stdset="0">
-          <cstring>VulkanPathTracing</cstring>
-         </property>
-         <property name="prefPath" stdset="0">
-          <cstring>View</cstring>
          </property>
         </widget>
         </item>

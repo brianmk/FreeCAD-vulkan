@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify Vulkan display preferences are read and applied.
 
-Cycles the Vulkan-only View prefs (VulkanShowEdges / VulkanShowPoints /
+Cycles the Vulkan-only View prefs (VulkanWireframe / VulkanShowPoints /
 VulkanEdgeColor) while rendering a Part::Box in the Vulkan viewport.  Each phase
 resets a pref via `Session.set_pref` and emits a `[HARNESS] pref` record; the
 parameter writes fire View3DSettings::OnChange -> applyVulkanSettings, whose
@@ -12,7 +12,7 @@ Usage:
   FC_VULKAN_DUMP_FRAME=1 FC_VULKAN_DUMP_START=0 FC_VULKAN_DUMP_END=400 \\
       FreeCAD vk_prefs_probe.py
 
-Phases: baseline (edges/points off) -> edges (red) -> edges+points.
+Phases: baseline (wireframe/points off) -> wireframe (red) -> wireframe+points.
 Exit: [VERDICT] prefs PASS only if every phase completes without error.
 """
 
@@ -36,10 +36,10 @@ def log(msg):
 
 s = Session(name="prefs")
 PHASES = [
-    ("baseline", {"VulkanShowEdges": False, "VulkanShowPoints": False}),
-    ("edges", {"VulkanShowEdges": True, "VulkanShowPoints": False,
-               "VulkanEdgeColor": 0xFF0000FF}),          # opaque red
-    ("points", {"VulkanShowEdges": True, "VulkanShowPoints": True}),
+    ("baseline", {"VulkanWireframe": False, "VulkanShowPoints": False}),
+    ("wireframe", {"VulkanWireframe": True, "VulkanShowPoints": False,
+                   "VulkanEdgeColor": 0xFF0000FF}),      # opaque red
+    ("points", {"VulkanWireframe": True, "VulkanShowPoints": True}),
 ]
 steps = [0]
 phase_idx = [0]
@@ -50,7 +50,7 @@ def apply_phase(idx):
     for key, value in prefs.items():
         s.set_pref(VIEW, key, value)
     s.frame_phase(name)
-    log(f"phase={name} edges={prefs.get('VulkanShowEdges', '?')} "
+    log(f"phase={name} wireframe={prefs.get('VulkanWireframe', '?')} "
         f"points={prefs.get('VulkanShowPoints', '?')}")
 
 

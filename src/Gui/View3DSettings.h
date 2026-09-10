@@ -50,6 +50,17 @@ public:
     void applySettings();
     int stopAnimatingIfDeactivated() const;
 
+    /// One-time normalization of the persisted View preferences (called once at
+    /// GUI startup, before any view is created).  Removes stale/duplicate keys
+    /// left behind by earlier versions so every setting has exactly one group,
+    /// one key and one type -- the ground truth the readers assume:
+    ///   * VulkanRenderMode is the sole render-mode source; the redundant bool
+    ///     VulkanPathTracing and the wrong-typed duplicates of the Vulkan
+    ///     display keys are dropped.
+    ///   * Light-source keys live only in View/LightSources; a stale copy under
+    ///     View is migrated (only when LightSources is missing it) and removed.
+    static void migratePreferences();
+
     bool ignoreNavigationStyle = false;
     bool ignoreVBO = false;
     bool ignoreDimensions = false;
