@@ -175,6 +175,17 @@ void VulkanViewportAdapter::useVulkanViewport(bool vulkan)
     if (!_vulkanViewer || !_viewer) {
         return;
     }
+    // The hidden GL viewer drives picking/navigation, but it is never shown, so
+    // its own geometry goes stale and must not be used to normalize cursor
+    // positions.  The render-manager viewport region is the single source of
+    // truth and is pinned to the Vulkan surface (device pixels) by
+    // applySurfaceViewportToGL, so tell the event/DPR conversion to derive the
+    // logical window size from that region (effectiveWindowSize) instead of the
+    // widget's own size.  Without this, toDevicePixelPosition() flipped Y
+    // against the stale hidden-widget height and hover/edge picks landed far
+    // off the cursor.  The classic GL page's region tracks the visible widget,
+    // so clear the flag there and keep the upstream cached-logical behavior.
+    _viewer->setVulkanDevicePixels(vulkan);
     auto* host = qobject_cast<QStackedWidget*>(_vulkanViewer->parentWidget());
     if (!host) {
         return;
