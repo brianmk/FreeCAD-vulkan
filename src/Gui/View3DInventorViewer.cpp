@@ -2079,8 +2079,8 @@ void View3DInventorViewer::applyVulkanSettings()
         return;
     }
 
-    VK_BREADCRUMB("[VK-TRACE] View3DInventorViewer::applyVulkanSettings edges=%d points=%d\n",
-                  hGrp->GetBool("VulkanShowEdges", false) ? 1 : 0,
+    VK_BREADCRUMB("[VK-TRACE] View3DInventorViewer::applyVulkanSettings wireframe=%d points=%d\n",
+                  hGrp->GetBool("VulkanWireframe", false) ? 1 : 0,
                   hGrp->GetBool("VulkanShowPoints", false) ? 1 : 0);
 
     // Single source of truth: VulkanViewSettings::load() reads the whole

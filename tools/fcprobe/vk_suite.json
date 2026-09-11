@@ -204,7 +204,6 @@
       "script": "vk_points_probe.py",
       "env": {
         "FC_VULKAN_BREADCRUMBS": "1",
-        "FC_VULKAN_ROUND_POINTS": "1",
         "FC_VULKAN_DUMP_FRAME": "1",
         "FC_VULKAN_DUMP_START": "0",
         "FC_VULKAN_DUMP_END": "400"

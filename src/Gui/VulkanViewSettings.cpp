@@ -22,7 +22,7 @@ VulkanViewSettings::load(const ParameterGrp::handle & hGrp)
     this->renderMode = hGrp->GetInt("VulkanRenderMode", 1);
     this->envMap = hGrp->GetInt("VulkanEnvironmentMap", -1);
 
-    this->showEdges = hGrp->GetBool("VulkanShowEdges", false);
+    this->wireframe = hGrp->GetBool("VulkanWireframe", false);
     this->showPoints = hGrp->GetBool("VulkanShowPoints", false);
     // Colors are stored as Unsigned (0xAABBGGRR) to survive INT_MAX; the
     // alpha is pinned to 1 (the edge overlay is opaque).
@@ -33,7 +33,6 @@ VulkanViewSettings::load(const ParameterGrp::handle & hGrp)
         static_cast<float>((color >> 8) & 0xff) / 255.0f,
         1.0f);
 
-    this->pathTracing = hGrp->GetBool("VulkanPathTracing", false);
     this->pathTracingBounces = std::clamp(
         static_cast<int>(hGrp->GetInt("VulkanPathTracingBounces", 4)), 1, 16);
     this->pathTracingSettleFrames = std::clamp(

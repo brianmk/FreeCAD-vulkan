@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Host-side assertions for vk_points_probe.py (VulkanShowPoints / round glyph).
+"""Host-side assertions for vk_points_probe.py (VulkanShowPoints overlay).
 
 The probe pins VulkanEdgeColor to red and toggles VulkanShowPoints on a
 tessellated sphere, emitting ordinal-bearing `[HARNESS] frame_phase` markers.
@@ -19,7 +19,7 @@ import re
 
 EDGE_LINE = re.compile(
     r"\[VK-TRACE\] View3DInventorViewer::applyVulkanSettings "
-    r"edges=(\d+) points=(\d+)")
+    r"wireframe=(\d+) points=(\d+)")
 PHASE_LINE = re.compile(r"\[HARNESS\] frame_phase phase=(\S+) frame=(\d+)")
 RED = (255, 0, 0)
 TOL = 12

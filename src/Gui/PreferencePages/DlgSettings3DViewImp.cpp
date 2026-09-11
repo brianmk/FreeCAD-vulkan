@@ -34,6 +34,7 @@
 #include <Gui/Multisample.h>
 #include <Gui/View3DInventorViewer.h>
 #include <Gui/ViewParams.h>
+#include <Gui/VulkanViewSettings.h>
 
 #include "DlgSettings3DViewImp.h"
 #include "ui_DlgSettings3DView.h"
@@ -77,9 +78,27 @@ void DlgSettings3DViewImp::saveSettings()
     ui->zAxisColor->onSave();
     ui->CheckBox_UseVulkanRenderer->onSave();
     ui->CheckBox_UseVulkanRayTracing->onSave();
-    ui->CheckBox_VulkanShowEdges->onSave();
+    ui->CheckBox_VulkanWireframe->onSave();
     ui->CheckBox_VulkanShowPoints->onSave();
-    ui->CheckBox_VulkanPathTracing->onSave();
+    // The "Path tracing" checkbox is a convenience view onto the single
+    // VulkanRenderMode pref (checked => PathTracing, unchecked => the Vulkan
+    // raster viewport), so it and the status-bar mode selector share one source
+    // and can never disagree.
+#ifdef FREECAD_USE_VULKAN
+    {
+        auto grp = App::GetApplication().GetParameterGroupByPath(
+            "User parameter:BaseApp/Preferences/View");
+        const int mode = static_cast<int>(grp->GetInt("VulkanRenderMode", 1));
+        if (ui->CheckBox_VulkanPathTracing->isChecked()
+            && mode != static_cast<int>(ViewRenderMode::PathTracing)) {
+            grp->SetInt("VulkanRenderMode", static_cast<int>(ViewRenderMode::PathTracing));
+        }
+        else if (!ui->CheckBox_VulkanPathTracing->isChecked()
+                 && mode == static_cast<int>(ViewRenderMode::PathTracing)) {
+            grp->SetInt("VulkanRenderMode", static_cast<int>(ViewRenderMode::RasterVulkan));
+        }
+    }
+#endif
     ui->SpinBox_VulkanBounces->onSave();
     ui->SpinBox_VulkanSettle->onSave();
     ui->SpinBox_VulkanMaxSamples->onSave();
@@ -107,9 +126,20 @@ void DlgSettings3DViewImp::loadSettings()
     ui->zAxisColor->onRestore();
     ui->CheckBox_UseVulkanRenderer->onRestore();
     ui->CheckBox_UseVulkanRayTracing->onRestore();
-    ui->CheckBox_VulkanShowEdges->onRestore();
+    ui->CheckBox_VulkanWireframe->onRestore();
     ui->CheckBox_VulkanShowPoints->onRestore();
-    ui->CheckBox_VulkanPathTracing->onRestore();
+    // The checkbox mirrors the single VulkanRenderMode pref.
+#ifdef FREECAD_USE_VULKAN
+    {
+        auto grp = App::GetApplication().GetParameterGroupByPath(
+            "User parameter:BaseApp/Preferences/View");
+        const int mode = static_cast<int>(grp->GetInt("VulkanRenderMode", 1));
+        ui->CheckBox_VulkanPathTracing->setChecked(
+            mode == static_cast<int>(ViewRenderMode::PathTracing));
+    }
+#else
+    ui->CheckBox_VulkanPathTracing->setChecked(false);
+#endif
     ui->SpinBox_VulkanBounces->onRestore();
     ui->SpinBox_VulkanSettle->onRestore();
     ui->SpinBox_VulkanMaxSamples->onRestore();

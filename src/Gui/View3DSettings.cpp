@@ -27,6 +27,7 @@
 #include <Inventor/nodes/SoPerspectiveCamera.h>
 
 
+#include <App/Application.h>
 #include <Base/Builder3D.h>
 #include <Base/Color.h>
 
@@ -66,6 +67,148 @@ View3DSettings::~View3DSettings()
     hLightSourcesGrp->Detach(this);
 }
 
+namespace {
+//! True when \a grp holds \a name with exactly \a type.  FreeCAD keeps one
+//! parameter map per type, so a key written with two types appears in two maps;
+//! this is how the migration detects the stale wrong-typed copies.
+bool viewPrefHasEntry(const ParameterGrp::handle& grp, const char* name,
+                      ParameterGrp::ParamType type)
+{
+    switch (type) {
+        case ParameterGrp::ParamType::FCBool:
+            for (const auto& e : grp->GetBoolMap(nullptr)) {
+                if (e.first == name) {
+                    return true;
+                }
+            }
+            break;
+        case ParameterGrp::ParamType::FCInt:
+            for (const auto& e : grp->GetIntMap(nullptr)) {
+                if (e.first == name) {
+                    return true;
+                }
+            }
+            break;
+        case ParameterGrp::ParamType::FCUInt:
+            for (const auto& e : grp->GetUnsignedMap(nullptr)) {
+                if (e.first == name) {
+                    return true;
+                }
+            }
+            break;
+        case ParameterGrp::ParamType::FCText:
+            for (const auto& e : grp->GetASCIIMap(nullptr)) {
+                if (e.first == name) {
+                    return true;
+                }
+            }
+            break;
+        default:
+            break;
+    }
+    return false;
+}
+}  // namespace
+
+void View3DSettings::migratePreferences()
+{
+    auto viewGrp = App::GetApplication().GetParameterGroupByPath(
+        "User parameter:BaseApp/Preferences/View");
+    if (!viewGrp) {
+        return;
+    }
+
+    // --- Vulkan display settings ---------------------------------------
+    // VulkanRenderMode (int) is the single render-mode source.  Older builds
+    // also wrote a bool VulkanPathTracing and, for the same keys, entries of a
+    // second type.  FreeCAD keeps one map per type and re-emits every map on
+    // save, so a stale duplicate survives forever unless it is dropped here.
+#ifdef FREECAD_USE_VULKAN
+    // Fold a legacy bool-only VulkanPathTracing=true into the mode before
+    // dropping the bool, so the choice is not lost.
+    if (!viewPrefHasEntry(viewGrp, "VulkanRenderMode", ParameterGrp::ParamType::FCInt)
+        && viewPrefHasEntry(viewGrp, "VulkanPathTracing", ParameterGrp::ParamType::FCBool)
+        && viewGrp->GetBool("VulkanPathTracing", false)) {
+        viewGrp->SetInt("VulkanRenderMode", static_cast<int>(ViewRenderMode::PathTracing));
+    }
+    // Fold the old edge-overlay pref name into the wireframe name (the overlay
+    // draws the raster wireframe/point passes) before dropping the old key.
+    if (!viewPrefHasEntry(viewGrp, "VulkanWireframe", ParameterGrp::ParamType::FCBool)
+        && viewPrefHasEntry(viewGrp, "VulkanShowEdges", ParameterGrp::ParamType::FCBool)) {
+        viewGrp->SetBool("VulkanWireframe", viewGrp->GetBool("VulkanShowEdges", false));
+    }
+#endif
+    viewGrp->RemoveBool("VulkanPathTracing");
+    viewGrp->RemoveBool("VulkanRenderMode");            // canonical: int
+    viewGrp->RemoveBool("VulkanShowEdges");             // renamed: VulkanWireframe
+    viewGrp->RemoveInt("VulkanShowEdges");              // renamed: VulkanWireframe
+    viewGrp->RemoveInt("VulkanWireframe");              // canonical: bool
+    viewGrp->RemoveInt("VulkanShowPoints");             // canonical: bool
+    viewGrp->RemoveASCII("VulkanPathTracingDenoiser");  // canonical: int
+    viewGrp->RemoveInt("BackgroundColor");              // canonical: unsigned
+
+    // Superseded by the HeadlightDirection string; no code reads the rotation
+    // quaternion any more.
+    viewGrp->RemoveFloat("HeadlightRotationX");
+    viewGrp->RemoveFloat("HeadlightRotationY");
+    viewGrp->RemoveFloat("HeadlightRotationZ");
+    viewGrp->RemoveFloat("HeadlightRotationW");
+
+    // --- Light sources --------------------------------------------------
+    // Light settings are authoritative in View/LightSources.  Migrate any value
+    // an earlier version wrote directly under View (only when LightSources does
+    // not already define it), then drop every typed copy from View.
+    auto lightGrp = viewGrp->GetGroup("LightSources");
+
+    struct LightKey {
+        const char* name;
+        ParameterGrp::ParamType type;
+    };
+    const LightKey lightKeys[] = {
+        {"EnableHeadlight", ParameterGrp::ParamType::FCBool},
+        {"HeadlightColor", ParameterGrp::ParamType::FCUInt},
+        {"HeadlightDirection", ParameterGrp::ParamType::FCText},
+        {"HeadlightIntensity", ParameterGrp::ParamType::FCInt},
+        {"EnableBacklight", ParameterGrp::ParamType::FCBool},
+        {"BacklightColor", ParameterGrp::ParamType::FCUInt},
+        {"BacklightDirection", ParameterGrp::ParamType::FCText},
+        {"BacklightIntensity", ParameterGrp::ParamType::FCInt},
+        {"EnableFillLight", ParameterGrp::ParamType::FCBool},
+        {"FillLightColor", ParameterGrp::ParamType::FCUInt},
+        {"FillLightDirection", ParameterGrp::ParamType::FCText},
+        {"FillLightIntensity", ParameterGrp::ParamType::FCInt},
+        {"AmbientLightColor", ParameterGrp::ParamType::FCUInt},
+        {"AmbientLightIntensity", ParameterGrp::ParamType::FCInt},
+    };
+
+    for (const LightKey& key : lightKeys) {
+        const bool inView = viewPrefHasEntry(viewGrp, key.name, key.type);
+        const bool inLights = viewPrefHasEntry(lightGrp, key.name, key.type);
+        if (inView && !inLights) {
+            switch (key.type) {
+                case ParameterGrp::ParamType::FCBool:
+                    lightGrp->SetBool(key.name, viewGrp->GetBool(key.name, false));
+                    break;
+                case ParameterGrp::ParamType::FCInt:
+                    lightGrp->SetInt(key.name, viewGrp->GetInt(key.name, 0));
+                    break;
+                case ParameterGrp::ParamType::FCUInt:
+                    lightGrp->SetUnsigned(key.name, viewGrp->GetUnsigned(key.name, 0));
+                    break;
+                case ParameterGrp::ParamType::FCText:
+                    lightGrp->SetASCII(key.name, viewGrp->GetASCII(key.name, ""));
+                    break;
+                default:
+                    break;
+            }
+        }
+        viewGrp->RemoveBool(key.name);
+        viewGrp->RemoveInt(key.name);
+        viewGrp->RemoveUnsigned(key.name);
+        viewGrp->RemoveASCII(key.name);
+    }
+}
+
 int View3DSettings::stopAnimatingIfDeactivated() const
 {
     long defaultTimeout = 3000;
@@ -99,17 +242,24 @@ void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::
         }
         return;
     }
-    const ParameterGrp& rGrp = static_cast<const ParameterGrp&>(rCaller);
     ensurePrefTable();
     for (const auto & entry : m_prefTable) {
         if (strcmp(entry.name, Reason) == 0) {
+            // Always read from the entry's canonical group, not from whichever
+            // group happened to fire the notification.  Both hGrp (View) and
+            // hLightSourcesGrp (View/LightSources) are attached, and a stale
+            // copy of a light key under View must never shadow the authoritative
+            // LightSources value.
+            const ParameterGrp& rGrp = entry.light
+                ? static_cast<const ParameterGrp&>(*hLightSourcesGrp)
+                : static_cast<const ParameterGrp&>(*hGrp);
             entry.apply(rGrp);
             return;
         }
     }
     // Any unrecognized pref in the view group preserves the old catch-all
     // behavior (apply the background colors).
-    applyBackground(rGrp);
+    applyBackground(static_cast<const ParameterGrp&>(rCaller));
 }
 
 void View3DSettings::ensurePrefTable()
