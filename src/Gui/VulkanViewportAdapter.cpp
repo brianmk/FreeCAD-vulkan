@@ -352,6 +352,7 @@ void VulkanViewportAdapter::pushSettings()
     this->pushSceneLights();
 #endif
 }
+#ifdef FREECAD_USE_VULKAN
 namespace {
 
 // Evaluate \a light's world-space "travel" direction (pointing TOWARD the
@@ -389,6 +390,7 @@ lightWorldDirection(SoRenderManager* rm, const SoNode* light)
 }
 
 } // namespace
+#endif
 
 void
 VulkanViewportAdapter::pushSceneLights()
