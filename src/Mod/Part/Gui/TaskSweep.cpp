@@ -55,6 +55,7 @@
 #include <Mod/Part/App/PartFeature.h>
 
 #include "TaskSweep.h"
+#include "ShapeSelection.h"
 #include "ui_TaskSweep.h"
 
 
@@ -158,81 +159,7 @@ SweepWidget::~SweepWidget()
 
 void SweepWidget::findShapes()
 {
-    App::Document* activeDoc = App::GetApplication().getActiveDocument();
-    Gui::Document* activeGui = Gui::Application::Instance->getDocument(activeDoc);
-    if (!activeGui) {
-        return;
-    }
-    d->document = activeDoc->getName();
-
-    std::vector<App::DocumentObject*> objs = activeDoc->getObjectsOfType<App::DocumentObject>();
-
-    for (auto obj : objs) {
-        Part::TopoShape topoShape = Part::Feature::getTopoShape(
-            obj,
-            Part::ShapeOption::ResolveLink | Part::ShapeOption::Transform
-        );
-        if (topoShape.isNull()) {
-            continue;
-        }
-        TopoDS_Shape shape = topoShape.getShape();
-        if (shape.IsNull()) {
-            continue;
-        }
-
-        // also allow compounds with a single face, wire or vertex or
-        // if there are only edges building one wire
-        if (shape.ShapeType() == TopAbs_COMPOUND) {
-            Handle(TopTools_HSequenceOfShape) hEdges = new TopTools_HSequenceOfShape();
-            Handle(TopTools_HSequenceOfShape) hWires = new TopTools_HSequenceOfShape();
-
-            TopoDS_Iterator it(shape);
-            int numChilds = 0;
-            TopoDS_Shape child;
-            for (; it.More(); it.Next(), numChilds++) {
-                if (!it.Value().IsNull()) {
-                    child = it.Value();
-                    if (child.ShapeType() == TopAbs_EDGE) {
-                        hEdges->Append(child);
-                    }
-                }
-            }
-
-            // a single child
-            if (numChilds == 1) {
-                shape = child;
-            }
-            // or all children are edges
-            else if (hEdges->Length() == numChilds) {
-                Part::Fix_ShapeAnalysis_FreeBounds_ConnectEdgesToWires(
-                    hEdges,
-                    Precision::Confusion(),
-                    Standard_False,
-                    hWires
-                );
-                if (hWires->Length() == 1) {
-                    shape = hWires->Value(1);
-                }
-            }
-        }
-
-        if (!shape.Infinite()
-            && (shape.ShapeType() == TopAbs_FACE || shape.ShapeType() == TopAbs_WIRE
-                || shape.ShapeType() == TopAbs_EDGE || shape.ShapeType() == TopAbs_VERTEX)) {
-            QString label = QString::fromUtf8(obj->Label.getValue());
-            QString name = QString::fromLatin1(obj->getNameInDocument());
-
-            QTreeWidgetItem* child = new QTreeWidgetItem();
-            child->setText(0, label);
-            child->setToolTip(0, label);
-            child->setData(0, Qt::UserRole, name);
-            Gui::ViewProvider* vp = activeGui->getViewProvider(obj);
-            if (vp) {
-                child->setIcon(0, vp->getIcon());
-            }
-            d->ui.selector->availableTreeWidget()->addTopLevelItem(child);
-        }
-    }
+    d->document = fillShapeSelector(d->ui.selector->availableTreeWidget());
 }
 
 bool SweepWidget::isPathValid(const Gui::SelectionObject& sel) const
@@ -399,43 +326,18 @@ bool SweepWidget::accept()
         str << "App.getDocument('" << d->document.c_str() << "')." << name << ", ";
     }
 
-    try {
-        Gui::WaitCursor wc;
-        QString cmd;
-        cmd = QStringLiteral(
-                  "App.getDocument('%5').addObject('Part::Sweep','Sweep')\n"
-                  "App.getDocument('%5').ActiveObject.Sections=[%1]\n"
-                  "App.getDocument('%5').ActiveObject.Spine=%2\n"
-                  "App.getDocument('%5').ActiveObject.Solid=%3\n"
-                  "App.getDocument('%5').ActiveObject.Frenet=%4\n"
-        )
-                  .arg(list, selection.c_str(), solid, frenet, d->document.c_str());
+    Gui::WaitCursor wc;
+    QString cmd;
+    cmd = QStringLiteral(
+              "App.getDocument('%5').addObject('Part::Sweep','Sweep')\n"
+              "App.getDocument('%5').ActiveObject.Sections=[%1]\n"
+              "App.getDocument('%5').ActiveObject.Spine=%2\n"
+              "App.getDocument('%5').ActiveObject.Solid=%3\n"
+              "App.getDocument('%5').ActiveObject.Frenet=%4\n"
+    )
+              .arg(list, selection.c_str(), solid, frenet, d->document.c_str());
 
-        Gui::Document* doc = Gui::Application::Instance->getDocument(d->document.c_str());
-        if (!doc) {
-            throw Base::RuntimeError("Document doesn't exist anymore");
-        }
-        doc->openCommand(QT_TRANSLATE_NOOP("Command", "Sweep"));
-        Gui::Command::runCommand(Gui::Command::App, cmd.toUtf8());
-        doc->getDocument()->recompute();
-        App::DocumentObject* obj = doc->getDocument()->getActiveObject();
-        if (obj && !obj->isValid()) {
-            std::string msg = obj->getStatusString();
-            doc->abortCommand();
-            throw Base::RuntimeError(msg);
-        }
-        doc->commitCommand();
-    }
-    catch (const Base::Exception& e) {
-        QMessageBox::warning(
-            this,
-            tr("Input error"),
-            QCoreApplication::translate("Exception", e.what())
-        );
-        return false;
-    }
-
-    return true;
+    return executeShapeCommand(this, d->document, cmd, QT_TRANSLATE_NOOP("Command", "Sweep"));
 }
 
 bool SweepWidget::reject()
@@ -448,18 +350,7 @@ bool SweepWidget::reject()
 
 void SweepWidget::onCurrentItemChanged(QTreeWidgetItem* current, QTreeWidgetItem* previous)
 {
-    if (previous) {
-        Gui::Selection().rmvSelection(
-            d->document.c_str(),
-            (const char*)previous->data(0, Qt::UserRole).toByteArray()
-        );
-    }
-    if (current) {
-        Gui::Selection().addSelection(
-            d->document.c_str(),
-            (const char*)current->data(0, Qt::UserRole).toByteArray()
-        );
-    }
+    applyShapeTreeSelection(d->document, current, previous);
 }
 
 void SweepWidget::onButtonPathToggled(bool on)
