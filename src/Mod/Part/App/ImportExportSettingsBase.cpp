@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
 /***************************************************************************
- *   Copyright (c) 2021 Werner Mayer <wmayer[at]users.sourceforge.net>     *
+ *   Copyright (c) 2022 Werner Mayer <wmayer[at]users.sourceforge.net>     *
  *                                                                         *
  *   This file is part of the FreeCAD CAx development system.              *
  *                                                                         *
@@ -22,61 +22,73 @@
  *                                                                         *
  ***************************************************************************/
 
-#include <BRepPrimAPI_MakePrism.hxx>
+#include "ImportExportSettingsBase.h"
 
-
-#include <Base/Tools.h>
-
-#include "PrismExtension.h"
-#include "PrimitiveShapes.h"
+#include <App/Application.h>
 
 
 using namespace Part;
 
-EXTENSION_PROPERTY_SOURCE(Part::PrismExtension, App::DocumentObjectExtension)
-
-PrismExtension::PrismExtension()
+ImportExportSettingsBase::ImportExportSettingsBase(const char* groupPath)
 {
-    EXTENSION_ADD_PROPERTY_TYPE(FirstAngle, (0.0f), "Prism", App::Prop_None, "Angle in first direction");
-    EXTENSION_ADD_PROPERTY_TYPE(SecondAngle, (0.0f), "Prism", App::Prop_None, "Angle in second direction");
-
-    static const App::PropertyQuantityConstraint::Constraints angleConstraint
-        = {-89.99999, 89.99999, 1.0};
-    FirstAngle.setConstraints(&angleConstraint);
-    SecondAngle.setConstraints(&angleConstraint);
-
-    initExtensionType(PrismExtension::getExtensionClassTypeId());
+    pGroup = App::GetApplication().GetParameterGroupByPath(groupPath);
 }
 
-PrismExtension::~PrismExtension() = default;
-
-short int PrismExtension::extensionMustExecute()
+Interface::Unit ImportExportSettingsBase::getUnit() const
 {
-    if (FirstAngle.isTouched()) {
-        return 1;
-    }
-    if (SecondAngle.isTouched()) {
-        return 1;
-    }
-    return DocumentObjectExtension::extensionMustExecute();
+    return static_cast<Interface::Unit>(pGroup->GetInt("Unit", 0));
 }
 
-App::DocumentObjectExecReturn* PrismExtension::extensionExecute()
+void ImportExportSettingsBase::setUnit(Interface::Unit unit)
 {
-    return App::DocumentObjectExtension::extensionExecute();
+    pGroup->SetInt("Unit", static_cast<long>(unit));
+    applyUnit(unit);
 }
 
-void PrismExtension::extensionOnChanged(const App::Property* prop)
+std::string ImportExportSettingsBase::getCompany() const
 {
-    App::DocumentObjectExtension::extensionOnChanged(prop);
+    return pGroup->GetASCII("Company", defaultCompany().c_str());
 }
 
-TopoDS_Shape PrismExtension::makePrism(double height, const TopoDS_Face& face) const
+void ImportExportSettingsBase::setCompany(const char* name)
 {
-    return PrimitiveShapes::extrudePrism(
-        face,
-        height,
-        FirstAngle.getValue(),
-        SecondAngle.getValue()
-    );
+    pGroup->SetASCII("Company", name);
+    applyCompany(name);
 }
+
+std::string ImportExportSettingsBase::getAuthor() const
+{
+    return pGroup->GetASCII("Author", defaultAuthor().c_str());
+}
+
+void ImportExportSettingsBase::setAuthor(const char* name)
+{
+    pGroup->SetASCII("Author", name);
+    applyAuthor(name);
+}
+
+std::string ImportExportSettingsBase::getProductName() const
+{
+    return defaultProductName();
+}
+
+void ImportExportSettingsBase::setProductName(const char* name)
+{
+    applyProductName(name);
+}
+
+std::string ImportExportSettingsBase::defaultCompany() const
+{
+    return {};
+}
+
+void ImportExportSettingsBase::applyCompany(const char*)
+{}
+
+std::string ImportExportSettingsBase::defaultAuthor() const
+{
+    return {};
+}
+
+void ImportExportSettingsBase::applyAuthor(const char*)
+{}

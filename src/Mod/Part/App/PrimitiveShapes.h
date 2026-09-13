@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
 /***************************************************************************
- *   Copyright (c) 2022 Werner Mayer <wmayer[at]users.sourceforge.net>     *
+ *   Copyright (c) 2007 Werner Mayer <wmayer[at]users.sourceforge.net>     *
  *                                                                         *
  *   This file is part of the FreeCAD CAx development system.              *
  *                                                                         *
@@ -24,36 +24,78 @@
 
 #pragma once
 
-#include <Mod/Part/App/ImportExportSettingsBase.h>
+#include <TopoDS_Face.hxx>
+#include <TopoDS_Shape.hxx>
+
+#include <Mod/Part/PartGlobal.h>
 
 namespace Part
 {
-namespace STEP
+
+/** Shared geometry construction of the Part and PartDesign primitives.
+ *
+ * The helpers only build the shape. Validation of the input values and the
+ * module specific error handling stay in the calling feature.
+ */
+namespace PrimitiveShapes
 {
 
-class PartExport ImportExportSettings: public ImportExportSettingsBase
-{
-public:
-    ImportExportSettings();
+PartExport TopoDS_Shape makeSphere(double radius, double angle1, double angle2, double angle3);
 
-    void setVisibleExportDialog(bool);
-    bool isVisibleExportDialog() const;
+PartExport TopoDS_Shape makeEllipsoid(
+    double radius1,
+    double radius2,
+    double radius3,
+    double angle1,
+    double angle2,
+    double angle3
+);
 
-    void setVisibleImportDialog(bool);
-    bool isVisibleImportDialog() const;
+PartExport TopoDS_Shape makeCylinder(
+    double radius,
+    double height,
+    double angle,
+    double firstAngle,
+    double secondAngle
+);
 
-    void setWriteSurfaceCurveMode(bool);
-    bool getWriteSurfaceCurveMode() const;
+PartExport TopoDS_Shape makeCone(double radius1, double radius2, double height, double angle);
 
-    std::string getScheme() const;
-    void setScheme(const char*);
+PartExport TopoDS_Shape makeTorus(
+    double radius1,
+    double radius2,
+    double angle1,
+    double angle2,
+    double angle3
+);
 
-private:
-    void applyUnit(Interface::Unit) override;
+PartExport TopoDS_Shape makePrism(
+    long polygon,
+    double circumradius,
+    double height,
+    double firstAngle,
+    double secondAngle
+);
 
-    std::string defaultProductName() const override;
-    void applyProductName(const char*) override;
-};
+PartExport TopoDS_Shape makeWedge(
+    double xmin,
+    double ymin,
+    double zmin,
+    double z2min,
+    double x2min,
+    double xmax,
+    double ymax,
+    double zmax,
+    double z2max,
+    double x2max
+);
 
-}  // namespace STEP
+PartExport TopoDS_Shape extrudePrism(
+    const TopoDS_Face& face,
+    double height,
+    double firstAngle,
+    double secondAngle
+);
+
+}  // namespace PrimitiveShapes
 }  // namespace Part
