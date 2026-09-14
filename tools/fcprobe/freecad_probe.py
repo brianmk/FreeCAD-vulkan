@@ -298,9 +298,9 @@ def check_preferences(events: Iterable[dict[str, Any]],
     """Assert the Vulkan display prefs were read AND rendered.
 
     Code path: the ``applyVulkanSettings`` breadcrumb must have recorded the
-    edges/points transitions.  Render: with the overlay on, at least one frame
-    must contain enough ``edge_rgb`` pixels; with it off, some frame must have
-    none.  Returns a list of error strings (empty == PASS).
+    wireframe/points transitions.  Render: with the overlay on, at least one
+    frame must contain enough ``edge_rgb`` pixels; with it off, some frame must
+    have none.  Returns a list of error strings (empty == PASS).
     """
     errors: list[str] = []
     evs = list(events)
@@ -309,10 +309,10 @@ def check_preferences(events: Iterable[dict[str, Any]],
               and "applyVulkanSettings" in ev.get("text", "")]
     if not traces:
         errors.append("no applyVulkanSettings breadcrumb (code path never ran)")
-    if expected_edge_on and not any("edges=1" in t for t in traces):
-        errors.append("applyVulkanSettings never recorded edges=1")
-    if any("edges=0" in t for t in traces) is False:
-        errors.append("applyVulkanSettings never recorded edges=0 (baseline)")
+    if expected_edge_on and not any("wireframe=1" in t for t in traces):
+        errors.append("applyVulkanSettings never recorded wireframe=1")
+    if any("wireframe=0" in t for t in traces) is False:
+        errors.append("applyVulkanSettings never recorded wireframe=0 (baseline)")
 
     frames = frame_paths(frames_dir)
     if not frames:
@@ -562,6 +562,7 @@ def run_to_fail(script: str, max_runs: int = 10,
             "exit_code": rep.session.get("exit_code"),
             "signal": signal,
             "errors": list(rep.errors),
+            "report_view_errors": list(rep.session.get("report_view_errors") or ()),
             "artifact_dir": rep.artifact_dir,
         })
         if signal:
@@ -969,12 +970,15 @@ def run_case(
     elif report.verdict not in ("ERROR", "TIMEOUT", "FAIL"):
         report.add_error("no VERDICT PASS line found")
 
-    # -- console error capture (probe exception / FreeCAD error) -----------
+    # -- report-view error capture (probe exception / FreeCAD / Coin) ------
     # The FreeCAD GUI writes probe load/run failures to its console
-    # ("Exception while processing file: ...") and its Base::Console().error
-    # output.  Surface these even when no [VERDICT] line is ever printed.
-    console_errs = _console_errors(lines)
+    # ("Exception while processing file: ..."), its Base::Console().error
+    # output, Coin's own "Coin error in ..." diagnostics and uncaught
+    # exceptions.  Surface these even when no [VERDICT] line is ever printed,
+    # and always highlight them (see _print_report_view_errors).
+    console_errs = _report_view_errors(lines)
     if console_errs:
+        report.session["report_view_errors"] = console_errs
         for e in console_errs:
             report.add_error(e)
         if report.verdict not in ("ERROR", "TIMEOUT"):
@@ -1012,19 +1016,33 @@ def _is_terminal_error(line: str) -> bool:
 def _console_errors(lines: Iterable[str]) -> list[str]:
     """Extract error diagnostics the FreeCAD console writes to stdout/stderr.
 
-    The most common is a probe that failed at load/start: FreeCAD reports
-    ``Exception while processing file: <script>`` (or a Python ``Traceback``).
-    We collect the marker, any indented traceback frames, and the trailing
-    non-indented exception summary, stopping at the first blank line.
+    Two shapes are recognized:
+
+    * a probe that failed at load/start: FreeCAD reports
+      ``Exception while processing file: <script>`` (or a Python ``Traceback``).
+      We collect the marker, any indented traceback frames, and the trailing
+      non-indented exception summary, stopping at the first blank line.
+    * a module/workbench that failed to initialize: FreeCAD's ``Init.py``
+      scripts print ``During initialization the error "<ex>" occurred in
+      <path>``.  That is a standalone one-line diagnostic, collected on its own
+      (a broken import/ABI in a Mod or an addon leaves the app half-loaded even
+      though the probe itself may still print PASS).
+
     (``Base::Console().error`` output also lands here.)
     """
-    markers = ("Exception while processing file:", "Traceback (most recent call last):")
+    trace_markers = ("Exception while processing file:",
+                     "Traceback (most recent call last):")
+    standalone_markers = ("During initialization the error",)
     result: list[str] = []
     collecting = False
     seen_frame = False
     for line in lines:
         s = line.rstrip("\n")
-        if any(m in s for m in markers):
+        if any(m in s for m in standalone_markers):
+            result.append(s)
+            collecting = False
+            continue
+        if any(m in s for m in trace_markers):
             collecting = True
             result.append(s)
             seen_frame = False
@@ -1043,6 +1061,68 @@ def _console_errors(lines: Iterable[str]) -> list[str]:
         else:
             break
     return result
+
+
+# Error-level messages FreeCAD/Coin write straight to the report view.  They
+# bypass the Python ``FreeCAD.Console`` wrapper, so the guest cannot capture
+# them; the host scans the merged stdout for these markers instead.
+_REPORT_VIEW_ERROR_MARKERS = (
+    "Coin error in ",                 # Coin SoDebugError, e.g. removeChild()
+    "CRITICAL - Uncaught exception",  # FreeCAD's uncaught-Python handler
+    "Uncaught exception",
+)
+
+
+def _report_view_errors(lines: Iterable[str]) -> list[str]:
+    """Collect error-level diagnostics shown in FreeCAD's report view.
+
+    Extends :func:`_console_errors` (probe load/exec failures, workbench init
+    errors and their tracebacks) with the messages FreeCAD and Coin write
+    straight to the report view -- notably Coin's ``Coin error in
+    <method>(): ...`` diagnostics and the GUI's ``CRITICAL - Uncaught
+    exception:`` handler.  The harness always highlights these so a probe
+    cannot silently pass while the report view carries errors.
+    """
+    result: list[str] = []
+    for e in _console_errors(lines):
+        if e not in result:
+            result.append(e)
+    for line in lines:
+        s = line.rstrip("\n")
+        if any(m in s for m in _REPORT_VIEW_ERROR_MARKERS) and s not in result:
+            result.append(s)
+    return result
+
+
+def _supports_color() -> bool:
+    """True when ANSI color should be written to stdout."""
+    if os.environ.get("NO_COLOR"):
+        return False
+    try:
+        return bool(sys.stdout.isatty())
+    except Exception:
+        return False
+
+
+def _highlight(text: str) -> str:
+    """Bold-red ``text`` on a color terminal; plain otherwise."""
+    if _supports_color():
+        return f"\033[1;31m{text}\033[0m"
+    return text
+
+
+def _print_report_view_errors(errors: Iterable[str], tag: str = "RUN") -> None:
+    """Print a prominent, highlighted banner for report-view errors.
+
+    Emitted whenever the report view carried error-level messages -- even for
+    an otherwise-passing probe -- so they can never be missed.
+    """
+    errs = [e for e in (errors or ()) if e]
+    if not errs:
+        return
+    print(_highlight(f"[{tag}] !!! REPORT-VIEW ERRORS ({len(errs)}) !!!"))
+    for e in errs:
+        print(_highlight(f"[{tag}] !!! {e}"))
 
 
 def extract_verdict(lines: Iterable[str]) -> str:
@@ -1158,6 +1238,7 @@ def _cli(argv: List[str]) -> int:
             print(f"[RUN] VALIDATION {vuid} count={s['count']} level={lv}{tag}")
         for e in report.errors:
             print(f"[RUN] ERROR {e}")
+        _print_report_view_errors(report.session.get("report_view_errors"), "RUN")
         return 0 if report.verdict == "PASS" else 1
     if args.command == "report":
         return _cli_report(args)
@@ -1196,6 +1277,7 @@ def _cli(argv: List[str]) -> int:
                   f"exit={r['exit_code']}{sig}")
             for e in r["errors"]:
                 print(f"[SOAK]   {e}")
+            _print_report_view_errors(r.get("report_view_errors"), "SOAK")
         print(f"[SOAK] total={result['total_runs']} crashes={result['crashes']} "
               f"ok={result['ok']}")
         return 0 if result["ok"] else 1
@@ -1239,6 +1321,7 @@ def _cli_check(args: Any) -> int:
     print(f"[check] verdict={report.verdict}")
     for e in report.errors:
         print(f"[check] ERROR {e}")
+    _print_report_view_errors(report.session.get("report_view_errors"), "check")
     return 0 if report.verdict == "PASS" else 1
 
 
@@ -1277,6 +1360,7 @@ def _cli_suite(args: Any) -> int:
         print(f"[SUITE]   verdict={report.verdict}")
         for e in report.errors:
             print(f"[SUITE]   ERROR {e}")
+        _print_report_view_errors(report.session.get("report_view_errors"), "SUITE")
         if report.verdict != "PASS":
             failed += 1
     print(f"[SUITE] {len(manifest['cases'])} cases, {failed} failed")
@@ -1317,6 +1401,7 @@ def _print_report(artifact_dir: str) -> None:
         print(f"[report] frames={len(sess['frame_hashes'])}")
     for e in data.get("errors", []):
         print(f"[report] ERROR {e}")
+    _print_report_view_errors(sess.get("report_view_errors"), "report")
 
 
 # ---------------------------------------------------------------------------

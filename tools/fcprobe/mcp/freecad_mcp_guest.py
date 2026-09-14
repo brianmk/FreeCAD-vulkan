@@ -199,6 +199,105 @@ def log(params: Dict[str, Any]) -> Dict[str, Any]:
     return {"level": level, "message": msg.rstrip("\n")}
 
 
+# ---------------------------------------------------------------------------
+# ReportView dock (GUI only)
+# ---------------------------------------------------------------------------
+# The dock is registered as "Std_ReportView" (MainWindow::setupReportView) but
+# some builds expose it under the title ("Report view"/"ReportView"), so try the
+# known names first, then fall back to any dock whose name/title mentions
+# "report".  The dock's widget is either the ReportView container (a QWidget
+# holding a QTabWidget with the ReportOutput QTextEdit and the PythonConsole
+# QPlainTextEdit) or, in simpler builds, the ReportOutput QTextEdit directly.
+# Because QPlainTextEdit does not derive from QTextEdit, findChild(QTextEdit)
+# unambiguously returns the ReportOutput when the container layout is used.
+_REPORT_DOCK_NAMES = ("Std_ReportView", "Report view", "ReportView", "ReportOutput")
+
+
+def _find_report_dock(mw):
+    from PySide import QtWidgets
+    for name in _REPORT_DOCK_NAMES:
+        dock = mw.findChild(QtWidgets.QDockWidget, name)
+        if dock is not None:
+            return dock
+    for dock in mw.findChildren(QtWidgets.QDockWidget):
+        label = f"{dock.objectName()} {dock.windowTitle()}".lower()
+        if "report" in label:
+            return dock
+    return None
+
+
+def _report_output_widget():
+    """Return (dock, text_edit) for the ReportView's Output tab.  GUI only."""
+    from PySide import QtWidgets
+    import FreeCADGui
+    mw = FreeCADGui.getMainWindow()
+    if mw is None:
+        raise RuntimeError("no main window")
+    dock = _find_report_dock(mw)
+    if dock is None:
+        raise RuntimeError("ReportView dock not found")
+    view = dock.widget()
+    if isinstance(view, QtWidgets.QTextEdit):
+        edit = view
+    else:
+        edit = view.findChild(QtWidgets.QTextEdit) if view is not None else None
+    if edit is None:
+        raise RuntimeError("ReportOutput text widget not found in ReportView")
+    return dock, edit
+
+
+def get_report_view(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Read the text shown in the ReportView's Output tab (GUI only).
+
+    `limit` = max lines (0/absent = all), `tail=True` (default) returns the most
+    recent lines.  This is the *widget* contents (what the user sees), which is
+    distinct from `get_log`'s fd-level capture of the process stream.
+    """
+    if not _is_gui():
+        return {"gui_available": False, "text": "", "lines": 0, "total_lines": 0,
+                "visible": False, "error": "ReportView requires the FreeCAD GUI"}
+    dock, edit = _report_output_widget()
+    all_lines = edit.toPlainText().splitlines()
+    limit = int(params.get("limit", 0) or 0)
+    tail = bool(params.get("tail", True))
+    if limit > 0:
+        lines = all_lines[-limit:] if tail else all_lines[:limit]
+    else:
+        lines = all_lines
+    return {"text": "\n".join(lines), "lines": len(lines),
+            "total_lines": len(all_lines), "visible": dock.isVisible(),
+            "gui_available": True}
+
+
+def clear_report_view(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Clear the ReportView's Output tab (GUI only)."""
+    if not _is_gui():
+        return {"cleared": False, "gui_available": False,
+                "error": "ReportView requires the FreeCAD GUI"}
+    _, edit = _report_output_widget()
+    edit.clear()
+    return {"cleared": True, "gui_available": True}
+
+
+def show_report_view(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Show/hide the ReportView dock.  `visible` bool (default True) also raises
+    the dock and brings its Output tab to the front.  GUI only."""
+    if not _is_gui():
+        return {"visible": False, "gui_available": False,
+                "error": "ReportView requires the FreeCAD GUI"}
+    from PySide import QtWidgets
+    dock, edit = _report_output_widget()
+    visible = bool(params.get("visible", True))
+    dock.setVisible(visible)
+    if visible:
+        dock.raise_()
+        view = dock.widget()
+        tabs = view.findChild(QtWidgets.QTabWidget) if view is not None else None
+        if tabs is not None:
+            tabs.setCurrentWidget(edit)
+    return {"visible": dock.isVisible(), "gui_available": True}
+
+
 def _app_modules():
     """Late import of the FreeCAD App-side modules (work in GUI and FreeCADCmd)."""
     import FreeCAD as App
@@ -1993,6 +2092,10 @@ HANDLERS: Dict[str, Callable[[Dict[str, Any]], Any]] = {
     "get_log": get_log,
     "clear_log": clear_log,
     "log": log,
+    # report view (GUI widget contents)
+    "get_report_view": get_report_view,
+    "clear_report_view": clear_report_view,
+    "show_report_view": show_report_view,
     # placement
     "get_placement": get_placement,
     "set_placement": set_placement,
@@ -2167,10 +2270,36 @@ def _is_gui() -> bool:
         return False
 
 
+def _install_sigint_handler() -> None:
+    """Make Ctrl+C terminate the FreeCAD process.
+
+    The embedded interpreter installs Python's ``default_int_handler``, which
+    only raises ``KeyboardInterrupt`` at the next Python bytecode boundary.
+    FreeCAD's main loop is C++ Qt, and PySide prints and then swallows an
+    exception raised inside a slot, so a terminal Ctrl+C is silently ignored
+    and the process keeps running (the drain-timer traceback is exactly that
+    swallowed KeyboardInterrupt).  Restore the OS default behaviour --
+    terminate -- so the harness can always be stopped from the keyboard.
+
+    Must run on the main thread; if that fails (or signals are unavailable)
+    the interpreter default is left in place.
+    """
+    import signal
+
+    def _on_sigint(signum, _frame):  # noqa: ARG001
+        os._exit(128 + signum)
+
+    try:
+        signal.signal(signal.SIGINT, _on_sigint)
+    except (ValueError, OSError):
+        pass
+
+
 def run_guest() -> None:
     """Open the socket, serve until killed.  Called at module import (FreeCAD
     executes this script as top-level code)."""
     install_output_capture()
+    _install_sigint_handler()
     try:
         os.unlink(SOCKET_PATH)
     except OSError:
@@ -2188,7 +2317,9 @@ def run_guest() -> None:
         try:
             _drain_headless()
         except KeyboardInterrupt:
-            pass
+            # No SIGINT handler (e.g. signal.signal unavailable): die instead
+            # of looping forever on a Ctrl+C that can never be serviced.
+            os._exit(130)
 
 
 if "FreeCAD" in sys.modules:

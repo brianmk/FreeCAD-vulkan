@@ -209,6 +209,83 @@ check("console marker", any("Exception while processing file" in e for e in ce))
 check("console traceback frame", any("ModuleNotFoundError" in e for e in ce))
 check("console stops after blank", len(ce) < 5)
 
+# --- console error capture (module/workbench init failure) ---
+init_lines = [
+    'During initialization the error "/path/_coin.so: undefined symbol: '
+    'foo" occurred in /path/Mod/sheetmetal/InitGui.py\n',
+    "some later line\n",
+]
+cei = fp._console_errors(init_lines)
+check("init error captured", any("During initialization the error" in e for e in cei))
+check("init error one line", len(cei) == 1)
+
+# --- report-view error capture (Coin diagnostics + uncaught exceptions) ---
+rv_lines = [
+    "Coin error in SoGroup::removeChild(): tried to remove non-existent "
+    "child 0x1 (Switch)\n",
+    "CRITICAL - Uncaught exception:\n",
+    "  File \"/x/y.py\", line 1, in f\n",
+    "    boom()\n",
+    "RuntimeError: deleted object\n",
+    "\n",
+    "normal line\n",
+]
+rve = fp._report_view_errors(rv_lines)
+check("report-view coin error captured", any("Coin error in" in e for e in rve))
+check("report-view uncaught captured",
+      any("CRITICAL - Uncaught exception" in e for e in rve))
+check("report-view no false positive", all("normal line" not in e for e in rve))
+check("report-view includes console errors",
+      fp._report_view_errors(console_lines)[0] in rve or
+      any("Exception while processing file" in e
+          for e in fp._report_view_errors(console_lines)))
+
+# --- report-view highlight (ANSI only on a color terminal) ---
+class _FakeTty:
+    def isatty(self):
+        return True
+
+    def write(self, _s):
+        pass
+
+    def flush(self):
+        pass
+
+os.environ.pop("NO_COLOR", None)
+_real_stdout = sys.stdout
+sys.stdout = _FakeTty()
+try:
+    hl = fp._highlight("boom")
+finally:
+    sys.stdout = _real_stdout
+check("highlight ANSI on tty", "\033[1;31m" in hl and hl.endswith("\033[0m"))
+os.environ["NO_COLOR"] = "1"
+try:
+    hl2 = fp._highlight("boom")
+finally:
+    os.environ.pop("NO_COLOR", None)
+check("highlight plain with NO_COLOR", hl2 == "boom")
+
+# a stub that prints a Coin error but still says PASS -> run_case must FAIL it
+# and record the report-view error.
+stubrv = "/tmp/opencode/_fc_stub_reportview.py"
+with open(stubrv, "w") as f:
+    f.write(
+        "import sys\n"
+        "print('Coin error in SoGroup::removeChild(): tried to remove "
+        "non-existent child 0x1 (Switch)')\n"
+        "print('[VERDICT] SAMPLE PASS')\n"
+        "sys.exit(0)\n"
+    )
+rvrep = fp.run_case(stubrv, binary="/usr/bin/python3", profile="vulkan",
+                    out_dir="/tmp/opencode/runs", report_name="reportview")
+check("report-view error -> FAIL", rvrep.verdict == "FAIL")
+check("report-view error stored",
+      any("Coin error in" in e
+          for e in rvrep.session.get("report_view_errors", [])))
+check("report-view error in report.errors",
+      any("Coin error in" in e for e in rvrep.errors))
+
 # a real-ish stub that throws -> run_case surfaces the exception as an error
 stubexc = "/tmp/opencode/_fc_stub_exc.py"
 with open(stubexc, "w") as f:
@@ -253,12 +330,12 @@ check("probe-die run actually ends fast", hangrep.verdict in ("FAIL", "ERROR"))
 
 # --- new: [VK-SET]/[OVL]/[PUSH]/[UBO] events + color-pixel counting ----
 evs = list(fp.iter_events([
-    "[VK-SET] pushSettings edges=1 points=0 edgeColor=(1.00,0.00,0.00,1.00)\n",
+    "[VK-SET] pushSettings raster=0 wireframe=1 points=0 edgeColor=(1.00,0.00,0.00,1.00)\n",
     "[OVL] wireframe=1 points=0 fillMode=1 edgeColor=(1.00,0.00,0.00,1.00)\n",
     "[PUSH] srcDiffuse=1 override=1 fillModeOverride=1\n",
     "[UBO] lighting=1 material=1\n",
 ]))
-check("parse VK-SET", any(e["source"] == "VK-SET" and e["fields"].get("edges") == "1"
+check("parse VK-SET", any(e["source"] == "VK-SET" and e["fields"].get("wireframe") == "1"
                           for e in evs))
 check("parse OVL/PUSH/UBO", {e["source"] for e in evs} >= {"OVL", "PUSH", "UBO"})
 vks = fp.extract_vksett(evs)
@@ -305,16 +382,16 @@ for x in range(3, 6):
         redim.putpixel((x, y), (255, 0, 0))
 redim.save(f"{fdir}/frame_3.png")                                    # edges on -> red
 evs2 = [
-    {"source": "VK-TRACE", "text": "View3DInventorViewer::applyVulkanSettings edges=0 points=0"},
-    {"source": "VK-TRACE", "text": "View3DInventorViewer::applyVulkanSettings edges=1 points=1"},
-    {"source": "HARNESS", "kind": "frame_phase", "fields": {"phase": "edges"}},
+    {"source": "VK-TRACE", "text": "View3DInventorViewer::applyVulkanSettings wireframe=0 points=0"},
+    {"source": "VK-TRACE", "text": "View3DInventorViewer::applyVulkanSettings wireframe=1 points=1"},
+    {"source": "HARNESS", "kind": "frame_phase", "fields": {"phase": "wireframe"}},
 ]
 check("check_preferences PASS", fp.check_preferences(evs2, fdir, min_px=3) == [])
 # baseline frame exists (frame_1 has no red) and edges frame has red -> pass
 check("check_preferences baseline present", "no frame with 0 edge pixels" not in fp.check_preferences(evs2, fdir))
-# a run where applyVulkanSettings never saw edges=1 -> error
-errs = fp.check_preferences([{"source": "VK-TRACE", "text": "applyVulkanSettings edges=0 points=0"}], fdir)
-check("check_preferences missing edges=1", any("edges=1" in e for e in errs))
+# a run where applyVulkanSettings never saw wireframe=1 -> error
+errs = fp.check_preferences([{"source": "VK-TRACE", "text": "applyVulkanSettings wireframe=0 points=0"}], fdir)
+check("check_preferences missing wireframe=1", any("wireframe=1" in e for e in errs))
 # a run targeting a color that is never rendered -> error
 novis = fp.check_preferences(evs2, fdir, min_px=3, edge_rgb=(0, 255, 0))
 check("check_preferences detects missing render",
