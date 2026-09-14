@@ -41,7 +41,7 @@ VulkanViewSettings::load(const ParameterGrp::handle & hGrp)
         static_cast<int>(hGrp->GetInt("VulkanPathTracingMaxSamples", 256)),
         1, 4096);
     // Denoiser backend, stored as the combo index (0=RTX, 1=OIDN, 2=FSR,
-    // 3=None); map to the backend name the RT renderer expects.
+    // 3=None, 4=DLSS-RR); map to the backend name the RT renderer expects.
     switch (hGrp->GetInt("VulkanPathTracingDenoiser", 0)) {
         case 1:
             this->pathTracingDenoiser = "oidn";
@@ -51,6 +51,9 @@ VulkanViewSettings::load(const ParameterGrp::handle & hGrp)
             break;
         case 3:
             this->pathTracingDenoiser = "none";
+            break;
+        case 4:
+            this->pathTracingDenoiser = "dlssrr";
             break;
         default:
             this->pathTracingDenoiser = "rtx";
