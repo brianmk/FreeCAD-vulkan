@@ -59,25 +59,6 @@ else:
 BuildingTypes = ArchCommands.BuildingTypes
 
 
-def makeBuilding(objectslist=None, name=None):
-    """Obsolete, superseded by ArchBuildingPart.makeBuilding.
-
-    makeBuilding([objectslist],[name]): creates a building including the
-    objects from the given list."""
-
-    if not FreeCAD.ActiveDocument:
-        FreeCAD.Console.PrintError("No active document. Aborting\n")
-        return
-    obj = FreeCAD.ActiveDocument.addObject("App::DocumentObjectGroupPython", "Building")
-    obj.Label = name if name else translate("Arch", "Building")
-    _Building(obj)
-    if FreeCAD.GuiUp:
-        _ViewProviderBuilding(obj.ViewObject)
-    if objectslist:
-        obj.Group = objectslist
-    return obj
-
-
 class _CommandBuilding:
     "the Arch Building command definition"
 

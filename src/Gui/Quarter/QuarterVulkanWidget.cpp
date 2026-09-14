@@ -106,35 +106,38 @@ static bool vulkanPersistentResourcesEnabled()
     return enabled;
 }
 
-static void vkLog(const char * fmt, ...)
+enum class VkLogLevel {
+    Log,
+    Warning,
+    Error
+};
+
+// Single formatting/emission path for the three Vulkan log severities.  The
+// only difference between them is the Base::Console() channel, so the
+// va_list formatting and the "[Vulkan] " tag live here once.
+static void vkMessage(VkLogLevel level, const char * fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
     char buf[1024];
     std::vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
-    Base::Console().log("%s%s\n", VK_TAG, buf);
+    switch (level) {
+        case VkLogLevel::Log:
+            Base::Console().log("%s%s\n", VK_TAG, buf);
+            break;
+        case VkLogLevel::Warning:
+            Base::Console().warning("%s%s\n", VK_TAG, buf);
+            break;
+        case VkLogLevel::Error:
+            Base::Console().error("%s%s\n", VK_TAG, buf);
+            break;
+    }
 }
 
-static void vkWarn(const char * fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-    char buf[1024];
-    std::vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
-    Base::Console().warning("%s%s\n", VK_TAG, buf);
-}
-
-static void vkErr(const char * fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-    char buf[1024];
-    std::vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
-    Base::Console().error("%s%s\n", VK_TAG, buf);
-}
+#define vkLog(...) vkMessage(VkLogLevel::Log, __VA_ARGS__)
+#define vkWarn(...) vkMessage(VkLogLevel::Warning, __VA_ARGS__)
+#define vkErr(...) vkMessage(VkLogLevel::Error, __VA_ARGS__)
 
 // Format a VkPhysicalDevice API/driver version (VK_MAKE_API_VERSION layout).
 static QByteArray vkVersionStr(uint32_t v)

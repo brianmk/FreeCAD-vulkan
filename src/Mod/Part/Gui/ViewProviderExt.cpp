@@ -1249,11 +1249,6 @@ struct CoinGeometryData {
     std::vector<int32_t> lineIndices;
     std::vector<int> edgeMapping;
     int nodeStartIndex = 0;
-    int numFaces = 0;
-    int numEdges = 0;
-    int numNodes = 0;
-    int numTriangles = 0;
-    int numLines = 0;
     bool empty = false;
 };
 
@@ -1290,7 +1285,7 @@ static PartGui::CoinGeometryData computeCoinGeometry(
     // book keeping
     [[maybe_unused]]
     int numTriangles = 0,
-        numNodes = 0, numNorms = 0, numFaces = 0, numEdges = 0, numLines = 0;
+        numNodes = 0, numNorms = 0, numFaces = 0, numEdges = 0;
 
     std::set<int> faceEdges;
 
@@ -1891,15 +1886,8 @@ static PartGui::CoinGeometryData computeCoinGeometry(
     }
     data.edgeMapping = std::move(lineToEdge);
 
-    // preset the index vector size
-    numLines = lineSetCoords.size();
     data.lineIndices = std::move(lineSetCoords);
 
-    data.numFaces = numFaces;
-    data.numEdges = numEdges;
-    data.numNodes = numNodes;
-    data.numTriangles = numTriangles;
-    data.numLines = numLines;
     return data;
 }
 
