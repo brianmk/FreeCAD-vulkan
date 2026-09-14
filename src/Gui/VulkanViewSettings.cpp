@@ -24,9 +24,16 @@ VulkanViewSettings::load(const ParameterGrp::handle & hGrp)
 
     this->wireframe = hGrp->GetBool("VulkanWireframe", false);
     this->showPoints = hGrp->GetBool("VulkanShowPoints", false);
-    // Colors are stored as Unsigned (0xAABBGGRR) to survive INT_MAX; the
+    // Colors are stored as Unsigned (0xRRGGBBAA) to survive INT_MAX; the
     // alpha is pinned to 1 (the edge overlay is opaque).
-    const unsigned long color = hGrp->GetUnsigned("VulkanEdgeColor", 0x050505FFUL);
+    //
+    // The edge overlay draws every edge with a single uniform color, so unless
+    // VulkanEdgeColor is set it defaults to the Coin/OpenGL default shape line
+    // color (DefaultShapeLineColor), keeping the two viewports' edge color the
+    // same out of the box.
+    const unsigned long glEdgeColor =
+        hGrp->GetUnsigned("DefaultShapeLineColor", 255UL);
+    const unsigned long color = hGrp->GetUnsigned("VulkanEdgeColor", glEdgeColor);
     this->edgeColor = SbColor4f(
         static_cast<float>((color >> 24) & 0xff) / 255.0f,
         static_cast<float>((color >> 16) & 0xff) / 255.0f,
