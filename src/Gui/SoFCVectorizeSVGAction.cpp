@@ -30,123 +30,10 @@
 #include <Base/FileInfo.h>
 
 #include "SoFCVectorizeSVGAction.h"
+#include "SoVectorizeItem.h"
 
 
 using namespace Gui;
-
-class SoVectorizeItem
-{
-public:
-    SoVectorizeItem()
-    {
-        this->type = UNDEFINED;
-        this->depth = 0.0f;
-    }
-    // quick and easy type system
-    enum Type
-    {
-        UNDEFINED,
-        LINE,
-        TRIANGLE,
-        TEXT,
-        POINT,
-        IMAGE
-    };
-    int type;
-    float depth;  // for depth sorting
-};
-
-class SoVectorizePoint: public SoVectorizeItem
-{
-public:
-    SoVectorizePoint()
-    {
-        this->type = POINT;
-        this->vidx = 0;
-        this->size = 1.0f;
-        this->col = 0;
-    }
-    int vidx;    // index to BSPtree coordinate
-    float size;  // Coin size (pixels)
-    uint32_t col;
-};
-
-class SoVectorizeTriangle: public SoVectorizeItem
-{
-public:
-    SoVectorizeTriangle()
-    {
-        this->type = TRIANGLE;
-    }
-    int vidx[3];  // indices to BSPtree coordinates
-    uint32_t col[3];
-};
-
-class SoVectorizeLine: public SoVectorizeItem
-{
-public:
-    SoVectorizeLine()
-    {
-        this->type = LINE;
-        vidx[0] = 0;
-        vidx[1] = 0;
-        col[0] = 0;
-        col[1] = 0;
-        this->pattern = 0xffff;
-        this->width = 1.0f;
-    }
-    int vidx[2];  // indices to BSPtree coordinates
-    uint32_t col[2];
-    uint16_t pattern;  // Coin line pattern
-    float width;       // Coin line width (pixels)
-};
-
-class SoVectorizeText: public SoVectorizeItem
-{
-public:
-    SoVectorizeText()
-    {
-        this->type = TEXT;
-        this->fontsize = 10;
-        this->col = 0;
-        this->justification = LEFT;
-    }
-
-    enum Justification
-    {
-        LEFT,
-        RIGHT,
-        CENTER
-    };
-
-    SbName fontname;
-    float fontsize;  // size in normalized coordinates
-    SbString string;
-    SbVec2f pos;  // pos in normalized coordinates
-    uint32_t col;
-    Justification justification;
-};
-
-class SoVectorizeImage: public SoVectorizeItem
-{
-public:
-    SoVectorizeImage()
-    {
-        this->type = IMAGE;
-        this->image.data = nullptr;
-        this->image.nc = 0;
-    }
-
-    SbVec2f pos;   // pos in normalized coordinates
-    SbVec2f size;  // size in normalized coordinates
-
-    struct Image
-    {
-        const unsigned char* data;
-        SbVec2s size;
-        int nc;
-    } image;
-};
 
 // ----------------------------------------------------------------
 
@@ -223,21 +110,18 @@ void SoFCVectorizeSVGActionP::printText(const SoVectorizeText* item) const
 
 void SoFCVectorizeSVGActionP::printTriangle(const SoVectorizeTriangle* item) const
 {
-    SbVec2f mul = publ->getRotatedViewportSize();
-    SbVec2f add = publ->getRotatedViewportStartpos();
-
-    const SbBSPTree& bsp = publ->getBSPTree();
-
     SbVec3f v[3];
     SbColor c[3];
-    float t[3];
-
-    for (int i = 0; i < 3; i++) {
-        v[i] = bsp.getPoint(item->vidx[i]);
-        v[i][0] = (v[i][0] * mul[0]) + add[0];
-        v[i][1] = ((1.0f - v[i][1]) * mul[1]) + add[1];
-        c[i].setPackedValue(item->col[i], t[i]);
-    }
+    getVectorizeCoords(
+        publ->getRotatedViewportSize(),
+        publ->getRotatedViewportStartpos(),
+        publ->getBSPTree(),
+        item->vidx,
+        item->col,
+        3,
+        v,
+        c
+    );
     this->printTriangle((SbVec3f*)v, (SbColor*)c);
 }
 /* TODO: Support gradients, e.g.
@@ -342,21 +226,18 @@ void SoFCVectorizeSVGActionP::printSquare(const SbVec3f& v, const SbColor& c, co
 
 void SoFCVectorizeSVGActionP::printLine(const SoVectorizeLine* item) const
 {
-    SbVec2f mul = publ->getRotatedViewportSize();
-    SbVec2f add = publ->getRotatedViewportStartpos();
-
-    const SbBSPTree& bsp = publ->getBSPTree();
-
     SbVec3f v[2];
     SbColor c[2];
-    float t[2];
-
-    for (int i = 0; i < 2; i++) {
-        v[i] = bsp.getPoint(item->vidx[i]);
-        v[i][0] = (v[i][0] * mul[0]) + add[0];
-        v[i][1] = ((1.0f - v[i][1]) * mul[1]) + add[1];
-        c[i].setPackedValue(item->col[i], t[i]);
-    }
+    getVectorizeCoords(
+        publ->getRotatedViewportSize(),
+        publ->getRotatedViewportStartpos(),
+        publ->getBSPTree(),
+        item->vidx,
+        item->col,
+        2,
+        v,
+        c
+    );
     uint32_t cc = c[0].getPackedValue();
 
     std::ostream& str = publ->getSVGOutput()->getFileStream();
@@ -475,24 +356,5 @@ void SoFCVectorizeSVGAction::printBackground() const
 
 void SoFCVectorizeSVGAction::printItem(const SoVectorizeItem* item) const
 {
-    switch (item->type) {
-        case SoVectorizeItem::TRIANGLE:
-            this->p->printTriangle(static_cast<const SoVectorizeTriangle*>(item));
-            break;
-        case SoVectorizeItem::LINE:
-            this->p->printLine(static_cast<const SoVectorizeLine*>(item));
-            break;
-        case SoVectorizeItem::POINT:
-            this->p->printPoint(static_cast<const SoVectorizePoint*>(item));
-            break;
-        case SoVectorizeItem::TEXT:
-            this->p->printText(static_cast<const SoVectorizeText*>(item));
-            break;
-        case SoVectorizeItem::IMAGE:
-            this->p->printImage(static_cast<const SoVectorizeImage*>(item));
-            break;
-        default:
-            assert(0 && "unsupported item");
-            break;
-    }
+    printVectorizeItem(this->p, item);
 }
