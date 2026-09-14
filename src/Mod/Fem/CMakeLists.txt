@@ -199,6 +199,7 @@ SET(FemMesh_SRCS
 SET(FemObjects_SRCS
     femobjects/__init__.py
     femobjects/base_femelement.py
+    femobjects/base_femflowvelocity.py
     femobjects/base_femmeshelement.py
     femobjects/base_fempythonobject.py
     femobjects/constant_vacuumpermittivity.py
@@ -692,6 +693,7 @@ SET(FemGuiObjects_SRCS
 SET(FemGuiTaskPanels_SRCS
     femtaskpanels/__init__.py
     femtaskpanels/base_femtaskpanel.py
+    femtaskpanels/base_femflowvelocitytaskpanel.py
     femtaskpanels/base_femlogtaskpanel.py
     femtaskpanels/base_fempostpanel.py
     femtaskpanels/base_fempreviewpanel.py

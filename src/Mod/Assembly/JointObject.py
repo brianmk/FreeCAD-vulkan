@@ -40,7 +40,7 @@ __url__ = "https://www.freecad.org"
 
 from pivy import coin
 import UtilsAssembly
-import Preferences
+import AssemblyPreferences
 
 from SoSwitchMarker import SoSwitchMarker
 
@@ -144,7 +144,7 @@ JointParallelForbidden = [
 
 
 def solveIfAllowed(assembly, storePrev=False):
-    if assembly.Type == "Assembly" and Preferences.preferences().GetBool(
+    if assembly.Type == "Assembly" and AssemblyPreferences.preferences().GetBool(
         "SolveInJointCreation", True
     ):
         assembly.solve(storePrev)
@@ -1516,7 +1516,7 @@ class ViewProviderGroundedJoint:
 
         self.scaleFactor = 3.0
 
-        lockpadColorInt = Preferences.preferences().GetUnsigned("AssemblyConstraints", 0xCC333300)
+        lockpadColorInt = AssemblyPreferences.preferences().GetUnsigned("AssemblyConstraints", 0xCC333300)
         self.lockpadColor = coin.SoBaseColor()
         self.lockpadColor.rgb.setValue(UtilsAssembly.color_from_unsigned(lockpadColorInt))
 

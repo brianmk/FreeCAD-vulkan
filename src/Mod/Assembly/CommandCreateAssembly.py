@@ -30,7 +30,7 @@ if App.GuiUp:
     from PySide import QtCore, QtGui, QtWidgets
 
 import UtilsAssembly
-import Preferences
+import AssemblyPreferences
 
 translate = App.Qt.translate
 
@@ -59,7 +59,7 @@ class CommandCreateAssembly:
         if Gui.Control.activeDialog():
             return False
 
-        if Preferences.preferences().GetBool("EnforceOneAssemblyRule", True):
+        if AssemblyPreferences.preferences().GetBool("EnforceOneAssemblyRule", True):
             activeAssembly = UtilsAssembly.activeAssembly()
 
             if UtilsAssembly.isThereOneRootAssembly() and not activeAssembly:

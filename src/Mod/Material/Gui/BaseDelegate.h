@@ -74,6 +74,9 @@ protected:
     QString getStringValue(const QModelIndex& index) const;
     Color parseColor(const QString& color) const;
 
+    void paintValue(QPainter* painter,
+                    const QStyleOptionViewItem& option,
+                    const QModelIndex& index) const;
     void paintQuantity(QPainter* painter,
                        const QStyleOptionViewItem& option,
                        const QModelIndex& index) const;
@@ -96,7 +99,8 @@ protected:
                     const QModelIndex& index) const;
 
     virtual bool newRow(const QAbstractItemModel* model, const QModelIndex& index) const;
-    QWidget* createWidget(QWidget* parent, const QVariant& item, const QModelIndex& index) const;
+    virtual QWidget*
+    createWidget(QWidget* parent, const QVariant& item, const QModelIndex& index) const;
 };
 
 }  // namespace MatGui

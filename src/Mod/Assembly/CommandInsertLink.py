@@ -33,7 +33,7 @@ if App.GuiUp:
     from PySide.QtGui import QIcon
 
 import UtilsAssembly
-import Preferences
+import AssemblyPreferences
 import CommandCreateJoint
 
 __title__ = "Assembly Command Insert Component"
@@ -116,7 +116,7 @@ class TaskAssemblyInsertLink(QtCore.QObject):
         self.form.installEventFilter(self)
         self.form.partList.installEventFilter(self)
 
-        pref = Preferences.preferences()
+        pref = AssemblyPreferences.preferences()
         self.form.CheckBox_ShowOnlyParts.setChecked(pref.GetBool("InsertShowOnlyParts", False))
         self.form.CheckBox_RigidSubAsm.setChecked(pref.GetBool("InsertRigidSubAssemblies", True))
 
@@ -197,7 +197,7 @@ class TaskAssemblyInsertLink(QtCore.QObject):
             App.removeDocumentObserver(self.docObserver)
             self.docObserver = None
 
-        pref = Preferences.preferences()
+        pref = AssemblyPreferences.preferences()
         pref.SetBool("InsertShowOnlyParts", self.form.CheckBox_ShowOnlyParts.isChecked())
         pref.SetBool("InsertRigidSubAssemblies", self.form.CheckBox_RigidSubAsm.isChecked())
         Gui.Selection.clearSelection()
@@ -466,7 +466,7 @@ class TaskAssemblyInsertLink(QtCore.QObject):
             self.handleFirstInsertion()
 
     def handleFirstInsertion(self):
-        pref = Preferences.preferences()
+        pref = AssemblyPreferences.preferences()
         fixPart = False
         fixPartPref = pref.GetInt("GroundFirstPart", 0)
         if fixPartPref == 0:  # unset

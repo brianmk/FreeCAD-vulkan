@@ -1036,7 +1036,26 @@ void Document::slotNewObject(const App::DocumentObject& Obj)
             // if successfully created set the right name and calculate the view
             // FIXME: Consider to change argument of attach() to const pointer
             pcProvider->attach(const_cast<App::DocumentObject*>(&Obj));
-            pcProvider->updateView();
+            // During a document restore the object's properties are still at
+            // their defaults here: readObjects() creates every object first and
+            // only then reads the FeatureData/property values, and each restored
+            // property fires onChanged() -> updateData().  The full updateView()
+            // pass over every property is therefore redundant while restoring
+            // (it is what made opening a many-object document slow), so skip it
+            // and let the property callbacks populate the representation.
+            // attach() has already built the node structure.  Outside a restore
+            // (an object created interactively) updateView() is still required.
+            // FC_GUI_RESTORE_FULL_VIEWUPDATE restores the unconditional call for
+            // A/B validation of the skip.
+            static const bool forceFullUpdate = [] {
+                const char * v = std::getenv("FC_GUI_RESTORE_FULL_VIEWUPDATE");
+                return v != nullptr && std::strcmp(v, "0") != 0
+                    && std::strcmp(v, "false") != 0;
+            }();
+            if (forceFullUpdate
+                || !Obj.getDocument()->testStatus(App::Document::Restoring)) {
+                pcProvider->updateView();
+            }
             pcProvider->setActiveMode();
         }
         catch (const Base::MemoryException& e) {
