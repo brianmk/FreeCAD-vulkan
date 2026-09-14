@@ -406,6 +406,7 @@ SET(PathPythonOp_SRCS
     Path/Op/Slot.py
     Path/Op/Surface.py
     Path/Op/SurfaceSupport.py
+    Path/Op/SurfaceWaterline.py
     Path/Op/Tapping.py
     Path/Op/ThreadMilling.py
     Path/Op/Util.py

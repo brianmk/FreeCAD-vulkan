@@ -99,6 +99,13 @@ for action in fp._build_parser()._actions:
     if isinstance(action, argparse._SubParsersAction):
         _run_sub = action.choices.get("run")
 check("CLI --validation flag present", "--validation" in _run_sub.format_help())
+_subs = {}
+for action in fp._build_parser()._actions:
+    if isinstance(action, argparse._SubParsersAction):
+        _subs = action.choices
+check("preflight flags on run-like subcommands",
+      all("--no-preflight" in _subs[c].format_help()
+          for c in ("run", "matrix", "soak", "suite") if c in _subs))
 
 # --- Tier 2: drawlist hash + frame diff + snapshot ---
 events = [{"source": "VKBE", "text": "[VKBE] line cmd=1"},
@@ -360,6 +367,63 @@ check("user-input command set includes Std_Open",
       "Std_Open" in fp._USER_INPUT_COMMANDS)
 check("dialog timeout default is sane",
       1000 <= fp._cmd_dialog_timeout_ms() <= 60000)
+
+# --- fail-fast pre-flight: harness self-test + probe lint gate --------------
+check("harness_selftest clean", fp.harness_selftest() == [])
+_pf_bad = fp.preflight(_bad, selftest=True, smoke=False)
+check("preflight surfaces probe ERROR",
+      any(lv == "ERROR" for _, lv, _, _ in _pf_bad))
+check("preflight names the probe",
+      any(p == _bad for p, _, _, _ in _pf_bad))
+_pf_clean = fp.preflight(_clean, selftest=True, smoke=False)
+check("preflight clean probe has no ERROR",
+      not any(lv == "ERROR" for _, lv, _, _ in _pf_clean))
+_orig_hst = fp.harness_selftest
+fp.harness_selftest = lambda: [("ERROR", 1, "synthetic harness break")]
+_pf_h = fp.preflight(_clean, selftest=True, smoke=False)
+fp.harness_selftest = _orig_hst
+check("preflight attributes harness findings to the harness",
+      any(p == os.path.abspath(fp.__file__) and lv == "ERROR"
+          for p, lv, _, _ in _pf_h))
+fp.harness_selftest = lambda: [("ERROR", 1, "synthetic harness break")]
+check("preflight gate fails on broken harness",
+      fp._preflight_gate(_clean, smoke=False) is False)
+fp.harness_selftest = _orig_hst
+
+# --- console-error capture + exit-on-error --------------------------------
+check("terminal on [HARNESS] error",
+      fp._is_terminal_error("[HARNESS] error msg=boom\n"))
+check("terminal on load exception",
+      fp._is_terminal_error("Exception while processing file: p.py\n"))
+check("not terminal on ordinary harness record",
+      not fp._is_terminal_error("[HARNESS] expect name=x ok=1\n"))
+_h = fp.parse_event("[HARNESS] error msg=FreeCAD console PrintError: boom here")
+check("harness error keeps message spaces",
+      _h and _h["fields"].get("msg") == "FreeCAD console PrintError: boom here")
+
+# _out writes fd 1 directly (FreeCAD leaves sys.stdout block-buffered, so
+# print(flush=True) would not reach the host until the process exits).
+import subprocess as _sp
+_r = _sp.run([sys.executable, "-c",
+              "import sys; sys.path.insert(0, '/tmp/opencode'); "
+              "import freecad_probe as fp; fp._out('UNBUFFERED-OK')"],
+             capture_output=True, text=True)
+check("_out writes fd 1", _r.stdout.strip() == "UNBUFFERED-OK")
+check("Session has exit_on_error", hasattr(fp.Session, "exit_on_error"))
+check("Session captures console",
+      hasattr(fp.Session, "_install_console_capture")
+      and "PrintError" in fp.Session._CONSOLE_ERROR_METHODS)
+check("preflight skips non-py script",
+      fp.preflight("manifest.json", selftest=True, smoke=False) == [])
+check("preflight no-selftest skips harness",
+      all(p != os.path.abspath(fp.__file__)
+          for p, _, _, _ in fp.preflight(_clean, selftest=False, smoke=False)))
+check("preflight no-lint skips probe",
+      fp.preflight(_bad, selftest=False, smoke=False, lint=False) == [])
+check("preflight gate rejects bad probe",
+      fp._preflight_gate(_bad, smoke=False) is False)
+check("preflight gate accepts clean probe",
+      fp._preflight_gate(_clean, smoke=False) is True)
 
 print("=== RESULT:", "PASS" if PASS else "FAIL", "===")
 sys.exit(0 if PASS else 1)

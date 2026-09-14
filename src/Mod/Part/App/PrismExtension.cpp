@@ -28,6 +28,7 @@
 #include <Base/Tools.h>
 
 #include "PrismExtension.h"
+#include "PrimitiveShapes.h"
 
 
 using namespace Part;
@@ -72,14 +73,10 @@ void PrismExtension::extensionOnChanged(const App::Property* prop)
 
 TopoDS_Shape PrismExtension::makePrism(double height, const TopoDS_Face& face) const
 {
-    // the direction vector for the prism is the height for z and the given angle
-    BRepPrimAPI_MakePrism mkPrism(
+    return PrimitiveShapes::extrudePrism(
         face,
-        gp_Vec(
-            height * tan(Base::toRadians<double>(FirstAngle.getValue())),
-            height * tan(Base::toRadians<double>(SecondAngle.getValue())),
-            height
-        )
+        height,
+        FirstAngle.getValue(),
+        SecondAngle.getValue()
     );
-    return mkPrism.Shape();
 }

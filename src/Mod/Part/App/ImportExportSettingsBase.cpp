@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
 /***************************************************************************
- *   Copyright (c) 2019 Werner Mayer <wmayer[at]users.sourceforge.net>     *
+ *   Copyright (c) 2022 Werner Mayer <wmayer[at]users.sourceforge.net>     *
  *                                                                         *
  *   This file is part of the FreeCAD CAx development system.              *
  *                                                                         *
@@ -22,47 +22,73 @@
  *                                                                         *
  ***************************************************************************/
 
-#pragma once
+#include "ImportExportSettingsBase.h"
 
-#include <memory>
+#include <App/Application.h>
 
-#include <Gui/TaskView/TaskDialog.h>
-#include <Gui/TaskView/TaskView.h>
-#include <Mod/Part/Gui/CrossSectionsBase.h>
 
-namespace MeshPartGui
+using namespace Part;
+
+ImportExportSettingsBase::ImportExportSettingsBase(const char* groupPath)
 {
+    pGroup = App::GetApplication().GetParameterGroupByPath(groupPath);
+}
 
-class Ui_CrossSections;
-
-class CrossSections: public PartGui::CrossSectionsBase
+Interface::Unit ImportExportSettingsBase::getUnit() const
 {
-    Q_OBJECT
+    return static_cast<Interface::Unit>(pGroup->GetInt("Unit", 0));
+}
 
-public:
-    explicit CrossSections(
-        const Base::BoundBox3d& bb,
-        QWidget* parent = nullptr,
-        Qt::WindowFlags fl = Qt::WindowFlags()
-    );
-
-    ~CrossSections() override;
-
-    bool apply() override;
-
-protected:
-    void retranslateUi() override;
-
-private:
-    std::unique_ptr<Ui_CrossSections> ui;
-};
-
-class TaskCrossSections: public PartGui::CrossSectionsTaskDialog
+void ImportExportSettingsBase::setUnit(Interface::Unit unit)
 {
-    Q_OBJECT
+    pGroup->SetInt("Unit", static_cast<long>(unit));
+    applyUnit(unit);
+}
 
-public:
-    explicit TaskCrossSections(const Base::BoundBox3d& bb);
-};
+std::string ImportExportSettingsBase::getCompany() const
+{
+    return pGroup->GetASCII("Company", defaultCompany().c_str());
+}
 
-}  // namespace MeshPartGui
+void ImportExportSettingsBase::setCompany(const char* name)
+{
+    pGroup->SetASCII("Company", name);
+    applyCompany(name);
+}
+
+std::string ImportExportSettingsBase::getAuthor() const
+{
+    return pGroup->GetASCII("Author", defaultAuthor().c_str());
+}
+
+void ImportExportSettingsBase::setAuthor(const char* name)
+{
+    pGroup->SetASCII("Author", name);
+    applyAuthor(name);
+}
+
+std::string ImportExportSettingsBase::getProductName() const
+{
+    return defaultProductName();
+}
+
+void ImportExportSettingsBase::setProductName(const char* name)
+{
+    applyProductName(name);
+}
+
+std::string ImportExportSettingsBase::defaultCompany() const
+{
+    return {};
+}
+
+void ImportExportSettingsBase::applyCompany(const char*)
+{}
+
+std::string ImportExportSettingsBase::defaultAuthor() const
+{
+    return {};
+}
+
+void ImportExportSettingsBase::applyAuthor(const char*)
+{}

@@ -1,7 +1,6 @@
 # ***************************************************************************
 # *   Copyright (c) 2017 Markus Hovorka <m.hovorka@live.de>                 *
 # *   Copyright (c) 2020 Bernd Hahnebach <bernd@bimstatik.org>              *
-# *   Copyright (c) 2023 Uwe Stöhr <uwestoehr@lyx.org>                      *
 # *                                                                         *
 # *   This file is part of the FreeCAD CAx development system.              *
 # *                                                                         *
@@ -23,24 +22,53 @@
 # *                                                                         *
 # ***************************************************************************
 
-__title__ = "FreeCAD FEM constraint flow velocity document object"
-__author__ = "Markus Hovorka, Bernd Hahnebach, Uwe Stöhr"
+__title__ = "FreeCAD FEM flow velocity base document object"
+__author__ = "Markus Hovorka, Bernd Hahnebach"
 __url__ = "https://www.freecad.org"
 
-## @package constraint_flowvelocity
+## @package base_femflowvelocity
 #  \ingroup FEM
-#  \brief constraint flow velocity object
+#  \brief base object for flow velocity constraints
 
-from . import base_femflowvelocity
+from . import base_fempythonobject
 
 
-class ConstraintFlowVelocity(base_femflowvelocity.BaseFemFlowVelocity):
+class BaseFemFlowVelocity(base_fempythonobject.BaseFemPythonObject):
+    """Base object for the flow velocity constraints.
 
-    Type = "Fem::ConstraintFlowVelocity"
+    Adds the per-axis velocity, formula and unspecified properties shared by
+    ``Fem::ConstraintFlowVelocity`` and ``Fem::ConstraintInitialFlowVelocity``.
+    """
 
     def __init__(self, obj):
         super().__init__(obj)
-        obj.addProperty(
-            "App::PropertyBool", "NormalToBoundary", "Parameter", "Flow is in normal direction"
-        )
-        obj.setPropertyStatus("NormalToBoundary", "LockDynamic")
+        for axis in ("X", "Y", "Z"):
+            obj.addProperty(
+                "App::PropertyVelocity",
+                f"Velocity{axis}",
+                "Parameter",
+                f"Velocity in {axis}-direction",
+            )
+            obj.setPropertyStatus(f"Velocity{axis}", "LockDynamic")
+            obj.addProperty(
+                "App::PropertyString",
+                f"Velocity{axis}Formula",
+                "Parameter",
+                f"Velocity formula in {axis}-direction",
+            )
+            obj.setPropertyStatus(f"Velocity{axis}Formula", "LockDynamic")
+            obj.addProperty(
+                "App::PropertyBool",
+                f"Velocity{axis}Unspecified",
+                "Parameter",
+                f"Use velocity in {axis}-direction",
+            )
+            obj.setPropertyStatus(f"Velocity{axis}Unspecified", "LockDynamic")
+            setattr(obj, f"Velocity{axis}Unspecified", True)
+            obj.addProperty(
+                "App::PropertyBool",
+                f"Velocity{axis}HasFormula",
+                "Parameter",
+                f"Use formula for velocity in {axis}-direction",
+            )
+            obj.setPropertyStatus(f"Velocity{axis}HasFormula", "LockDynamic")

@@ -72,13 +72,13 @@ class AssemblyWorkbench(Workbench):
         import CommandCreateSimulation
         import CommandCreateSnapshot
         import CommandCreateBom
-        import Preferences
+        import AssemblyPreferences
 
         FreeCADGui.addLanguagePath(":/translations")
         FreeCADGui.addIconPath(":/icons")
 
         FreeCADGui.addPreferencePage(
-            Preferences.PreferencesPage, QT_TRANSLATE_NOOP("QObject", "Assembly")
+            AssemblyPreferences.PreferencesPage, QT_TRANSLATE_NOOP("QObject", "Assembly")
         )
 
         # build commands list

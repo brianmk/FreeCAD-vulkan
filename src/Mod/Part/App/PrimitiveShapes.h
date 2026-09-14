@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
 /***************************************************************************
- *   Copyright (c) 2019 Werner Mayer <wmayer[at]users.sourceforge.net>     *
+ *   Copyright (c) 2007 Werner Mayer <wmayer[at]users.sourceforge.net>     *
  *                                                                         *
  *   This file is part of the FreeCAD CAx development system.              *
  *                                                                         *
@@ -24,45 +24,78 @@
 
 #pragma once
 
-#include <memory>
+#include <TopoDS_Face.hxx>
+#include <TopoDS_Shape.hxx>
 
-#include <Gui/TaskView/TaskDialog.h>
-#include <Gui/TaskView/TaskView.h>
-#include <Mod/Part/Gui/CrossSectionsBase.h>
+#include <Mod/Part/PartGlobal.h>
 
-namespace MeshPartGui
+namespace Part
 {
 
-class Ui_CrossSections;
-
-class CrossSections: public PartGui::CrossSectionsBase
+/** Shared geometry construction of the Part and PartDesign primitives.
+ *
+ * The helpers only build the shape. Validation of the input values and the
+ * module specific error handling stay in the calling feature.
+ */
+namespace PrimitiveShapes
 {
-    Q_OBJECT
 
-public:
-    explicit CrossSections(
-        const Base::BoundBox3d& bb,
-        QWidget* parent = nullptr,
-        Qt::WindowFlags fl = Qt::WindowFlags()
-    );
+PartExport TopoDS_Shape makeSphere(double radius, double angle1, double angle2, double angle3);
 
-    ~CrossSections() override;
+PartExport TopoDS_Shape makeEllipsoid(
+    double radius1,
+    double radius2,
+    double radius3,
+    double angle1,
+    double angle2,
+    double angle3
+);
 
-    bool apply() override;
+PartExport TopoDS_Shape makeCylinder(
+    double radius,
+    double height,
+    double angle,
+    double firstAngle,
+    double secondAngle
+);
 
-protected:
-    void retranslateUi() override;
+PartExport TopoDS_Shape makeCone(double radius1, double radius2, double height, double angle);
 
-private:
-    std::unique_ptr<Ui_CrossSections> ui;
-};
+PartExport TopoDS_Shape makeTorus(
+    double radius1,
+    double radius2,
+    double angle1,
+    double angle2,
+    double angle3
+);
 
-class TaskCrossSections: public PartGui::CrossSectionsTaskDialog
-{
-    Q_OBJECT
+PartExport TopoDS_Shape makePrism(
+    long polygon,
+    double circumradius,
+    double height,
+    double firstAngle,
+    double secondAngle
+);
 
-public:
-    explicit TaskCrossSections(const Base::BoundBox3d& bb);
-};
+PartExport TopoDS_Shape makeWedge(
+    double xmin,
+    double ymin,
+    double zmin,
+    double z2min,
+    double x2min,
+    double xmax,
+    double ymax,
+    double zmax,
+    double z2max,
+    double x2max
+);
 
-}  // namespace MeshPartGui
+PartExport TopoDS_Shape extrudePrism(
+    const TopoDS_Face& face,
+    double height,
+    double firstAngle,
+    double secondAngle
+);
+
+}  // namespace PrimitiveShapes
+}  // namespace Part

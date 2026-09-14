@@ -315,6 +315,28 @@ def clear_log() -> str:
 
 
 @mcp.tool()
+def get_report_view(limit: int = 0, tail: bool = True) -> str:
+    """Read the FreeCAD ReportView's Output tab (what the GUI shows the user).
+    `limit` = max lines (0 = all); `tail=True` (default) returns the most recent
+    lines. Requires the GUI FreeCAD. This is the widget contents, distinct from
+    `get_log`'s fd-level capture of the process stream."""
+    return _fmt(_call("get_report_view", limit=limit, tail=tail))
+
+
+@mcp.tool()
+def clear_report_view() -> str:
+    """Clear the FreeCAD ReportView's Output tab. Requires the GUI FreeCAD."""
+    return _fmt(_call("clear_report_view"))
+
+
+@mcp.tool()
+def show_report_view(visible: bool = True) -> str:
+    """Show or hide the FreeCAD ReportView dock. `visible=True` (default) shows
+    it, raises it, and brings its Output tab to the front. Requires the GUI."""
+    return _fmt(_call("show_report_view", visible=visible))
+
+
+@mcp.tool()
 def get_placement(name: str) -> str:
     """Return the Placement (base + rotation) of the named object."""
     return _fmt(_call("get_placement", name=name))
