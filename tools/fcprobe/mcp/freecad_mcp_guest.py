@@ -2270,10 +2270,36 @@ def _is_gui() -> bool:
         return False
 
 
+def _install_sigint_handler() -> None:
+    """Make Ctrl+C terminate the FreeCAD process.
+
+    The embedded interpreter installs Python's ``default_int_handler``, which
+    only raises ``KeyboardInterrupt`` at the next Python bytecode boundary.
+    FreeCAD's main loop is C++ Qt, and PySide prints and then swallows an
+    exception raised inside a slot, so a terminal Ctrl+C is silently ignored
+    and the process keeps running (the drain-timer traceback is exactly that
+    swallowed KeyboardInterrupt).  Restore the OS default behaviour --
+    terminate -- so the harness can always be stopped from the keyboard.
+
+    Must run on the main thread; if that fails (or signals are unavailable)
+    the interpreter default is left in place.
+    """
+    import signal
+
+    def _on_sigint(signum, _frame):  # noqa: ARG001
+        os._exit(128 + signum)
+
+    try:
+        signal.signal(signal.SIGINT, _on_sigint)
+    except (ValueError, OSError):
+        pass
+
+
 def run_guest() -> None:
     """Open the socket, serve until killed.  Called at module import (FreeCAD
     executes this script as top-level code)."""
     install_output_capture()
+    _install_sigint_handler()
     try:
         os.unlink(SOCKET_PATH)
     except OSError:
@@ -2291,7 +2317,9 @@ def run_guest() -> None:
         try:
             _drain_headless()
         except KeyboardInterrupt:
-            pass
+            # No SIGINT handler (e.g. signal.signal unavailable): die instead
+            # of looping forever on a Ctrl+C that can never be serviced.
+            os._exit(130)
 
 
 if "FreeCAD" in sys.modules:
