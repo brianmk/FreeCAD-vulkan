@@ -532,6 +532,9 @@ void Part::Tools::getPointNormals(
                 for (thePolyConnect.Initialize(aNodeIter); thePolyConnect.More();
                      thePolyConnect.Next()) {
                     aTriangles(thePolyConnect.Value()).Get(aTri[0], aTri[1], aTri[2]);
+                    if (aTri[0] < 1 || aTri[1] < 1 || aTri[2] < 1) {
+                        continue;  // removed/degenerate triangle (0 node index)
+                    }
                     const gp_XYZ v1(aNodes(aTri[1]).Coord() - aNodes(aTri[0]).Coord());
                     const gp_XYZ v2(aNodes(aTri[2]).Coord() - aNodes(aTri[1]).Coord());
                     const gp_XYZ vv = v1 ^ v2;
@@ -596,6 +599,9 @@ void Part::Tools::getPointNormals(
                 for (thePolyConnect.Initialize(aNodeIter); thePolyConnect.More();
                      thePolyConnect.Next()) {
                     aPolyTri->Triangle(thePolyConnect.Value()).Get(aTri[0], aTri[1], aTri[2]);
+                    if (aTri[0] < 1 || aTri[1] < 1 || aTri[2] < 1) {
+                        continue;  // removed/degenerate triangle (0 node index)
+                    }
                     const gp_XYZ v1(aPolyTri->Node(aTri[1]).Coord() - aPolyTri->Node(aTri[0]).Coord());
                     const gp_XYZ v2(aPolyTri->Node(aTri[2]).Coord() - aPolyTri->Node(aTri[1]).Coord());
                     const gp_XYZ vv = v1 ^ v2;
