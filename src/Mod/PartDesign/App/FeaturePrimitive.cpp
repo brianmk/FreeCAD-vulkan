@@ -45,6 +45,7 @@
 
 #include "FeaturePrimitive.h"
 #include "FeaturePy.h"
+#include "Mod/Part/App/PrimitiveShapes.h"
 #include "Mod/Part/App/TopoShapeOpCode.h"
 
 using namespace PartDesign;
@@ -277,17 +278,13 @@ App::DocumentObjectExecReturn* Cylinder::execute()
         );
     }
     try {
-        BRepPrimAPI_MakeCylinder mkCylr(
+        return FeaturePrimitive::execute(Part::PrimitiveShapes::makeCylinder(
             Radius.getValue(),
             Height.getValue(),
-            Base::toRadians<double>(Angle.getValue())
-        );
-
-        // the direction vector for the prism is the height for z and the given angle
-        BRepPrim_Cylinder prim = mkCylr.Cylinder();
-        TopoDS_Shape result = makePrism(Height.getValue(), prim.BottomFace());
-
-        return FeaturePrimitive::execute(result);
+            Angle.getValue(),
+            FirstAngle.getValue(),
+            SecondAngle.getValue()
+        ));
     }
     catch (Standard_Failure& e) {
         return new App::DocumentObjectExecReturn(e.GetMessageString());
@@ -334,13 +331,12 @@ App::DocumentObjectExecReturn* Sphere::execute()
         );
     }
     try {
-        BRepPrimAPI_MakeSphere mkSphere(
+        return FeaturePrimitive::execute(Part::PrimitiveShapes::makeSphere(
             Radius.getValue(),
-            Base::toRadians<double>(Angle1.getValue()),
-            Base::toRadians<double>(Angle2.getValue()),
-            Base::toRadians<double>(Angle3.getValue())
-        );
-        return FeaturePrimitive::execute(mkSphere.Shape());
+            Angle1.getValue(),
+            Angle2.getValue(),
+            Angle3.getValue()
+        ));
     }
     catch (Standard_Failure& e) {
         return new App::DocumentObjectExecReturn(e.GetMessageString());
@@ -396,23 +392,12 @@ App::DocumentObjectExecReturn* Cone::execute()
         );
     }
     try {
-        if (std::abs(Radius1.getValue() - Radius2.getValue()) < Precision::Confusion()) {
-            // Build a cylinder
-            BRepPrimAPI_MakeCylinder mkCylr(
-                Radius1.getValue(),
-                Height.getValue(),
-                Base::toRadians<double>(Angle.getValue())
-            );
-            return FeaturePrimitive::execute(mkCylr.Shape());
-        }
-        // Build a cone
-        BRepPrimAPI_MakeCone mkCone(
+        return FeaturePrimitive::execute(Part::PrimitiveShapes::makeCone(
             Radius1.getValue(),
             Radius2.getValue(),
             Height.getValue(),
-            Base::toRadians<double>(Angle.getValue())
-        );
-        return FeaturePrimitive::execute(mkCone.Shape());
+            Angle.getValue()
+        ));
     }
     catch (Standard_Failure& e) {
         return new App::DocumentObjectExecReturn(e.GetMessageString());
@@ -482,37 +467,14 @@ App::DocumentObjectExecReturn* Ellipsoid::execute()
     }
 
     try {
-        gp_Pnt pnt(0.0, 0.0, 0.0);
-        gp_Dir dir(0.0, 0.0, 1.0);
-        gp_Ax2 ax2(pnt, dir);
-        BRepPrimAPI_MakeSphere mkSphere(
-            ax2,
+        return FeaturePrimitive::execute(Part::PrimitiveShapes::makeEllipsoid(
+            Radius1.getValue(),
             Radius2.getValue(),
-            Base::toRadians<double>(Angle1.getValue()),
-            Base::toRadians<double>(Angle2.getValue()),
-            Base::toRadians<double>(Angle3.getValue())
-        );
-        Standard_Real scaleX = 1.0;
-        Standard_Real scaleZ = Radius1.getValue() / Radius2.getValue();
-        // issue #1798: A third radius has been introduced. To be backward
-        // compatible if Radius3 is 0.0 (default) it's handled to be the same
-        // as Radius2
-        Standard_Real scaleY = 1.0;
-        if (Radius3.getValue() >= Precision::Confusion()) {
-            scaleY = Radius3.getValue() / Radius2.getValue();
-        }
-        gp_GTrsf mat;
-        mat.SetValue(1, 1, scaleX);
-        mat.SetValue(2, 1, 0.0);
-        mat.SetValue(3, 1, 0.0);
-        mat.SetValue(1, 2, 0.0);
-        mat.SetValue(2, 2, scaleY);
-        mat.SetValue(3, 2, 0.0);
-        mat.SetValue(1, 3, 0.0);
-        mat.SetValue(2, 3, 0.0);
-        mat.SetValue(3, 3, scaleZ);
-        BRepBuilderAPI_GTransform mkTrsf(mkSphere.Shape(), mat);
-        return FeaturePrimitive::execute(mkTrsf.Shape());
+            Radius3.getValue(),
+            Angle1.getValue(),
+            Angle2.getValue(),
+            Angle3.getValue()
+        ));
     }
     catch (Standard_Failure& e) {
         return new App::DocumentObjectExecReturn(e.GetMessageString());
@@ -580,24 +542,13 @@ App::DocumentObjectExecReturn* Torus::execute()
         );
     }
     try {
-        // https://forum.freecad.org/viewtopic.php?f=3&t=52719
-#if 0
-        BRepPrimAPI_MakeTorus mkTorus(Radius1.getValue(),
-                                      Radius2.getValue(),
-                                      Base::toRadians<double>(Angle1.getValue()),
-                                      Base::toRadians<double>(Angle2.getValue()),
-                                      Base::toRadians<double>(Angle3.getValue()));
-        return FeaturePrimitive::execute(mkTorus.Solid());
-#else
-        Part::TopoShape shape;
-        return FeaturePrimitive::execute(shape.makeTorus(
+        return FeaturePrimitive::execute(Part::PrimitiveShapes::makeTorus(
             Radius1.getValue(),
             Radius2.getValue(),
             Angle1.getValue(),
             Angle2.getValue(),
             Angle3.getValue()
         ));
-#endif
     }
     catch (Standard_Failure& e) {
         return new App::DocumentObjectExecReturn(e.GetMessageString());
@@ -675,23 +626,13 @@ App::DocumentObjectExecReturn* Prism::execute()
         );
     }
     try {
-        long nodes = Polygon.getValue();
-
-        Base::Matrix4D mat;
-        mat.rotZ(Base::toRadians(360.0 / nodes));
-
-        // create polygon
-        BRepBuilderAPI_MakePolygon mkPoly;
-        Base::Vector3d v(Circumradius.getValue(), 0, 0);
-        for (long i = 0; i < nodes; i++) {
-            mkPoly.Add(gp_Pnt(v.x, v.y, v.z));
-            v = mat * v;
-        }
-        mkPoly.Add(gp_Pnt(v.x, v.y, v.z));
-        BRepBuilderAPI_MakeFace mkFace(mkPoly.Wire());
-        // the direction vector for the prism is the height for z and the given angle
-        TopoDS_Shape prism = makePrism(Height.getValue(), mkFace.Face());
-        return FeaturePrimitive::execute(prism);
+        return FeaturePrimitive::execute(Part::PrimitiveShapes::makePrism(
+            Polygon.getValue(),
+            Circumradius.getValue(),
+            Height.getValue(),
+            FirstAngle.getValue(),
+            SecondAngle.getValue()
+        ));
     }
     catch (Standard_Failure& e) {
         return new App::DocumentObjectExecReturn(e.GetMessageString());
@@ -787,13 +728,18 @@ App::DocumentObjectExecReturn* Wedge::execute()
     }
 
     try {
-        gp_Pnt pnt(0.0, 0.0, 0.0);
-        gp_Dir dir(0.0, 0.0, 1.0);
-        BRepPrim_Wedge
-            mkWedge(gp_Ax2(pnt, dir), xmin, ymin, zmin, z2min, x2min, xmax, ymax, zmax, z2max, x2max);
-        BRepBuilderAPI_MakeSolid mkSolid;
-        mkSolid.Add(mkWedge.Shell());
-        return FeaturePrimitive::execute(mkSolid.Solid());
+        return FeaturePrimitive::execute(Part::PrimitiveShapes::makeWedge(
+            xmin,
+            ymin,
+            zmin,
+            z2min,
+            x2min,
+            xmax,
+            ymax,
+            zmax,
+            z2max,
+            x2max
+        ));
     }
     catch (Standard_Failure& e) {
         return new App::DocumentObjectExecReturn(e.GetMessageString());

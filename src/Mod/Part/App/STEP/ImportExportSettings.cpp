@@ -35,11 +35,8 @@ namespace STEP
 {
 
 ImportExportSettings::ImportExportSettings()
-{
-    pGroup = App::GetApplication().GetParameterGroupByPath(
-        "User parameter:BaseApp/Preferences/Mod/Part/STEP"
-    );
-}
+    : ImportExportSettingsBase("User parameter:BaseApp/Preferences/Mod/Part/STEP")
+{}
 
 void ImportExportSettings::setVisibleExportDialog(bool on)
 {
@@ -91,43 +88,17 @@ void ImportExportSettings::setScheme(const char* scheme)
     Interface_Static::SetCVal("write.step.schema", scheme);
 }
 
-Interface::Unit ImportExportSettings::getUnit() const
+void ImportExportSettings::applyUnit(Interface::Unit unit)
 {
-    return static_cast<Interface::Unit>(pGroup->GetInt("Unit", 0));
-}
-
-void ImportExportSettings::setUnit(Interface::Unit unit)
-{
-    pGroup->SetInt("Unit", static_cast<long>(unit));
     Part::Interface::writeStepUnit(unit);
 }
 
-std::string ImportExportSettings::getCompany() const
-{
-    return pGroup->GetASCII("Company");
-}
-
-void ImportExportSettings::setCompany(const char* name)
-{
-    pGroup->SetASCII("Company", name);
-}
-
-std::string ImportExportSettings::getAuthor() const
-{
-    return pGroup->GetASCII("Author");
-}
-
-void ImportExportSettings::setAuthor(const char* name)
-{
-    pGroup->SetASCII("Author", name);
-}
-
-std::string ImportExportSettings::getProductName() const
+std::string ImportExportSettings::defaultProductName() const
 {
     return Part::Interface::writeStepHeaderProduct();
 }
 
-void ImportExportSettings::setProductName(const char* name)
+void ImportExportSettings::applyProductName(const char* name)
 {
     Part::Interface::writeStepHeaderProduct(name);
 }
