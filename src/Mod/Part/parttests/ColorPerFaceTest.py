@@ -190,6 +190,12 @@ class ColorPerFaceTest(unittest.TestCase):
         self.doc = App.openDocument(self.fileName)
 
         fuse = self.doc.ActiveObject
+        # The display geometry is computed asynchronously while a document is
+        # restored, so the Coin scene graph may not reflect the restored colours
+        # yet.  Force a synchronous display update before inspecting it (the
+        # object is visible, so hide/show triggers the rebuild).
+        fuse.ViewObject.Visibility = False
+        fuse.ViewObject.Visibility = True
         self.assertEqual(len(fuse.Shape.Faces), 11)
         self.assertEqual(len(fuse.ViewObject.DiffuseColor), 11)
         self.assertEqual(fuse.ViewObject.DiffuseColor[0], (1.0, 0.0, 0.0, 1.0))
