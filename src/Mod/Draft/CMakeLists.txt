@@ -250,6 +250,7 @@ SET(Modifier_tools
     draftguitools/gui_shape2dview.py
     draftguitools/gui_draft2sketch.py
     draftguitools/gui_arrays.py
+    draftguitools/gui_arraybase.py
     draftguitools/gui_circulararray.py
     draftguitools/gui_orthoarray.py
     draftguitools/gui_patharray.py
@@ -294,6 +295,7 @@ SET(Draft_GUI_tools
 
 SET(Draft_task_panels
     drafttaskpanels/__init__.py
+    drafttaskpanels/base_draftarraytaskpanel.py
     drafttaskpanels/task_circulararray.py
     drafttaskpanels/task_orthoarray.py
     drafttaskpanels/task_polararray.py

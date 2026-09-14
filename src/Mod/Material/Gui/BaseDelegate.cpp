@@ -244,6 +244,13 @@ void BaseDelegate::paint(QPainter* painter,
                          const QStyleOptionViewItem& option,
                          const QModelIndex& index) const
 {
+    paintValue(painter, option, index);
+}
+
+void BaseDelegate::paintValue(QPainter* painter,
+                              const QStyleOptionViewItem& option,
+                              const QModelIndex& index) const
+{
     auto type = getType(index);
     if (type == Materials::MaterialValue::Quantity) {
         paintQuantity(painter, option, index);
