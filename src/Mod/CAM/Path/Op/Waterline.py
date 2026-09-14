@@ -44,7 +44,6 @@ except ImportError:
     raise ImportError
 
 import Path
-import Path.Op.Base as PathOp
 import Path.Op.SurfaceSupport as PathSurfaceSupport
 import Path.Op.SurfaceWaterline as PathSurfaceWaterline
 import PathScripts.PathUtils as PathUtils

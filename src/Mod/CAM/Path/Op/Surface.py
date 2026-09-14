@@ -47,7 +47,6 @@ except ImportError:
 
 from PySide.QtCore import QT_TRANSLATE_NOOP
 import Path
-import Path.Op.Base as PathOp
 import Path.Op.SurfaceSupport as PathSurfaceSupport
 import Path.Op.SurfaceWaterline as PathSurfaceWaterline
 import PathScripts.PathUtils as PathUtils
