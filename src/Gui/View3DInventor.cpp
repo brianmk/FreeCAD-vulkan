@@ -221,7 +221,7 @@ View3DInventor::View3DInventor(
         // other path happened to re-push them.
         connect(_viewer, &View3DInventorViewer::cameraMoved,
                 _vulkanAdapter, [this] {
-                    if (getenv("FC_LIGHT_TRACE")) {
+                    if (Base::envFlagEnabled("FC_LIGHT_TRACE")) {
                         static int _n = 0;
                         if (_n++ < 400) {
                             fprintf(stderr, "[LTRACE] cameraMoved n=%d\n", _n);

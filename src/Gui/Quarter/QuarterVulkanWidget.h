@@ -126,20 +126,8 @@ public:
       working while the Vulkan surface is on top.
     */
     //! Forward input events to \a target (typically the hidden GL viewer that
-    //! owns navigation/picking).  \a targetDevicePixelRatio is the device
-    //! pixel ratio the target uses to convert event positions; pass -1 to
-    //! fall back to the target's current devicePixelRatioF().  Providing it
-    //! explicitly avoids sniffing the target's type at event time.
-    void setEventForwardTarget(QWidget * target, qreal targetDevicePixelRatio = -1.0);
-
-    /*!
-      \brief No-op kept for API parity with QuarterWidget.
-
-      QVulkanWindow's default render pass always clears color and depth
-      (LOAD_OP_CLEAR), so frame clears cannot be disabled on the Vulkan
-      path.  Calls log a one-time warning.
-    */
-    void setClearEnabled(bool clearwindow, bool clearzbuffer);
+    //! owns navigation/picking).
+    void setEventForwardTarget(QWidget * target);
 
     /*!
       \brief Configure MSAA sample count (1, 2, 4, 8...).

@@ -106,34 +106,26 @@ static bool vulkanPersistentResourcesEnabled()
     return enabled;
 }
 
-static void vkLog(const char * fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-    char buf[1024];
-    std::vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
-    Base::Console().log("%s%s\n", VK_TAG, buf);
-}
+enum class VkMsgLevel { Log, Warn, Err };
 
-static void vkWarn(const char * fmt, ...)
+static void vkMsg(VkMsgLevel level, const char * fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
     char buf[1024];
     std::vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
-    Base::Console().warning("%s%s\n", VK_TAG, buf);
-}
-
-static void vkErr(const char * fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-    char buf[1024];
-    std::vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
-    Base::Console().error("%s%s\n", VK_TAG, buf);
+    switch (level) {
+        case VkMsgLevel::Log:
+            Base::Console().log("%s%s\n", VK_TAG, buf);
+            break;
+        case VkMsgLevel::Warn:
+            Base::Console().warning("%s%s\n", VK_TAG, buf);
+            break;
+        case VkMsgLevel::Err:
+            Base::Console().error("%s%s\n", VK_TAG, buf);
+            break;
+    }
 }
 
 // Format a VkPhysicalDevice API/driver version (VK_MAKE_API_VERSION layout).
@@ -394,15 +386,15 @@ public:
 
     void initResources() override
     {
-        vkLog("initResources: creating Vulkan backend");
+        vkMsg(VkMsgLevel::Log, "initResources: creating Vulkan backend");
         const VkPhysicalDeviceProperties * props = m_window->physicalDeviceProperties();
         if (props) {
-            vkLog("  physical device: %s", props->deviceName);
-            vkLog("  Vulkan API version: %s", vkVersionStr(props->apiVersion).constData());
-            vkLog("  driver version: 0x%08x", props->driverVersion);
+            vkMsg(VkMsgLevel::Log, "  physical device: %s", props->deviceName);
+            vkMsg(VkMsgLevel::Log, "  Vulkan API version: %s", vkVersionStr(props->apiVersion).constData());
+            vkMsg(VkMsgLevel::Log, "  driver version: 0x%08x", props->driverVersion);
         }
-        vkLog("  queue family index: %u", m_window->graphicsQueueFamilyIndex());
-        vkLog("  graphics queue: %p", static_cast<void*>(m_window->graphicsQueue()));
+        vkMsg(VkMsgLevel::Log, "  queue family index: %u", m_window->graphicsQueueFamilyIndex());
+        vkMsg(VkMsgLevel::Log, "  graphics queue: %p", static_cast<void*>(m_window->graphicsQueue()));
 
         m_initContext = {};
         m_initContext.instance = m_instance->vkInstance();
@@ -468,19 +460,19 @@ public:
             // never run.
             m_manager.setAutoClipping(SoVulkanRenderManager::VARIABLE_NEAR_PLANE);
             if (m_rtxBackendBuilt) {
-                vkLog("initResources: ray tracing backend built (device "
+                vkMsg(VkMsgLevel::Log, "initResources: ray tracing backend built (device "
                       "support=%d)",
                       m_rtxBackendAvailable ? 1 : 0);
             }
             else {
-                vkLog("initResources: ray tracing backend not built "
+                vkMsg(VkMsgLevel::Log, "initResources: ray tracing backend not built "
                       "(device support=%d); using raster Vulkan backend",
                       m_rtxBackendAvailable ? 1 : 0);
             }
-            vkLog("initResources: backend initialized OK");
+            vkMsg(VkMsgLevel::Log, "initResources: backend initialized OK");
         }
         else {
-            vkErr("initResources: backend initialize FAILED");
+            vkMsg(VkMsgLevel::Err, "initResources: backend initialize FAILED");
         }
     }
 
@@ -492,21 +484,21 @@ public:
         m_manager.setMaxFramesInFlight(
             static_cast<uint32_t>(m_window->swapChainImageCount()) + 1u);
         const VkSampleCountFlagBits samples = m_window->sampleCountFlagBits();
-        vkLog("initSwapChainResources:");
-        vkLog("  image size: %dx%d", m_window->swapChainImageSize().width(),
+        vkMsg(VkMsgLevel::Log, "initSwapChainResources:");
+        vkMsg(VkMsgLevel::Log, "  image size: %dx%d", m_window->swapChainImageSize().width(),
               m_window->swapChainImageSize().height());
-        vkLog("  color format: %d", static_cast<int>(m_window->colorFormat()));
-        vkLog("  depth/stencil format: %d",
+        vkMsg(VkMsgLevel::Log, "  color format: %d", static_cast<int>(m_window->colorFormat()));
+        vkMsg(VkMsgLevel::Log, "  depth/stencil format: %d",
               static_cast<int>(m_window->depthStencilFormat()));
-        vkLog("  sample count: %d", static_cast<int>(samples));
-        vkLog("  swapchain images: %d", m_window->swapChainImageCount());
+        vkMsg(VkMsgLevel::Log, "  sample count: %d", static_cast<int>(samples));
+        vkMsg(VkMsgLevel::Log, "  swapchain images: %d", m_window->swapChainImageCount());
 
         m_dumper.initSwapChainResources();
     }
 
     void releaseSwapChainResources() override
     {
-        vkLog("releaseSwapChainResources");
+        vkMsg(VkMsgLevel::Log, "releaseSwapChainResources");
         m_manager.setRenderTarget(nullptr);
         m_dumper.releaseSwapChainResources();
     }
@@ -515,20 +507,20 @@ public:
     {
         // Shut down the backend while the Vulkan device/queue are still
         // valid; the manager destructor runs too late to wait on the queue.
-        vkLog("releaseResources: shutting down backend");
+        vkMsg(VkMsgLevel::Log, "releaseResources: shutting down backend");
         m_manager.shutdown();
         m_initialized = false;
     }
 
     void physicalDeviceLost() override
     {
-        vkErr("physicalDeviceLost: VK_ERROR_DEVICE_LOST");
+        vkMsg(VkMsgLevel::Err, "physicalDeviceLost: VK_ERROR_DEVICE_LOST");
         this->dropToRaster("physical device lost");
     }
 
     void logicalDeviceLost() override
     {
-        vkErr("logicalDeviceLost: VK_ERROR_DEVICE_LOST");
+        vkMsg(VkMsgLevel::Err, "logicalDeviceLost: VK_ERROR_DEVICE_LOST");
         this->dropToRaster("logical device lost");
     }
 
@@ -557,7 +549,7 @@ public:
         if (m_manager.getRayTracingActive()) {
             m_manager.setPathTracingEnabled(FALSE);
         }
-        vkWarn("path tracing disabled after %s; falling back to the raster "
+        vkMsg(VkMsgLevel::Warn, "path tracing disabled after %s; falling back to the raster "
                "Vulkan backend.", reason);
     }
 
@@ -567,10 +559,10 @@ public:
 
         if (!m_initialized || !frame.scene) {
             if (!m_initialized) {
-                vkWarn("startNextFrame: backend not initialized, skipping");
+                vkMsg(VkMsgLevel::Warn, "startNextFrame: backend not initialized, skipping");
             }
             else {
-                vkWarn("startNextFrame: no scene graph set, skipping");
+                vkMsg(VkMsgLevel::Warn, "startNextFrame: no scene graph set, skipping");
             }
             // QVulkanWindow expects frameReady() exactly once per
             // startNextFrame().  When the backend is up but no scene is set
@@ -706,7 +698,7 @@ private:
                 // just dropped so the refining gate below does not keep the
                 // surface spinning on a dead trace path.
                 frame.pathTracingEnabled = false;
-                vkWarn("requestRayTracing: path tracing requested but the "
+                vkMsg(VkMsgLevel::Warn, "requestRayTracing: path tracing requested but the "
                        "ray-tracing backend is unavailable; falling back to "
                        "the raster Vulkan backend.");
                 // Feature detection: tell the owner the ray tracer cannot run
@@ -841,7 +833,7 @@ private:
         if (size != lastLoggedSize || samples != lastLoggedSamples) {
             lastLoggedSize = size;
             lastLoggedSamples = samples;
-            vkLog("startNextFrame: swapchainImage=%d extent=%dx%d samples=%d",
+            vkMsg(VkMsgLevel::Log, "startNextFrame: swapchainImage=%d extent=%dx%d samples=%d",
                   index, size.width(), size.height(),
                   static_cast<int>(samples));
         }
@@ -918,7 +910,7 @@ private:
                                                    m_window->defaultRenderPass(),
                                                    m_window->currentFramebuffer());
         if (!ok) {
-            vkErr("startNextFrame: renderExternal FAILED");
+            vkMsg(VkMsgLevel::Err, "startNextFrame: renderExternal FAILED");
         }
 
         vkdf->vkCmdEndRenderPass(cb);
@@ -1159,7 +1151,7 @@ QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent, bool rayTracing)
     : QWidget(parent)
     , d(new QuarterVulkanWidgetPrivate)
 {
-    vkLog("QuarterVulkanWidget: constructing%s",
+    vkMsg(VkMsgLevel::Log, "QuarterVulkanWidget: constructing%s",
           rayTracing ? " (ray tracing requested)" : "");
     d->rayTracing = rayTracing;
 
@@ -1253,7 +1245,7 @@ void QuarterVulkanWidget::ensureSharedInstance()
             QByteArrayLiteral("VK_KHR_external_semaphore"),
         });
         if (!g_sharedVulkanInstance.instance->create()) {
-            vkWarn("QuarterVulkanWidget: could not create instance with "
+            vkMsg(VkMsgLevel::Warn, "QuarterVulkanWidget: could not create instance with "
                    "validation layer (error %d), retrying without layers",
                    static_cast<int>(
                        g_sharedVulkanInstance.instance->errorCode()));
@@ -1264,20 +1256,20 @@ void QuarterVulkanWidget::ensureSharedInstance()
         if (g_sharedVulkanInstance.instance->isValid()) {
             const QVersionNumber api =
                 g_sharedVulkanInstance.instance->supportedApiVersion();
-            vkLog("QuarterVulkanWidget: instance created (Vulkan %d.%d.%d)",
+            vkMsg(VkMsgLevel::Log, "QuarterVulkanWidget: instance created (Vulkan %d.%d.%d)",
                   api.majorVersion(), api.minorVersion(), api.microVersion());
             const auto layers = g_sharedVulkanInstance.instance->layers();
             for (const QByteArray & l : layers) {
-                vkLog("  enabled layer: %s", l.constData());
+                vkMsg(VkMsgLevel::Log, "  enabled layer: %s", l.constData());
             }
             const auto extensions =
                 g_sharedVulkanInstance.instance->extensions();
             for (const QByteArray & e : extensions) {
-                vkLog("  enabled extension: %s", e.constData());
+                vkMsg(VkMsgLevel::Log, "  enabled extension: %s", e.constData());
             }
         }
         else {
-            vkErr("QuarterVulkanWidget: Vulkan instance creation FAILED "
+            vkMsg(VkMsgLevel::Err, "QuarterVulkanWidget: Vulkan instance creation FAILED "
                   "(error %d)",
                   static_cast<int>(
                       g_sharedVulkanInstance.instance->errorCode()));
@@ -1329,7 +1321,7 @@ void QuarterVulkanWidget::selectPhysicalDevice()
     // out instead; Qt will refuse to initialize the window with the invalid
     // instance and the view stays empty rather than taking the process down.
     if (!d->instance || !d->instance->isValid()) {
-        vkErr("QuarterVulkanWidget: Vulkan instance is invalid; skipping "
+        vkMsg(VkMsgLevel::Err, "QuarterVulkanWidget: Vulkan instance is invalid; skipping "
               "physical device selection");
         return;
     }
@@ -1338,7 +1330,7 @@ void QuarterVulkanWidget::selectPhysicalDevice()
     f->vkEnumeratePhysicalDevices(d->instance->vkInstance(), &devCount,
                                   nullptr);
     if (devCount == 0) {
-        vkErr("QuarterVulkanWidget: no Vulkan physical devices available");
+        vkMsg(VkMsgLevel::Err, "QuarterVulkanWidget: no Vulkan physical devices available");
         return;
     }
     std::vector<VkPhysicalDevice> devs(devCount);
@@ -1430,7 +1422,7 @@ void QuarterVulkanWidget::selectPhysicalDevice()
         // happens to have more secondary features.
         const int score = typeScore + (caps.fillModeNonSolid ? 20 : 0)
             + (caps.rayTracing ? 40 : 0);
-        vkLog("QuarterVulkanWidget: device %d '%s' type=%d "
+        vkMsg(VkMsgLevel::Log, "QuarterVulkanWidget: device %d '%s' type=%d "
               "fillModeNonSolid=%d rayTracing=%d score=%d",
               static_cast<int>(i), props.deviceName,
               static_cast<int>(props.deviceType), caps.fillModeNonSolid ? 1 : 0,
@@ -1456,7 +1448,7 @@ void QuarterVulkanWidget::selectPhysicalDevice()
     d->vulkanWindow->rtNvLinearSweptSpheresAvailable = best.nvLinearSweptSpheres;
     d->vulkanWindow->synchronization2Available = best.synchronization2;
     if (d->rayTracing && !best.externalMemoryFd) {
-        vkWarn("QuarterVulkanWidget: the selected device lacks "
+        vkMsg(VkMsgLevel::Warn, "QuarterVulkanWidget: the selected device lacks "
                "VK_KHR_external_memory_fd; the CUDA/OptiX denoiser cannot "
                "import Vulkan memory and will fall back to the other denoisers.");
     }
@@ -1469,11 +1461,11 @@ void QuarterVulkanWidget::selectPhysicalDevice()
     if (d->renderer) {
         d->renderer->setDeviceCaps(best);
     }
-    vkLog("QuarterVulkanWidget: selected physical device %d "
+    vkMsg(VkMsgLevel::Log, "QuarterVulkanWidget: selected physical device %d "
           "(fillModeNonSolid=%d rayTracing=%d)",
           bestIndex, best.fillModeNonSolid ? 1 : 0, best.rayTracing ? 1 : 0);
     if (d->rayTracing && !best.rayTracing) {
-        vkWarn("QuarterVulkanWidget: the selected device does not support "
+        vkMsg(VkMsgLevel::Warn, "QuarterVulkanWidget: the selected device does not support "
                "ray tracing; falling back to the raster backend.");
     }
 }
@@ -1505,7 +1497,7 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
     // device does not support would fail device creation.
     if (!d->vulkanWindow->rtRayTracingAvailable) {
         if (rayTracing) {
-            vkWarn("QuarterVulkanWidget: ray tracing requested but the selected "
+            vkMsg(VkMsgLevel::Warn, "QuarterVulkanWidget: ray tracing requested but the selected "
                    "device does not advertise VK_KHR_ray_tracing_pipeline / "
                    "VK_KHR_acceleration_structure; falling back to raster");
         }
@@ -1593,7 +1585,7 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
           }
         }
         if (computeFamily < 0) {
-          vkLog("QuarterVulkanWidget: no compute-capable queue family found; "
+          vkMsg(VkMsgLevel::Log, "QuarterVulkanWidget: no compute-capable queue family found; "
                 "async-compute unavailable");
           return;
         }
@@ -1624,10 +1616,10 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
           d->vulkanWindow->computeQueueIndex = 0;
           d->vulkanWindow->hasComputeQueueRequest = true;
         }
-        vkLog("QuarterVulkanWidget: request async-compute queue family=%d "
+        vkMsg(VkMsgLevel::Log, "QuarterVulkanWidget: request async-compute queue family=%d "
               "index=%u", computeFamily, d->vulkanWindow->computeQueueIndex);
       });
-    vkLog("QuarterVulkanWidget: request device ext: "
+    vkMsg(VkMsgLevel::Log, "QuarterVulkanWidget: request device ext: "
           "accel_structure, ray_tracing_pipeline, ray_query, "
           "deferred_host_ops%s%s",
           d->vulkanWindow->rtExternalMemoryFdAvailable
@@ -1716,7 +1708,7 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
         }
         features.pNext = &d->vulkanWindow->rtBufferDeviceAddress;
       });
-    vkLog("QuarterVulkanWidget: requested ray tracing pipeline device "
+    vkMsg(VkMsgLevel::Log, "QuarterVulkanWidget: requested ray tracing pipeline device "
           "extensions");
 }
 
@@ -1745,13 +1737,13 @@ void QuarterVulkanWidget::logSupportedSampleCounts()
         parts << QString::number(s);
     }
     QByteArray samplesStr = parts.join(QLatin1Char(',')).toUtf8();
-    vkLog("QuarterVulkanWidget: supported sample counts: %s",
+    vkMsg(VkMsgLevel::Log, "QuarterVulkanWidget: supported sample counts: %s",
           samplesStr.isEmpty() ? "(none)" : samplesStr.constData());
 }
 
 QuarterVulkanWidget::~QuarterVulkanWidget()
 {
-    vkLog("QuarterVulkanWidget: destroying");
+    vkMsg(VkMsgLevel::Log, "QuarterVulkanWidget: destroying");
     // Stop forwarding events before anything is freed: deferred events
     // delivered to the container/window after `d` is gone would otherwise
     // hit the event filter with a dangling private pointer.
@@ -1861,15 +1853,12 @@ void QuarterVulkanWidget::setEdgeColor(const SbColor4f & color)
     redraw();
 }
 
-void QuarterVulkanWidget::setEventForwardTarget(QWidget * target,
-                                                qreal targetDevicePixelRatio)
+void QuarterVulkanWidget::setEventForwardTarget(QWidget * target)
 {
     // The per-event scale is derived from both widgets' *live* device pixel
-    // ratios by InputDevice::crossWidgetPositionScale(); the ratio argument
-    // is kept only for API compatibility.  targetDevicePixelRatio is unused:
-    // reading a stale snapshot here is exactly what caused the forwarded pick
-    // point to be rescaled by 1/dpr on fractional-scaling displays.
-    Q_UNUSED(targetDevicePixelRatio);
+    // ratios by InputDevice::crossWidgetPositionScale(); no cached ratio is
+    // taken here (a stale snapshot is exactly what caused the forwarded pick
+    // point to be rescaled by 1/dpr on fractional-scaling displays).
     d->forwardTarget = target;
 }
 
@@ -1906,6 +1895,8 @@ void QuarterVulkanWidget::pollInjectFile()
             if (t == "move") return QEvent::MouseMove;
             if (t == "press") return QEvent::MouseButtonPress;
             if (t == "release") return QEvent::MouseButtonRelease;
+            if (t == "rpress") return QEvent::MouseButtonPress;
+            if (t == "rrelease") return QEvent::MouseButtonRelease;
             return QEvent::None;
         }();
         if (type == QEvent::None) {
@@ -1915,14 +1906,15 @@ void QuarterVulkanWidget::pollInjectFile()
         const QPointF local(tok[1].toDouble(), tok[2].toDouble());
         const QPointF global = d->container->mapToGlobal(
             QPoint(int(local.x()), int(local.y())));
+        const bool rightButton = (tok[0] == "rpress" || tok[0] == "rrelease");
         Qt::MouseButton btn = Qt::NoButton;
         Qt::MouseButtons state = Qt::NoButton;
         if (type == QEvent::MouseButtonPress) {
-            btn = Qt::LeftButton;
-            state = Qt::LeftButton;
+            btn = rightButton ? Qt::RightButton : Qt::LeftButton;
+            state = btn;
         }
         else if (type == QEvent::MouseButtonRelease) {
-            btn = Qt::LeftButton;
+            btn = rightButton ? Qt::RightButton : Qt::LeftButton;
         }
         QWindowSystemInterface::handleMouseEvent<QWindowSystemInterface::SynchronousDelivery>(
             d->window, local, QPointF(global.x(), global.y()), state, btn,
@@ -2035,25 +2027,9 @@ SbColor4f QuarterVulkanWidget::getBackgroundColor() const
     return d->renderer->getBackgroundColor();
 }
 
-void QuarterVulkanWidget::setClearEnabled(bool clearwindow, bool clearzbuffer)
-{
-    // QVulkanWindow's default render pass always clears its attachments
-    // (LOAD_OP_CLEAR), so frame clears cannot be disabled on the Vulkan
-    // path.  Kept for API parity with QuarterWidget; warn once if a caller
-    // requests anything else than the fixed behavior.
-    Q_UNUSED(clearwindow)
-    Q_UNUSED(clearzbuffer)
-    static bool warned = false;
-    if (!warned) {
-        warned = true;
-        vkWarn("setClearEnabled: QVulkanWindow's render pass always clears "
-               "color and depth; request ignored");
-    }
-}
-
 void QuarterVulkanWidget::setSampleCount(int samples)
 {
-    vkLog("setSampleCount: requesting %d samples", samples);
+    vkMsg(VkMsgLevel::Log, "setSampleCount: requesting %d samples", samples);
     d->window->setSampleCount(samples);
 }
 
@@ -2064,7 +2040,7 @@ int QuarterVulkanWidget::getSampleCount() const
 
 void QuarterVulkanWidget::setPreferredColorFormat(int vkFormat)
 {
-    vkLog("setPreferredColorFormat: requesting VkFormat %d", vkFormat);
+    vkMsg(VkMsgLevel::Log, "setPreferredColorFormat: requesting VkFormat %d", vkFormat);
     d->window->setPreferredColorFormats(
         QList<VkFormat>() << static_cast<VkFormat>(vkFormat));
 }

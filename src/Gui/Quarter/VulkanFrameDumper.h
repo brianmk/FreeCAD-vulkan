@@ -14,6 +14,8 @@
 
 #include <vulkan/vulkan.h>
 
+#include <Inventor/rendering/SoVulkanImageCopy.h>
+
 #include <Base/Console.h>
 #include <Base/FileInfo.h>
 
@@ -172,8 +174,6 @@ public:
         }
         m_dumpCount++;
 
-        QVulkanDeviceFunctions * vkdf =
-            m_instance->deviceFunctions(m_window->device());
         // The swapchain image is in VK_IMAGE_LAYOUT_PRESENT_SRC_KHR here:
         // QVulkanWindow's default render pass ends with the color attachment
         // in the present layout and QVulkanWindow presents it directly after
@@ -183,46 +183,22 @@ public:
         // back to PRESENT_SRC_KHR so the present never sees a stray
         // attachment layout (VUID-VkPresentInfoKHR-pImageIndices-01430).
         VkImage srcImage = m_window->swapChainImage(swapchainIndex);
-        VkImageMemoryBarrier barrier {};
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barrier.srcAccessMask = 0;  // PRESENT_SRC_KHR has no access bits
-        barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-        barrier.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = srcImage;
-        barrier.subresourceRange = {
-            VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        vkdf->vkCmdPipelineBarrier(
-            cb, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
-            1, &barrier);
-
-        VkBufferImageCopy region {};
-        region.imageSubresource = {
-            VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        region.imageExtent = {static_cast<uint32_t>(size.width()),
-                              static_cast<uint32_t>(size.height()), 1};
-        vkdf->vkCmdCopyImageToBuffer(cb, srcImage,
-                                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                     m_buffer, 1, &region);
-
-        barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-        barrier.dstAccessMask = 0;  // back to PRESENT_SRC_KHR
-        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-        vkdf->vkCmdPipelineBarrier(
-            cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
-            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0,
-            nullptr, 1, &barrier);
+        SoVulkanImageCopy::recordToBuffer(
+            cb, srcImage, m_buffer, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 0,
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_ACCESS_TRANSFER_READ_BIT, 0,
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            static_cast<uint32_t>(size.width()),
+            static_cast<uint32_t>(size.height()));
     }
 
     //! Write the staging buffer to a PNG after frame submission (no-op when
     //! disabled, without a buffer, or after the dump window).
     void saveFrame()
     {
-        const int windowFrames = m_dumpEnd - m_dumpStart + 1;
+        // recordFrameCopy() dumps frames in the half-open window
+        // [m_dumpStart, m_dumpEnd), i.e. m_dumpEnd - m_dumpStart frames.
+        const int windowFrames = m_dumpEnd - m_dumpStart;
         if (!m_enabled || m_buffer == VK_NULL_HANDLE || m_dumpCount <= 0
             || m_dumpCount > windowFrames) {
             return;

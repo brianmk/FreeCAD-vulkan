@@ -103,8 +103,8 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
     // The container<->viewer coordinate scale is derived live from both
     // widgets' devicePixelRatioF() by InputDevice::crossWidgetPositionScale()
     // at event time (single source of truth, portable across 1.25/1.5/2.0
-    // display scales); the ratio argument is unused, so pass the default.
-    _vulkanViewer->setEventForwardTarget(_viewer->getWidget(), -1.0);
+    // display scales).
+    _vulkanViewer->setEventForwardTarget(_viewer->getWidget());
     // Navigation and picking run on the hidden OpenGL viewer, so cursor
     // shape changes land on its widget.  Mirror them onto the visible
     // Vulkan container (see eventFilter) and pick up the initial state.
@@ -790,7 +790,7 @@ VulkanViewportAdapter::~VulkanViewportAdapter()
     // down synchronously here, before _viewer is destroyed.
     if (_vulkanViewer) {
         // Stop forwarding input to the (soon-dead) GL viewer.
-        _vulkanViewer->setEventForwardTarget(nullptr, 1.0);
+        _vulkanViewer->setEventForwardTarget(nullptr);
         QWidget* host = _vulkanViewer->parentWidget();
         if (auto* stack = qobject_cast<QStackedWidget*>(host)) {
             stack->removeWidget(_vulkanViewer);
