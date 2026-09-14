@@ -88,6 +88,8 @@ SET(PartGui_SRCS
     CrossSections.cpp
     CrossSections.h
     CrossSections.ui
+    CrossSectionsBase.cpp
+    CrossSectionsBase.h
     Mirroring.cpp
     Mirroring.h
     Mirroring.ui
@@ -239,6 +241,8 @@ SET(PartGui_SRCS
     SectionCutting.ui
     ShapeFromMesh.cpp
     ShapeFromMesh.h
+    ShapeSelection.cpp
+    ShapeSelection.h
     TaskFaceAppearances.cpp
     TaskFaceAppearances.h
     TaskFaceAppearances.ui
