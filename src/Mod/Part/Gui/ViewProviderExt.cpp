@@ -2203,7 +2203,6 @@ class ViewProviderPartExt::AsyncGeometryJob
 {
 public:
     explicit AsyncGeometryJob(ViewProviderPartExt* vp)
-        : vp(vp)
     {
         QObject::connect(&watcher, &QFutureWatcherBase::finished, &context, [this, vp]() {
             auto data = watcher.future().result();
@@ -2256,7 +2255,6 @@ public:
     }
 
 private:
-    ViewProviderPartExt* vp;
     QObject context;
     TopoDS_Shape jobShape;
     double pendingDeviation = 0.0;
