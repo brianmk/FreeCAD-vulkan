@@ -50,6 +50,7 @@
 #include <Base/Tools.h>
 
 #include "PrimitiveFeature.h"
+#include "PrimitiveShapes.h"
 #include "PartFeaturePy.h"
 
 namespace Part
@@ -368,14 +369,12 @@ App::DocumentObjectExecReturn* Sphere::execute()
         return new App::DocumentObjectExecReturn("Radius of sphere too small");
     }
     try {
-        BRepPrimAPI_MakeSphere mkSphere(
+        this->Shape.setValue(PrimitiveShapes::makeSphere(
             Radius.getValue(),
-            Base::toRadians<double>(Angle1.getValue()),
-            Base::toRadians<double>(Angle2.getValue()),
-            Base::toRadians<double>(Angle3.getValue())
-        );
-        TopoDS_Shape ResultShape = mkSphere.Shape();
-        this->Shape.setValue(ResultShape);
+            Angle1.getValue(),
+            Angle2.getValue(),
+            Angle3.getValue()
+        ));
     }
     catch (Standard_Failure& e) {
 
@@ -437,38 +436,14 @@ App::DocumentObjectExecReturn* Ellipsoid::execute()
     }
 
     try {
-        gp_Pnt pnt(0.0, 0.0, 0.0);
-        gp_Dir dir(0.0, 0.0, 1.0);
-        gp_Ax2 ax2(pnt, dir);
-        BRepPrimAPI_MakeSphere mkSphere(
-            ax2,
+        this->Shape.setValue(PrimitiveShapes::makeEllipsoid(
+            Radius1.getValue(),
             Radius2.getValue(),
-            Base::toRadians<double>(Angle1.getValue()),
-            Base::toRadians<double>(Angle2.getValue()),
-            Base::toRadians<double>(Angle3.getValue())
-        );
-        Standard_Real scaleX = 1.0;
-        Standard_Real scaleZ = Radius1.getValue() / Radius2.getValue();
-        // issue #1798: A third radius has been introduced. To be backward
-        // compatible if Radius3 is 0.0 (default) it's handled to be the same
-        // as Radius2
-        Standard_Real scaleY = 1.0;
-        if (Radius3.getValue() >= Precision::Confusion()) {
-            scaleY = Radius3.getValue() / Radius2.getValue();
-        }
-        gp_GTrsf mat;
-        mat.SetValue(1, 1, scaleX);
-        mat.SetValue(2, 1, 0.0);
-        mat.SetValue(3, 1, 0.0);
-        mat.SetValue(1, 2, 0.0);
-        mat.SetValue(2, 2, scaleY);
-        mat.SetValue(3, 2, 0.0);
-        mat.SetValue(1, 3, 0.0);
-        mat.SetValue(2, 3, 0.0);
-        mat.SetValue(3, 3, scaleZ);
-        BRepBuilderAPI_GTransform mkTrsf(mkSphere.Shape(), mat);
-        TopoDS_Shape ResultShape = mkTrsf.Shape();
-        this->Shape.setValue(ResultShape);
+            Radius3.getValue(),
+            Angle1.getValue(),
+            Angle2.getValue(),
+            Angle3.getValue()
+        ));
     }
     catch (Standard_Failure& e) {
 
@@ -517,15 +492,13 @@ App::DocumentObjectExecReturn* Cylinder::execute()
         return new App::DocumentObjectExecReturn("Rotation angle of cylinder too small");
     }
     try {
-        BRepPrimAPI_MakeCylinder mkCylr(
+        this->Shape.setValue(PrimitiveShapes::makeCylinder(
             Radius.getValue(),
             Height.getValue(),
-            Base::toRadians<double>(Angle.getValue())
-        );
-        // the direction vector for the prism is the height for z and the given angle
-        BRepPrim_Cylinder prim = mkCylr.Cylinder();
-        TopoDS_Shape ResultShape = makePrism(Height.getValue(), prim.BottomFace());
-        this->Shape.setValue(ResultShape);
+            Angle.getValue(),
+            FirstAngle.getValue(),
+            SecondAngle.getValue()
+        ));
     }
     catch (Standard_Failure& e) {
 
@@ -592,22 +565,13 @@ App::DocumentObjectExecReturn* Prism::execute()
         return new App::DocumentObjectExecReturn("Height of prism is too small");
     }
     try {
-        long nodes = Polygon.getValue();
-
-        Base::Matrix4D mat;
-        mat.rotZ(Base::toRadians(360.0 / nodes));
-
-        // create polygon
-        BRepBuilderAPI_MakePolygon mkPoly;
-        Base::Vector3d v(Circumradius.getValue(), 0, 0);
-        for (long i = 0; i < nodes; i++) {
-            mkPoly.Add(gp_Pnt(v.x, v.y, v.z));
-            v = mat * v;
-        }
-        mkPoly.Add(gp_Pnt(v.x, v.y, v.z));
-        BRepBuilderAPI_MakeFace mkFace(mkPoly.Wire());
-        // the direction vector for the prism is the height for z and the given angle
-        this->Shape.setValue(makePrism(Height.getValue(), mkFace.Face()));
+        this->Shape.setValue(PrimitiveShapes::makePrism(
+            Polygon.getValue(),
+            Circumradius.getValue(),
+            Height.getValue(),
+            FirstAngle.getValue(),
+            SecondAngle.getValue()
+        ));
     }
     catch (Standard_Failure& e) {
         return new App::DocumentObjectExecReturn(e.GetMessageString());
@@ -725,27 +689,12 @@ App::DocumentObjectExecReturn* Cone::execute()
         return new App::DocumentObjectExecReturn("Height of cone too small");
     }
     try {
-        TopoDS_Shape ResultShape;
-        if (std::abs(Radius1.getValue() - Radius2.getValue()) < Precision::Confusion()) {
-            // Build a cylinder
-            BRepPrimAPI_MakeCylinder mkCylr(
-                Radius1.getValue(),
-                Height.getValue(),
-                Base::toRadians<double>(Angle.getValue())
-            );
-            ResultShape = mkCylr.Shape();
-        }
-        else {
-            // Build a cone
-            BRepPrimAPI_MakeCone mkCone(
-                Radius1.getValue(),
-                Radius2.getValue(),
-                Height.getValue(),
-                Base::toRadians<double>(Angle.getValue())
-            );
-            ResultShape = mkCone.Shape();
-        }
-        this->Shape.setValue(ResultShape);
+        this->Shape.setValue(PrimitiveShapes::makeCone(
+            Radius1.getValue(),
+            Radius2.getValue(),
+            Height.getValue(),
+            Angle.getValue()
+        ));
     }
     catch (Standard_Failure& e) {
 
@@ -800,8 +749,7 @@ App::DocumentObjectExecReturn* Torus::execute()
         return new App::DocumentObjectExecReturn("Radius of torus too small");
     }
     try {
-        TopoShape shape;
-        this->Shape.setValue(shape.makeTorus(
+        this->Shape.setValue(PrimitiveShapes::makeTorus(
             Radius1.getValue(),
             Radius2.getValue(),
             Angle1.getValue(),
@@ -1084,13 +1032,18 @@ App::DocumentObjectExecReturn* Wedge::execute()
     }
 
     try {
-        gp_Pnt pnt(0.0, 0.0, 0.0);
-        gp_Dir dir(0.0, 0.0, 1.0);
-        BRepPrim_Wedge
-            mkWedge(gp_Ax2(pnt, dir), xmin, ymin, zmin, z2min, x2min, xmax, ymax, zmax, z2max, x2max);
-        BRepBuilderAPI_MakeSolid mkSolid;
-        mkSolid.Add(mkWedge.Shell());
-        this->Shape.setValue(mkSolid.Solid());
+        this->Shape.setValue(PrimitiveShapes::makeWedge(
+            xmin,
+            ymin,
+            zmin,
+            z2min,
+            x2min,
+            xmax,
+            ymax,
+            zmax,
+            z2max,
+            x2max
+        ));
     }
     catch (Standard_Failure& e) {
         return new App::DocumentObjectExecReturn(e.GetMessageString());

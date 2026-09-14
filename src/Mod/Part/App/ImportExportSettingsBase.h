@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
 /***************************************************************************
- *   Copyright (c) 2019 Werner Mayer <wmayer[at]users.sourceforge.net>     *
+ *   Copyright (c) 2022 Werner Mayer <wmayer[at]users.sourceforge.net>     *
  *                                                                         *
  *   This file is part of the FreeCAD CAx development system.              *
  *                                                                         *
@@ -24,45 +24,52 @@
 
 #pragma once
 
-#include <memory>
+#include <string>
 
-#include <Gui/TaskView/TaskDialog.h>
-#include <Gui/TaskView/TaskView.h>
-#include <Mod/Part/Gui/CrossSectionsBase.h>
+#include <Base/Parameter.h>
+#include <Mod/Part/App/Interface.h>
+#include <Mod/Part/PartGlobal.h>
 
-namespace MeshPartGui
+namespace Part
 {
 
-class Ui_CrossSections;
-
-class CrossSections: public PartGui::CrossSectionsBase
+/** Common base of the STEP and IGES import/export settings.
+ *
+ * It stores the settings in a parameter group and leaves the format specific
+ * handling of the unit, company, author and product name to the derived class.
+ */
+class PartExport ImportExportSettingsBase
 {
-    Q_OBJECT
-
 public:
-    explicit CrossSections(
-        const Base::BoundBox3d& bb,
-        QWidget* parent = nullptr,
-        Qt::WindowFlags fl = Qt::WindowFlags()
-    );
+    virtual ~ImportExportSettingsBase() = default;
 
-    ~CrossSections() override;
+    Interface::Unit getUnit() const;
+    void setUnit(Interface::Unit);
 
-    bool apply() override;
+    std::string getCompany() const;
+    void setCompany(const char*);
+
+    std::string getAuthor() const;
+    void setAuthor(const char*);
+
+    std::string getProductName() const;
+    void setProductName(const char*);
 
 protected:
-    void retranslateUi() override;
+    explicit ImportExportSettingsBase(const char* groupPath);
 
-private:
-    std::unique_ptr<Ui_CrossSections> ui;
+    virtual void applyUnit(Interface::Unit) = 0;
+
+    virtual std::string defaultCompany() const;
+    virtual void applyCompany(const char*);
+
+    virtual std::string defaultAuthor() const;
+    virtual void applyAuthor(const char*);
+
+    virtual std::string defaultProductName() const = 0;
+    virtual void applyProductName(const char*) = 0;
+
+    ParameterGrp::handle pGroup;
 };
 
-class TaskCrossSections: public PartGui::CrossSectionsTaskDialog
-{
-    Q_OBJECT
-
-public:
-    explicit TaskCrossSections(const Base::BoundBox3d& bb);
-};
-
-}  // namespace MeshPartGui
+}  // namespace Part

@@ -1004,15 +1004,8 @@ private:
     static Application *_pcSingleton;
     // checks if the environment is alright
     //static void CheckEnv(void);
-    // Search for the FreeCAD home path based on argv[0]
-    /*
-     * There are multiple implementations of this method per-OS
-     */
-    static std::string FindHomePath(const char* sCall);
     // Print the help message
     static void PrintInitHelp();
-    // figure out some things
-    static void ExtractUserPath();
     // load the user and system parameter set
     static void LoadParameters();
     // puts the given env variable in the config

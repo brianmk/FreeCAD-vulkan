@@ -229,6 +229,8 @@ SET(Features_SRCS
     Part2DObject.h
     PrimitiveFeature.cpp
     PrimitiveFeature.h
+    PrimitiveShapes.cpp
+    PrimitiveShapes.h
     FeatureGeometrySet.h
     FeatureGeometrySet.cpp
     CustomFeature.cpp
@@ -331,6 +333,7 @@ SET(Python_SRCS
     BezierCurvePyImp.cpp
     BSplineCurve.pyi
     BSplineCurvePyImp.cpp
+    BSplineCurvePyHelpers.h
     Plane.pyi
     PlanePyImp.cpp
     Cone.pyi
@@ -539,6 +542,8 @@ SET(Part_SRCS
     ${ShapeUpgradePy_SRCS}
     IGES/ImportExportSettings.cpp
     IGES/ImportExportSettings.h
+    ImportExportSettingsBase.cpp
+    ImportExportSettingsBase.h
     OCAF/ImportExportSettings.cpp
     OCAF/ImportExportSettings.h
     STEP/ImportExportSettings.cpp

@@ -133,6 +133,9 @@ View / GUI: `set_view`, `fit_view`, `screenshot`, `set_workbench`, `run_command`
 Logs: `get_log`, `log`, `clear_log`, plus `snapshot` (viewport + doc + camera +
 selection) and `run_python` (an eval/exec escape hatch).
 
+Report view: `get_report_view`, `clear_report_view`, `show_report_view` (read /
+clear / show-hide the ReportView dock's Output tab; GUI only).
+
 ## Logs
 
 `freecad_mcp_guest.py` captures the FreeCAD process's stdout/stderr **at the
@@ -146,6 +149,16 @@ await session.call_tool("get_log", {"limit": 200, "tail": True})
 The captured bytes are also echoed back to the original stdout, so a user's
 terminal keeps showing everything. `log(level, message)` writes a line into the
 FreeCAD console *and* into the buffer; `clear_log` empties it.
+
+### Report view
+
+`get_log` reads the fd-level process stream. To read the **ReportView widget**
+itself — exactly the text the GUI shows in its Output tab, including messages
+FreeCAD routes through its console but that may be filtered/coloured in the
+widget — use `get_report_view(limit=0, tail=True)`. It locates the
+`Std_ReportView` dock and returns its `ReportOutput` text; `clear_report_view`
+empties that tab and `show_report_view(visible=True)` shows/raises the dock.
+These need the GUI FreeCAD (headless returns `gui_available: false`).
 
 ## Notes
 

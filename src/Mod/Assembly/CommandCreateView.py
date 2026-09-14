@@ -37,7 +37,7 @@ if App.GuiUp:
     from PySide.QtWidgets import QPushButton, QMenu
 
 import UtilsAssembly
-import Preferences
+import AssemblyPreferences
 
 __title__ = "Assembly Command Create Exploded View"
 __author__ = "Ondsel"
@@ -640,7 +640,7 @@ class ViewProviderExplodedViewStep:
         """Setup the scene sub-graph of the view provider, this method is mandatory"""
         self.app_obj = vobj.Object
 
-        pref = Preferences.preferences()
+        pref = AssemblyPreferences.preferences()
 
         self.line_thickness = pref.GetInt("StepLineThickness", 3)
 
@@ -774,7 +774,7 @@ class TaskAssemblyCreateView(QtCore.QObject):
         self.form.btnAlignDragger.setText("Select a part")
         self.form.btnRadialExplosion.clicked.connect(self.onRadialClicked)
 
-        pref = Preferences.preferences()
+        pref = AssemblyPreferences.preferences()
         self.form.CheckBox_PartsAsSingleSolid.setChecked(pref.GetBool("PartsAsSingleSolid", True))
 
         self.initialPlcs = UtilsAssembly.saveAssemblyPartsPlacements(self.assembly)
@@ -840,7 +840,7 @@ class TaskAssemblyCreateView(QtCore.QObject):
         return True
 
     def deactivate(self):
-        pref = Preferences.preferences()
+        pref = AssemblyPreferences.preferences()
         pref.SetBool("PartsAsSingleSolid", self.form.CheckBox_PartsAsSingleSolid.isChecked())
 
         view = Gui.activeDocument().activeView()

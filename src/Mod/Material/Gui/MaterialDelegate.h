@@ -77,7 +77,9 @@ Q_SIGNALS:
     void propertyChange(const QString& property, const QVariant& value);
 
 private:
-    QWidget* createWidget(QWidget* parent, const QVariant& item, const QModelIndex& index) const;
+    QWidget* createWidget(QWidget* parent,
+                          const QVariant& item,
+                          const QModelIndex& index) const override;
     void showColorModal(const QString& propertyName, QStandardItem* item);
     void showImageModal(const QString& propertyName, QStandardItem* item);
     void showListModal(const QString& propertyName, QStandardItem* item);

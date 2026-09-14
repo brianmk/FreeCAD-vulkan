@@ -380,38 +380,7 @@ void MaterialDelegate::paint(QPainter* painter,
         return;
     }
 
-    auto type = getType(index);
-    if (type == Materials::MaterialValue::Quantity) {
-        paintQuantity(painter, option, index);
-        return;
-    }
-    if (type == Materials::MaterialValue::Image) {
-        paintImage(painter, option, index);
-        return;
-    }
-    if (type == Materials::MaterialValue::SVG) {
-        paintSVG(painter, option, index);
-        return;
-    }
-    if (type == Materials::MaterialValue::Color) {
-        paintColor(painter, option, index);
-        return;
-    }
-    if (type == Materials::MaterialValue::List || type == Materials::MaterialValue::FileList
-        || type == Materials::MaterialValue::ImageList) {
-        paintList(painter, option, index);
-        return;
-    }
-    if (type == Materials::MaterialValue::MultiLineString) {
-        paintMultiLineString(painter, option, index);
-        return;
-    }
-    if (type == Materials::MaterialValue::Array2D || type == Materials::MaterialValue::Array3D) {
-        paintArray(painter, option, index);
-        return;
-    }
-
-    QStyledItemDelegate::paint(painter, option, index);
+    paintValue(painter, option, index);
 }
 
 QWidget* MaterialDelegate::createEditor(QWidget* parent,
@@ -443,66 +412,16 @@ QWidget* MaterialDelegate::createWidget(QWidget* parent,
                                         const QVariant& item,
                                         const QModelIndex& index) const
 {
-    QWidget* widget = nullptr;
-
-    auto type = getType(index);
-    if (type == Materials::MaterialValue::Integer) {
+    // Material integer properties are signed, unlike the unsigned default.
+    if (getType(index) == Materials::MaterialValue::Integer) {
         auto spinner = new Gui::IntSpinBox(parent);
         spinner->setMinimum(0);
         spinner->setMaximum(std::numeric_limits<int>::max());
         spinner->setValue(item.toInt());
-        widget = spinner;
-    }
-    else if (type == Materials::MaterialValue::Float) {
-        auto spinner = new Gui::DoubleSpinBox(parent);
-
-        // the magnetic permeability is the parameter for which many decimals matter
-        // the most however, even for this, 6 digits are sufficient
-        spinner->setDecimals(6);
-
-        // for almost all Float parameters of materials a step of 1 would be too large
-        spinner->setSingleStep(0.1);
-
-        spinner->setMinimum(std::numeric_limits<double>::min());
-        spinner->setMaximum(std::numeric_limits<double>::max());
-        spinner->setValue(item.toDouble());
-        widget = spinner;
-    }
-    else if (type == Materials::MaterialValue::Boolean) {
-        auto combo = new Gui::PrefComboBox(parent);
-        combo->insertItem(0, QStringLiteral(""));
-        combo->insertItem(1, tr("False"));
-        combo->insertItem(2, tr("True"));
-        combo->setCurrentText(item.toString());
-        widget = combo;
-    }
-    else if (type == Materials::MaterialValue::Quantity) {
-        // auto input = new Gui::InputField(parent);
-        auto input = new Gui::QuantitySpinBox(parent);
-        input->setMinimum(std::numeric_limits<double>::min());
-        input->setMaximum(std::numeric_limits<double>::max());
-        input->setUnitText(getUnits(index));
-        // input->setPrecision(6);
-        input->setValue(item.value<Base::Quantity>());
-
-        widget = input;
-    }
-    else if (type == Materials::MaterialValue::File) {
-        auto chooser = new Gui::FileChooser(parent);
-        if (!item.toString().isEmpty()) {
-            chooser->setFileName(item.toString());
-        }
-
-        widget = chooser;
-    }
-    else {
-        // Default editor
-        auto lineEdit = new Gui::PrefLineEdit(parent);
-        lineEdit->setText(item.toString());
-        widget = lineEdit;
+        return spinner;
     }
 
-    return widget;
+    return BaseDelegate::createWidget(parent, item, index);
 }
 
 #include "moc_MaterialDelegate.cpp"

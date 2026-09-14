@@ -24,10 +24,7 @@
 
 #pragma once
 
-#include <Mod/Part/App/Interface.h>
-#include <Base/Parameter.h>
-
-#include <Mod/Part/PartGlobal.h>
+#include <Mod/Part/App/ImportExportSettingsBase.h>
 
 namespace Part
 {
@@ -35,7 +32,7 @@ namespace Part
 namespace IGES
 {
 
-class PartExport ImportExportSettings
+class PartExport ImportExportSettings: public ImportExportSettingsBase
 {
 public:
     ImportExportSettings();
@@ -46,20 +43,17 @@ public:
     bool getBRepMode() const;
     void setBRepMode(bool) const;
 
-    Interface::Unit getUnit() const;
-    void setUnit(Interface::Unit);
-
-    std::string getCompany() const;
-    void setCompany(const char*);
-
-    std::string getAuthor() const;
-    void setAuthor(const char*);
-
-    std::string getProductName() const;
-    void setProductName(const char*);
-
 private:
-    ParameterGrp::handle pGroup;
+    void applyUnit(Interface::Unit) override;
+
+    std::string defaultCompany() const override;
+    void applyCompany(const char*) override;
+
+    std::string defaultAuthor() const override;
+    void applyAuthor(const char*) override;
+
+    std::string defaultProductName() const override;
+    void applyProductName(const char*) override;
 };
 
 }  // namespace IGES

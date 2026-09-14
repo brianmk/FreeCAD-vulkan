@@ -1196,6 +1196,7 @@ SET(Inventor_SRCS
     Selection/SoFCSelectionAction.h
     SoFCVectorizeSVGAction.h
     SoFCVectorizeU3DAction.h
+    SoVectorizeItem.h
     SoLabelNodes.h
     TranslateManip.h
     SoDatumLabel.h

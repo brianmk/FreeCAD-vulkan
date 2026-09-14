@@ -49,6 +49,7 @@ from PySide.QtCore import QT_TRANSLATE_NOOP
 import Path
 import Path.Op.Base as PathOp
 import Path.Op.SurfaceSupport as PathSurfaceSupport
+import Path.Op.SurfaceWaterline as PathSurfaceWaterline
 import PathScripts.PathUtils as PathUtils
 import math
 import time
@@ -71,33 +72,10 @@ else:
 FLOAT_EPSILON = 1e-6  # Small value for floating point comparisons
 
 
-class ObjectSurface(PathOp.ObjectOp):
+class ObjectSurface(PathSurfaceWaterline.ObjectSurfaceWaterline):
     """Proxy object for Surfacing operation."""
 
-    def opFeatures(self, obj):
-        """opFeatures(obj) ... return all standard features"""
-        return (
-            PathOp.FeatureTool
-            | PathOp.FeatureDepths
-            | PathOp.FeatureHeights
-            | PathOp.FeatureStepDown
-            | PathOp.FeatureCoolant
-            | PathOp.FeatureBaseFaces
-        )
-
-    def initOperation(self, obj):
-        """initOperation(obj) ... Initialize the operation by
-        managing property creation and property editor status."""
-        self.propertiesReady = False
-
-        self.initOpProperties(obj)  # Initialize operation-specific properties
-
-        # For debugging
-        if Path.Log.getLevel(Path.Log.thisModule()) != 4:
-            obj.setEditorMode("ShowTempObjects", 2)  # hide
-
-        if not hasattr(obj, "DoNotSetDefaultValues"):
-            self.setEditorProperties(obj)
+    _onChangedProps = ["ScanType", "CutPattern"]
 
     def initOpProperties(self, obj, warn=False):
         """initOpProperties(obj) ... create operation specific properties"""
@@ -575,15 +553,6 @@ class ObjectSurface(PathOp.ObjectOp):
         obj.setEditorMode("PatternCenterAt", P2)
         obj.setEditorMode("PatternCenterCustom", P2)
 
-    def onChanged(self, obj, prop):
-        if hasattr(self, "propertiesReady"):
-            if self.propertiesReady:
-                if prop in ["ScanType", "CutPattern"]:
-                    self.setEditorProperties(obj)
-
-        if prop == "Active" and obj.ViewObject:
-            obj.ViewObject.signalChangeIcon()
-
     def opOnDocumentRestored(self, obj):
         self.propertiesReady = False
         job = PathUtils.findParentJob(obj)
@@ -605,22 +574,6 @@ class ObjectSurface(PathOp.ObjectOp):
                 setattr(obj, prop, val)
 
         self.setEditorProperties(obj)
-
-    def opApplyPropertyDefaults(self, obj, job, propList):
-        # Set standard property defaults
-        PROP_DFLTS = self.opPropertyDefaults(obj, job)
-        for n in PROP_DFLTS:
-            if n in propList:
-                prop = getattr(obj, n)
-                val = PROP_DFLTS[n]
-                setVal = False
-                if hasattr(prop, "Value"):
-                    if isinstance(val, int) or isinstance(val, float):
-                        setVal = True
-                if setVal:
-                    setattr(prop, "Value", val)
-                else:
-                    setattr(obj, n, val)
 
     def opSetDefaultValues(self, obj, job):
         """opSetDefaultValues(obj, job) ... initialize defaults"""
@@ -701,31 +654,6 @@ class ObjectSurface(PathOp.ObjectOp):
         if obj.AvoidLastX_Faces > 100:
             obj.AvoidLastX_Faces = 100
             Path.Log.error("AvoidLastX_Faces: Avoid last X faces count limited to 100.")
-
-    def opUpdateDepths(self, obj):
-        if hasattr(obj, "Base") and obj.Base:
-            base, sublist = obj.Base[0]
-            fbb = base.Shape.getElement(sublist[0]).BoundBox
-            zmin = fbb.ZMax
-            for base, sublist in obj.Base:
-                for sub in sublist:
-                    try:
-                        fbb = base.Shape.getElement(sub).BoundBox
-                        zmin = min(zmin, fbb.ZMin)
-                    except Part.OCCError as e:
-                        Path.Log.error(e)
-            obj.OpFinalDepth = zmin
-        elif self.job:
-            if hasattr(obj, "BoundBox"):
-                if obj.BoundBox == "BaseBoundBox":
-                    models = self.job.Model.Group
-                    zmin = models[0].Shape.BoundBox.ZMin
-                    for M in models:
-                        zmin = min(zmin, M.Shape.BoundBox.ZMin)
-                    obj.OpFinalDepth = zmin
-                if obj.BoundBox == "Stock":
-                    models = self.job.Stock
-                    obj.OpFinalDepth = self.job.Stock.Shape.BoundBox.ZMin
 
     def opExecute(self, obj):
         """opExecute(obj) ... process surface operation"""
@@ -2479,57 +2407,6 @@ class ObjectSurface(PathOp.ObjectOp):
         return cmds
 
     # Additional support methods
-    def resetOpVariables(self, all=True):
-        """resetOpVariables() ... Reset class variables used for instance of operation."""
-        self.holdPoint = None
-        self.layerEndPnt = None
-        self.onHold = False
-        self.SafeHeightOffset = 2.0
-        self.ClearHeightOffset = 4.0
-        self.layerEndzMax = 0.0
-        self.resetTolerance = 0.0
-        self.holdPntCnt = 0
-        self.bbRadius = 0.0
-        self.axialFeed = 0.0
-        self.axialRapid = 0.0
-        self.FinalDepth = 0.0
-        self.clearHeight = 0.0
-        self.safeHeight = 0.0
-        self.faceZMax = -999999999999.0
-        if all is True:
-            self.cutter = None
-            self.stl = None
-            self.fullSTL = None
-            self.cutOut = 0.0
-            self.useTiltCutter = False
-        return True
-
-    def deleteOpVariables(self, all=True):
-        """deleteOpVariables() ... Reset class variables used for instance of operation."""
-        del self.holdPoint
-        del self.layerEndPnt
-        del self.onHold
-        del self.SafeHeightOffset
-        del self.ClearHeightOffset
-        del self.layerEndzMax
-        del self.resetTolerance
-        del self.holdPntCnt
-        del self.bbRadius
-        del self.axialFeed
-        del self.axialRapid
-        del self.FinalDepth
-        del self.clearHeight
-        del self.safeHeight
-        del self.faceZMax
-        if all is True:
-            del self.cutter
-            del self.stl
-            del self.fullSTL
-            del self.cutOut
-            del self.radius
-            del self.useTiltCutter
-        return True
-
     def _getTransitionLine(self, pdc, p1, p2, obj):
         """Use an OCL PathDropCutter to generate a safe transition path between
         two points in the x/y plane."""
@@ -2546,13 +2423,6 @@ class ObjectSurface(PathOp.ObjectOp):
             for p in pdcLine:
                 p.z += zDelta
         return (pdcLine, min(zs), max(zs))
-
-    def showDebugObject(self, objShape, objName):
-        if self.showDebugObjects:
-            do = FreeCAD.ActiveDocument.addObject("Part::Feature", "tmp_" + objName)
-            do.Shape = objShape
-            do.purgeTouched()
-            self.tempGroup.addObject(do)
 
 
 # Eclass
