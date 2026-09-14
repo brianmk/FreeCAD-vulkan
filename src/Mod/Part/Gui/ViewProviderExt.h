@@ -28,6 +28,7 @@
 
 
 #include <map>
+#include <memory>
 
 #include <App/PropertyUnits.h>
 #include <Gui/ViewProviderGeometryObject.h>
@@ -64,6 +65,10 @@ namespace PartGui
 class SoBrepFaceSet;
 class SoBrepEdgeSet;
 class SoBrepPointSet;
+
+/// Plain-data display geometry produced by the (thread-safe) compute pass and
+/// consumed by the GUI-thread apply pass.  Defined in ViewProviderExt.cpp.
+struct CoinGeometryData;
 
 class PartGuiExport ViewProviderPartExt: public Gui::ViewProviderGeometryObject
 {
@@ -214,6 +219,14 @@ protected:
     /// update is forced); otherwise mark it touched so it refreshes on the
     /// next visibility change.
     void updateVisualIfVisible();
+    /// Apply display geometry that was computed off the GUI thread to the
+    /// Coin nodes.  Invoked on the GUI thread by the async job; discarded
+    /// when \a generation has been superseded.
+    void applyComputedGeometry(
+        std::shared_ptr<CoinGeometryData> data,
+        TopoDS_Shape shape,
+        unsigned int generation
+    );
     void handleChangedPropertyName(
         Base::XMLReader& reader,
         const char* TypeName,
@@ -261,6 +274,13 @@ private:
 
     // shape that was last rendered so if it does not change we don't re-render it without need
     TopoDS_Shape lastRenderedShape;
+
+    // Asynchronous display-geometry computation used while a document is
+    // being restored (the heavy BRep meshing runs on a worker thread and the
+    // result is applied to the Coin nodes on the GUI thread as it lands).
+    class AsyncGeometryJob;
+    std::unique_ptr<AsyncGeometryJob> asyncJob;
+    unsigned int visualGeneration = 0;
 };
 
 }  // namespace PartGui

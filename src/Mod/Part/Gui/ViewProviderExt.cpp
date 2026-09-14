@@ -50,8 +50,14 @@
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 
 #include <QAction>
+#include <QFutureWatcher>
 #include <QMenu>
+#include <QObject>
+#include <QThreadPool>
+#include <QtConcurrentRun>
 #include <sstream>
+
+#include <OSD_ThreadPool.hxx>
 
 #include <Inventor/SoPickedPoint.h>
 #include <Inventor/details/SoFaceDetail.h>
@@ -88,9 +94,14 @@
 #include <Mod/Part/App/Tools.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <functional>
 #include <map>
+#include <memory>
+#include <mutex>
+#include <thread>
 #include <tuple>
 #include <vector>
 
@@ -1226,27 +1237,44 @@ bool refanPlanarBoundaryConvex(const Handle(Poly_Triangulation) & mesh,
 
 }  // namespace
 
-void ViewProviderPartExt::setupCoinGeometry(
+namespace PartGui {
+
+// Plain-data result of the (thread-safe) display-geometry computation.  The
+// GUI thread copies it into the Coin scene graph via applyCoinGeometry().
+struct CoinGeometryData {
+    std::vector<SbVec3f> points;
+    std::vector<SbVec3f> normals;
+    std::vector<int32_t> faceIndices;
+    std::vector<int32_t> partIndices;
+    std::vector<int32_t> lineIndices;
+    std::vector<int> edgeMapping;
+    int nodeStartIndex = 0;
+    int numFaces = 0;
+    int numEdges = 0;
+    int numNodes = 0;
+    int numTriangles = 0;
+    int numLines = 0;
+    bool empty = false;
+};
+
+}  // namespace PartGui
+
+// Pure computation of the Coin display geometry of \a shape.  It reads only
+// the shape's own OCCT data and writes into local buffers, so it is safe to
+// run off the GUI thread (see ViewProviderPartExt::updateVisual()).  The
+// result is applied to the Coin nodes by applyCoinGeometry().
+static PartGui::CoinGeometryData computeCoinGeometry(
     TopoDS_Shape shape,
-    SoCoordinate3* coords,
-    SoBrepFaceSet* faceset,
-    SoNormal* norm,
-    SoBrepEdgeSet* lineset,
-    SoBrepPointSet* nodeset,
     double deviation,
     double angularDeflection,
-    bool normalsFromUV
+    bool normalsFromUV,
+    bool rtvActive
 )
 {
+    PartGui::CoinGeometryData data;
     if (Part::Tools::isShapeEmpty(shape)) {
-        coords->point.setNum(0);
-        norm->vector.setNum(0);
-        faceset->coordIndex.setNum(0);
-        faceset->partIndex.setNum(0);
-        lineset->coordIndex.setNum(0);
-        lineset->setEdgeMapping({});
-        nodeset->startIndex.setValue(0);
-        return;
+        data.empty = true;
+        return data;
     }
 
     // The Vulkan ray-traced viewport composites BRep edge lines over the
@@ -1259,11 +1287,7 @@ void ViewProviderPartExt::setupCoinGeometry(
     // Vulkan raster edge overlay draws B-Rep feature edges, so it must also
     // suppress the parametric seam (otherwise a smooth sphere/cylinder shows a
     // phantom meridian line cutting through the surface).
-    const bool rtvActive = seamSuppressionEnabled();
-
-    // time measurement and book keeping
-    Base::TimeElapsed startTime;
-
+    // book keeping
     [[maybe_unused]]
     int numTriangles = 0,
         numNodes = 0, numNorms = 0, numFaces = 0, numEdges = 0, numLines = 0;
@@ -1446,16 +1470,16 @@ void ViewProviderPartExt::setupCoinGeometry(
     numNodes += vertexMap.Extent();
 
     // create memory for the nodes and indexes
-    coords->point.setNum(numNodes);
-    norm->vector.setNum(numNorms);
-    faceset->coordIndex.setNum(numTriangles * 4);
-    faceset->partIndex.setNum(numFaces);
+    data.points.resize(numNodes);
+    data.normals.resize(numNorms);
+    data.faceIndices.resize(static_cast<size_t>(numTriangles) * 4);
+    data.partIndices.resize(numFaces);
 
     // get the raw memory for fast fill up
-    SbVec3f* verts = coords->point.startEditing();
-    SbVec3f* norms = norm->vector.startEditing();
-    int32_t* index = faceset->coordIndex.startEditing();
-    int32_t* parts = faceset->partIndex.startEditing();
+    SbVec3f* verts = data.points.data();
+    SbVec3f* norms = data.normals.data();
+    int32_t* index = data.faceIndices.data();
+    int32_t* parts = data.partIndices.data();
 
     // preset the normal vector with null vector
     for (int i = 0; i < numNorms; i++) {
@@ -1783,7 +1807,7 @@ void ViewProviderPartExt::setupCoinGeometry(
         }
     }
 
-    nodeset->startIndex.setValue(faceNodeOffset);
+    data.nodeStartIndex = faceNodeOffset;
     for (int i = 0; i < vertexMap.Extent(); i++) {
         const TopoDS_Vertex& aVertex = TopoDS::Vertex(vertexMap(i + 1));
         gp_Pnt pnt = BRep_Tool::Pnt(aVertex);
@@ -1865,39 +1889,93 @@ void ViewProviderPartExt::setupCoinGeometry(
         lineSetCoords.push_back(-1);
         lineToEdge.push_back(it.first);
     }
-    lineset->setEdgeMapping(std::move(lineToEdge));
+    data.edgeMapping = std::move(lineToEdge);
 
     // preset the index vector size
     numLines = lineSetCoords.size();
-    lineset->coordIndex.setNum(numLines);
-    int32_t* lines = lineset->coordIndex.startEditing();
+    data.lineIndices = std::move(lineSetCoords);
 
-    int l = 0;
-    for (auto it = lineSetCoords.begin(); it != lineSetCoords.end(); ++it, l++) {
-        lines[l] = *it;
+    data.numFaces = numFaces;
+    data.numEdges = numEdges;
+    data.numNodes = numNodes;
+    data.numTriangles = numTriangles;
+    data.numLines = numLines;
+    return data;
+}
+
+// Copy computed display geometry into the Coin nodes.  Must run on the GUI
+// thread (Coin scene graph is not thread-safe).
+static void applyCoinGeometry(
+    const PartGui::CoinGeometryData& data,
+    SoCoordinate3* coords,
+    SoBrepFaceSet* faceset,
+    SoNormal* norm,
+    SoBrepEdgeSet* lineset,
+    SoBrepPointSet* nodeset
+)
+{
+    if (data.empty) {
+        coords->point.setNum(0);
+        norm->vector.setNum(0);
+        faceset->coordIndex.setNum(0);
+        faceset->partIndex.setNum(0);
+        lineset->coordIndex.setNum(0);
+        lineset->setEdgeMapping({});
+        nodeset->startIndex.setValue(0);
+        return;
     }
 
-    // end the editing of the nodes
-    coords->point.finishEditing();
-    norm->vector.finishEditing();
-    faceset->coordIndex.finishEditing();
-    faceset->partIndex.finishEditing();
-    lineset->coordIndex.finishEditing();
+    coords->point.setNum(static_cast<int>(data.points.size()));
+    if (!data.points.empty()) {
+        coords->point.setValues(0, static_cast<int>(data.points.size()), data.points.data());
+    }
+    norm->vector.setNum(static_cast<int>(data.normals.size()));
+    if (!data.normals.empty()) {
+        norm->vector.setValues(0, static_cast<int>(data.normals.size()), data.normals.data());
+    }
+    faceset->coordIndex.setNum(static_cast<int>(data.faceIndices.size()));
+    if (!data.faceIndices.empty()) {
+        faceset->coordIndex.setValues(
+            0,
+            static_cast<int>(data.faceIndices.size()),
+            data.faceIndices.data()
+        );
+    }
+    faceset->partIndex.setNum(static_cast<int>(data.partIndices.size()));
+    if (!data.partIndices.empty()) {
+        faceset->partIndex.setValues(
+            0,
+            static_cast<int>(data.partIndices.size()),
+            data.partIndices.data()
+        );
+    }
+    lineset->coordIndex.setNum(static_cast<int>(data.lineIndices.size()));
+    if (!data.lineIndices.empty()) {
+        lineset->coordIndex.setValues(
+            0,
+            static_cast<int>(data.lineIndices.size()),
+            data.lineIndices.data()
+        );
+    }
+    lineset->setEdgeMapping(data.edgeMapping);
+    nodeset->startIndex.setValue(data.nodeStartIndex);
+}
 
-#ifdef FC_DEBUG
-    Base::Console().log(
-        "ViewProvider update time: %f s\n",
-        Base::TimeElapsed::diffTimeF(startTime, Base::TimeElapsed())
-    );
-    Base::Console().log(
-        "Shape mesh info: Faces:%d Edges:%d Nodes:%d Triangles:%d IdxVec:%d\n",
-        numFaces,
-        numEdges,
-        numNodes,
-        numTriangles,
-        numLines
-    );
-#endif
+void ViewProviderPartExt::setupCoinGeometry(
+    TopoDS_Shape shape,
+    SoCoordinate3* coords,
+    SoBrepFaceSet* faceset,
+    SoNormal* norm,
+    SoBrepEdgeSet* lineset,
+    SoBrepPointSet* nodeset,
+    double deviation,
+    double angularDeflection,
+    bool normalsFromUV
+)
+{
+    PartGui::CoinGeometryData data =
+        computeCoinGeometry(shape, deviation, angularDeflection, normalsFromUV, seamSuppressionEnabled());
+    applyCoinGeometry(data, coords, faceset, norm, lineset, nodeset);
 }
 
 bool
@@ -1942,6 +2020,161 @@ void ViewProviderPartExt::setupCoinGeometry(
     );
 }
 
+namespace {
+
+// Dedicated pool for the (heavy) display-geometry computation, with a bounded
+// worker count so it cannot starve the global Qt pool or oversubscribe the
+// machine together with OCCT's own parallel mesher.
+QThreadPool* geometryThreadPool()
+{
+    static QThreadPool* pool = nullptr;
+    static std::once_flag once;
+    std::call_once(once, []() {
+        auto* p = new QThreadPool();
+        const int hw = std::max(1, static_cast<int>(std::thread::hardware_concurrency()));
+        const int workers = std::clamp(hw / 8, 1, 4);
+        p->setMaxThreadCount(workers);
+        pool = p;
+        try {
+            const int occThreads = std::max(1, hw / workers);
+            Handle(OSD_ThreadPool) occPool = OSD_ThreadPool::DefaultPool(occThreads);
+            if (!occPool.IsNull() && !occPool->IsInUse()) {
+                occPool->Init(occThreads);
+            }
+        }
+        catch (...) {
+            // OCCT pool already sized or busy; leave it as-is.
+        }
+    });
+    return pool;
+}
+
+std::shared_ptr<PartGui::CoinGeometryData> computeCoinGeometryAsync(
+    TopoDS_Shape shape,
+    double deviation,
+    double angularDeflection,
+    bool normalsFromUV,
+    bool rtvActive
+)
+{
+    auto data = std::make_shared<PartGui::CoinGeometryData>();
+    try {
+        *data = computeCoinGeometry(shape, deviation, angularDeflection, normalsFromUV, rtvActive);
+    }
+    catch (const Standard_Failure& e) {
+        data->empty = true;
+        FC_ERR("Cannot compute Inventor representation (async): " << e.GetMessageString());
+    }
+    catch (...) {
+        data->empty = true;
+        FC_ERR("Cannot compute Inventor representation (async)");
+    }
+    return data;
+}
+
+}  // namespace
+
+// Owns the QFutureWatcher of one in-flight geometry computation and applies
+// its result on the GUI thread.  A member of ViewProviderPartExt, so it is
+// destroyed on the GUI thread together with the view provider, which
+// disconnects the finished handler and discards any late result.
+class ViewProviderPartExt::AsyncGeometryJob
+{
+public:
+    explicit AsyncGeometryJob(ViewProviderPartExt* vp)
+        : vp(vp)
+    {
+        QObject::connect(&watcher, &QFutureWatcherBase::finished, &context, [this, vp]() {
+            auto data = watcher.future().result();
+            if (data) {
+                vp->applyComputedGeometry(data, jobShape, generation);
+            }
+        });
+    }
+
+    void start(
+        TopoDS_Shape shape,
+        double deviation,
+        double angularDeflection,
+        bool normalsFromUV,
+        bool rtvActive,
+        unsigned int gen
+    )
+    {
+        jobShape = shape;
+        generation = gen;
+        pendingDeviation = deviation;
+        pendingAngularDeflection = angularDeflection;
+        pendingNormalsFromUV = normalsFromUV;
+        watcher.setFuture(QtConcurrent::run(
+            geometryThreadPool(),
+            computeCoinGeometryAsync,
+            shape,
+            deviation,
+            angularDeflection,
+            normalsFromUV,
+            rtvActive
+        ));
+    }
+
+    bool isRunning() const
+    {
+        return watcher.isRunning();
+    }
+
+    bool matches(
+        const TopoDS_Shape& shape,
+        double deviation,
+        double angularDeflection,
+        bool normalsFromUV
+    ) const
+    {
+        return jobShape.IsPartner(shape) && pendingDeviation == deviation
+            && pendingAngularDeflection == angularDeflection
+            && pendingNormalsFromUV == normalsFromUV;
+    }
+
+private:
+    ViewProviderPartExt* vp;
+    QObject context;
+    TopoDS_Shape jobShape;
+    double pendingDeviation = 0.0;
+    double pendingAngularDeflection = 0.0;
+    bool pendingNormalsFromUV = false;
+    unsigned int generation = 0;
+    QFutureWatcher<std::shared_ptr<PartGui::CoinGeometryData>> watcher;
+};
+
+// Whether display geometry may be built off the GUI thread.  Enabled by
+// default, disabled with the AsyncGeometry user preference or by setting
+// FC_LOAD_SERIAL=1 (force the synchronous path).  Only used while a document
+// is being restored, so interactive edits keep the synchronous path.
+static bool envFlagTruthy(const char* name)
+{
+    const char* value = std::getenv(name);
+    if (!value || !*value) {
+        return false;
+    }
+    std::string s(value);
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return s == "1" || s == "true" || s == "yes" || s == "on";
+}
+
+static bool asyncGeometryEnabled()
+{
+    static const bool enabled = []() {
+        if (envFlagTruthy("FC_LOAD_SERIAL")) {
+            return false;
+        }
+        auto hGrp = App::GetApplication().GetParameterGroupByPath(
+            "User parameter:BaseApp/Preferences/Mod/Part/General");
+        return hGrp ? hGrp->GetBool("AsyncGeometry", true) : true;
+    }();
+    return enabled;
+}
+
 void ViewProviderPartExt::updateVisual()
 {
     TopoDS_Shape shape = getRenderedShape().getShape();
@@ -1956,6 +2189,45 @@ void ViewProviderPartExt::updateVisual()
         setHighlightedFaces(ShapeAppearance.getValues());
         setHighlightedEdges(LineColorArray.getValues());
         setHighlightedPoints(PointColorArray.getValue());
+        return;
+    }
+
+    const double deviation = Deviation.getValue();
+    const double angularDeflection = AngularDeflection.getValue();
+    const bool normalsFromUV = NormalsFromUV;
+
+    // During document restore the heavy BRep meshing runs on a worker thread
+    // and the geometry is applied to the Coin nodes as it lands, so objects
+    // appear progressively instead of blocking the GUI for the whole load.
+    if (asyncGeometryEnabled() && App::Document::isAnyRestoring()) {
+        if (asyncJob && asyncJob->isRunning()
+            && asyncJob->matches(shape, deviation, angularDeflection, normalsFromUV)) {
+            return;  // the same geometry is already being computed
+        }
+
+        // The selection/highlight refer to the geometry about to be replaced;
+        // clear them now and re-apply the material bindings once the computed
+        // geometry lands in applyComputedGeometry().
+        Gui::SoSelectionElementAction saction(Gui::SoSelectionElementAction::None);
+        saction.apply(this->faceset);
+        saction.apply(this->lineset);
+        saction.apply(this->nodeset);
+        Gui::SoHighlightElementAction hclear;
+        hclear.apply(this->faceset);
+        hclear.apply(this->lineset);
+        hclear.apply(this->nodeset);
+
+        if (!asyncJob) {
+            asyncJob = std::make_unique<AsyncGeometryJob>(this);
+        }
+        asyncJob->start(
+            shape,
+            deviation,
+            angularDeflection,
+            normalsFromUV,
+            seamSuppressionEnabled(),
+            ++visualGeneration
+        );
         return;
     }
 
@@ -1982,9 +2254,9 @@ void ViewProviderPartExt::updateVisual()
             norm,
             lineset,
             nodeset,
-            Deviation.getValue(),
-            AngularDeflection.getValue(),
-            NormalsFromUV
+            deviation,
+            angularDeflection,
+            normalsFromUV
         );
 
         lastRenderedShape = shape;
@@ -2002,6 +2274,32 @@ void ViewProviderPartExt::updateVisual()
     }
 
     // The material has to be checked again
+    setHighlightedFaces(ShapeAppearance.getValues());
+    setHighlightedEdges(LineColorArray.getValues());
+    setHighlightedPoints(PointColorArray.getValue());
+}
+
+void ViewProviderPartExt::applyComputedGeometry(
+    std::shared_ptr<CoinGeometryData> data,
+    TopoDS_Shape shape,
+    unsigned int generation
+)
+{
+    if (generation != visualGeneration) {
+        return;  // superseded by a newer geometry request
+    }
+
+    Gui::SoUpdateVBOAction action;
+    action.apply(this->faceset);
+
+    applyCoinGeometry(*data, coords, faceset, norm, lineset, nodeset);
+    lastRenderedShape = shape;
+    VisualTouched = false;
+
+    if (this->faceset->partIndex.getNum() > this->pcShapeMaterial->diffuseColor.getNum()) {
+        this->pcFaceBind->value = SoMaterialBinding::OVERALL;
+    }
+
     setHighlightedFaces(ShapeAppearance.getValues());
     setHighlightedEdges(LineColorArray.getValues());
     setHighlightedPoints(PointColorArray.getValue());
