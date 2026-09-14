@@ -115,6 +115,7 @@
 #include "TextDocumentEditorView.h"
 #include "UiLoader.h"
 #include "View3DPy.h"
+#include "View3DSettings.h"
 #include "View3DViewerPy.h"
 #include "View3DInventor.h"
 #include "ViewProviderAnnotation.h"
@@ -2396,6 +2397,10 @@ void Application::initApplication()
         new Base::ScriptProducer("FreeCADGuiTest", FreeCADGuiTest);
         init_resources();
         setCategoryFilterRules();
+        // Normalize the persisted View preferences once, before any view is
+        // created, so every setting has a single group/key/type (see
+        // View3DSettings::migratePreferences).
+        View3DSettings::migratePreferences();
         old_qtmsg_handler = qInstallMessageHandler(messageHandler);
         init = true;
     }

@@ -99,13 +99,10 @@ uint64_t selectionRevision()
 
 static bool vulkanPersistentResourcesEnabled()
 {
-    static const bool enabled = []() {
-        const char* value = std::getenv("FC_VULKAN_PERSISTENT_RESOURCES");
-        return !value
-            || (std::strcmp(value, "0") != 0
-                && std::strcmp(value, "false") != 0
-                && std::strcmp(value, "off") != 0);
-    }();
+    // On by default; the shared helper honors the conventional 0/false/off
+    // opt-out (this was an inline copy of the policy).
+    static const bool enabled =
+        Base::envFlagTruthy("FC_VULKAN_PERSISTENT_RESOURCES", true);
     return enabled;
 }
 
@@ -187,15 +184,24 @@ public:
         QMutexLocker locker(&m_stateMutex);
         m_camera = camera;
     }
+    //! Display/tuning settings as one blob (see SoVulkanViewSettings).  The
+    //! render manager diffs and applies the whole blob, so the renderer keeps
+    //! no per-field "last applied" mirrors of its own.  The individual setters
+    //! are thin struct-field writers kept for the existing widget API.
+    void setViewSettings(const SoVulkanViewSettings & settings)
+    {
+        QMutexLocker locker(&m_stateMutex);
+        m_viewSettings = settings;
+    }
     void setBackgroundColor(const SbColor4f & color)
     {
         QMutexLocker locker(&m_stateMutex);
-        m_background = color;
+        m_viewSettings.backgroundColor = color;
     }
     SbColor4f getBackgroundColor() const
     {
         QMutexLocker locker(&m_stateMutex);
-        return m_background;
+        return m_viewSettings.backgroundColor;
     }
     void setBackgroundGradient(bool enabled,
                                const SbColor4f & top,
@@ -206,24 +212,34 @@ public:
                       enabled ? 1 : 0, top[0], top[1], top[2],
                       bottom[0], bottom[1], bottom[2]);
         QMutexLocker locker(&m_stateMutex);
-        m_backgroundGradient = enabled;
-        m_backgroundTop = top;
-        m_backgroundBottom = bottom;
+        m_viewSettings.backgroundGradient = enabled;
+        m_viewSettings.backgroundTop = top;
+        m_viewSettings.backgroundBottom = bottom;
     }
     void setWireframeOverlay(bool enabled)
     {
         QMutexLocker locker(&m_stateMutex);
-        m_wireframeOverlay = enabled;
+        m_viewSettings.wireframeOverlay = enabled;
     }
     void setPointsOverlay(bool enabled)
     {
         QMutexLocker locker(&m_stateMutex);
-        m_pointsOverlay = enabled;
+        m_viewSettings.pointsOverlay = enabled;
     }
     void setEdgeColor(const SbColor4f & color)
     {
         QMutexLocker locker(&m_stateMutex);
-        m_edgeColor = color;
+        m_viewSettings.edgeColor = color;
+    }
+
+    // Capabilities probed by the widget's physical-device selection, handed to
+    // the render manager through SoVulkanDeviceContext::caps so the renderer
+    // does not re-enumerate the device extension list.
+    void setDeviceCaps(const SoVulkanDeviceCaps & caps)
+    {
+        QMutexLocker locker(&m_stateMutex);
+        m_deviceCaps = caps;
+        m_deviceCapsValid = true;
     }
 
     // Path tracing state is staged here and applied to the manager at the
@@ -243,27 +259,27 @@ public:
     void setPathTracingBounces(int bounces)
     {
         QMutexLocker locker(&m_stateMutex);
-        m_pathTracingBounces = std::clamp(bounces, 1, 16);
+        m_viewSettings.pathTracingBounces = std::clamp(bounces, 1, 16);
     }
     void setPathTracingSettleFrames(int frames)
     {
         QMutexLocker locker(&m_stateMutex);
-        m_pathTracingSettleFrames = std::clamp(frames, 1, 120);
+        m_viewSettings.pathTracingSettleFrames = std::clamp(frames, 1, 120);
     }
     void setPathTracingMaxSamples(int samples)
     {
         QMutexLocker locker(&m_stateMutex);
-        m_pathTracingMaxSamples = std::clamp(samples, 1, 4096);
+        m_viewSettings.pathTracingMaxSamples = std::clamp(samples, 1, 4096);
     }
     void setPathTracingDenoiser(const std::string & denoiser)
     {
         QMutexLocker locker(&m_stateMutex);
-        m_pathTracingDenoiser = denoiser;
+        m_viewSettings.pathTracingDenoiser = denoiser;
     }
     void setPathTracingDenoiserScale(float scale)
     {
         QMutexLocker locker(&m_stateMutex);
-        m_pathTracingDenoiserScale = std::clamp(scale, 1.0f, 8.0f);
+        m_viewSettings.pathTracingDenoiserScale = std::clamp(scale, 1.0f, 8.0f);
     }
     bool getPathTracingEnabled() const
     {
@@ -276,38 +292,37 @@ public:
         return m_pathTracingActive;
     }
 
-    void setViewMode(int mode)
+    void setViewMode(SoVulkanViewMode mode)
     {
         QMutexLocker locker(&m_stateMutex);
-        m_viewMode = mode;
+        m_viewSettings.viewMode = mode;
     }
-    int getViewMode() const
+    SoVulkanViewMode getViewMode() const
     {
         QMutexLocker locker(&m_stateMutex);
-        return m_viewMode;
+        return m_viewSettings.viewMode;
     }
 
     void setEnvMap(int index)
     {
         QMutexLocker locker(&m_stateMutex);
-        m_envMap = index;
+        m_viewSettings.envMap = index;
     }
     int getEnvMap() const
     {
         QMutexLocker locker(&m_stateMutex);
-        return m_envMap;
+        return m_viewSettings.envMap;
     }
 
-    // Staged authoritative scene lighting (GL host -> RT backend).  Like the
-    // env map, applied at the next startNextFrame() so every m_manager call
-    // stays inside frame setup.  The eye-space light data is camera-
-    // independent, so only the source set is stored here.
-    void setSceneLights(const std::vector<SoLightData> & lights,
-                        const SbVec3f & ambient)
+    // Staged authoritative scene lighting (GL host -> both backends).  Like
+    // the env map, applied at the next startNextFrame() so every m_manager call
+    // stays inside frame setup.  The set is camera-anchored world-space data,
+    // re-pushed by the adapter on every camera move, so the dirty flag drives a
+    // fresh apply per frame while the camera moves.
+    void setSceneLights(const SoLightingData & lighting)
     {
         QMutexLocker locker(&m_stateMutex);
-        m_sceneLights = lights;
-        m_sceneAmbient = ambient;
+        m_sceneLighting = lighting;
         m_sceneLightsDirty = true;
     }
 
@@ -408,6 +423,10 @@ public:
         if (props) {
             m_initContext.apiVersion = props->apiVersion;
         }
+        // Pass the capabilities probed by the widget so the renderer does not
+        // re-enumerate the device extension list.
+        m_initContext.caps = m_deviceCaps;
+        m_initContext.capsValid = m_deviceCapsValid;
         // Request the ray-tracing backend BEFORE initialize() only when path
         // tracing is (or will be) used.  Bringing it up unconditionally
         // rebuilds the whole RT stack (acceleration structures + RT
@@ -578,7 +597,8 @@ public:
         notifySurfaceSize(size);
 
         VkCommandBuffer cb = m_window->currentCommandBuffer();
-        recordScenePass(cb, size, frame.background, multisample);
+        recordScenePass(cb, size, frame.viewSettings.backgroundColor,
+                        multisample);
 
         // Env-gated frame dump (see Detail::VulkanFrameDumper): copy the
         // swapchain color image into a staging buffer inside the same command
@@ -628,37 +648,10 @@ private:
         SoNode * overlayScene = nullptr;
         SoNode * decorationScene = nullptr;
         SoCamera * camera = nullptr;
-        SbColor4f background;
-        SbColor4f backgroundTop;
-        SbColor4f backgroundBottom;
-        SbColor4f edgeColor;
-        bool backgroundGradient = false;
-        bool wireframeOverlay = false;
-        bool pointsOverlay = false;
+        //! Display/tuning settings snapshot (one blob; the manager diffs it).
+        SoVulkanViewSettings viewSettings;
         bool pathTracingEnabled = false;
-        int pathTracingBounces = 4;
-        int pathTracingSettleFrames = 6;
-        bool pathTracingDenoise = true;
     };
-
-    // Apply a path-tracing setting to the manager only when it changed since
-    // the last frame, and record it as applied.  Manager access is kept at
-    // frame setup (see snapshotFrameState()); this just removes the repeated
-    // diff-and-apply ceremony around the many scalar path-tracing settings.
-    // When `force` is true the setting is pushed unconditionally (even when it
-    // already matches `applied`): used right after a fresh RTX engine is
-    // created, since a newly built engine starts from its own defaults (e.g.
-    // ptDenoise is ON) and any setting that the manager previously "ignored"
-    // (not-initialized) was marked applied without reaching the engine.
-    template <typename T, typename Setter>
-    void applyPathTracingSetting(const T& value, T& applied, Setter&& setter,
-                                 bool force = false)
-    {
-        if (force || value != applied) {
-            setter(value);
-            applied = value;
-        }
-    }
 
     // Qt 6 invokes startNextFrame() on the GUI thread, like every other
     // access to these state members; the setters and redraw sensors run on
@@ -677,16 +670,11 @@ private:
         frame.overlayScene = m_overlayScene;
         frame.decorationScene = m_decorationScene;
         frame.camera = m_camera;
-        frame.background = m_background;
-        frame.backgroundTop = m_backgroundTop;
-        frame.backgroundBottom = m_backgroundBottom;
-        frame.edgeColor = m_edgeColor;
-        frame.backgroundGradient = m_backgroundGradient;
-        frame.wireframeOverlay = m_wireframeOverlay;
-        frame.pointsOverlay = m_pointsOverlay;
+        frame.viewSettings = m_viewSettings;
         frame.pathTracingEnabled = m_pathTracingEnabled;
-        frame.pathTracingBounces = m_pathTracingBounces;
-        frame.pathTracingSettleFrames = m_pathTracingSettleFrames;
+        // Denoising is required for path tracing, so it always runs while the
+        // path tracer is active; the denoiser selector only picks the filter.
+        frame.viewSettings.pathTracingDenoise = m_pathTracingEnabled;
 
         // Enable before raising the start latch: the RT backend drops the
         // latch if path tracing is not yet enabled (setPathTracingStart
@@ -737,84 +725,25 @@ private:
         }
         // A fresh RTX engine -- lazily built just above, or re-created by the
         // window-init reset flagged in initResources() -- starts from its own
-        // defaults (ptDenoise is ON), so re-push every path-tracing setting
-        // exactly once.  Guard on m_rtxBackendBuilt so a raster-only view (no
-        // RT backend) never spams the "not initialized" manager warnings.
+        // defaults (ptDenoise is ON), so force the manager to re-apply the
+        // whole settings blob to the fresh engine.  Guarded on m_rtxBackendBuilt
+        // so a raster-only view (no RT backend) never spams the "not
+        // initialized" manager warnings.  The manager does the per-field diff
+        // for the steady state (see SoVulkanRenderManager::setViewSettings).
         const bool reapplyPT = m_rtxBackendBuilt
             && (m_reapplyPathTracingSettings || !rtxBefore);
         m_reapplyPathTracingSettings = false;
-        applyPathTracingSetting(m_pathTracingBounces, m_appliedPathTracingBounces,
-            [this](int v) {
-                m_manager.setPathTracingBounces(static_cast<uint32_t>(v));
-            },
-            reapplyPT);
-        applyPathTracingSetting(m_pathTracingSettleFrames, m_appliedPathTracingSettleFrames,
-            [this](int v) {
-                m_manager.setPathTracingSettleFrames(static_cast<uint32_t>(v));
-            },
-            reapplyPT);
-        applyPathTracingSetting(m_pathTracingMaxSamples, m_appliedPathTracingMaxSamples,
-            [this](int v) {
-                m_manager.setPathTracingMaxSamples(static_cast<uint32_t>(v));
-            },
-            reapplyPT);
-        // Denoising is required for path tracing, so it always runs when the
-        // path tracer is active -- it is not an independent toggle the user
-        // must remember to flip.  The Denoiser selector (below) only picks the
-        // filter; "None" disables the filter and shows raw radiance.
-        const bool effDenoise = m_pathTracingEnabled;
-        frame.pathTracingDenoise = effDenoise;
-        applyPathTracingSetting(effDenoise, m_appliedPathTracingDenoise,
-            [this](bool v) {
-                m_manager.setPathTracingDenoiseEnabled(v ? TRUE : FALSE);
-            },
-            reapplyPT);
-        applyPathTracingSetting(m_pathTracingDenoiser, m_appliedPathTracingDenoiser,
-            [this](const std::string& v) {
-                m_manager.setPathTracingDenoiser(v.empty() ? nullptr : v.c_str());
-            },
-            reapplyPT);
-        applyPathTracingSetting(m_pathTracingDenoiserScale,
-            m_appliedPathTracingDenoiserScale,
-            [this](float v) {
-                m_manager.setPathTracingDenoiserScale(v);
-            },
-            reapplyPT);
-        // Apply the ray-traced view mode (Interactive/AO/PathTracing) when it
-        // changed, so the manager (and the shader's u_state.y) picks AO vs
-        // multi-bounce.  The RT backend must be initialized first; the enable
-        // toggle above builds it lazily when path tracing was requested.
-        // `reapplyPT` re-pushes even when the request matches the recorded
-        // baseline: a freshly (re)built engine starts from its own defaults,
-        // so a mode chosen while the backend was down would otherwise be
-        // swallowed by the equality check and never reach the new engine.
-        if (reapplyPT || m_viewMode != m_appliedViewMode) {
-            if (m_rtxBackendBuilt) {
-                m_manager.setViewMode(m_viewMode);
-            }
-            m_appliedViewMode = m_viewMode;
+        if (reapplyPT) {
+            m_manager.invalidateViewSettings();
         }
-        // Environment "cubemap" preset: apply to the manager when it changed,
-        // so the environment-lit view (and the path-tracer sky) use the
-        // selected sky instead of the viewport gradient.  Index -1 (both
-        // members' default) means "no preset": in Vulkan the engine then
-        // renders the sky from the viewport background gradient, and the
-        // freshly built RTX engine itself already defaults to -1, so forcing
-        // a -1 re-push onto it early-returns in setEnvMap() unchanged.
-        if (reapplyPT || m_envMap != m_appliedEnvMap) {
-            if (m_rtxBackendBuilt) {
-                m_manager.setEnvMap(m_envMap);
-            }
-            m_appliedEnvMap = m_envMap;
-        }
-        // Push the GL-authoritative scene lighting to the RT backend.  The
-        // IR draw-list lighting capture can drop to zero lights on the
-        // retained/replayed path tracer, so the RT backend consumes the
-        // host's own light set here instead.
+        // Push the GL-authoritative scene lighting to the render manager,
+        // which fans it out to BOTH backends: the raster executor (so the
+        // raster view's view-relative lights follow the camera like Coin GL)
+        // and the RT backend (whose IR capture can drop to zero lights on the
+        // retained/replayed path tracer).  Not gated on the RT backend being
+        // built -- the raster path needs the set too.
         if (m_sceneLightsDirty) {
-            if (m_rtxBackendBuilt) {
-                m_manager.setSceneLights(m_sceneLights, m_sceneAmbient);
-            }
+            m_manager.setSceneLights(m_sceneLighting);
             m_sceneLightsDirty = false;
         }
         if (m_pathTracingStart) {
@@ -870,29 +799,29 @@ private:
         // ratio stayed 1.0 and overlay strokes (NaviCube edges/axes/service
         // dots) rendered 1/dpr too thin on a fractional-scaling display.
         m_manager.setDevicePixelRatio(static_cast<float>(m_owner->devicePixelRatioF()));
-        m_manager.setBackgroundColor(frame.background);
-        VK_BREADCRUMB_ONCE("[VK-TRACE] startNextFrame: setBackgroundGradient "
-                           "enabled=%d top=(%.3f,%.3f,%.3f) bottom=(%.3f,%.3f,%.3f)\n",
-                           frame.backgroundGradient ? 1 : 0,
-                           frame.backgroundTop[0], frame.backgroundTop[1],
-                           frame.backgroundTop[2],
-                           frame.backgroundBottom[0], frame.backgroundBottom[1],
-                           frame.backgroundBottom[2]);
-        m_manager.setBackgroundGradient(frame.backgroundGradient,
-                                        frame.backgroundTop,
-                                        frame.backgroundBottom);
-        m_manager.setWireframeOverlay(frame.wireframeOverlay);
-        m_manager.setPointsOverlay(frame.pointsOverlay);
-        m_manager.setEdgeColor(frame.edgeColor);
+        VK_BREADCRUMB_ONCE("[VK-TRACE] startNextFrame: setViewSettings "
+                           "bgGradient=%d top=(%.3f,%.3f,%.3f) bottom=(%.3f,%.3f,%.3f)\n",
+                           frame.viewSettings.backgroundGradient ? 1 : 0,
+                           frame.viewSettings.backgroundTop[0],
+                           frame.viewSettings.backgroundTop[1],
+                           frame.viewSettings.backgroundTop[2],
+                           frame.viewSettings.backgroundBottom[0],
+                           frame.viewSettings.backgroundBottom[1],
+                           frame.viewSettings.backgroundBottom[2]);
+        // One call applies the whole display/tuning blob (the manager diffs it).
+        m_manager.setViewSettings(frame.viewSettings);
         if (Base::envFlagEnabled("FC_VULKAN_BACKEND_DEBUG")) {
             static int syncLog = 0;
             if (syncLog++ < 3) {
-                Base::Console().message("[VK-SET] startNextFrame wire=%d points=%d "
-                                       "edge=(%.2f,%.2f,%.2f,%.2f)\n",
-                                       frame.wireframeOverlay ? 1 : 0,
-                                    frame.pointsOverlay ? 1 : 0,
-                                    frame.edgeColor[0], frame.edgeColor[1],
-                                    frame.edgeColor[2], frame.edgeColor[3]);
+                Base::Console().message(
+                    "[VK-SET] startNextFrame wire=%d points=%d "
+                    "edge=(%.2f,%.2f,%.2f,%.2f)\n",
+                    frame.viewSettings.wireframeOverlay ? 1 : 0,
+                    frame.viewSettings.pointsOverlay ? 1 : 0,
+                    frame.viewSettings.edgeColor[0],
+                    frame.viewSettings.edgeColor[1],
+                    frame.viewSettings.edgeColor[2],
+                    frame.viewSettings.edgeColor[3]);
             }
         }
         // The external path relies on QVulkanWindow's default render pass
@@ -1014,13 +943,13 @@ private:
     QVulkanWindow * m_window = nullptr;
     QuarterVulkanWidget * m_owner = nullptr;
     QSize m_lastSurfaceSize;
-    SbColor4f m_background = SbColor4f(0.0f, 0.0f, 0.0f, 1.0f);
-    bool m_backgroundGradient = false;
-    SbColor4f m_backgroundTop = SbColor4f(0.0f, 0.0f, 0.0f, 1.0f);
-    SbColor4f m_backgroundBottom = SbColor4f(0.0f, 0.0f, 0.0f, 1.0f);
-    bool m_wireframeOverlay = false;
-    bool m_pointsOverlay = false;
-    SbColor4f m_edgeColor = SbColor4f(0.05f, 0.05f, 0.05f, 1.0f);
+    //! Display/tuning settings as one blob (see SoVulkanViewSettings).  The
+    //! manager diffs and applies the whole blob, so the renderer keeps no
+    //! per-field "last applied" mirrors of its own.
+    SoVulkanViewSettings m_viewSettings;
+    // Capabilities probed by selectPhysicalDevice() (see setDeviceCaps).
+    SoVulkanDeviceCaps m_deviceCaps {};
+    bool m_deviceCapsValid = false;
     bool m_initialized = false;
     // Path tracing state mirrored here: requested values are written from
     // the widget API, startNextFrame() applies them to the manager during
@@ -1029,42 +958,12 @@ private:
     bool m_pathTracingStart = false;
     bool m_pathTracingActive = false;
     bool m_pathTracingRefining = false;
-    // Ray-traced view mode: Interactive (raster/off), AmbientOcclusion
-    // (single-sample AO preview) or PathTracing (accumulating).  Stage from
-    // the widget API and apply to the manager each frame, like the other
-    // path-tracing settings.
-    int m_viewMode = 0;   // 0=Interactive 1=AmbientOcclusion 2=PathTracing
-    int m_appliedViewMode = -1;   // mirror so a change is seen exactly once
-    // "Cubemap" environment preset (see setEnvMap); staged from the widget
-    // API and applied to the manager each frame like the view mode.  -1 =
-    // use the viewport background gradient.
-    int m_envMap = -1;
-    int m_appliedEnvMap = -1;
     // Staged authoritative scene lighting (GL host -> RT backend).  The eye-
     // space data is camera-independent, so only a dirty flag (set on push /
     // on an empty reset) triggers a re-push to the manager.
-    std::vector<SoLightData> m_sceneLights;
-    SbVec3f m_sceneAmbient = SbVec3f(0.2f, 0.2f, 0.2f);
+    SoLightingData m_sceneLighting;
     bool m_sceneLightsDirty = false;
     bool m_appliedPathTracingEnabled = false;
-    int m_pathTracingBounces = 4;
-    int m_pathTracingSettleFrames = 6;
-    int m_pathTracingMaxSamples = 256;
-    std::string m_pathTracingDenoiser;   // "" = default (env/backend)
-    float m_pathTracingDenoiserScale = 1.0f;
-    int m_appliedPathTracingBounces = 0;
-    int m_appliedPathTracingSettleFrames = 0;
-    int m_appliedPathTracingMaxSamples = 0;
-    float m_appliedPathTracingDenoiserScale = 1.0f;
-    // The denoiser baseline must reflect the backend's REAL initial state, which
-    // is ON (SoRTXRenderBackend::ptDenoise defaults to TRUE every engine create).
-    // Initializing it to false made applyPathTracingSetting(false, false,
-    // ...) a no-op, so a fresh view ("denoiser off", the raster default, or an
-    // RT view with the denoiser disabled) never pushed ptDenoise to FALSE and
-    // the backend kept its default-on.  With the baseline TRUE the FIRST frame
-    // always pushes the requested (usually off) state once.
-    bool m_appliedPathTracingDenoise = true;
-    std::string m_appliedPathTracingDenoiser;
     // Set when the RTX engine was (re)created (initResources()/lazy build) so
     // the next frame re-pushes every path-tracing setting to the fresh engine
     // instead of trusting the stale "applied" baselines.  Consumed once per
@@ -1202,6 +1101,9 @@ public:
     bool rtNvClusterAvailable = false;
     bool rtNvPartitionedAvailable = false;
     bool rtNvLinearSweptSpheresAvailable = false;
+    // VK_KHR_synchronization2 (Vulkan 1.3 core) is a hard dependency of
+    // VK_EXT_opacity_micromap; enabled alongside it when present.
+    bool synchronization2Available = false;
     // Feature structs behind the optional extensions above.  They live on the
     // window object (not the modifier lambda) because QVulkanWindowPrivate::
     // init() reads the pNext chain after the callback returns.
@@ -1299,7 +1201,7 @@ QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent, bool rayTracing)
     // drive the real event filter is a genuine platform event posted to the
     // embedded window.  Enabling this is zero-cost unless the env var names a
     // file to poll (see pollInjectFile()).
-    if (const char * injectPath = ::getenv("FC_VULKAN_INJECT_PY")) {
+    if (const char * injectPath = Base::envString("FC_VULKAN_INJECT_PY")) {
         d->injectPath = injectPath;
         injectTimer = new QTimer(this);
         injectTimer->setInterval(10);
@@ -1443,15 +1345,64 @@ void QuarterVulkanWidget::selectPhysicalDevice()
     f->vkEnumeratePhysicalDevices(d->instance->vkInstance(), &devCount,
                                   devs.data());
 
+    // One physical-device capability probe.  All of the widget's feature /
+    // extension gates are filled from a single pass so (a) each device's
+    // extension list is enumerated once instead of re-enumerated per queried
+    // name, and (b) the per-device optional flags are recorded for the *chosen*
+    // device rather than for whichever device happened to be probed last.
+    // The capability block is shared with the renderer (SoVulkanDeviceCaps in
+    // SoVulkanRenderTarget.h), so the extension-name list and the probe result
+    // have one definition and the renderer does not re-enumerate the device.
+    // (VK_KHR_synchronization2 is a hard dependency of VK_EXT_opacity_micromap;
+    // requesting the latter without it fails vkCreateDevice validation,
+    // VUID-ppEnabledExtensionNames-01387.)
+    using DeviceCaps = SoVulkanDeviceCaps;
+    auto queryCaps = [f](VkPhysicalDevice dev) {
+        DeviceCaps caps;
+        VkPhysicalDeviceFeatures feats {};
+        f->vkGetPhysicalDeviceFeatures(dev, &feats);
+        caps.fillModeNonSolid = feats.fillModeNonSolid != 0;
+        caps.fullDrawIndexUint32 = feats.fullDrawIndexUint32 != 0;
+        caps.dualSrcBlend = feats.dualSrcBlend != 0;
+        VkPhysicalDeviceProperties props {};
+        f->vkGetPhysicalDeviceProperties(dev, &props);
+        // Timeline semaphores are a Vulkan 1.2 core feature; the RT backend
+        // already requires 1.2+, so a 1.2+ device supports them.
+        caps.timelineSemaphore = props.apiVersion >= VK_API_VERSION_1_2;
+        caps.synchronization2 = props.apiVersion >= VK_API_VERSION_1_3;
+        uint32_t extCount = 0;
+        f->vkEnumerateDeviceExtensionProperties(dev, nullptr, &extCount, nullptr);
+        std::vector<VkExtensionProperties> exts(extCount);
+        if (extCount > 0) {
+            f->vkEnumerateDeviceExtensionProperties(dev, nullptr, &extCount,
+                                                    exts.data());
+        }
+        auto hasExt = [&exts](const char * name) {
+            for (const auto & ext : exts) {
+                if (std::strcmp(ext.extensionName, name) == 0) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        caps.externalSemaphoreFd = hasExt("VK_KHR_external_semaphore_fd");
+        caps.externalMemoryFd = hasExt("VK_KHR_external_memory_fd");
+        caps.positionFetch = hasExt("VK_KHR_ray_tracing_position_fetch");
+        caps.opacityMicromap = hasExt("VK_EXT_opacity_micromap");
+        caps.nvCluster = hasExt("VK_NV_cluster_acceleration_structure");
+        caps.nvPartitioned = hasExt("VK_NV_partitioned_acceleration_structure");
+        caps.nvLinearSweptSpheres = hasExt("VK_NV_ray_tracing_linear_swept_spheres");
+        caps.synchronization2 = caps.synchronization2
+            || hasExt("VK_KHR_synchronization2");
+        caps.rayTracing = hasExt("VK_KHR_acceleration_structure")
+            && hasExt("VK_KHR_ray_tracing_pipeline")
+            && hasExt("VK_KHR_ray_query");
+        return caps;
+    };
+
     int bestIndex = 0;
     int bestScore = -1;
-    bool bestFillMode = false;
-    bool bestRt = false;
-    bool bestExternalSemaphoreFd = false;
-    bool bestExternalMemoryFd = false;
-    bool bestFullDrawIndex = false;
-    bool bestDualSrcBlend = false;
-    bool bestTimelineSemaphore = false;
+    DeviceCaps best;
     for (uint32_t i = 0; i < devCount; ++i) {
         VkPhysicalDeviceProperties props {};
         f->vkGetPhysicalDeviceProperties(devs[i], &props);
@@ -1473,51 +1424,38 @@ void QuarterVulkanWidget::selectPhysicalDevice()
             typeScore = 5;
             break;
         }
-        VkPhysicalDeviceFeatures devFeatures {};
-        f->vkGetPhysicalDeviceFeatures(devs[i], &devFeatures);
-        const bool fillMode = devFeatures.fillModeNonSolid ? true : false;
-        const bool rtReady = this->deviceSupportsRayTracing(devs[i]);
-        const bool extSemFd =
-            this->deviceSupportsExtension(devs[i], "VK_KHR_external_semaphore_fd");
-        const bool extMemFd =
-            this->deviceSupportsExtension(devs[i], "VK_KHR_external_memory_fd");
-        const bool fullDrawIdx = devFeatures.fullDrawIndexUint32 ? true : false;
-        const bool dualSrcBlend = devFeatures.dualSrcBlend ? true : false;
-        // Timeline semaphores are a Vulkan 1.2 core feature; the RT backend
-        // already requires 1.2+, so a 1.2+ device supports them.
-        const bool timelineSem =
-            props.apiVersion >= VK_API_VERSION_1_2;
+        const DeviceCaps caps = queryCaps(devs[i]);
         // Tie-breakers stay below the discrete/integrated type gap (50) so a
         // dedicated GPU is always preferred over an integrated one that
         // happens to have more secondary features.
-        const int score =
-            typeScore + (fillMode ? 20 : 0) + (rtReady ? 40 : 0);
+        const int score = typeScore + (caps.fillModeNonSolid ? 20 : 0)
+            + (caps.rayTracing ? 40 : 0);
         vkLog("QuarterVulkanWidget: device %d '%s' type=%d "
               "fillModeNonSolid=%d rayTracing=%d score=%d",
               static_cast<int>(i), props.deviceName,
-              static_cast<int>(props.deviceType), fillMode ? 1 : 0,
-              rtReady ? 1 : 0, score);
+              static_cast<int>(props.deviceType), caps.fillModeNonSolid ? 1 : 0,
+              caps.rayTracing ? 1 : 0, score);
         if (score > bestScore) {
             bestScore = score;
             bestIndex = static_cast<int>(i);
-            bestFillMode = fillMode;
-            bestRt = rtReady;
-            bestExternalSemaphoreFd = extSemFd;
-            bestExternalMemoryFd = extMemFd;
-            bestFullDrawIndex = fullDrawIdx;
-            bestDualSrcBlend = dualSrcBlend;
-            bestTimelineSemaphore = timelineSem;
+            best = caps;
         }
     }
 
-    d->vulkanWindow->fillModeNonSolid = bestFillMode;
-    d->vulkanWindow->rtRayTracingAvailable = bestRt;
-    d->vulkanWindow->rtExternalSemaphoreFdAvailable = bestExternalSemaphoreFd;
-    d->vulkanWindow->rtExternalMemoryFdAvailable = bestExternalMemoryFd;
-    d->vulkanWindow->fullDrawIndexUint32 = bestFullDrawIndex;
-    d->vulkanWindow->dualSrcBlend = bestDualSrcBlend;
-    d->vulkanWindow->rtTimelineSemaphoreAvailable = bestTimelineSemaphore;
-    if (d->rayTracing && !bestExternalMemoryFd) {
+    d->vulkanWindow->fillModeNonSolid = best.fillModeNonSolid;
+    d->vulkanWindow->rtRayTracingAvailable = best.rayTracing;
+    d->vulkanWindow->rtExternalSemaphoreFdAvailable = best.externalSemaphoreFd;
+    d->vulkanWindow->rtExternalMemoryFdAvailable = best.externalMemoryFd;
+    d->vulkanWindow->fullDrawIndexUint32 = best.fullDrawIndexUint32;
+    d->vulkanWindow->dualSrcBlend = best.dualSrcBlend;
+    d->vulkanWindow->rtTimelineSemaphoreAvailable = best.timelineSemaphore;
+    d->vulkanWindow->rtPositionFetchAvailable = best.positionFetch;
+    d->vulkanWindow->rtOpacityMicromapAvailable = best.opacityMicromap;
+    d->vulkanWindow->rtNvClusterAvailable = best.nvCluster;
+    d->vulkanWindow->rtNvPartitionedAvailable = best.nvPartitioned;
+    d->vulkanWindow->rtNvLinearSweptSpheresAvailable = best.nvLinearSweptSpheres;
+    d->vulkanWindow->synchronization2Available = best.synchronization2;
+    if (d->rayTracing && !best.externalMemoryFd) {
         vkWarn("QuarterVulkanWidget: the selected device lacks "
                "VK_KHR_external_memory_fd; the CUDA/OptiX denoiser cannot "
                "import Vulkan memory and will fall back to the other denoisers.");
@@ -1526,100 +1464,18 @@ void QuarterVulkanWidget::selectPhysicalDevice()
     // requested by configureDeviceFeatures() are guaranteed to be supported
     // by the device that is actually created.
     d->window->setPhysicalDeviceIndex(bestIndex);
+    // Hand the probe result to the renderer so it can skip its own extension
+    // enumeration (see SoVulkanDeviceContext::caps).
+    if (d->renderer) {
+        d->renderer->setDeviceCaps(best);
+    }
     vkLog("QuarterVulkanWidget: selected physical device %d "
           "(fillModeNonSolid=%d rayTracing=%d)",
-          bestIndex, bestFillMode ? 1 : 0, bestRt ? 1 : 0);
-    if (d->rayTracing && !bestRt) {
+          bestIndex, best.fillModeNonSolid ? 1 : 0, best.rayTracing ? 1 : 0);
+    if (d->rayTracing && !best.rayTracing) {
         vkWarn("QuarterVulkanWidget: the selected device does not support "
                "ray tracing; falling back to the raster backend.");
     }
-}
-
-// True when \a device advertises the ray-tracing extension set
-// (VK_KHR_acceleration_structure, VK_KHR_ray_tracing_pipeline,
-// VK_KHR_ray_query) that SoRTXRenderBackend requires.
-bool QuarterVulkanWidget::deviceSupportsRayTracing(VkPhysicalDevice device)
-{
-    auto * f = d->instance->functions();
-    uint32_t extCount = 0;
-    f->vkEnumerateDeviceExtensionProperties(device, nullptr, &extCount,
-                                            nullptr);
-    std::vector<VkExtensionProperties> exts(extCount);
-    if (extCount > 0) {
-        f->vkEnumerateDeviceExtensionProperties(device, nullptr, &extCount,
-                                                exts.data());
-    }
-    bool haveAS = false;
-    bool haveRTPipeline = false;
-    bool haveRayQuery = false;
-    bool havePositionFetch = false;
-    bool haveOpacityMicromap = false;
-    bool haveNvCluster = false;
-    bool haveNvPartitioned = false;
-    bool haveNvLSS = false;
-    for (const auto & ext : exts) {
-        if (std::strcmp(ext.extensionName, "VK_KHR_acceleration_structure")
-            == 0) {
-            haveAS = true;
-        }
-        else if (std::strcmp(ext.extensionName,
-                             "VK_KHR_ray_tracing_pipeline")
-                 == 0) {
-            haveRTPipeline = true;
-        }
-        else if (std::strcmp(ext.extensionName, "VK_KHR_ray_query") == 0) {
-            haveRayQuery = true;
-        }
-        else if (std::strcmp(ext.extensionName,
-                             "VK_KHR_ray_tracing_position_fetch") == 0) {
-            havePositionFetch = true;
-        }
-        else if (std::strcmp(ext.extensionName, "VK_EXT_opacity_micromap")
-                 == 0) {
-            haveOpacityMicromap = true;
-        }
-        else if (std::strcmp(ext.extensionName,
-                             "VK_NV_cluster_acceleration_structure") == 0) {
-            haveNvCluster = true;
-        }
-        else if (std::strcmp(ext.extensionName,
-                             "VK_NV_partitioned_acceleration_structure") == 0) {
-            haveNvPartitioned = true;
-        }
-        else if (std::strcmp(ext.extensionName,
-                             "VK_NV_ray_tracing_linear_swept_spheres") == 0) {
-            haveNvLSS = true;
-        }
-    }
-    d->vulkanWindow->rtPositionFetchAvailable = havePositionFetch;
-    d->vulkanWindow->rtOpacityMicromapAvailable = haveOpacityMicromap;
-    d->vulkanWindow->rtNvClusterAvailable = haveNvCluster;
-    d->vulkanWindow->rtNvPartitionedAvailable = haveNvPartitioned;
-    d->vulkanWindow->rtNvLinearSweptSpheresAvailable = haveNvLSS;
-    return haveAS && haveRTPipeline && haveRayQuery;
-}
-
-bool QuarterVulkanWidget::deviceSupportsExtension(VkPhysicalDevice device,
-                                                  const char * name)
-{
-    if (!d->instance || !d->instance->functions() || !name) {
-        return false;
-    }
-    auto * f = d->instance->functions();
-    uint32_t extCount = 0;
-    f->vkEnumerateDeviceExtensionProperties(device, nullptr, &extCount,
-                                            nullptr);
-    std::vector<VkExtensionProperties> exts(extCount);
-    if (extCount > 0) {
-        f->vkEnumerateDeviceExtensionProperties(device, nullptr, &extCount,
-                                                exts.data());
-    }
-    for (const auto & ext : exts) {
-        if (std::strcmp(ext.extensionName, name) == 0) {
-            return true;
-        }
-    }
-    return false;
 }
 
 // Request the device extensions and feature structs for ray tracing (when
@@ -1657,12 +1513,7 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
         // pipelines.
         d->window->setEnabledFeaturesModifier(
           [this](VkPhysicalDeviceFeatures2 & features) {
-            features.features.fillModeNonSolid =
-              d->vulkanWindow->fillModeNonSolid ? VK_TRUE : VK_FALSE;
-            features.features.fullDrawIndexUint32 =
-              d->vulkanWindow->fullDrawIndexUint32 ? VK_TRUE : VK_FALSE;
-            features.features.dualSrcBlend =
-              d->vulkanWindow->dualSrcBlend ? VK_TRUE : VK_FALSE;
+            this->applyBaseDeviceFeatures(features);
           });
         return;
     }
@@ -1692,8 +1543,13 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
     if (d->vulkanWindow->rtPositionFetchAvailable) {
         deviceExt << QByteArrayLiteral("VK_KHR_ray_tracing_position_fetch");
     }
-    if (d->vulkanWindow->rtOpacityMicromapAvailable) {
-        deviceExt << QByteArrayLiteral("VK_EXT_opacity_micromap");
+    // VK_EXT_opacity_micromap requires VK_KHR_synchronization2 (or Vulkan 1.3
+    // core); request both together, gated on the dependency being present, or
+    // vkCreateDevice fails validation (VUID-ppEnabledExtensionNames-01387).
+    if (d->vulkanWindow->rtOpacityMicromapAvailable
+        && d->vulkanWindow->synchronization2Available) {
+        deviceExt << QByteArrayLiteral("VK_EXT_opacity_micromap")
+                  << QByteArrayLiteral("VK_KHR_synchronization2");
     }
     if (d->vulkanWindow->rtNvClusterAvailable) {
         deviceExt << QByteArrayLiteral("VK_NV_cluster_acceleration_structure");
@@ -1818,12 +1674,7 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
     d->vulkanWindow->rtTimelineSemaphore.timelineSemaphore = VK_TRUE;
     d->window->setEnabledFeaturesModifier(
       [this](VkPhysicalDeviceFeatures2 & features) {
-        features.features.fillModeNonSolid =
-          d->vulkanWindow->fillModeNonSolid ? VK_TRUE : VK_FALSE;
-        features.features.fullDrawIndexUint32 =
-          d->vulkanWindow->fullDrawIndexUint32 ? VK_TRUE : VK_FALSE;
-        features.features.dualSrcBlend =
-          d->vulkanWindow->dualSrcBlend ? VK_TRUE : VK_FALSE;
+        this->applyBaseDeviceFeatures(features);
         d->vulkanWindow->rtRayQuery.pNext = features.pNext;
         d->vulkanWindow->rtRayTracingPipeline.pNext =
           &d->vulkanWindow->rtRayQuery;
@@ -1831,39 +1682,58 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
           &d->vulkanWindow->rtRayTracingPipeline;
         d->vulkanWindow->rtBufferDeviceAddress.pNext =
           &d->vulkanWindow->rtAccelerationStructure;
+        // Insert an optional feature struct directly after
+        // VkPhysicalDeviceBufferDeviceAddressFeatures in the pNext chain.
+        // Every Vulkan feature struct begins with sType + pNext, so the chain
+        // link can be manipulated through VkBaseOutStructure; the driver walks
+        // the whole chain, so the order is cosmetic only.
+        auto chainAfterBda = [this](VkBaseOutStructure * node) {
+            node->pNext = static_cast<VkBaseOutStructure *>(
+                d->vulkanWindow->rtBufferDeviceAddress.pNext);
+            d->vulkanWindow->rtBufferDeviceAddress.pNext = node;
+        };
         // Timeline semaphores for the async-compute path (see the queue
         // modifier): only requested when the 1.2+ device reports them.
         if (d->vulkanWindow->rtTimelineSemaphoreAvailable) {
-            d->vulkanWindow->rtTimelineSemaphore.pNext =
-                d->vulkanWindow->rtBufferDeviceAddress.pNext;
-            d->vulkanWindow->rtBufferDeviceAddress.pNext =
-                &d->vulkanWindow->rtTimelineSemaphore;
+            chainAfterBda(reinterpret_cast<VkBaseOutStructure *>(
+                &d->vulkanWindow->rtTimelineSemaphore));
         }
         // Chain the optional capability feature structs (each gated on its
-        // extension being present) so the device enables them.  The driver
-        // walks the whole pNext chain, so the order is cosmetic only.
+        // extension being present) so the device enables them.
         if (d->vulkanWindow->rtPositionFetchAvailable) {
             d->vulkanWindow->rtPositionFetch.sType =
                 VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_POSITION_FETCH_FEATURES_KHR;
             d->vulkanWindow->rtPositionFetch.rayTracingPositionFetch = VK_TRUE;
-            d->vulkanWindow->rtPositionFetch.pNext =
-                d->vulkanWindow->rtBufferDeviceAddress.pNext;
-            d->vulkanWindow->rtBufferDeviceAddress.pNext =
-                &d->vulkanWindow->rtPositionFetch;
+            chainAfterBda(reinterpret_cast<VkBaseOutStructure *>(
+                &d->vulkanWindow->rtPositionFetch));
         }
         if (d->vulkanWindow->rtOpacityMicromapAvailable) {
             d->vulkanWindow->rtOpacityMicromap.sType =
                 VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_FEATURES_EXT;
             d->vulkanWindow->rtOpacityMicromap.micromap = VK_TRUE;
-            d->vulkanWindow->rtOpacityMicromap.pNext =
-                d->vulkanWindow->rtBufferDeviceAddress.pNext;
-            d->vulkanWindow->rtBufferDeviceAddress.pNext =
-                &d->vulkanWindow->rtOpacityMicromap;
+            chainAfterBda(reinterpret_cast<VkBaseOutStructure *>(
+                &d->vulkanWindow->rtOpacityMicromap));
         }
         features.pNext = &d->vulkanWindow->rtBufferDeviceAddress;
       });
     vkLog("QuarterVulkanWidget: requested ray tracing pipeline device "
           "extensions");
+}
+
+void QuarterVulkanWidget::applyBaseDeviceFeatures(
+    VkPhysicalDeviceFeatures2 & features) const
+{
+    // Always-on features shared by the raster and RT feature-modifier paths.
+    // fillModeNonSolid drives the wireframe/points overlay pipelines;
+    // fullDrawIndexUint32 and dualSrcBlend are the other optional core
+    // features the backend may use.  Each is gated on the probed device
+    // capability recorded on the window.
+    features.features.fillModeNonSolid =
+        d->vulkanWindow->fillModeNonSolid ? VK_TRUE : VK_FALSE;
+    features.features.fullDrawIndexUint32 =
+        d->vulkanWindow->fullDrawIndexUint32 ? VK_TRUE : VK_FALSE;
+    features.features.dualSrcBlend =
+        d->vulkanWindow->dualSrcBlend ? VK_TRUE : VK_FALSE;
 }
 
 void QuarterVulkanWidget::logSupportedSampleCounts()
@@ -2280,22 +2150,32 @@ uint32_t QuarterVulkanWidget::asyncComputeQueueIndex() const
     return d->vulkanWindow ? d->vulkanWindow->computeQueueIndex : 0;
 }
 
-void QuarterVulkanWidget::setViewMode(int mode)
+void QuarterVulkanWidget::setViewMode(SoVulkanViewMode mode)
 {
     if (!d->renderer) {
         return;
     }
-    VK_BREADCRUMB("[VK-TRACE] QuarterVulkanWidget::setViewMode mode=%d\n", mode);
+    VK_BREADCRUMB("[VK-TRACE] QuarterVulkanWidget::setViewMode mode=%d\n",
+                  static_cast<int>(mode));
     d->renderer->setViewMode(mode);
     redraw();
 }
 
-int QuarterVulkanWidget::getViewMode() const
+SoVulkanViewMode QuarterVulkanWidget::getViewMode() const
 {
     if (!d->renderer) {
-        return 0;
+        return SoVulkanViewMode::RtxModeOff;
     }
     return d->renderer->getViewMode();
+}
+
+void QuarterVulkanWidget::setViewSettings(const SoVulkanViewSettings & settings)
+{
+    if (!d->renderer) {
+        return;
+    }
+    d->renderer->setViewSettings(settings);
+    redraw();
 }
 
 void QuarterVulkanWidget::setEnvMap(int index)
@@ -2309,13 +2189,12 @@ void QuarterVulkanWidget::setEnvMap(int index)
     redraw();
 }
 
-void QuarterVulkanWidget::setSceneLights(const std::vector<SoLightData> & lights,
-                                         const SbVec3f & ambient)
+void QuarterVulkanWidget::setSceneLights(const SoLightingData & lighting)
 {
     if (!d->renderer) {
         return;
     }
-    d->renderer->setSceneLights(lights, ambient);
+    d->renderer->setSceneLights(lighting);
     redraw();
 }
 

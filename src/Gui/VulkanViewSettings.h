@@ -20,6 +20,7 @@
 
 #include <Base/Parameter.h>
 #include <Inventor/SbColor4f.h>
+#include <Inventor/rendering/SoVulkanViewMode.h>
 
 namespace Gui {
 
@@ -60,18 +61,17 @@ constexpr bool isRayTracedMode(int renderMode) noexcept
     return !isRasterMode(renderMode);
 }
 
-//! Map a ViewRenderMode to the Vulkan viewport widget's own ray-traced
-//! view-mode int (0 = raster, 1 = RayTracing/AO, 2 = PathTracing, 3 =
-//! Environment).  The two enums are intentionally distinct (the widget mode is
-//! a subset), so this single mapping replaces the magic ints that used to be
-//! hardcoded in each setRenderMode() branch.
-constexpr int viewRenderModeToWidgetMode(ViewRenderMode mode) noexcept
+//! Map a ViewRenderMode to the renderer's SoVulkanViewMode.  The application
+//! enum is a superset (it distinguishes the two raster backends and the
+//! wireframe override), so this is the single place the two are related --
+//! callers pass the result straight to the renderer with no magic ints.
+constexpr SoVulkanViewMode viewRenderModeToWidgetMode(ViewRenderMode mode) noexcept
 {
     switch (mode) {
-        case ViewRenderMode::RayTracing:  return 1;  // widget AO shader
-        case ViewRenderMode::PathTracing: return 2;
-        case ViewRenderMode::Environment: return 3;
-        default:                          return 0;  // RasterCoin/RasterVulkan/Wireframe
+        case ViewRenderMode::RayTracing:  return SoVulkanViewMode::RtxModeAmbientOcclusion;
+        case ViewRenderMode::PathTracing: return SoVulkanViewMode::RtxModePathTrace;
+        case ViewRenderMode::Environment: return SoVulkanViewMode::RtxModeEnvironment;
+        default:                          return SoVulkanViewMode::RtxModeOff;
     }
 }
 #endif // FREECAD_USE_VULKAN
@@ -110,10 +110,10 @@ struct VulkanViewSettings
 #endif
     }
 
-    bool showEdges = false;
+    //! Wireframe (edge) overlay and point overlay for the raster backend.
+    bool wireframe = false;
     bool showPoints = false;
     SbColor4f edgeColor = SbColor4f(0.05f, 0.05f, 0.05f, 1.0f);
-    bool pathTracing = false;
     // Path-tracing tuning (see the View preferences dialog).
     int pathTracingBounces = 4;
     int pathTracingSettleFrames = 6;

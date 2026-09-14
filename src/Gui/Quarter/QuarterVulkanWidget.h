@@ -11,6 +11,8 @@
 #include <Inventor/SbColor4f.h>
 #include <Inventor/SbVec3f.h>
 #include <Inventor/rendering/SoRenderIR.h>
+#include <Inventor/rendering/SoVulkanViewMode.h>
+#include <Inventor/rendering/SoVulkanViewSettings.h>
 #include <vector>
 
 #ifdef FREECAD_USE_VULKAN
@@ -248,13 +250,21 @@ public:
     /*!
       \brief Ray-traced view mode.
 
-      Passes the integer value of SoRTXRenderBackend::RtxViewMode (0 = off /
-      raster, 1 = ambient-occlusion preview, 2 = path tracing, 3 = environment).
-      \a mode 0 leaves the backend in its current state (raster is driven by
-      setPathTracingEnabled(false)).
+      Passes a SoVulkanViewMode (shared with the renderer): RtxModeOff (raster,
+      driven by setPathTracingEnabled(false)), RtxModeAmbientOcclusion,
+      RtxModePathTrace or RtxModeEnvironment.
     */
-    void setViewMode(int mode);
-    int getViewMode() const;
+    void setViewMode(SoVulkanViewMode mode);
+    SoVulkanViewMode getViewMode() const;
+
+    /*!
+      \brief Apply the whole Vulkan viewport display/tuning settings blob.
+
+      The render manager diffs it and re-applies only on change, so this may be
+      called repeatedly.  Structural state (scene, camera, viewport, render
+      target) and the stateful path-tracing enable/start latch are separate.
+    */
+    void setViewSettings(const SoVulkanViewSettings & settings);
 
     /*!
       \brief Select the "cubemap" environment preset (-1 = viewport
@@ -269,16 +279,15 @@ public:
     static const char * getEnvMapName(int index);
 
     /*!
-      \brief Provide the authoritative scene lighting (GL host -> RT backend).
+      \brief Provide the authoritative scene lighting (GL host -> both backends).
 
-      \a lights is the effective eye-space light set and \a ambient the
+      \a lighting is the camera-anchored world-space viewer light set plus the
       intensity-scaled scene ambient.  Forwarded to SoVulkanRenderManager::
-      setSceneLights so the path tracer uses the host's lights instead of the
-      IR draw-list lighting capture, which can drop to zero on the retained/
+      setSceneLights so both Vulkan backends use the host's lights instead of
+      the IR draw-list lighting capture, which can drop to zero on the retained/
       replayed frame and render surfaces near-black.
     */
-    void setSceneLights(const std::vector<SoLightData> & lights,
-                        const SbVec3f & ambient);
+    void setSceneLights(const SoLightingData & lighting);
 
     /*!
       \brief Start flag for progressive path-tracing refinement.
@@ -353,9 +362,12 @@ private:
     void releaseSharedInstance();
 #ifdef FREECAD_USE_VULKAN
     void selectPhysicalDevice();
-    bool deviceSupportsRayTracing(VkPhysicalDevice device);
-    bool deviceSupportsExtension(VkPhysicalDevice device, const char * name);
     void configureDeviceFeatures(bool rayTracing);
+    //! Fill the always-on device features (wireframe/points overlays + full
+    //! draw-index + dual-source blend) shared by the raster and RT feature
+    //! modifier paths, so the two setEnabledFeaturesModifier() callbacks do not
+    //! each carry their own copy of the same assignments.
+    void applyBaseDeviceFeatures(VkPhysicalDeviceFeatures2 & features) const;
     void logSupportedSampleCounts();
 #endif
 

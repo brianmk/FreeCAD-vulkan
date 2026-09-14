@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""Verify Vulkan point rendering (VulkanShowPoints) and the round-point glyph
-path (FC_VULKAN_ROUND_POINTS=1, SO_POINT_SHAPE_ROUND).
+"""Verify Vulkan point rendering (VulkanShowPoints overlay).
 
 Renders a tessellated Part::Sphere in a raster Vulkan view so vertex points are
 numerous, then toggles VulkanShowPoints on.  The VulkanEdgeColor is pinned to red
 so the frame dump pixel counts are deterministic; the host-side check asserts the
 applyVulkanSettings breadcrumb recorded the points=0->1 transition and that the
-run produced frame dumps (the round-point discard path ran without crashing).
+run produced frame dumps.
 
 Usage:
-  FC_VULKAN_ROUND_POINTS=1 FC_VULKAN_DUMP_FRAME=1 FC_VULKAN_DUMP_START=0 \\
-      FC_VULKAN_DUMP_END=400 FC_VULKAN_BACKEND_DEBUG=1 FreeCAD vk_points_probe.py
+  FC_VULKAN_DUMP_FRAME=1 FC_VULKAN_DUMP_START=0 FC_VULKAN_DUMP_END=400 \\
+      FC_VULKAN_BACKEND_DEBUG=1 FreeCAD vk_points_probe.py
 """
 
 import os
@@ -51,14 +50,12 @@ def step():
     if k == 1:
         for name in list(FreeCAD.listDocuments()):
             FreeCAD.closeDocument(name)
-        s.set_pref(VIEW, "UseVulkanRayTracing", False)
-        s.set_pref(VIEW, "VulkanPathTracing", False)
         # Force raster mode (1): the point overlay is only drawn by the raster
         # backend, not the RTX path tracer.
         s.set_pref(VIEW, "VulkanRenderMode", 1)
         # Edges off in BOTH phases so only points contribute edge-colored
         # (red) pixels -> a clean baseline (0) vs points (>0) comparison.
-        s.set_pref(VIEW, "VulkanShowEdges", False)
+        s.set_pref(VIEW, "VulkanWireframe", False)
         s.set_pref(VIEW, "VulkanShowPoints", False)
         s.set_pref(VIEW, "VulkanEdgeColor", 0xFF0000FF)
         build_scene()
@@ -67,7 +64,7 @@ def step():
     elif k == 3:
         s.set_pref(VIEW, "VulkanShowPoints", True)
         s.frame_phase("points")
-        log("phase=points (VulkanShowPoints on, round glyph path)")
+        log("phase=points (VulkanShowPoints on)")
     elif k == 5:
         log("snapshot + finish")
         s.snapshot()

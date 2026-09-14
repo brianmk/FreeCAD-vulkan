@@ -32,6 +32,12 @@ namespace Detail {
 //! the backend rasterized (QVulkanWindow::grab() renders its own frame).
 //! The dump window is controlled with FC_VULKAN_DUMP_START /
 //! FC_VULKAN_DUMP_END (defaults 240-245).
+//!
+//! Swapchain-side counterpart of Coin's SoVulkanShared::dumpImageToHost()
+//! (which the RT storage-image dump uses).  They share the staging-buffer +
+//! copy + map + write shape and differ only in command-buffer ownership: this
+//! one records into the frame's own command buffer (no submit/wait, to avoid
+//! stalling the pipeline), while the Coin helper owns a one-shot submit.
 class VulkanFrameDumper
 {
 public:
@@ -262,20 +268,20 @@ public:
 
 private:
     // Returns UINT32_MAX when no memory type matches, so callers can fail
-    // with a diagnostic instead of silently falling back to type 0.
+    // with a diagnostic instead of silently falling back to type 0.  The
+    // device memory properties are queried once and cached (they cannot change
+    // for a given physical device).
     uint32_t findMemoryType(const VkMemoryRequirements & memReq,
                             uint32_t props)
     {
-        // Pick a memory type supporting the requested properties.  The
-        // physical device memory properties are fetched through the
-        // instance's loader trampoline (QVulkanWindow does not expose
-        // them).
-        VkPhysicalDeviceMemoryProperties memProps {};
-        m_instance->functions()->vkGetPhysicalDeviceMemoryProperties(
-            m_window->physicalDevice(), &memProps);
-        for (uint32_t i = 0; i < memProps.memoryTypeCount; ++i) {
+        if (!m_memPropsValid) {
+            m_instance->functions()->vkGetPhysicalDeviceMemoryProperties(
+                m_window->physicalDevice(), &m_memProps);
+            m_memPropsValid = true;
+        }
+        for (uint32_t i = 0; i < m_memProps.memoryTypeCount; ++i) {
             if ((memReq.memoryTypeBits & (1u << i))
-                && (memProps.memoryTypes[i].propertyFlags & props) == props) {
+                && (m_memProps.memoryTypes[i].propertyFlags & props) == props) {
                 return i;
             }
         }
@@ -284,6 +290,8 @@ private:
 
     QVulkanInstance * m_instance = nullptr;
     QVulkanWindow * m_window = nullptr;
+    VkPhysicalDeviceMemoryProperties m_memProps {};
+    bool m_memPropsValid = false;
     bool m_enabled = false;
     int m_dumpStart = 240;
     int m_dumpEnd = 246;

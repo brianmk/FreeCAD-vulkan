@@ -428,7 +428,7 @@ struct MainWindowP
 #ifdef FREECAD_USE_VULKAN
     QComboBox* viewModeCombo = nullptr;
     QComboBox* envMapCombo = nullptr;
-    QToolButton* edgeOverlayButton = nullptr;
+    QToolButton* wireframeButton = nullptr;
 #endif
     std::vector<StatusBarItem> statusBarItems;
     ParameterGrp::handle hStatusBar;
@@ -710,27 +710,27 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
     connect(d->envMapCombo, qOverload<int>(&QComboBox::currentIndexChanged),
             this, &MainWindow::onEnvMapComboChanged);
 
-    // Toggle for the black BRep edge overlay drawn on top of objects in the
-    // Vulkan viewport (the "edges" display option).  Lives next to the
-    // environment selector; its checked state mirrors the active view.
-    d->edgeOverlayButton = new QToolButton(statusBar());
-    d->edgeOverlayButton->setObjectName(QStringLiteral("EdgeOverlayButton"));
-    d->edgeOverlayButton->setCheckable(true);
-    d->edgeOverlayButton->setAutoRaise(true);
-    d->edgeOverlayButton->setIcon(BitmapFactory().iconFromTheme("DrawStyleFlatLines"));
-    d->edgeOverlayButton->setToolTip(tr("Toggle the object edge overlay"));
+    // Toggle for the wireframe (edge) overlay drawn on top of objects in the
+    // Vulkan raster viewport.  Lives next to the environment selector; its
+    // checked state mirrors the active view.
+    d->wireframeButton = new QToolButton(statusBar());
+    d->wireframeButton->setObjectName(QStringLiteral("WireframeButton"));
+    d->wireframeButton->setCheckable(true);
+    d->wireframeButton->setAutoRaise(true);
+    d->wireframeButton->setIcon(BitmapFactory().iconFromTheme("DrawStyleFlatLines"));
+    d->wireframeButton->setToolTip(tr("Toggle the wireframe overlay"));
     addStatusBarItem(
-        d->edgeOverlayButton,
-        {.id = "edgeOverlayButton",
-         //: A context menu action used to show or hide the edge overlay toggle
-         //: in the status bar
-         .title = tr("Edge Overlay"),
+        d->wireframeButton,
+        {.id = "wireframeButton",
+         //: A context menu action used to show or hide the wireframe overlay
+         //: toggle in the status bar
+         .title = tr("Wireframe Overlay"),
          .slot = StatusBarSlot::Right,
          .order = 253,
          .persistentVisibility = true}
     );
-    connect(d->edgeOverlayButton, &QToolButton::toggled,
-            this, &MainWindow::onEdgeOverlayToggled);
+    connect(d->wireframeButton, &QToolButton::toggled,
+            this, &MainWindow::onWireframeToggled);
 #endif // FREECAD_USE_VULKAN
 
     auto* groundPlaneWidget = new GroundPlaneWidget(statusBar());
@@ -1666,7 +1666,7 @@ void MainWindow::addWindow(MDIView* view)
         connect(v3, &View3DInventor::renderModeChanged,
                 this, &MainWindow::syncViewModeCombo);
         connect(v3, &View3DInventor::renderModeChanged,
-                this, &MainWindow::syncEdgeOverlayButton);
+                this, &MainWindow::syncWireframeButton);
 #endif
     }
 
@@ -1705,7 +1705,7 @@ void MainWindow::removeWindow(Gui::MDIView* view, bool close)
         disconnect(v3, &View3DInventor::renderModeChanged,
                    this, &MainWindow::syncViewModeCombo);
         disconnect(v3, &View3DInventor::renderModeChanged,
-                   this, &MainWindow::syncEdgeOverlayButton);
+                   this, &MainWindow::syncWireframeButton);
 #endif
     }
 
@@ -1834,7 +1834,7 @@ void MainWindow::setActiveWindow(MDIView* view)
 #ifdef FREECAD_USE_VULKAN
     syncViewModeCombo();
     syncEnvMapCombo();
-    syncEdgeOverlayButton();
+    syncWireframeButton();
 #endif
 
     // activate/remember workbench by tab (if enabled)
@@ -1924,25 +1924,25 @@ void MainWindow::onEnvMapComboChanged(int index)
     view->setEnvMap(index - 1);
 }
 
-void MainWindow::onEdgeOverlayToggled(bool checked)
+void MainWindow::onWireframeToggled(bool checked)
 {
     View3DInventor* view = dynamic_cast<View3DInventor*>(d->activeView.data());
     if (!view) {
         return;
     }
-    view->setShowEdges(checked);
+    view->setWireframe(checked);
 }
 
-void MainWindow::syncEdgeOverlayButton()
+void MainWindow::syncWireframeButton()
 {
-    if (!d->edgeOverlayButton) {
+    if (!d->wireframeButton) {
         return;
     }
-    // Checked state mirrors the active view's edge-overlay visibility.
+    // Checked state mirrors the active view's wireframe-overlay visibility.
     View3DInventor* vecView = dynamic_cast<View3DInventor*>(d->activeView.data());
-    const bool showEdges = vecView ? vecView->getShowEdges() : false;
-    QSignalBlocker blocker(d->edgeOverlayButton);
-    d->edgeOverlayButton->setChecked(showEdges);
+    const bool wireframe = vecView ? vecView->getWireframe() : false;
+    QSignalBlocker blocker(d->wireframeButton);
+    d->wireframeButton->setChecked(wireframe);
 }
 #endif // FREECAD_USE_VULKAN
 
