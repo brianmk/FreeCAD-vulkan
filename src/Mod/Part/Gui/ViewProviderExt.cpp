@@ -53,9 +53,11 @@
 #include <QFutureWatcher>
 #include <QMenu>
 #include <QObject>
+#include <QString>
 #include <QThreadPool>
 #include <QtConcurrentRun>
 #include <sstream>
+#include <string>
 
 #include <OSD_ThreadPool.hxx>
 
@@ -85,6 +87,7 @@
 
 #include <Gui/BitmapFactory.h>
 #include <Gui/Control.h>
+#include <Gui/MainWindow.h>
 #include <Gui/Selection/SoFCSelectionAction.h>
 #include <Gui/Selection/SoFCUnifiedSelection.h>
 #include <Gui/ViewParams.h>
@@ -1109,6 +1112,9 @@ bool refanPlanarBoundaryConvex(const Handle(Poly_Triangulation) & mesh,
     for (Standard_Integer t = 1; t <= mesh->NbTriangles() && planeNormal.SquareMagnitude() < 1e-16; ++t) {
         Standard_Integer n1, n2, n3;
         mesh->Triangle(t).Get(n1, n2, n3);
+        if (n1 < 1 || n2 < 1 || n3 < 1) {
+            continue;  // removed/degenerate triangle (0 node index)
+        }
         gp_Vec e1(mesh->Node(n1), mesh->Node(n2));
         gp_Vec e2(mesh->Node(n1), mesh->Node(n3));
         planeNormal = e1.Crossed(e2);
@@ -1130,6 +1136,9 @@ bool refanPlanarBoundaryConvex(const Handle(Poly_Triangulation) & mesh,
     for (Standard_Integer t = 1; t <= mesh->NbTriangles(); ++t) {
         Standard_Integer n1, n2, n3;
         mesh->Triangle(t).Get(n1, n2, n3);
+        if (n1 < 1 || n2 < 1 || n3 < 1) {
+            continue;  // removed/degenerate triangle (0 node index)
+        }
         const std::pair<Standard_Integer, Standard_Integer> edges[3] = {
             {std::min(n1, n2), std::max(n1, n2)},
             {std::min(n2, n3), std::max(n2, n3)},
@@ -1250,6 +1259,11 @@ struct CoinGeometryData {
     std::vector<int> edgeMapping;
     int nodeStartIndex = 0;
     bool empty = false;
+    // Non-empty when the tessellation *threw* (as opposed to the shape simply
+    // being empty).  Carries the OCCT failure message from the worker thread so
+    // the GUI thread can report it with the object's name; without this the
+    // failure was swallowed and the object silently disappeared.
+    std::string error;
 };
 
 }  // namespace PartGui
@@ -1266,6 +1280,21 @@ static PartGui::CoinGeometryData computeCoinGeometry(
     bool rtvActive
 )
 {
+    // BRepTools::Clean()/BRepMesh_IncrementalMesh() below mutate the shape's
+    // triangulation, which lives in the TopoDS_TShape shared by every copy of
+    // the handle, and the rest of this function reads that same triangulation.
+    // The async path runs several of these on the geometry thread pool at once,
+    // and updateVisual() can start a new job for the same shape while an older
+    // one is still running (the QFutureWatcher tracks only the newest future;
+    // it does not cancel the previous QtConcurrent::run).  Two overlapping
+    // computations then clean/re-mesh the triangulation while the other is
+    // iterating it, which OCCT reports as
+    //   NCollection_AliasedArray::value(), out of range index
+    // and which silently left the object invisible.  Serialize the whole
+    // computation so the mutation and the reads never overlap.
+    static std::mutex geometryMutex;
+    std::lock_guard<std::mutex> geometryLock(geometryMutex);
+
     PartGui::CoinGeometryData data;
     if (Part::Tools::isShapeEmpty(shape)) {
         data.empty = true;
@@ -1345,12 +1374,25 @@ static PartGui::CoinGeometryData computeCoinGeometry(
         static_cast<size_t>(faceMap.Extent()) + 1);
     std::vector<gp_Pnt> refanCentroid(static_cast<size_t>(faceMap.Extent()) + 1);
 
+    // The triangulation and location fetched for each face in the sizing pass,
+    // reused verbatim in the fill pass.  Re-fetching there is not just wasted
+    // work: for a face with no stored triangulation Part::Tools::triangulationOfFace
+    // re-meshes a local copy, and the parallel mesher is not deterministic, so
+    // the two passes could disagree on the node count/numbering and index the
+    // second mesh with the first mesh's node numbers (an OCCT out-of-range).
+    std::vector<Handle(Poly_Triangulation)> faceMesh(
+        static_cast<size_t>(faceMap.Extent()) + 1);
+    std::vector<TopLoc_Location> faceLoc(
+        static_cast<size_t>(faceMap.Extent()) + 1);
+
     for (int i = 1; i <= faceMap.Extent(); i++) {
         Handle(Poly_Triangulation) mesh = BRep_Tool::Triangulation(TopoDS::Face(faceMap(i)), aLoc);
 
         if (mesh.IsNull()) {
             mesh = Part::Tools::triangulationOfFace(TopoDS::Face(faceMap(i)));
         }
+        faceMesh[i] = mesh;
+        faceLoc[i] = aLoc;
 
         // Note: we must also count empty faces
         if (!mesh.IsNull()) {
@@ -1483,13 +1525,11 @@ static PartGui::CoinGeometryData computeCoinGeometry(
 
     int ii = 0, faceNodeOffset = 0, faceTriaOffset = 0;
     for (int i = 1; i <= faceMap.Extent(); i++, ii++) {
-        TopLoc_Location aLoc;
         const TopoDS_Face& actFace = TopoDS::Face(faceMap(i));
-        // get the mesh of the shape
-        Handle(Poly_Triangulation) mesh = BRep_Tool::Triangulation(actFace, aLoc);
-        if (mesh.IsNull()) {
-            mesh = Part::Tools::triangulationOfFace(actFace);
-        }
+        // Reuse the triangulation fetched in the sizing pass so both passes
+        // index the exact same mesh (see faceMesh above).
+        TopLoc_Location aLoc = faceLoc[i];
+        Handle(Poly_Triangulation) mesh = faceMesh[i];
         if (mesh.IsNull()) {
             parts[ii] = 0;
             continue;
@@ -1536,6 +1576,9 @@ static PartGui::CoinGeometryData computeCoinGeometry(
                  ++g) {
                 Standard_Integer a, b2, c2;
                 mesh->Triangle(g).Get(a, b2, c2);
+                if (a < 1 || b2 < 1 || c2 < 1) {
+                    continue;  // removed/degenerate triangle (0 node index)
+                }
                 gp_Vec e1(mesh->Node(a), mesh->Node(b2));
                 gp_Vec e2(mesh->Node(a), mesh->Node(c2));
                 planeN = e1.Crossed(e2);
@@ -1638,6 +1681,21 @@ static PartGui::CoinGeometryData computeCoinGeometry(
 #else
             mesh->Triangle(g).Get(N1, N2, N3);
 #endif
+
+            // OCCT marks removed/degenerate triangles with node index 0 (the
+            // Poly_Triangle default).  Such a triangle has no geometry, and
+            // mesh->Node(0) indexes the node array at -1, which OCCT reports
+            // as "NCollection_AliasedArray::value(), out of range index" --
+            // the failure that silently blanked the object.  Emit a degenerate
+            // placeholder so the triangle count stays in sync with the sizing
+            // pass (which counts mesh->NbTriangles()).
+            if (N1 < 1 || N2 < 1 || N3 < 1) {
+                index[faceTriaOffset * 4 + 4 * (g - 1)] = faceNodeOffset;
+                index[faceTriaOffset * 4 + 4 * (g - 1) + 1] = faceNodeOffset;
+                index[faceTriaOffset * 4 + 4 * (g - 1) + 2] = faceNodeOffset;
+                index[faceTriaOffset * 4 + 4 * (g - 1) + 3] = SO_END_FACE_INDEX;
+                continue;
+            }
 
             // change orientation of the triangle if the face is reversed
             if (orient != TopAbs_FORWARD) {
@@ -2037,6 +2095,26 @@ QThreadPool* geometryThreadPool()
     return pool;
 }
 
+// Surface a display-geometry failure to the user.  Such failures used to be
+// logged only from the worker thread (without the object's name) and the empty
+// result was then applied silently, so an object whose tessellation threw just
+// vanished from the viewport with no explanation.  Name the object in the
+// Report View and echo it on the status bar so the failure is visible even when
+// the Report View is hidden.
+void reportDisplayGeometryFailure(const App::DocumentObject* obj, const std::string& detail)
+{
+    const std::string name = obj ? obj->getFullName() : std::string("<unknown object>");
+    FC_ERR("Cannot compute Inventor representation for the shape of " << name
+           << ": " << detail);
+    if (Gui::getMainWindow()) {
+        Gui::getMainWindow()->showMessage(
+            QString::fromStdString(
+                "Cannot compute display geometry for " + name + ": " + detail),
+            10000
+        );
+    }
+}
+
 std::shared_ptr<PartGui::CoinGeometryData> computeCoinGeometryAsync(
     TopoDS_Shape shape,
     double deviation,
@@ -2051,11 +2129,12 @@ std::shared_ptr<PartGui::CoinGeometryData> computeCoinGeometryAsync(
     }
     catch (const Standard_Failure& e) {
         data->empty = true;
-        FC_ERR("Cannot compute Inventor representation (async): " << e.GetMessageString());
+        const char* msg = e.GetMessageString();
+        data->error = (msg && *msg) ? msg : "unknown OCCT failure";
     }
     catch (...) {
         data->empty = true;
-        FC_ERR("Cannot compute Inventor representation (async)");
+        data->error = "unknown exception";
     }
     return data;
 }
@@ -2070,11 +2149,12 @@ class ViewProviderPartExt::AsyncGeometryJob
 {
 public:
     explicit AsyncGeometryJob(ViewProviderPartExt* vp)
+        : vp(vp)
     {
-        QObject::connect(&watcher, &QFutureWatcherBase::finished, &context, [this, vp]() {
+        QObject::connect(&watcher, &QFutureWatcherBase::finished, &context, [this]() {
             auto data = watcher.future().result();
             if (data) {
-                vp->applyComputedGeometry(data, jobShape, generation);
+                this->vp->applyComputedGeometry(data, jobShape, generation);
             }
         });
     }
@@ -2122,6 +2202,7 @@ public:
     }
 
 private:
+    ViewProviderPartExt* vp;
     QObject context;
     TopoDS_Shape jobShape;
     double pendingDeviation = 0.0;
@@ -2250,13 +2331,14 @@ void ViewProviderPartExt::updateVisual()
         VisualTouched = false;
     }
     catch (const Standard_Failure& e) {
-        FC_ERR(
-            "Cannot compute Inventor representation for the shape of "
-            << pcObject->getFullName() << ": " << e.GetMessageString()
+        const char* msg = e.GetMessageString();
+        reportDisplayGeometryFailure(
+            pcObject,
+            (msg && *msg) ? msg : "unknown OCCT failure"
         );
     }
     catch (...) {
-        FC_ERR("Cannot compute Inventor representation for the shape of " << pcObject->getFullName());
+        reportDisplayGeometryFailure(pcObject, "unknown exception");
     }
 
     // The material has to be checked again
@@ -2273,6 +2355,13 @@ void ViewProviderPartExt::applyComputedGeometry(
 {
     if (generation != visualGeneration) {
         return;  // superseded by a newer geometry request
+    }
+
+    if (!data->error.empty()) {
+        // The off-thread tessellation threw.  Report it with the object's name
+        // rather than silently applying the empty geometry (which is what left
+        // the object invisible with no explanation).
+        reportDisplayGeometryFailure(this->pcObject, data->error);
     }
 
     Gui::SoUpdateVBOAction action;
