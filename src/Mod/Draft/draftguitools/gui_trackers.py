@@ -148,7 +148,8 @@ class Tracker:
             sg = self.get_scene_graph()
             if not sg:
                 return
-            sg.removeChild(self.switch)
+            if sg.findChild(self.switch) >= 0:
+                sg.removeChild(self.switch)
             sg.addChild(self.switch)
 
     def raiseTracker(self):
@@ -160,7 +161,8 @@ class Tracker:
             sg = self.get_scene_graph()
             if not sg:
                 return
-            sg.removeChild(self.switch)
+            if sg.findChild(self.switch) >= 0:
+                sg.removeChild(self.switch)
             sg.insertChild(self.switch, 0)
 
     def setColor(self, color=None):
@@ -1757,6 +1759,222 @@ class archDimTracker(Tracker):
             self.setString()
         else:
             return Vector(self.pnts.getValues()[-1].getValue())
+
+
+class TranslateGizmo(Tracker):
+    """A 3-axis translate gizmo used by the Move tool.
+
+    Three :class:`coin.SoTranslate1Dragger` nodes are arranged so that each one
+    translates along one axis of the (working plane) coordinate system given by
+    ``rotation``.  Dragging one handle reports a distance along that axis; the
+    total world displacement is the sum of the three axes.
+    """
+
+    _AXIS_NAMES = {"x": "gizmo_giz_x", "y": "gizmo_giz_y", "z": "gizmo_giz_z"}
+    _AXIS_LOCAL = {"x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1)}
+    _AXIS_COLORS = {
+        "x": (0.90, 0.15, 0.15),
+        "y": (0.15, 0.60, 0.20),
+        "z": (0.20, 0.40, 0.95),
+    }
+
+    def __init__(self, origin=None, rotation=None, scale=1.0, name="TranslateGizmo"):
+        origin = Vector(origin) if origin is not None else Vector(0, 0, 0)
+        if rotation is None:
+            import FreeCAD
+
+            rotation = FreeCAD.Rotation()
+
+        self.origin = Vector(origin)
+        self._rot = rotation
+        self._scale = float(scale)
+
+        self.scaleNode = coin.SoScale()
+        self.scaleNode.scaleFactor.setValue(self._scale, self._scale, self._scale)
+
+        # Note: in pivy, SoTransform is not exposed as a group, so we wrap it in
+        # a SoSeparator that also holds the three axis handles.
+        self.place = coin.SoTransform()
+        self.place.translation.setValue(tuple(self.origin))
+        self.place.rotation.setValue(self._rot.Q)
+
+        # Order matters: translate to the origin FIRST, then scale the handle
+        # geometry.  If the scale came first it would also multiply the
+        # translation, so a gizmo anchored anywhere but the world origin would
+        # be displaced by scale*origin (and its handles would be unpickable).
+        self.body = coin.SoSeparator()
+        self.body.addChild(self.place)
+        self.body.addChild(self.scaleNode)
+
+        self.draggers = {}
+        for axis in ("x", "y", "z"):
+            ax_sep = coin.SoSeparator()
+
+            color = coin.SoBaseColor()
+            color.rgb = self._AXIS_COLORS[axis]
+            ax_sep.addChild(color)
+
+            rot = coin.SoRotation()
+            if axis == "y":
+                rot.rotation.setValue(coin.SbRotation(coin.SbVec3f(0, 0, 1), math.pi / 2))
+            elif axis == "z":
+                rot.rotation.setValue(coin.SbRotation(coin.SbVec3f(0, 1, 0), -math.pi / 2))
+            # x: identity
+            ax_sep.addChild(rot)
+
+            dragger = coin.SoTranslate1Dragger()
+            # NOTE: use setName() -- in this pivy build assigning the Python
+            # ``name`` attribute only shadows it and does NOT set the Coin name,
+            # so the dragger could not be identified later by name.
+            dragger.setName(self._AXIS_NAMES[axis])
+            dragger.labelVisible = False
+            ax_sep.addChild(dragger)
+
+            self.draggers[axis] = dragger
+            self.body.addChild(ax_sep)
+
+        super().__init__(children=[self.body], name=name)
+        self.on()
+
+    def set_origin(self, origin):
+        """Move the gizmo to a new origin (global coordinates)."""
+        self.origin = Vector(origin)
+        self.place.translation.setValue(tuple(self.origin))
+
+    def set_rotation(self, rotation):
+        """Orient the gizmo to a new coordinate system (e.g. the working plane)."""
+        self._rot = rotation
+        self.place.rotation.setValue(rotation.Q)
+
+    def set_scale(self, scale):
+        """Set the uniform scale of the gizmo (used for camera auto scaling)."""
+        self._scale = float(scale)
+        self.scaleNode.scaleFactor.setValue(self._scale, self._scale, self._scale)
+
+    def reset(self):
+        """Reset all handles back to zero displacement."""
+        for dragger in self.draggers.values():
+            dragger.translation.setValue(0, 0, 0)
+
+    def world_translation(self, axis):
+        """Return the world-space displacement vector contributed by one axis.
+
+        The dragger ``translation`` field is in the (unscaled) local dragger
+        space, so the result is scaled by the gizmo scale.
+        """
+        dragger = self.draggers.get(axis)
+        if dragger is None:
+            return Vector(0, 0, 0)
+        local = dragger.translation.getValue()[0]
+        direction = self._rot.multVec(Vector(*self._AXIS_LOCAL[axis]))
+        return direction * (local * self._scale)
+
+    def total_delta(self):
+        """Return the total world displacement, the sum over all three axes."""
+        delta = Vector(0, 0, 0)
+        for axis in ("x", "y", "z"):
+            delta += self.world_translation(axis)
+        return delta
+
+    def get_draggers(self):
+        """Return the dict of axis -> SoTranslate1Dragger (for registering callbacks)."""
+        return self.draggers
+
+    @staticmethod
+    def _node_name(node):
+        """Return a node's Coin name as a str.
+
+        In this pivy build the only reliable accessor is ``getName()`` (which
+        works through child proxies); the Python ``name`` attribute is a
+        shadow that does not reflect the real Coin name.
+        """
+        try:
+            nm = node.getName()
+        except Exception:
+            nm = None
+        if nm:
+            if isinstance(nm, str):
+                return nm
+            try:
+                return str(nm)
+            except Exception:
+                return nm
+        nm = getattr(node, "name", None)
+        if isinstance(nm, str):
+            return nm
+        if nm is None:
+            return ""
+        try:
+            v = nm.getValue()
+            if isinstance(v, str):
+                return v
+        except Exception:
+            pass
+        try:
+            return str(nm)
+        except Exception:
+            return ""
+
+    def axis_of(self, dragger):
+        """Return the axis name ("x"/"y"/"z") for a dragger proxy, or None."""
+        name = self._node_name(dragger)
+        for axis, nm in self._AXIS_NAMES.items():
+            if name == nm:
+                return axis
+        return None
+
+    def update_scale_from_camera(self, view, origin=None):
+        """Scale the gizmo relative to the camera so it stays a constant screen size."""
+        origin = self.origin if origin is None else Vector(origin)
+        try:
+            cam = view.getCameraNode()
+        except Exception:
+            return self._scale
+        if cam is None:
+            return self._scale
+        try:
+            if isinstance(cam, coin.SoOrthographicCamera):
+                size = cam.height.getValue()
+            else:
+                cam_pos = Vector(*cam.position.getValue())
+                size = (cam_pos - origin).Length
+            if size < 1e-6:
+                size = 1.0
+        except Exception:
+            return self._scale
+        self.set_scale(size * 0.15)
+        return self._scale
+
+    def is_under_cursor(self, view, pos, pick_radius=20):
+        """Return the axis ("x"/"y"/"z") whose handle is under the screen point,
+        or None.
+
+        Uses a Coin ray pick with the SoEvent position -- the same approach as
+        ``Gui::NavigationStyle::isDraggerUnderCursor`` -- so the coordinate
+        space matches the 3D-view events exactly.  The pick runs in C++ and is
+        fast even on large scenes.
+        """
+        try:
+            rm = view.getViewer().getSoRenderManager()
+            scene = rm.getSceneGraph()
+            if scene is None:
+                return None
+            rp = coin.SoRayPickAction(rm.getViewportRegion())
+            rp.setRadius(pick_radius)
+            rp.setPoint(coin.SbVec2s(int(pos[0]), int(pos[1])))
+            rp.setPickAll(True)
+            rp.apply(scene)
+            names = set(self._AXIS_NAMES.values())
+            picks = rp.getPickedPointList()
+            for i in range(picks.getLength()):
+                path = picks[i].getPath()
+                for j in range(path.getLength()):
+                    node = path.getNode(j)
+                    if self._node_name(node) in names:
+                        return self.axis_of(node)
+        except Exception:
+            return None
+        return None
 
 
 ## @}

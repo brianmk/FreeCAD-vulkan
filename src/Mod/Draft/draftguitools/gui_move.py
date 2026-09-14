@@ -42,6 +42,7 @@ from draftguitools import gui_base_original
 from draftguitools import gui_tool_utils
 from draftguitools import gui_trackers as trackers
 from draftguitools.gui_subelements import SubelementHighlight
+from draftutils import params
 from draftutils import utils
 from draftutils import todo
 from draftutils.messages import _msg, _err, _toolmsg
@@ -91,12 +92,179 @@ class Move(gui_base_original.Modifier):
         self.ui.modUi()
         if self.copymode:
             self.ui.isCopy.setChecked(True)
+
+        # State used by the interactive axis gizmo.
+        self.gizmo = None
+        self._gizmo_cbs = []
+        self.gizmo_dragging = False
+        self.gizmo_used = False
+        self.cancelled = False
+        self.gizmo_delta = None
+        self.vector = None
+
+        self._setup_gizmo()
+
+        if self.gizmo is not None:
+            # Anchor the relative X/Y/Z fields to the gizmo origin so they act
+            # as a displacement vector instead of absolute coordinates.
+            self._set_local_relative()
+            self.node = [self.gizmo_origin]
+            self.ui.isRelative.show()
+            zero = App.Units.Quantity(0, App.Units.Length).UserString
+            self.ui.xValue.setText(zero)
+            self.ui.yValue.setText(zero)
+            self.ui.zValue.setText(zero)
+            self.ui.finishButton.show()
+
+        if not self.ghosts:
+            self.set_ghosts()
+
         self.ui.xValue.setFocus()
         self.ui.xValue.selectAll()
         self.call = self.view.addEventCallback("SoEvent", self.action)
-        _toolmsg(translate("draft", "Pick start point"))
+        if self.gizmo is not None:
+            _toolmsg(translate("draft", "Drag an axis, or type a distance and press Enter"))
+        else:
+            _toolmsg(translate("draft", "Pick start point"))
         self.selection_done = True
         self.update_hints()
+
+    def _set_local_relative(self):
+        """Force working-plane (local) relative mode for this command only."""
+        for cb in (self.ui.isGlobal, self.ui.isRelative):
+            cb.blockSignals(True)
+        self.ui.globalMode = False
+        self.ui.relativeMode = True
+        self.ui.isGlobal.setChecked(False)
+        self.ui.isRelative.setChecked(True)
+        for cb in (self.ui.isGlobal, self.ui.isRelative):
+            cb.blockSignals(False)
+        self.ui.checkLocal()
+
+    def _get_gizmo_origin(self):
+        """Return the point the gizmo is anchored to (usually the object origin)."""
+        try:
+            objs = [s.Object for s in self.selection if s.Object is not None]
+            if objs:
+                first = objs[0]
+                try:
+                    return first.getGlobalPlacement().Base
+                except Exception:
+                    try:
+                        return first.Placement.Base
+                    except Exception:
+                        return self.wp.position
+        except Exception:
+            pass
+        return self.wp.position
+
+    def _setup_gizmo(self):
+        """Create and register the interactive axis gizmo (if enabled)."""
+        if not params.get_param("DraftMoveGizmo"):
+            return
+        try:
+            self.gizmo_origin = self._get_gizmo_origin()
+            gizmo = trackers.TranslateGizmo(
+                origin=self.gizmo_origin, rotation=self.wp.get_placement().Rotation
+            )
+            gizmo.update_scale_from_camera(self.view, self.gizmo_origin)
+            for axis, dragger in gizmo.get_draggers().items():
+                for cbtype, cb in (
+                    ("addStartCallback", self.gizmo_start),
+                    ("addMotionCallback", self.gizmo_motion),
+                    ("addFinishCallback", self.gizmo_finish),
+                ):
+                    self._gizmo_cbs.append(
+                        (dragger, cbtype, self.view.addDraggerCallback(dragger, cbtype, cb))
+                    )
+            self.gizmo = gizmo
+            # The axis draggers only receive mouse events when the viewer
+            # forwards them to the scene graph; by default events go to the
+            # navigation style only, so the handles would be shown but never
+            # grabbable.  Restored in finish().
+            try:
+                self.view.getViewer().setRedirectToSceneGraph(True)
+                self._gizmo_redirect = True
+            except Exception:
+                self._gizmo_redirect = False
+            # Remember the moved objects' pickability so it can be toggled while
+            # the cursor is over a handle (see _set_gizmo_pick_block) and
+            # restored in finish().
+            self._gizmo_selectable = []
+            for sel in self.selection:
+                obj = getattr(sel, "Object", None)
+                vp = getattr(obj, "ViewObject", None) if obj is not None else None
+                if vp is None or not hasattr(vp, "Selectable"):
+                    continue
+                try:
+                    self._gizmo_selectable.append((vp, bool(vp.Selectable)))
+                except Exception:
+                    pass
+        except Exception as e:
+            _err(translate("draft", "Could not create the move gizmo: {}").format(e))
+            self.gizmo = None
+
+    def _remove_gizmo_callbacks(self):
+        for dragger, cbtype, cb in getattr(self, "_gizmo_cbs", []):
+            try:
+                self.view.removeDraggerCallback(dragger, cbtype, cb)
+            except Exception:
+                pass
+        self._gizmo_cbs = []
+
+    def _set_gizmo_pick_block(self, block):
+        """Toggle pickability of the moved objects while over a gizmo handle.
+
+        The handles extend from the object origin and are usually occluded by
+        the object itself, and a Coin dragger only grabs when it is the closest
+        pick under the cursor.  So while the cursor is over a handle the moved
+        objects are made unpickable (the dragger can win the pick); the rest of
+        the time they stay pickable so Draft's own point-picking still snaps to
+        them.
+        """
+        for vp, was in getattr(self, "_gizmo_selectable", []):
+            try:
+                want = False if block else was
+                if bool(vp.Selectable) != want:
+                    vp.Selectable = want
+            except Exception:
+                pass
+
+    def gizmo_start(self, dragger):
+        """Called when the user grabs a gizmo axis."""
+        if self.gizmo is None or self.gizmo.axis_of(dragger) is None:
+            return
+        self.gizmo_dragging = True
+        if not self.node:
+            self.node = [self.gizmo_origin]
+        # Snap the ghost back to the origin so it follows the drag from zero.
+        zero = App.Vector(0, 0, 0)
+        for ghost in self.ghosts:
+            ghost.move(zero)
+            ghost.on()
+
+    def gizmo_motion(self, dragger):
+        """Called while the user drags a gizmo axis."""
+        if self.gizmo is None or self.gizmo.axis_of(dragger) is None:
+            return
+        self.gizmo_used = True
+        delta = self.gizmo.total_delta()
+        self.vector = delta
+        self.gizmo_delta = delta
+        for ghost in self.ghosts:
+            ghost.move(delta)
+            ghost.on()
+        if self.ui.isTaskOn:
+            self.ui.displayPoint(self.gizmo_origin + delta, self.gizmo_origin)
+
+    def gizmo_finish(self, dragger):
+        """Called when the user releases a gizmo axis."""
+        if self.gizmo is None or self.gizmo.axis_of(dragger) is None:
+            return
+        self.gizmo_dragging = False
+        self.gizmo_used = True
+        for ghost in self.ghosts:
+            ghost.on()
 
     def finish(self, cont=False):
         """Terminate the operation.
@@ -107,6 +275,36 @@ class Move(gui_base_original.Modifier):
             Restart (continue) the command if `True`, or if `None` and
             `ui.continueMode` is `True`.
         """
+        # Apply a pending gizmo displacement (e.g. the Finish button was
+        # pressed) unless the command was cancelled with Esc, or the task panel
+        # has already been destroyed (e.g. on workbench deactivation, in which
+        # case its widgets raise RuntimeError on access).
+        if (
+            not getattr(self, "cancelled", False)
+            and getattr(self, "gizmo_delta", None) is not None
+            and self.gizmo_delta.Length > 1e-9
+        ):
+            try:
+                self.move(self.ui.isCopy.isChecked())
+            except RuntimeError:
+                # Panel gone: drop the pending displacement instead of crashing.
+                self.gizmo_delta = None
+        self._remove_gizmo_callbacks()
+        if getattr(self, "_gizmo_redirect", False):
+            try:
+                self.view.getViewer().setRedirectToSceneGraph(False)
+            except Exception:
+                pass
+            self._gizmo_redirect = False
+        for vp, was in getattr(self, "_gizmo_selectable", []):
+            try:
+                vp.Selectable = was
+            except Exception:
+                pass
+        self._gizmo_selectable = []
+        if getattr(self, "gizmo", None) is not None:
+            self.gizmo.finalize()
+            self.gizmo = None
         self.end_callbacks(self.call)
         for ghost in self.ghosts:
             ghost.finalize()
@@ -125,15 +323,36 @@ class Move(gui_base_original.Modifier):
             Dictionary with strings that indicates the type of event received
             from the 3D view.
         """
+        # While the cursor is over a handle, hide the moved objects from the
+        # pick so the Coin dragger can win it (see _set_gizmo_pick_block).
+        if (
+            self.gizmo is not None
+            and not self.gizmo_dragging
+            and arg.get("Type") in ("SoLocation2Event", "SoMouseButtonEvent")
+        ):
+            pos = arg.get("Position")
+            if pos is not None:
+                self._set_gizmo_pick_block(
+                    self.gizmo.is_under_cursor(self.view, pos) is not None
+                )
+        if self.gizmo_dragging:
+            return  # the axis dragger owns the mouse
         if arg["Type"] == "SoKeyboardEvent" and arg["Key"] == "ESCAPE":
+            self.cancelled = True
             self.finish()
         elif arg["Type"] == "SoLocation2Event":
+            if self.gizmo_used:
+                return  # keep the dragged displacement, ignore hover
             self.handle_mouse_move_event(arg)
         elif (
             arg["Type"] == "SoMouseButtonEvent"
             and arg["State"] == "DOWN"
             and arg["Button"] == "BUTTON1"
         ):
+            if self.gizmo is not None:
+                pos = arg.get("Position")
+                if pos is not None and self.gizmo.is_under_cursor(self.view, pos):
+                    return  # let the axis dragger handle the grab
             self.handle_mouse_click_event(arg)
 
     def handle_mouse_move_event(self, arg):
@@ -162,6 +381,12 @@ class Move(gui_base_original.Modifier):
             self.set_ghosts()
         if not self.point:
             return
+        # A click away from the gizmo resumes plain point picking; drop any
+        # pending gizmo displacement so it is not double-applied.
+        self.gizmo_used = False
+        self.gizmo_delta = None
+        if self.gizmo is not None:
+            self.gizmo.reset()
         self.ui.redraw()
         if self.node == []:
             self.node.append(self.point)
@@ -227,6 +452,12 @@ class Move(gui_base_original.Modifier):
         cmd += "subelements=" + str(self.ui.isSubelementMode.isChecked()) + ")"
         cmd_list = [cmd, "FreeCAD.ActiveDocument.recompute()"]
         self.commit(cmd_name, cmd_list)
+        # The displacement is now applied; reset the gizmo for the next one.
+        self.gizmo_delta = None
+        if self.gizmo is not None:
+            self.gizmo.reset()
+            for ghost in self.ghosts:
+                ghost.off()
 
     def numericInput(self, numx, numy, numz):
         """Validate the entry fields in the user interface.
