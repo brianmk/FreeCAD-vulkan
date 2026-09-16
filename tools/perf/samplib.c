@@ -89,6 +89,11 @@ __attribute__((constructor)) static void init(void)
 
 __attribute__((destructor)) static void fini(void)
 {
+  /* Re-dump /proc/self/maps at exit: FreeCAD lazily dlopen()s its Mod
+   * libraries (Sketcher, Part, ...) long after the constructor ran, so the
+   * startup dump alone cannot symbolize any frame in them.  The exit dump is
+   * the complete mapping set used for addr2line. */
+  dump_maps();
   if (g_fd >= 0) close(g_fd);
   if (g_maps >= 0) close(g_maps);
 }
