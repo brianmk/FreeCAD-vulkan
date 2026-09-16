@@ -22,10 +22,6 @@
  *                                                                         *
  ***************************************************************************/
 
-#include <atomic>
-#include <chrono>
-#include <cstdio>
-
 #include <Bnd_Box.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepTools.hxx>
@@ -1361,22 +1357,8 @@ static PartGui::CoinGeometryData computeCoinGeometry(
 
     std::set<int> faceEdges;
 
-    // --- TEMP instrumentation ---
-    static std::atomic<long> __ccg{0};
-    long __n = __ccg.fetch_add(1) + 1;
-    int __nfaces = 0, __ntri = 0;
-    for (TopExp_Explorer __ex(shape, TopAbs_FACE); __ex.More(); __ex.Next()) {
-        ++__nfaces;
-        TopLoc_Location __loc;
-        if (!BRep_Tool::Triangulation(TopoDS::Face(__ex.Current()), __loc).IsNull()) {
-            ++__ntri;
-        }
-    }
-    auto __tA = std::chrono::steady_clock::now();
-
     // calculating the deflection value
     Standard_Real deflection = Part::Tools::getDeflection(shape, deviation);
-    auto __tB = std::chrono::steady_clock::now();
 
     // Since OCCT 7.6 a value of equal 0 is not allowed any more, this can happen if a single
     // vertex should be displayed.
@@ -1405,22 +1387,8 @@ static PartGui::CoinGeometryData computeCoinGeometry(
 #else
     BRepTools::Clean(shape, Standard_True);
 #endif
-    auto __tC = std::chrono::steady_clock::now();
 
     BRepMesh_IncrementalMesh(shape, meshParams);
-    auto __tD = std::chrono::steady_clock::now();
-    fprintf(
-        stderr,
-        "[VPE] ccg#%ld faces=%d triBefore=%d defl=%.4g "
-        "getDefl=%.1fms clean=%.1fms mesh=%.1fms\n",
-        __n,
-        __nfaces,
-        __ntri,
-        (double)deflection,
-        std::chrono::duration<double, std::milli>(__tB - __tA).count(),
-        std::chrono::duration<double, std::milli>(__tC - __tB).count(),
-        std::chrono::duration<double, std::milli>(__tD - __tC).count()
-    );
 
     // We must reset the location here because the transformation data
     // are set in the placement property
@@ -1683,10 +1651,15 @@ static PartGui::CoinGeometryData computeCoinGeometry(
 
             // Reference outward face normal from the first non-degenerate
             // mesh triangle (orientation already baked in by OCCT).  The cap
-            // is planar so every node shares this normal.
+            // is planar so every node shares this normal.  Degeneracy is
+            // measured against gp::Resolution(), the same bound gp_Vec::
+            // Normalize() enforces: a sliver triangle with a tiny but non-zero
+            // area would otherwise pass a smaller test and make Normalize()
+            // throw gp_Dir()'s zero-norm error, which aborts the display
+            // geometry for the whole object.
             gp_Vec planeN(0, 0, 0);
             for (int g = 1; g <= static_cast<int>(mesh->NbTriangles()) &&
-                            planeN.SquareMagnitude() < 1e-16;
+                            planeN.Magnitude() <= gp::Resolution();
                  ++g) {
                 Standard_Integer a, b2, c2;
                 mesh->Triangle(g).Get(a, b2, c2);
@@ -1697,7 +1670,9 @@ static PartGui::CoinGeometryData computeCoinGeometry(
                 gp_Vec e2(mesh->Node(a), mesh->Node(c2));
                 planeN = e1.Crossed(e2);
             }
-            if (planeN.SquareMagnitude() < 1e-16) {
+            if (planeN.Magnitude() <= gp::Resolution()) {
+                FC_WARN("no non-degenerate triangle on a re-fanned planar face; "
+                        "shading it with +Z");
                 planeN = gp_Vec(0, 0, 1);
             }
             planeN.Normalize();
@@ -1706,6 +1681,11 @@ static PartGui::CoinGeometryData computeCoinGeometry(
             }
             if (!identity) {
                 planeN.Transform(myTransf);
+                if (planeN.Magnitude() <= gp::Resolution()) {
+                    FC_WARN("a re-fanned planar face normal collapsed under the "
+                            "face placement; shading it with +Z");
+                    planeN = gp_Vec(0, 0, 1);
+                }
                 planeN.Normalize();
             }
             const SbVec3f sbn(static_cast<float>(planeN.X()),
