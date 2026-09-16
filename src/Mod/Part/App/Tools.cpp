@@ -485,7 +485,8 @@ void Part::Tools::getPointNormals(
 void Part::Tools::getPointNormals(
     const TopoDS_Face& theFace,
     Handle(Poly_Triangulation) aPolyTri,
-    TColgp_Array1OfDir& theNormals
+    TColgp_Array1OfDir& theNormals,
+    bool storeNormals
 )
 {
 #if OCC_VERSION_HEX < 0x070600
@@ -557,7 +558,9 @@ void Part::Tools::getPointNormals(
             aNormals->SetValue(anId + 3, (Standard_ShortReal)theNormals(aNodeIter).Z());
         }
 
-        aPolyTri->SetNormals(aNormals);
+        if (storeNormals) {
+            aPolyTri->SetNormals(aNormals);
+        }
 
         if (theFace.Orientation() == TopAbs_REVERSED) {
             for (Standard_Integer aNodeIter = aNodes.Lower(); aNodeIter <= aNodes.Upper();
@@ -603,7 +606,9 @@ void Part::Tools::getPointNormals(
         Standard_Boolean hasNodesUV = aPolyTri->HasUVNodes() && !aSurf.IsNull();
         Standard_Integer aTri[3];
 
-        aPolyTri->AddNormals();
+        if (storeNormals) {
+            aPolyTri->AddNormals();
+        }
         for (Standard_Integer aNodeIter = 1; aNodeIter <= numNodes; ++aNodeIter) {
             // try to retrieve normal from real surface first, when UV coordinates are available
             Standard_Integer aEstim = 2;
@@ -648,7 +653,9 @@ void Part::Tools::getPointNormals(
                 theNormals(aNodeIter) = (aModMax > aTol) ? gp_Dir(eqPlan) : gp::DZ();
             }
 
-            aPolyTri->SetNormal(aNodeIter, theNormals(aNodeIter));
+            if (storeNormals) {
+                aPolyTri->SetNormal(aNodeIter, theNormals(aNodeIter));
+            }
         }
 
         if (theFace.Orientation() == TopAbs_REVERSED) {

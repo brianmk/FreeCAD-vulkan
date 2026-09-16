@@ -1620,9 +1620,9 @@ static PartGui::CoinGeometryData computeCoinGeometry(
     // triangle range and its own part entry, so the faces are fully independent
     // and can run in parallel.  The per-face arithmetic (and its float
     // accumulation order) is unchanged, so the result is identical to the
-    // serial pass.  getPointNormals() may cache normals on the face's own
-    // triangulation; every face in faceMap has a distinct TShape and therefore
-    // a distinct triangulation, so that write never overlaps another face.
+    // serial pass.  getPointNormals() is called read-only (storeNormals=false)
+    // because distinct faces of a shape can share one triangulation, so its
+    // normals write-back would be a data race here.
     OSD_Parallel::For(1, faceMap.Extent() + 1, [&](const int i) {
         const TopoDS_Face& actFace = TopoDS::Face(faceMap(i));
         // Reuse the triangulation fetched in the sizing pass so both passes
@@ -1779,7 +1779,15 @@ static PartGui::CoinGeometryData computeCoinGeometry(
         TColgp_Array1OfDir Normals(1, numNodes);
 #endif
         if (normalsFromUV) {
-            Part::Tools::getPointNormals(actFace, mesh, Normals);
+            // storeNormals=false: this runs in the parallel per-face fill, and
+            // getPointNormals() writing its result back onto the triangulation
+            // is a data race -- two faces of the same shape can share a
+            // triangulation (same TShape, different orientation), and the
+            // write-back (AddNormals()/SetNormal()) then reallocates/mutates it
+            // while another face is reading it, which segfaults.  Compute into
+            // the local array only; the triangulation is re-meshed on every
+            // computeCoinGeometry() call anyway, so the cache is worthless here.
+            Part::Tools::getPointNormals(actFace, mesh, Normals, /*storeNormals=*/false);
         }
 
         for (int g = 1; g <= nbTriInFace; g++) {
