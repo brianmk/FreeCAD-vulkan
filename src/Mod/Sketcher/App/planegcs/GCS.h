@@ -633,6 +633,11 @@ public:
     }
 
     int diagnose(Algorithm alg = DogLeg);
+    // Diagnose each decoupled connected component independently.  The reduced
+    // Jacobian is block-diagonal over the components, so one global QR is
+    // O(N^3) while the per-component QRs are ~sum(n_i^3).  Results are merged
+    // into this system (dofs summed, redundant/conflicting/tags appended).
+    void diagnoseComponents(Algorithm alg, const VEC_I& components, int componentsSize);
     int dofsNumber() const
     {
         return hasDiagnosis ? dofs : -1;

@@ -1735,6 +1735,138 @@ void System::declareDrivenParams(VEC_pD& params)
 }
 
 
+void System::diagnoseComponents(Algorithm alg, const VEC_I& components, int componentsSize)
+{
+    // The reduced Jacobian built by diagnose() is block-diagonal over the
+    // decoupled connected components of the constraint graph.  Running one
+    // global QR on it costs O(N^3); running one QR per component costs
+    // ~sum(n_i^3).  For a sketch made of many independent loops (hundreds of
+    // separate closed profiles) this is orders of magnitude cheaper.
+    //
+    // Each component is diagnosed by a temporary System restricted to that
+    // component's constraints and parameters, reusing diagnose() unchanged so
+    // the numerical behaviour is identical.  Results are merged here: dofs are
+    // summed and the redundant/conflicting/dependent sets are unioned (the
+    // Constraint* pointers are shared with the original system).
+    redundant.clear();
+    conflictingTags.clear();
+    redundantTags.clear();
+    partiallyRedundantTags.clear();
+    pDependentParameters.clear();
+    pDependentParametersGroups.clear();
+    hasDiagnosis = true;
+    emptyDiagnoseMatrix = true;
+    dofs = 0;
+
+    if (componentsSize <= 0) {
+        return;
+    }
+
+    // Assign each constraint to a component via any of its unknown parameters.
+    std::vector<int> constrComp(clist.size(), -1);
+    for (std::size_t k = 0; k < clist.size(); ++k) {
+        int cid = -1;
+        for (double* p : c2p[clist[k]]) {
+            auto it = pIndex.find(p);
+            if (it != pIndex.end()) {
+                cid = components[it->second];
+                break;
+            }
+        }
+        constrComp[k] = cid;
+    }
+
+    for (int cid = 0; cid < componentsSize; ++cid) {
+        std::vector<Constraint*> csubset;
+        for (std::size_t k = 0; k < clist.size(); ++k) {
+            if (constrComp[k] == cid) {
+                csubset.push_back(clist[k]);
+            }
+        }
+        if (csubset.empty()) {
+            continue;
+        }
+
+        VEC_pD psubset;
+        for (std::size_t i = 0; i < plist.size(); ++i) {
+            if (components[i] == cid) {
+                psubset.push_back(plist[i]);
+            }
+        }
+
+        System sub;
+        sub.clist = csubset;
+        sub.plist = psubset;
+        for (double* p : pdrivenlist) {
+            if (std::ranges::find(psubset, p) != psubset.end()) {
+                sub.pdrivenlist.push_back(p);
+            }
+        }
+        sub.hasUnknowns = true;
+        // Mirror the solver configuration so per-component diagnosis (which may
+        // internally solve a SubSystem to separate redundants from conflicts)
+        // behaves exactly as the global diagnosis would.
+        sub.maxIter = maxIter;
+        sub.maxIterRedundant = maxIterRedundant;
+        sub.sketchSizeMultiplier = sketchSizeMultiplier;
+        sub.sketchSizeMultiplierRedundant = sketchSizeMultiplierRedundant;
+        sub.convergence = convergence;
+        sub.convergenceRedundant = convergenceRedundant;
+        sub.qrAlgorithm = qrAlgorithm;
+        sub.autoChooseAlgorithm = autoChooseAlgorithm;
+        sub.autoQRThreshold = autoQRThreshold;
+        sub.dogLegGaussStep = dogLegGaussStep;
+        sub.qrpivotThreshold = qrpivotThreshold;
+        sub.debugMode = debugMode;
+        sub.LM_eps = LM_eps;
+        sub.LM_eps1 = LM_eps1;
+        sub.LM_tau = LM_tau;
+        sub.DL_tolg = DL_tolg;
+        sub.DL_tolx = DL_tolx;
+        sub.DL_tolf = DL_tolf;
+        sub.LM_epsRedundant = LM_epsRedundant;
+        sub.LM_eps1Redundant = LM_eps1Redundant;
+        sub.LM_tauRedundant = LM_tauRedundant;
+        sub.DL_tolgRedundant = DL_tolgRedundant;
+        sub.DL_tolxRedundant = DL_tolxRedundant;
+        sub.DL_tolfRedundant = DL_tolfRedundant;
+
+        sub.diagnose(alg);
+
+        redundant.insert(sub.redundant.begin(), sub.redundant.end());
+        conflictingTags.insert(
+            conflictingTags.end(),
+            sub.conflictingTags.begin(),
+            sub.conflictingTags.end()
+        );
+        redundantTags.insert(redundantTags.end(), sub.redundantTags.begin(), sub.redundantTags.end());
+        partiallyRedundantTags.insert(
+            partiallyRedundantTags.end(),
+            sub.partiallyRedundantTags.begin(),
+            sub.partiallyRedundantTags.end()
+        );
+        pDependentParameters.insert(
+            pDependentParameters.end(),
+            sub.pDependentParameters.begin(),
+            sub.pDependentParameters.end()
+        );
+        pDependentParametersGroups.insert(
+            pDependentParametersGroups.end(),
+            sub.pDependentParametersGroups.begin(),
+            sub.pDependentParametersGroups.end()
+        );
+        dofs += sub.dofs;
+        emptyDiagnoseMatrix = emptyDiagnoseMatrix && sub.emptyDiagnoseMatrix;
+
+        // `sub` borrows the constraints/parameters owned by this system; its
+        // destructor would deleteAllContent(clist).  Drop the borrowed list so
+        // the shared Constraint objects are not destroyed.
+        sub.clist.clear();
+        sub.drivenConstraints.clear();
+    }
+}
+
+
 void System::initSolution(Algorithm alg)
 {
     // - Stores the current parameters values in the vector "reference"
@@ -1755,9 +1887,37 @@ void System::initSolution(Algorithm alg)
     // storing reference configuration
     setReference();
 
-    // diagnose conflicting or redundant constraints
+    // Partition into decoupled components (on all driving constraints) BEFORE
+    // diagnosis, so each component can be diagnosed independently.  The
+    // reduced Jacobian is block-diagonal over these components; one global QR
+    // would be O(N^3) whereas per-component QRs are ~sum(n_i^3).
     if (!hasDiagnosis) {
-        diagnose(alg);
+        std::vector<Constraint*> clistDriving;
+        std::ranges::copy_if(clist, std::back_inserter(clistDriving), [](auto constr) {
+            return constr->isDriving();
+        });
+
+        Graph gd;
+        for (int i = 0; i < int(plist.size() + clistDriving.size()); i++) {
+            boost::add_vertex(gd);
+        }
+        int dvtid = int(plist.size());
+        for (const auto constr : clistDriving) {
+            for (const auto param : c2p[constr]) {
+                MAP_pD_I::const_iterator it = pIndex.find(param);
+                if (it != pIndex.end()) {
+                    boost::add_edge(dvtid, it->second, gd);
+                }
+            }
+            ++dvtid;
+        }
+        VEC_I dcomponents(boost::num_vertices(gd));
+        int dcomponentsSize = 0;
+        if (!dcomponents.empty()) {
+            dcomponentsSize = boost::connected_components(gd, &dcomponents[0]);
+        }
+
+        diagnoseComponents(alg, dcomponents, dcomponentsSize);
     }
 
     // if still no diagnosis after explicitly calling `diagnose`, nothing to do here
