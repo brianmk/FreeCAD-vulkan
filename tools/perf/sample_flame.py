@@ -27,6 +27,20 @@ import re
 import subprocess
 import sys
 
+# Output sections, individually selectable with --sections (or 'all').
+SECTIONS = ("self", "func", "file", "svg")
+
+
+def parse_sections(value: str) -> list[str]:
+    if not value or value.strip() == "all":
+        return list(SECTIONS)
+    wanted = [s.strip() for s in value.split(",") if s.strip()]
+    bad = [s for s in wanted if s not in SECTIONS]
+    if bad:
+        raise SystemExit("unknown section(s): %s (known: %s)"
+                         % (", ".join(bad), ", ".join(SECTIONS)))
+    return wanted
+
 
 def parse_maps(path: str):
     """Return (base, module_path) list, sorted; base = lowest mapping per module."""
@@ -154,6 +168,23 @@ def build_tree(samples, syms, max_depth: int):
     return root
 
 
+def prune_tree(node, min_samples: int):
+    """Drop child nodes with fewer than ``min_samples`` samples.
+
+    Heavily inlined C++ (Eigen templates especially) produces thousands of
+    one-sample frames that bloat the SVG without adding signal.  Pruning keeps
+    the graph readable and the file small.
+    """
+    if min_samples <= 0:
+        return
+    node["children"] = {
+        k: c for k, c in node["children"].items()
+        if c["__count__"] >= min_samples
+    }
+    for c in node["children"].values():
+        prune_tree(c, min_samples)
+
+
 def _esc(s: str) -> str:
     return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             .replace('"', "&quot;"))
@@ -248,8 +279,13 @@ def main(argv=None) -> int:
     p.add_argument("--focus", default="",
                    help="comma-separated substrings; keep frames whose source "
                         "file contains ANY of them")
+    p.add_argument("--sections", default="all",
+                   help="comma list of %s (or 'all')" % ",".join(SECTIONS))
+    p.add_argument("--min-samples", type=int, default=0,
+                   help="prune SVG nodes below this sample count (0 = keep all)")
     p.add_argument("--quiet", action="store_true")
     args = p.parse_args(argv)
+    sections = parse_sections(args.sections)
 
     ranges, low = parse_maps(args.maps)
     samples = parse_samples(args.stacks)
@@ -289,29 +325,33 @@ def main(argv=None) -> int:
 
     func, leaf, src, mod = top_frames(stripped, syms, args.depth)
     n = len(stripped)
-    if not args.quiet:
+    if not args.quiet and "self" in sections:
         print(f"# {n} samples.  Innermost (CPU-burn) functions by self time:")
         for fn, c in leaf.most_common(args.top):
             print(f"   {100.0 * c / n:5.1f}%  {fn}")
+    if not args.quiet and "func" in sections:
         print("\n# Inclusive CPU share by function (appears in stack):")
         for fn, c in func.most_common(args.top):
             print(f"   {100.0 * c / n:5.1f}%  {fn}")
+    if not args.quiet and "file" in sections:
         print("\n# Inclusive CPU share by source file:")
         for fl, c in src.most_common(16):
             print(f"   {100.0 * c / n:5.1f}%  {fl}")
 
-    tree = build_tree(stripped, syms, args.depth)
+    if "svg" in sections:
+        tree = build_tree(stripped, syms, args.depth)
+        prune_tree(tree, args.min_samples)
 
-    def depth_of(node):
-        if not node["children"]:
-            return 0
-        return 1 + max(depth_of(c) for c in node["children"].values())
+        def depth_of(node):
+            if not node["children"]:
+                return 0
+            return 1 + max(depth_of(c) for c in node["children"].values())
 
-    svg = flame_svg(tree, args.title, max_depth=depth_of(tree))
-    with open(args.out, "w", encoding="utf-8") as f:
-        f.write(svg)
-    if not args.quiet:
-        print(f"\nwrote {args.out}")
+        svg = flame_svg(tree, args.title, max_depth=depth_of(tree))
+        with open(args.out, "w", encoding="utf-8") as f:
+            f.write(svg)
+        if not args.quiet:
+            print(f"\nwrote {args.out}")
     return 0
 
 
