@@ -22,6 +22,10 @@
  *                                                                         *
  ***************************************************************************/
 
+#include <atomic>
+#include <chrono>
+#include <cstdio>
+
 #include <Bnd_Box.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepTools.hxx>
@@ -1159,17 +1163,7 @@ bool refanPlanarBoundaryConvex(const Handle(Poly_Triangulation) & mesh,
         edgePairs.emplace_back(std::min(n2, n3), std::max(n2, n3));
         edgePairs.emplace_back(std::min(n3, n1), std::max(n3, n1));
     }
-    std::sort(
-        edgePairs.begin(),
-        edgePairs.end(),
-        [](const std::pair<Standard_Integer, Standard_Integer>& a,
-           const std::pair<Standard_Integer, Standard_Integer>& b) {
-            if (a.first != b.first) {
-                return a.first < b.first;
-            }
-            return a.second < b.second;
-        }
-    );
+    std::sort(edgePairs.begin(), edgePairs.end());
 
     // Boundary adjacency: each node must have exactly two boundary neighbours.
     // adj[k] holds them, or -1 while unfilled.
@@ -1367,8 +1361,22 @@ static PartGui::CoinGeometryData computeCoinGeometry(
 
     std::set<int> faceEdges;
 
+    // --- TEMP instrumentation ---
+    static std::atomic<long> __ccg{0};
+    long __n = __ccg.fetch_add(1) + 1;
+    int __nfaces = 0, __ntri = 0;
+    for (TopExp_Explorer __ex(shape, TopAbs_FACE); __ex.More(); __ex.Next()) {
+        ++__nfaces;
+        TopLoc_Location __loc;
+        if (!BRep_Tool::Triangulation(TopoDS::Face(__ex.Current()), __loc).IsNull()) {
+            ++__ntri;
+        }
+    }
+    auto __tA = std::chrono::steady_clock::now();
+
     // calculating the deflection value
     Standard_Real deflection = Part::Tools::getDeflection(shape, deviation);
+    auto __tB = std::chrono::steady_clock::now();
 
     // Since OCCT 7.6 a value of equal 0 is not allowed any more, this can happen if a single
     // vertex should be displayed.
@@ -1397,8 +1405,22 @@ static PartGui::CoinGeometryData computeCoinGeometry(
 #else
     BRepTools::Clean(shape, Standard_True);
 #endif
+    auto __tC = std::chrono::steady_clock::now();
 
     BRepMesh_IncrementalMesh(shape, meshParams);
+    auto __tD = std::chrono::steady_clock::now();
+    fprintf(
+        stderr,
+        "[VPE] ccg#%ld faces=%d triBefore=%d defl=%.4g "
+        "getDefl=%.1fms clean=%.1fms mesh=%.1fms\n",
+        __n,
+        __nfaces,
+        __ntri,
+        (double)deflection,
+        std::chrono::duration<double, std::milli>(__tB - __tA).count(),
+        std::chrono::duration<double, std::milli>(__tC - __tB).count(),
+        std::chrono::duration<double, std::milli>(__tD - __tC).count()
+    );
 
     // We must reset the location here because the transformation data
     // are set in the placement property
@@ -1649,8 +1671,8 @@ static PartGui::CoinGeometryData computeCoinGeometry(
         // time.  Rebuild it as a clean centroid fan: the rim nodes keep their
         // original mesh indices (so the B-Rep edge-line pass below still
         // resolves them via PolygonOnTriangulation) and one centroid node is
-        // appended after them.  nbNodesInFace/nbTriInFace are set to match so
-        // the per-face offset advance stays in sync with the sizing pass.
+        // appended after them.  nbTriInFace is set to the fan's triangle count
+        // so this face's slice matches the offsets sized above.
         bool refanned = (i <= static_cast<int>(refanValid.size()) &&
                          refanValid[i]);
         if (refanned) {
@@ -1854,11 +1876,11 @@ static PartGui::CoinGeometryData computeCoinGeometry(
         parts[ii] = nbTriInFace;  // new part
     });
 
-    // Edge polylines are collected into a shared map keyed by the topological
-    // edge index, and each edge is emitted by whichever face reaches it first,
-    // so this part stays serial.  Faces with no triangulation were skipped by
-    // the fill pass above and contribute no edges here either (matching the
-    // original single-pass loop).
+    // Edge polylines are collected into lineSetByEdge, indexed by the
+    // topological edge index, and each edge is emitted by whichever face
+    // reaches it first, so this part stays serial.  Faces with no triangulation
+    // were skipped by the fill pass above and contribute no edges here either
+    // (matching the original single-pass loop).
     for (int i = 1; i <= faceMap.Extent(); ++i) {
         const TopoDS_Face& actFace = TopoDS::Face(faceMap(i));
         TopLoc_Location aLoc = faceLoc[i];
@@ -2037,24 +2059,13 @@ static PartGui::CoinGeometryData computeCoinGeometry(
             key.z = static_cast<int>(std::lround(p[2] * 1000.0f));
             posOrder.emplace_back(key, i);
         }
-        std::sort(
-            posOrder.begin(),
-            posOrder.end(),
-            [](const std::pair<PosKey, int>& a, const std::pair<PosKey, int>& b) {
-                if (a.first < b.first) {
-                    return true;
-                }
-                if (b.first < a.first) {
-                    return false;
-                }
-                // Tie-break on the node index so the first entry of every group
-                // is the lowest-index node, matching the insertion order the
-                // previous std::map<key, std::vector<int>> produced.  The
-                // perfectly-cancelling-normal fallback below picks that first
-                // node, so this keeps the result bit-identical.
-                return a.second < b.second;
-            }
-        );
+        // std::pair's operator< compares the key first and the node index
+        // second, so equal positions are ordered by ascending node index.  That
+        // keeps the first entry of every group the lowest-index node, matching
+        // the insertion order the previous std::map<key, std::vector<int>>
+        // produced; the perfectly-cancelling-normal fallback below picks that
+        // first node, so the result stays bit-identical.
+        std::sort(posOrder.begin(), posOrder.end());
         // cos(15 deg) = Blender's 30-degree Smooth-by-Angle threshold.
         constexpr float kCoherenceMin = 0.966f;
         size_t s = 0;
