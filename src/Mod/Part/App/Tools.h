@@ -211,7 +211,8 @@ public:
     static void getPointNormals(
         const TopoDS_Face& face,
         Handle(Poly_Triangulation) aPoly,
-        TColgp_Array1OfDir& normals
+        TColgp_Array1OfDir& normals,
+        bool storeNormals = true
     );
     /*!
      * \brief getPointNormals

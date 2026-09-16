@@ -56,9 +56,12 @@
 #include <QString>
 #include <QThreadPool>
 #include <QtConcurrentRun>
+#include <algorithm>
+#include <array>
 #include <sstream>
 #include <string>
 
+#include <OSD_Parallel.hxx>
 #include <OSD_ThreadPool.hxx>
 
 #include <Inventor/SoPickedPoint.h>
@@ -1106,10 +1109,16 @@ bool refanPlanarBoundaryConvex(const Handle(Poly_Triangulation) & mesh,
     // Planarity: all nodes within a small tolerance of the face plane.  Use
     // the first non-degenerate face normal (cross of a triangle) as the plane
     // normal so this also works for arbitrarily oriented planar faces (not
-    // just the axis-aligned z==const caps).
+    // just the axis-aligned z==const caps).  Degeneracy is measured against
+    // gp::Resolution(), the bound gp_Vec::Normalize() enforces below; a sliver
+    // triangle with a tiny but non-zero area would otherwise pass a smaller
+    // test and make Normalize() throw gp_Dir()'s zero-norm error, which aborts
+    // the display geometry for the whole object.
     gp_Pnt P0 = mesh->Node(1);
     gp_Vec planeNormal(0, 0, 0);
-    for (Standard_Integer t = 1; t <= mesh->NbTriangles() && planeNormal.SquareMagnitude() < 1e-16; ++t) {
+    for (Standard_Integer t = 1;
+         t <= mesh->NbTriangles() && planeNormal.Magnitude() <= gp::Resolution();
+         ++t) {
         Standard_Integer n1, n2, n3;
         mesh->Triangle(t).Get(n1, n2, n3);
         if (n1 < 1 || n2 < 1 || n3 < 1) {
@@ -1119,47 +1128,83 @@ bool refanPlanarBoundaryConvex(const Handle(Poly_Triangulation) & mesh,
         gp_Vec e2(mesh->Node(n1), mesh->Node(n3));
         planeNormal = e1.Crossed(e2);
     }
-    if (planeNormal.SquareMagnitude() < 1e-16) {
+    if (planeNormal.Magnitude() <= gp::Resolution()) {
         return false;
     }
     planeNormal.Normalize();
     const double planeTol = 1e-4;
+    const double p0x = P0.X();
+    const double p0y = P0.Y();
+    const double p0z = P0.Z();
+    const double pnx = planeNormal.X();
+    const double pny = planeNormal.Y();
+    const double pnz = planeNormal.Z();
     for (Standard_Integer k = 1; k <= nN; ++k) {
-        if (std::abs(gp_Vec(P0, mesh->Node(k)).Dot(planeNormal)) > planeTol) {
+        const gp_Pnt& pk = mesh->Node(k);
+        const double dist = (pk.X() - p0x) * pnx + (pk.Y() - p0y) * pny
+            + (pk.Z() - p0z) * pnz;
+        if (std::abs(dist) > planeTol) {
             return false;  // not planar
         }
     }
 
     // Edge-use count: an edge shared by exactly one triangle is a boundary
-    // edge.  Build the boundary adjacency graph from boundary edges.
-    std::map<std::pair<Standard_Integer, Standard_Integer>, int> edgeCount;
+    // edge.  The three node pairs of every triangle are collected, sorted and
+    // walked in runs; a pair occurring exactly once is a boundary edge.  This
+    // replaces a std::map<pair,int> that allocated a node per unique edge
+    // (millions of them across all faces) and dominated the geometry build.
+    std::vector<std::pair<Standard_Integer, Standard_Integer>> edgePairs;
+    edgePairs.reserve(static_cast<size_t>(mesh->NbTriangles()) * 3);
     for (Standard_Integer t = 1; t <= mesh->NbTriangles(); ++t) {
         Standard_Integer n1, n2, n3;
         mesh->Triangle(t).Get(n1, n2, n3);
         if (n1 < 1 || n2 < 1 || n3 < 1) {
             continue;  // removed/degenerate triangle (0 node index)
         }
-        const std::pair<Standard_Integer, Standard_Integer> edges[3] = {
-            {std::min(n1, n2), std::max(n1, n2)},
-            {std::min(n2, n3), std::max(n2, n3)},
-            {std::min(n3, n1), std::max(n3, n1)}};
-        for (const auto & e : edges) {
-            ++edgeCount[e];
-        }
+        edgePairs.emplace_back(std::min(n1, n2), std::max(n1, n2));
+        edgePairs.emplace_back(std::min(n2, n3), std::max(n2, n3));
+        edgePairs.emplace_back(std::min(n3, n1), std::max(n3, n1));
     }
-    std::map<Standard_Integer, std::vector<Standard_Integer>> boundaryAdj;
-    for (const auto & [e, count] : edgeCount) {
-        if (count == 1) {
-            boundaryAdj[e.first].push_back(e.second);
-            boundaryAdj[e.second].push_back(e.first);
+    std::sort(edgePairs.begin(), edgePairs.end());
+
+    // Boundary adjacency: each node must have exactly two boundary neighbours.
+    // adj[k] holds them, or -1 while unfilled.
+    std::vector<std::array<Standard_Integer, 2>> adj(
+        static_cast<size_t>(nN) + 1, {-1, -1});
+    for (size_t i = 0; i < edgePairs.size();) {
+        size_t j = i + 1;
+        while (j < edgePairs.size() && edgePairs[j] == edgePairs[i]) {
+            ++j;
         }
+        if (j - i == 1) {
+            const Standard_Integer a = edgePairs[i].first;
+            const Standard_Integer b = edgePairs[i].second;
+            if (adj[a][0] < 0) {
+                adj[a][0] = b;
+            }
+            else if (adj[a][1] < 0) {
+                adj[a][1] = b;
+            }
+            else {
+                return false;
+            }
+            if (adj[b][0] < 0) {
+                adj[b][0] = a;
+            }
+            else if (adj[b][1] < 0) {
+                adj[b][1] = a;
+            }
+            else {
+                return false;
+            }
+        }
+        i = j;
     }
     // A boundary-only triangulation has every node with exactly two boundary
     // neighbours, and a single component (a washer/ring has two loops and is
     // rejected below because the walk cannot return every node).
     for (Standard_Integer k = 1; k <= nN; ++k) {
-        const auto it = boundaryAdj.find(k);
-        if (it == boundaryAdj.end() || it->second.size() != 2) {
+        if (adj[k][0] < 0 || adj[k][1] < 0) {
             return false;
         }
     }
@@ -1171,7 +1216,7 @@ bool refanPlanarBoundaryConvex(const Handle(Poly_Triangulation) & mesh,
     bool first = true;
     while (true) {
         boundary.push_back(cur);
-        const std::vector<Standard_Integer> & nbrs = boundaryAdj[cur];
+        const std::array<Standard_Integer, 2> & nbrs = adj[cur];
         Standard_Integer next = (nbrs[0] == prev) ? nbrs[1] : nbrs[0];
         prev = cur;
         cur = next;
@@ -1267,6 +1312,18 @@ struct CoinGeometryData {
 };
 
 }  // namespace PartGui
+
+// Resolve a face's local placement once, so the fill pass and the edge pass
+// share the same identity/transform handling.
+static void facePlacement(const TopLoc_Location& aLoc,
+                          Standard_Boolean& identity,
+                          gp_Trsf& myTransf)
+{
+    identity = aLoc.IsIdentity();
+    if (!identity) {
+        myTransf = aLoc.Transformation();
+    }
+}
 
 // Pure computation of the Coin display geometry of \a shape.  It reads only
 // the shape's own OCCT data and writes into local buffers, so it is safe to
@@ -1423,10 +1480,15 @@ static PartGui::CoinGeometryData computeCoinGeometry(
     TopTools_IndexedMapOfShape edgeMap;
     TopExp::MapShapes(shape, TopAbs_EDGE, edgeMap);
 
-    // key is the edge number, value the coord indexes. This is needed to keep the same order as
-    // the edges.
-    std::map<int, std::vector<int32_t>> lineSetMap;
-    std::set<int> edgeIdxSet;
+    // Edge polylines indexed directly by the (1-based) topological edge number,
+    // so the fill loop needs no map/set lookup.  lineSetByEdge[e] holds the
+    // coord indexes of edge e's polyline; edgePending[e] is cleared once the
+    // edge has been emitted so each edge is emitted exactly once.  Iterating
+    // the vector in index order reproduces the ascending key order the previous
+    // std::map produced.
+    std::vector<std::vector<int32_t>> lineSetByEdge(
+        static_cast<size_t>(edgeMap.Extent()) + 1);
+    std::vector<char> edgePending(static_cast<size_t>(edgeMap.Extent()) + 1, 1);
     std::vector<int32_t> edgeVector;
 
     // In the RT view, drop parametric seam edges: an edge is a seam when the
@@ -1478,7 +1540,6 @@ static PartGui::CoinGeometryData computeCoinGeometry(
 
     // count and index the edges
     for (int i = 1; i <= edgeMap.Extent(); i++) {
-        edgeIdxSet.insert(i);
         numEdges++;
 
         const TopoDS_Edge& aEdge = TopoDS::Edge(edgeMap(i));
@@ -1523,28 +1584,65 @@ static PartGui::CoinGeometryData computeCoinGeometry(
         norms[i] = SbVec3f(0.0, 0.0, 0.0);
     }
 
-    int ii = 0, faceNodeOffset = 0, faceTriaOffset = 0;
-    for (int i = 1; i <= faceMap.Extent(); i++, ii++) {
+    // Per-face output offsets, so the fill pass can write each face's slice
+    // independently (and therefore in parallel) instead of carrying a running
+    // accumulator.  These mirror exactly the per-face counts the sizing pass
+    // summed into numNodes/numTriangles.
+    std::vector<int> faceNodeOffsetArr(static_cast<size_t>(faceMap.Extent()) + 1, 0);
+    std::vector<int> faceTriaOffsetArr(static_cast<size_t>(faceMap.Extent()) + 1, 0);
+    // Running node offset past the last face, where the free-edge and vertex
+    // passes below continue appending.
+    int freeNodeOffset = 0;
+    {
+        int triaOffset = 0;
+        for (int i = 1; i <= faceMap.Extent(); ++i) {
+            int nbNodesInFace = 0;
+            int nbTriInFace = 0;
+            const Handle(Poly_Triangulation)& mesh = faceMesh[i];
+            if (!mesh.IsNull()) {
+                if (refanValid[i]) {
+                    nbTriInFace = static_cast<int>(refanBoundary[i].size());
+                    nbNodesInFace = static_cast<int>(refanBoundary[i].size()) + 1;
+                }
+                else {
+                    nbNodesInFace = mesh->NbNodes();
+                    nbTriInFace = mesh->NbTriangles();
+                }
+            }
+            faceNodeOffsetArr[i] = freeNodeOffset;
+            faceTriaOffsetArr[i] = triaOffset;
+            freeNodeOffset += nbNodesInFace;
+            triaOffset += nbTriInFace;
+        }
+    }
+
+    // Fill the per-face slices.  A face writes only its own node range, its own
+    // triangle range and its own part entry, so the faces are fully independent
+    // and can run in parallel.  The per-face arithmetic (and its float
+    // accumulation order) is unchanged, so the result is identical to the
+    // serial pass.  getPointNormals() is called read-only (storeNormals=false)
+    // because distinct faces of a shape can share one triangulation, so its
+    // normals write-back would be a data race here.
+    OSD_Parallel::For(1, faceMap.Extent() + 1, [&](const int i) {
         const TopoDS_Face& actFace = TopoDS::Face(faceMap(i));
         // Reuse the triangulation fetched in the sizing pass so both passes
         // index the exact same mesh (see faceMesh above).
         TopLoc_Location aLoc = faceLoc[i];
         Handle(Poly_Triangulation) mesh = faceMesh[i];
+        const int faceNodeOffset = faceNodeOffsetArr[i];
+        const int faceTriaOffset = faceTriaOffsetArr[i];
+        const int ii = i - 1;
         if (mesh.IsNull()) {
             parts[ii] = 0;
-            continue;
+            return;
         }
 
         // getting the transformation of the shape/face
         gp_Trsf myTransf;
         Standard_Boolean identity = true;
-        if (!aLoc.IsIdentity()) {
-            identity = false;
-            myTransf = aLoc.Transformation();
-        }
+        facePlacement(aLoc, identity, myTransf);
 
-        // getting size of node and triangle array of this face
-        int nbNodesInFace = mesh->NbNodes();
+        // getting size of the triangle array of this face
         int nbTriInFace = mesh->NbTriangles();
         // check orientation
         TopAbs_Orientation orient = actFace.Orientation();
@@ -1556,23 +1654,27 @@ static PartGui::CoinGeometryData computeCoinGeometry(
         // time.  Rebuild it as a clean centroid fan: the rim nodes keep their
         // original mesh indices (so the B-Rep edge-line pass below still
         // resolves them via PolygonOnTriangulation) and one centroid node is
-        // appended after them.  nbNodesInFace/nbTriInFace are set to match so
-        // the per-face offset advance stays in sync with the sizing pass.
+        // appended after them.  nbTriInFace is set to the fan's triangle count
+        // so this face's slice matches the offsets sized above.
         bool refanned = (i <= static_cast<int>(refanValid.size()) &&
                          refanValid[i]);
         if (refanned) {
             const std::vector<Standard_Integer>& bnd = refanBoundary[i];
             nbTriInFace = static_cast<int>(bnd.size());
-            nbNodesInFace = static_cast<int>(bnd.size()) + 1;  // rim + centroid
             const int centroidIdx = static_cast<int>(bnd.size());  // appended
             const int centroidNode = faceNodeOffset + centroidIdx;
 
             // Reference outward face normal from the first non-degenerate
             // mesh triangle (orientation already baked in by OCCT).  The cap
-            // is planar so every node shares this normal.
+            // is planar so every node shares this normal.  Degeneracy is
+            // measured against gp::Resolution(), the same bound gp_Vec::
+            // Normalize() enforces: a sliver triangle with a tiny but non-zero
+            // area would otherwise pass a smaller test and make Normalize()
+            // throw gp_Dir()'s zero-norm error, which aborts the display
+            // geometry for the whole object.
             gp_Vec planeN(0, 0, 0);
             for (int g = 1; g <= static_cast<int>(mesh->NbTriangles()) &&
-                            planeN.SquareMagnitude() < 1e-16;
+                            planeN.Magnitude() <= gp::Resolution();
                  ++g) {
                 Standard_Integer a, b2, c2;
                 mesh->Triangle(g).Get(a, b2, c2);
@@ -1583,7 +1685,9 @@ static PartGui::CoinGeometryData computeCoinGeometry(
                 gp_Vec e2(mesh->Node(a), mesh->Node(c2));
                 planeN = e1.Crossed(e2);
             }
-            if (planeN.SquareMagnitude() < 1e-16) {
+            if (planeN.Magnitude() <= gp::Resolution()) {
+                FC_WARN("no non-degenerate triangle on a re-fanned planar face; "
+                        "shading it with +Z");
                 planeN = gp_Vec(0, 0, 1);
             }
             planeN.Normalize();
@@ -1592,6 +1696,11 @@ static PartGui::CoinGeometryData computeCoinGeometry(
             }
             if (!identity) {
                 planeN.Transform(myTransf);
+                if (planeN.Magnitude() <= gp::Resolution()) {
+                    FC_WARN("a re-fanned planar face normal collapsed under the "
+                            "face placement; shading it with +Z");
+                    planeN = gp_Vec(0, 0, 1);
+                }
                 planeN.Normalize();
             }
             const SbVec3f sbn(static_cast<float>(planeN.X()),
@@ -1670,7 +1779,15 @@ static PartGui::CoinGeometryData computeCoinGeometry(
         TColgp_Array1OfDir Normals(1, numNodes);
 #endif
         if (normalsFromUV) {
-            Part::Tools::getPointNormals(actFace, mesh, Normals);
+            // storeNormals=false: this runs in the parallel per-face fill, and
+            // getPointNormals() writing its result back onto the triangulation
+            // is a data race -- two faces of the same shape can share a
+            // triangulation (same TShape, different orientation), and the
+            // write-back (AddNormals()/SetNormal()) then reallocates/mutates it
+            // while another face is reading it, which segfaults.  Compute into
+            // the local array only; the triangulation is re-meshed on every
+            // computeCoinGeometry() call anyway, so the cache is worthless here.
+            Part::Tools::getPointNormals(actFace, mesh, Normals, /*storeNormals=*/false);
         }
 
         for (int g = 1; g <= nbTriInFace; g++) {
@@ -1760,6 +1877,25 @@ static PartGui::CoinGeometryData computeCoinGeometry(
         }  // !refanned: standard triangle loop
 
         parts[ii] = nbTriInFace;  // new part
+    });
+
+    // Edge polylines are collected into lineSetByEdge, indexed by the
+    // topological edge index, and each edge is emitted by whichever face
+    // reaches it first, so this part stays serial.  Faces with no triangulation
+    // were skipped by the fill pass above and contribute no edges here either
+    // (matching the original single-pass loop).
+    for (int i = 1; i <= faceMap.Extent(); ++i) {
+        const TopoDS_Face& actFace = TopoDS::Face(faceMap(i));
+        TopLoc_Location aLoc = faceLoc[i];
+        Handle(Poly_Triangulation) mesh = faceMesh[i];
+        if (mesh.IsNull()) {
+            continue;
+        }
+        const int faceNodeOffset = faceNodeOffsetArr[i];
+
+        Standard_Boolean identity = true;
+        gp_Trsf myTransf;
+        facePlacement(aLoc, identity, myTransf);
 
         // handling the edges lying on this face
         TopExp_Explorer Exp;
@@ -1769,13 +1905,13 @@ static PartGui::CoinGeometryData computeCoinGeometry(
             int edgeIndex = edgeMap.FindIndex(curEdge);
             edgeVector.push_back((int32_t)edgeIndex - 1);
             // already processed this index ?
-            if (edgeIdxSet.find(edgeIndex) != edgeIdxSet.end()) {
+            if (edgePending[edgeIndex]) {
 
                 // An RT view drops parametric seam edges (see seamEdges):
                 // skip adding them to the line set so the phantom meridian
                 // does not render across the smooth face.
                 if (rtvActive && seamEdges.find(edgeIndex) != seamEdges.end()) {
-                    edgeIdxSet.erase(edgeIndex);
+                    edgePending[edgeIndex] = 0;
                     continue;
                 }
 
@@ -1791,7 +1927,7 @@ static PartGui::CoinGeometryData computeCoinGeometry(
                 for (Standard_Integer i = indices.Lower(); i <= indices.Upper(); i++) {
                     int nodeIndex = indices(i);
                     int index = faceNodeOffset + nodeIndex - 1;
-                    lineSetMap[edgeIndex].push_back(index);
+                    lineSetByEdge[edgeIndex].push_back(index);
 
                     // usually the coordinates for this edge are already set by the
                     // triangles of the face this edge belongs to. However, there are
@@ -1809,16 +1945,12 @@ static PartGui::CoinGeometryData computeCoinGeometry(
                     verts[index] = Base::convertTo<SbVec3f>(p);
                 }
 
-                // remove the handled edge index from the set
-                edgeIdxSet.erase(edgeIndex);
+                // mark the handled edge index as emitted
+                edgePending[edgeIndex] = 0;
             }
         }
 
         edgeVector.push_back(-1);
-
-        // counting up the per Face offsets
-        faceNodeOffset += nbNodesInFace;
-        faceTriaOffset += nbTriInFace;
     }
 
     // handling of the free edges
@@ -1836,10 +1968,7 @@ static PartGui::CoinGeometryData computeCoinGeometry(
         if (faceEdges.find(hash) == faceEdges.end()) {
             Handle(Poly_Polygon3D) aPoly = Part::Tools::polygonOfEdge(aEdge, aLoc);
             if (!aPoly.IsNull()) {
-                if (!aLoc.IsIdentity()) {
-                    identity = false;
-                    myTransf = aLoc.Transformation();
-                }
+                facePlacement(aLoc, identity, myTransf);
 
                 const TColgp_Array1OfPnt& aNodes = aPoly->Nodes();
                 int nbNodesInEdge = aPoly->NbNodes();
@@ -1850,22 +1979,22 @@ static PartGui::CoinGeometryData computeCoinGeometry(
                     if (!identity) {
                         pnt.Transform(myTransf);
                     }
-                    int index = faceNodeOffset + j - 1;
+                    int index = freeNodeOffset + j - 1;
                     verts[index] = Base::convertTo<SbVec3f>(pnt);
-                    lineSetMap[i].push_back(index);
+                    lineSetByEdge[i].push_back(index);
                 }
 
-                faceNodeOffset += nbNodesInEdge;
+                freeNodeOffset += nbNodesInEdge;
             }
         }
     }
 
-    data.nodeStartIndex = faceNodeOffset;
+    data.nodeStartIndex = freeNodeOffset;
     for (int i = 0; i < vertexMap.Extent(); i++) {
         const TopoDS_Vertex& aVertex = TopoDS::Vertex(vertexMap(i + 1));
         gp_Pnt pnt = BRep_Tool::Pnt(aVertex);
 
-        verts[faceNodeOffset + i] = Base::convertTo<SbVec3f>(pnt);
+        verts[freeNodeOffset + i] = Base::convertTo<SbVec3f>(pnt);
     }
 
     // normalize all normals
@@ -1891,56 +2020,99 @@ static PartGui::CoinGeometryData computeCoinGeometry(
     // cos(15 deg) = 0.9659.  This keeps flat faces and hard bevels crisp while
     // welding only the smooth-curve seams.
     {
-        std::map<std::tuple<int, int, int>, std::vector<int> > posToNodes;
+        // Group node indices by rounded position.  A sort-based grouping is
+        // used rather than a std::map<key, std::vector<int>>: the map allocated
+        // one tree node plus one vector per distinct position (millions of
+        // them for a large shape), which dominated the geometry build.  The
+        // sort does no per-node allocation and walks runs of equal keys.  The
+        // result is identical because each node belongs to exactly one
+        // position group and the tie-break below preserves the original
+        // representative.
+        // A POD key with a hand-written comparator is used instead of
+        // std::tuple<int,int,int>: the recursive tuple operator< is a chain of
+        // template calls that is very expensive in an unoptimized build, and
+        // sorting millions of nodes made it the single hottest part of the
+        // geometry build.
+        struct PosKey {
+            int x;
+            int y;
+            int z;
+            bool operator<(const PosKey& o) const {
+                if (x != o.x) return x < o.x;
+                if (y != o.y) return y < o.y;
+                return z < o.z;
+            }
+            bool operator==(const PosKey& o) const {
+                return x == o.x && y == o.y && z == o.z;
+            }
+        };
+        std::vector<std::pair<PosKey, int> > posOrder;
+        posOrder.reserve(static_cast<size_t>(numNorms));
         for (int i = 0; i < numNorms; i++) {
             const SbVec3f& p = verts[i];
-            auto key = std::make_tuple(
-                static_cast<int>(std::lround(p[0] * 1000.0f)),
-                static_cast<int>(std::lround(p[1] * 1000.0f)),
-                static_cast<int>(std::lround(p[2] * 1000.0f)));
-            posToNodes[key].push_back(i);
+            PosKey key;
+            key.x = static_cast<int>(std::lround(p[0] * 1000.0f));
+            key.y = static_cast<int>(std::lround(p[1] * 1000.0f));
+            key.z = static_cast<int>(std::lround(p[2] * 1000.0f));
+            posOrder.emplace_back(key, i);
         }
+        // std::pair's operator< compares the key first and the node index
+        // second, so equal positions are ordered by ascending node index.  That
+        // keeps the first entry of every group the lowest-index node, matching
+        // the insertion order the previous std::map<key, std::vector<int>>
+        // produced; the perfectly-cancelling-normal fallback below picks that
+        // first node, so the result stays bit-identical.
+        std::sort(posOrder.begin(), posOrder.end());
         // cos(15 deg) = Blender's 30-degree Smooth-by-Angle threshold.
         constexpr float kCoherenceMin = 0.966f;
-        for (auto& kv : posToNodes) {
-            if (kv.second.size() < 2) {
-                continue;
+        size_t s = 0;
+        while (s < posOrder.size()) {
+            size_t e = s + 1;
+            while (e < posOrder.size() && posOrder[e].first == posOrder[s].first) {
+                ++e;
             }
-            SbVec3f sum(0.0f, 0.0f, 0.0f);
-            for (int idx : kv.second) {
-                sum += norms[idx];
+            const size_t groupSize = e - s;
+            if (groupSize >= 2) {
+                SbVec3f sum(0.0f, 0.0f, 0.0f);
+                for (size_t k = s; k < e; ++k) {
+                    sum += norms[posOrder[k].second];
+                }
+                // Copies are already unit length, so |sum|/N is the coherence.
+                const float ratio = sum.length() / static_cast<float>(groupSize);
+                if (ratio >= kCoherenceMin) {
+                    SbVec3f avg = sum;
+                    if (avg.normalize() == 0.0f) {
+                        // Perfectly cancelling copies (e.g. opposite pole
+                        // normals); fall back to the first copy so we never
+                        // emit a zero normal.
+                        avg = norms[posOrder[s].second];
+                    }
+                    for (size_t k = s; k < e; ++k) {
+                        norms[posOrder[k].second] = avg;
+                    }
+                }
             }
-            // Copies are already unit length, so |sum|/N is the coherence.
-            const float ratio =
-                sum.length() / static_cast<float>(kv.second.size());
-            if (ratio < kCoherenceMin) {
-                continue;  // a genuine hard crease; leave flat shading intact
-            }
-            SbVec3f avg = sum;
-            if (avg.normalize() == 0.0f) {
-                // Perfectly cancelling copies (e.g. opposite pole normals);
-                // fall back to the first copy so we never emit a zero normal.
-                avg = norms[kv.second.front()];
-            }
-            for (int idx : kv.second) {
-                norms[idx] = avg;
-            }
+            s = e;
         }
     }
 
-    // lineSetMap only holds entries for edges that actually produced a polyline
-    // (an edge whose Poly_PolygonOnTriangulation is null is skipped above, and the
-    // free-edge pass only rescues edges belonging to no face). The emitted polyline
-    // order therefore has gaps with respect to the topological edge numbering, so
-    // record the real edge index of each polyline rather than inferring it from the
-    // line index later - see ViewProviderPartExt::getElement().
+    // lineSetByEdge only holds entries for edges that actually produced a
+    // polyline (an edge whose Poly_PolygonOnTriangulation is null is skipped
+    // above, and the free-edge pass only rescues edges belonging to no face).
+    // The emitted polyline order therefore has gaps with respect to the
+    // topological edge numbering, so record the real edge index of each
+    // polyline rather than inferring it from the line index later - see
+    // ViewProviderPartExt::getElement().
     std::vector<int32_t> lineSetCoords;
     std::vector<int> lineToEdge;
-    lineToEdge.reserve(lineSetMap.size());
-    for (const auto& it : lineSetMap) {
-        lineSetCoords.insert(lineSetCoords.end(), it.second.begin(), it.second.end());
+    for (int e = 1; e <= edgeMap.Extent(); ++e) {
+        const std::vector<int32_t>& polyline = lineSetByEdge[e];
+        if (polyline.empty()) {
+            continue;
+        }
+        lineSetCoords.insert(lineSetCoords.end(), polyline.begin(), polyline.end());
         lineSetCoords.push_back(-1);
-        lineToEdge.push_back(it.first);
+        lineToEdge.push_back(e);
     }
     data.edgeMapping = std::move(lineToEdge);
 
