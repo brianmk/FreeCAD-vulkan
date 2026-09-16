@@ -67,8 +67,10 @@
 # include <GeomAdaptor_HCurve.hxx>
 #endif
 
+#include <Base/Console.h>
 #include <Base/Exception.h>
 #include <Base/Vector3D.h>
+#include <Standard_Failure.hxx>
 
 #include "Tools.h"
 
@@ -569,7 +571,21 @@ void Part::Tools::getPointNormals(
 
     if (aPolyTri->HasNormals()) {
         for (Standard_Integer aNodeIter = 1; aNodeIter <= numNodes; ++aNodeIter) {
-            theNormals(aNodeIter) = aPolyTri->Normal(aNodeIter);
+            gp_Vec3f aStored;
+            aPolyTri->Normal(aNodeIter, aStored);
+            if (aStored.SquareModulus() > 0.0f) {
+                theNormals(aNodeIter) = gp_Dir(aStored.x(), aStored.y(), aStored.z());
+            }
+            else {
+                // gp_Dir rejects a zero vector, and a degenerate triangulation
+                // can carry one.  Substitute +Z rather than throwing, which
+                // would abort the caller's whole display geometry.
+                Base::Console().warning(
+                    "Part: triangulation has a zero normal at node %d; using +Z\n",
+                    static_cast<int>(aNodeIter)
+                );
+                theNormals(aNodeIter) = gp::DZ();
+            }
         }
 
         if (theFace.Orientation() == TopAbs_REVERSED) {
@@ -590,9 +606,25 @@ void Part::Tools::getPointNormals(
         aPolyTri->AddNormals();
         for (Standard_Integer aNodeIter = 1; aNodeIter <= numNodes; ++aNodeIter) {
             // try to retrieve normal from real surface first, when UV coordinates are available
-            if (!hasNodesUV
-                || GeomLib::NormEstim(aSurf, aPolyTri->UVNode(aNodeIter), aTol, theNormals(aNodeIter))
-                    > 1) {
+            Standard_Integer aEstim = 2;
+            if (hasNodesUV) {
+                try {
+                    aEstim = GeomLib::NormEstim(
+                        aSurf,
+                        aPolyTri->UVNode(aNodeIter),
+                        aTol,
+                        theNormals(aNodeIter)
+                    );
+                }
+                catch (const Standard_Failure&) {
+                    // A degenerate surface point (a pole, or a cone apex) has no
+                    // well-defined normal, and gp_Dir rejects the resulting zero
+                    // vector.  Fall back to the facet normal computed below
+                    // instead of aborting the caller's display geometry.
+                    aEstim = 2;
+                }
+            }
+            if (aEstim > 1) {
                 // compute flat normals
                 gp_XYZ eqPlan(0.0, 0.0, 0.0);
 
