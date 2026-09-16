@@ -1109,10 +1109,16 @@ bool refanPlanarBoundaryConvex(const Handle(Poly_Triangulation) & mesh,
     // Planarity: all nodes within a small tolerance of the face plane.  Use
     // the first non-degenerate face normal (cross of a triangle) as the plane
     // normal so this also works for arbitrarily oriented planar faces (not
-    // just the axis-aligned z==const caps).
+    // just the axis-aligned z==const caps).  Degeneracy is measured against
+    // gp::Resolution(), the bound gp_Vec::Normalize() enforces below; a sliver
+    // triangle with a tiny but non-zero area would otherwise pass a smaller
+    // test and make Normalize() throw gp_Dir()'s zero-norm error, which aborts
+    // the display geometry for the whole object.
     gp_Pnt P0 = mesh->Node(1);
     gp_Vec planeNormal(0, 0, 0);
-    for (Standard_Integer t = 1; t <= mesh->NbTriangles() && planeNormal.SquareMagnitude() < 1e-16; ++t) {
+    for (Standard_Integer t = 1;
+         t <= mesh->NbTriangles() && planeNormal.Magnitude() <= gp::Resolution();
+         ++t) {
         Standard_Integer n1, n2, n3;
         mesh->Triangle(t).Get(n1, n2, n3);
         if (n1 < 1 || n2 < 1 || n3 < 1) {
@@ -1122,7 +1128,7 @@ bool refanPlanarBoundaryConvex(const Handle(Poly_Triangulation) & mesh,
         gp_Vec e2(mesh->Node(n1), mesh->Node(n3));
         planeNormal = e1.Crossed(e2);
     }
-    if (planeNormal.SquareMagnitude() < 1e-16) {
+    if (planeNormal.Magnitude() <= gp::Resolution()) {
         return false;
     }
     planeNormal.Normalize();
@@ -1306,6 +1312,18 @@ struct CoinGeometryData {
 };
 
 }  // namespace PartGui
+
+// Resolve a face's local placement once, so the fill pass and the edge pass
+// share the same identity/transform handling.
+static void facePlacement(const TopLoc_Location& aLoc,
+                          Standard_Boolean& identity,
+                          gp_Trsf& myTransf)
+{
+    identity = aLoc.IsIdentity();
+    if (!identity) {
+        myTransf = aLoc.Transformation();
+    }
+}
 
 // Pure computation of the Coin display geometry of \a shape.  It reads only
 // the shape's own OCCT data and writes into local buffers, so it is safe to
@@ -1622,10 +1640,7 @@ static PartGui::CoinGeometryData computeCoinGeometry(
         // getting the transformation of the shape/face
         gp_Trsf myTransf;
         Standard_Boolean identity = true;
-        if (!aLoc.IsIdentity()) {
-            identity = false;
-            myTransf = aLoc.Transformation();
-        }
+        facePlacement(aLoc, identity, myTransf);
 
         // getting size of the triangle array of this face
         int nbTriInFace = mesh->NbTriangles();
@@ -1872,10 +1887,7 @@ static PartGui::CoinGeometryData computeCoinGeometry(
 
         Standard_Boolean identity = true;
         gp_Trsf myTransf;
-        if (!aLoc.IsIdentity()) {
-            identity = false;
-            myTransf = aLoc.Transformation();
-        }
+        facePlacement(aLoc, identity, myTransf);
 
         // handling the edges lying on this face
         TopExp_Explorer Exp;
@@ -1948,10 +1960,7 @@ static PartGui::CoinGeometryData computeCoinGeometry(
         if (faceEdges.find(hash) == faceEdges.end()) {
             Handle(Poly_Polygon3D) aPoly = Part::Tools::polygonOfEdge(aEdge, aLoc);
             if (!aPoly.IsNull()) {
-                if (!aLoc.IsIdentity()) {
-                    identity = false;
-                    myTransf = aLoc.Transformation();
-                }
+                facePlacement(aLoc, identity, myTransf);
 
                 const TColgp_Array1OfPnt& aNodes = aPoly->Nodes();
                 int nbNodesInEdge = aPoly->NbNodes();
