@@ -1184,8 +1184,10 @@ public:
     QPointer<QWidget> forwardTarget;
 
     // Debug-only synthetic mouse injector state (see pollInjectFile()).
+#ifdef FREECAD_VULKAN_DEBUG_HOOKS
     QString injectPath;
     int injectConsumed = 0;
+#endif
 };
 
 QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent, bool rayTracing)
@@ -1233,7 +1235,9 @@ QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent, bool rayTracing)
     // QCoreApplication::sendEvent() input, so the only way a test probe can
     // drive the real event filter is a genuine platform event posted to the
     // embedded window.  Enabling this is zero-cost unless the env var names a
-    // file to poll (see pollInjectFile()).
+    // file to poll (see pollInjectFile()).  Compiled out of release builds
+    // unless FREECAD_USE_VULKAN_DEBUG_HOOKS is set.
+#ifdef FREECAD_VULKAN_DEBUG_HOOKS
     if (const char * injectPath = Base::envString("FC_VULKAN_INJECT_PY")) {
         d->injectPath = injectPath;
         injectTimer = new QTimer(this);
@@ -1242,6 +1246,7 @@ QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent, bool rayTracing)
                          &QuarterVulkanWidget::pollInjectFile);
         injectTimer->start();
     }
+#endif
 }
 
 // One QVulkanInstance is shared across every 3D view (Qt intends a single
@@ -1906,6 +1911,7 @@ void QuarterVulkanWidget::setEventForwardTarget(QWidget * target,
     d->forwardTarget = target;
 }
 
+#ifdef FREECAD_VULKAN_DEBUG_HOOKS
 void QuarterVulkanWidget::pollInjectFile()
 {
     if (d->injectPath.isEmpty() || !d->window) {
@@ -1964,6 +1970,7 @@ void QuarterVulkanWidget::pollInjectFile()
         d->injectConsumed = i + 1;
     }
 }
+#endif
 
 bool QuarterVulkanWidget::eventFilter(QObject * watched, QEvent * event)
 {

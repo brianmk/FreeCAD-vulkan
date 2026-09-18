@@ -40,6 +40,7 @@ namespace Detail {
 //! copy + map + write shape and differ only in command-buffer ownership: this
 //! one records into the frame's own command buffer (no submit/wait, to avoid
 //! stalling the pipeline), while the Coin helper owns a one-shot submit.
+#ifdef FREECAD_VULKAN_DEBUG_HOOKS
 class VulkanFrameDumper
 {
 public:
@@ -280,6 +281,20 @@ private:
     int m_frameCount = 0;
     quint64 m_frameOrdinal = 0;
 };
+#else
+// Release build without debug hooks: same interface, but no staging buffer,
+// no vkCmdCopyImageToBuffer and no PNG write compiled in.  Every method is a
+// no-op, so QuarterVulkanWidget's call sites stay unchanged.
+class VulkanFrameDumper
+{
+public:
+    VulkanFrameDumper(QVulkanInstance *, QVulkanWindow *) {}
+    void initSwapChainResources() {}
+    void releaseSwapChainResources() {}
+    void recordFrameCopy(VkCommandBuffer, int, const QSize &, quint64) {}
+    void saveFrame() {}
+};
+#endif
 
 } // namespace Detail
 } // namespace Quarter

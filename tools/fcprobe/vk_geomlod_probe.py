@@ -52,8 +52,12 @@ def build_scene():
     # default deflection.
     try:
         sphere.ViewObject.Deviation = 0.05
-    except Exception:
-        pass
+    except Exception as exc:
+        # Not fatal, but say so: if the property name changes, the probe would
+        # silently fall back to the machine's default deflection and the
+        # host-side MIN_MAIN_VERTS check could then fail confusingly.
+        log("warn: could not set Sphere.Deviation (%s); using the default "
+            "tessellation" % exc)
     doc.recompute()
     FreeCADGui.updateGui()
     view = FreeCADGui.ActiveDocument.ActiveView

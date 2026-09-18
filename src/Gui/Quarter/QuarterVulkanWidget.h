@@ -352,6 +352,7 @@ public:
 protected:
     bool eventFilter(QObject * watched, QEvent * event) override;
 
+#ifdef FREECAD_VULKAN_DEBUG_HOOKS
     /*!
       \brief Debug-only synthetic mouse injector (FC_VULKAN_INJECT_PY).
 
@@ -363,10 +364,13 @@ protected:
       QCoreApplication::sendEvent() to a QWindowContainer is swallowed by the
       container and never forwarded to the embedded window.  A per-poll
       consumed-line counter lets a probe append new events and have them picked
-      up on the next poll.  Not compiled out: it is a zero-cost, debug-only
-      hook (see the breadcrumb-instrumentation skill).
+      up on the next poll.
+
+      Compiled only when FREECAD_VULKAN_DEBUG_HOOKS is set (auto-on for Debug
+      builds, see src/Gui/CMakeLists.txt), so release builds carry no injector.
     */
     void pollInjectFile();
+#endif
 
 private:
     void ensureSharedInstance();
@@ -383,7 +387,9 @@ private:
 #endif
 
     QuarterVulkanWidgetPrivate * d;
+#ifdef FREECAD_VULKAN_DEBUG_HOOKS
     QTimer * injectTimer = nullptr;
+#endif
 };
 
 } // namespace Quarter
