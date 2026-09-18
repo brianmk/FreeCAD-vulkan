@@ -32,6 +32,7 @@
 #endif
 #include <cstring>
 #include <functional>
+#include <vector>
 
 #include "Console.h"
 #include "PyObjectBase.h"
@@ -186,6 +187,7 @@ void ConsoleSingleton::notify(
  */
 void ConsoleSingleton::attachObserver(ILogger* pcObserver)
 {
+    std::lock_guard<std::mutex> lock(_observerMutex);
     // double insert !!
     assert(!_aclObservers.contains(pcObserver));
 
@@ -199,6 +201,7 @@ void ConsoleSingleton::attachObserver(ILogger* pcObserver)
  */
 void ConsoleSingleton::detachObserver(ILogger* pcObserver)
 {
+    std::lock_guard<std::mutex> lock(_observerMutex);
     _aclObservers.erase(pcObserver);
 }
 
@@ -210,7 +213,18 @@ void ConsoleSingleton::notifyPrivate(
     const std::string& msg
 ) const
 {
-    for (ILogger* Iter : _aclObservers) {
+    // Snapshot the observer list under the lock and call out with it released:
+    // sendLog() may re-enter the Console (attach/detach/emit), which would
+    // self-deadlock on a non-recursive mutex.  This also makes concurrent
+    // notify() calls safe, now that the display geometry can emit warnings
+    // from OSD worker threads.
+    std::vector<ILogger*> observers;
+    {
+        std::lock_guard<std::mutex> lock(_observerMutex);
+        observers.assign(_aclObservers.begin(), _aclObservers.end());
+    }
+
+    for (ILogger* Iter : observers) {
         if (Iter->isActive(category)) {
             Iter->sendLog(
                 notifiername,
@@ -277,6 +291,7 @@ void ConsoleSingleton::postEvent(
 ILogger* ConsoleSingleton::get(const char* Name) const
 {
     const char* OName {};
+    std::lock_guard<std::mutex> lock(_observerMutex);
     for (ILogger* Iter : _aclObservers) {
         OName = Iter->name();  // get the name
         if (OName && strcmp(OName, Name) == 0) {
@@ -707,8 +722,17 @@ PyObject* ConsoleSingleton::sGetObservers(PyObject* /*self*/, PyObject* args)
 
     PY_TRY
     {
+        std::vector<ILogger*> observers;
+        {
+            std::lock_guard<std::mutex> lock(instance()._observerMutex);
+            observers.assign(
+                instance()._aclObservers.begin(),
+                instance()._aclObservers.end()
+            );
+        }
+
         Py::List list;
-        for (const auto i : instance()._aclObservers) {
+        for (const auto i : observers) {
             list.append(Py::String(i->name() ? i->name() : ""));
         }
 
