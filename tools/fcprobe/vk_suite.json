@@ -254,6 +254,18 @@
       "timeout": 180
     },
     {
+      "name": "geomlod",
+      "script": "vk_geomlod_probe.py",
+      "env": {
+        "FC_VULKAN_BACKEND_DEBUG": "1",
+        "FC_VULKAN_GEOM_LOD_ALWAYS": "1"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 180
+    },
+    {
       "name": "aspack-on",
       "script": "vk_aspack_probe.py",
       "env": {
