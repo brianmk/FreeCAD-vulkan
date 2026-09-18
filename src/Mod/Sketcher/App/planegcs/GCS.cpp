@@ -1920,11 +1920,6 @@ void System::initSolution(Algorithm alg)
         diagnoseComponents(alg, dcomponents, dcomponentsSize);
     }
 
-    // if still no diagnosis after explicitly calling `diagnose`, nothing to do here
-    if (!hasDiagnosis) {
-        return;
-    }
-
     std::vector<Constraint*> clistR;
     if (!redundant.empty()) {
         std::ranges::copy_if(clist, std::back_inserter(clistR), [this](auto constr) {
