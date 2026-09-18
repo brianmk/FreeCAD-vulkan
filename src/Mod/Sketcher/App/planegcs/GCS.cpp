@@ -1735,6 +1735,36 @@ void System::declareDrivenParams(VEC_pD& params)
 }
 
 
+int System::buildComponentGraph(const std::vector<Constraint*>& constrs, VEC_I& components) const
+{
+    // Parameters are vertices 0..plist.size()-1, the constraints follow them.
+    Graph g;
+    for (int i = 0; i < int(plist.size() + constrs.size()); i++) {
+        boost::add_vertex(g);
+    }
+
+    int vtid = int(plist.size());
+    for (const auto constr : constrs) {
+        const auto itc = c2p.find(constr);
+        if (itc != c2p.end()) {
+            for (const auto param : itc->second) {
+                MAP_pD_I::const_iterator it = pIndex.find(param);
+                if (it != pIndex.end()) {
+                    boost::add_edge(vtid, it->second, g);
+                }
+            }
+        }
+        ++vtid;
+    }
+
+    components.assign(boost::num_vertices(g), 0);
+    if (components.empty()) {
+        return 0;
+    }
+    return boost::connected_components(g, &components[0]);
+}
+
+
 void System::diagnoseComponents(Algorithm alg, const VEC_I& components, int componentsSize)
 {
     // The reduced Jacobian built by diagnose() is block-diagonal over the
@@ -1897,26 +1927,8 @@ void System::initSolution(Algorithm alg)
             return constr->isDriving();
         });
 
-        Graph gd;
-        for (int i = 0; i < int(plist.size() + clistDriving.size()); i++) {
-            boost::add_vertex(gd);
-        }
-        int dvtid = int(plist.size());
-        for (const auto constr : clistDriving) {
-            for (const auto param : c2p[constr]) {
-                MAP_pD_I::const_iterator it = pIndex.find(param);
-                if (it != pIndex.end()) {
-                    boost::add_edge(dvtid, it->second, gd);
-                }
-            }
-            ++dvtid;
-        }
-        VEC_I dcomponents(boost::num_vertices(gd));
-        int dcomponentsSize = 0;
-        if (!dcomponents.empty()) {
-            dcomponentsSize = boost::connected_components(gd, &dcomponents[0]);
-        }
-
+        VEC_I dcomponents;
+        const int dcomponentsSize = buildComponentGraph(clistDriving, dcomponents);
         diagnoseComponents(alg, dcomponents, dcomponentsSize);
     }
 
@@ -1933,28 +1945,8 @@ void System::initSolution(Algorithm alg)
     }
 
     // partitioning into decoupled components
-    Graph g;
-    for (int i = 0; i < int(plist.size() + clistR.size()); i++) {
-        boost::add_vertex(g);
-    }
-
-    int cvtid = int(plist.size());
-    for (const auto constr : clistR) {
-        VEC_pD& cparams = c2p[constr];
-        for (const auto param : cparams) {
-            MAP_pD_I::const_iterator it = pIndex.find(param);
-            if (it != pIndex.end()) {
-                boost::add_edge(cvtid, it->second, g);
-            }
-        }
-        ++cvtid;
-    }
-
-    VEC_I components(boost::num_vertices(g));
-    int componentsSize = 0;
-    if (!components.empty()) {
-        componentsSize = boost::connected_components(g, &components[0]);
-    }
+    VEC_I components;
+    const int componentsSize = buildComponentGraph(clistR, components);
 
     // identification of equality constraints and parameter reduction
     std::set<Constraint*> reducedConstrs;  // constraints that will be eliminated through reduction

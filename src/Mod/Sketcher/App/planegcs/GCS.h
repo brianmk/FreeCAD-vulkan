@@ -227,6 +227,11 @@ private:
         bool silent = true
     );
 
+    // Build the parameter<->constraint graph over \a constrs and label every
+    // vertex with its connected-component index (parameters first, then the
+    // constraints).  Returns the number of components.
+    int buildComponentGraph(const std::vector<Constraint*>& constrs, VEC_I& components) const;
+
 #ifdef _GCS_EXTRACT_SOLVER_SUBSYSTEM_
     void extractSubsystem(SubSystem* subsys, bool isRedundantsolving);
 #endif
