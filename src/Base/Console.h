@@ -712,6 +712,7 @@ private:
 
     // observer list
     std::set<ILogger*> _aclObservers;
+    mutable std::mutex _observerMutex;
 
     std::map<std::string, int> _logLevels;
     int _defaultLogLevel;
