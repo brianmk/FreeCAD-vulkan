@@ -245,6 +245,7 @@
       "script": "vk_tlascull_probe.py",
       "env": {
         "FC_VULKAN_RT_DEBUG": "1",
+        "FC_VULKAN_TLAS_CULL": "0",
         "FC_VULKAN_TLAS_PIX": "8"
       },
       "allow_vuid": [
