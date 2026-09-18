@@ -113,6 +113,11 @@ struct VulkanViewSettings
     //! Wireframe (edge) overlay and point overlay for the raster backend.
     bool wireframe = false;
     bool showPoints = false;
+    //! Interaction LOD: while the camera is navigating, drop the ray-traced
+    //! render to a single-bounce preview so an orbit/pan of a heavy scene
+    //! stays responsive; a clean full-quality accumulation restarts once the
+    //! camera settles.  Only affects the ray-traced view modes.
+    bool interactionLod = true;
     SbColor4f edgeColor = SbColor4f(0.05f, 0.05f, 0.05f, 1.0f);
     // Path-tracing tuning (see the View preferences dialog).
     int pathTracingBounces = 4;

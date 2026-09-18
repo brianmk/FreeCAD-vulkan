@@ -311,6 +311,17 @@ public:
     void setPathTracingBounces(int bounces);
 
     /*!
+      \brief Enable/disable interaction LOD (quality reduction while the
+      camera moves).
+
+      While engaged the path tracer runs a single bounce so an interactive
+      orbit/pan of a heavy scene stays responsive; disengaging restarts a
+      clean full-quality accumulation.  Forwarded to the ray-tracing backend;
+      a no-op when it is not active.
+    */
+    void setInteractionLod(bool active);
+
+    /*!
       \brief Frames of a static camera before the accumulation auto-restarts
       (1..120).
 

@@ -64,6 +64,6 @@ def check(lines, report):
         # Culling disabled: nothing may be culled, and the scene still traces.
         if any(culled > 0 for _, _, culled in ev):
             err("cull=off: some [RTDBG] buildTlas line reported culled>0 "
-                "but FC_VULKAN_TLAS_CULL was not set")
+                "but FC_VULKAN_TLAS_CULL was not enabled (unset or \"0\")")
         if not any(inst > 0 for _, inst, _ in ev):
             err("cull=off: no instance was ever traced (instances==0)")

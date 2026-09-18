@@ -269,6 +269,13 @@ public:
         QMutexLocker locker(&m_stateMutex);
         m_viewSettings.pathTracingSettleFrames = std::clamp(frames, 1, 120);
     }
+    //! Interaction LOD is a runtime navigation state, not a persisted
+    //! setting, so it is staged on its own rather than in m_viewSettings.
+    void setInteractionLod(bool active)
+    {
+        QMutexLocker locker(&m_stateMutex);
+        m_interactionLod = active;
+    }
     void setPathTracingMaxSamples(int samples)
     {
         QMutexLocker locker(&m_stateMutex);
@@ -654,6 +661,8 @@ private:
         //! Display/tuning settings snapshot (one blob; the manager diffs it).
         SoVulkanViewSettings viewSettings;
         bool pathTracingEnabled = false;
+        //! Interaction LOD (single-bounce preview while the camera moves).
+        bool interactionLod = false;
     };
 
     // Qt 6 invokes startNextFrame() on the GUI thread, like every other
@@ -675,6 +684,7 @@ private:
         frame.camera = m_camera;
         frame.viewSettings = m_viewSettings;
         frame.pathTracingEnabled = m_pathTracingEnabled;
+        frame.interactionLod = m_interactionLod;
         // Denoising is required for path tracing, so it always runs while the
         // path tracer is active; the denoiser selector only picks the filter.
         frame.viewSettings.pathTracingDenoise = m_pathTracingEnabled;
@@ -813,6 +823,10 @@ private:
                            frame.viewSettings.backgroundBottom[2]);
         // One call applies the whole display/tuning blob (the manager diffs it).
         m_manager.setViewSettings(frame.viewSettings);
+        // Interaction LOD is a separate runtime state (not part of the diffed
+        // settings blob).  The manager forwards it to the RT backend and is
+        // idempotent, so applying it every frame is cheap.
+        m_manager.setInteractionLod(frame.interactionLod ? TRUE : FALSE);
         if (Base::envFlagEnabled("FC_VULKAN_BACKEND_DEBUG")) {
             static int syncLog = 0;
             if (syncLog++ < 3) {
@@ -908,6 +922,20 @@ private:
         rpBegin.clearValueCount = multisample ? 3u : 2u;
         rpBegin.pClearValues = clearValues;
 
+        // GPU geometry-LOD pre-pass (raster).  Vulkan forbids compute inside a
+        // render pass, so prepare the frame and record the sub-pixel
+        // compaction dispatches BEFORE beginning the pass; renderExternal()
+        // below detects the prepared frame and skips the setup it already ran.
+        // No-op in ray-tracing mode.
+        //
+        // NOTE: this only compacts what the manager's draw list actually
+        // contains.  A fresh document's main region is usually just the hidden
+        // nav cube, so "the LOD runs" here says nothing about real document
+        // geometry - see the VALIDATION NOTE in
+        // SoVulkanRenderBackendGeometryLod.cpp before trusting a nav-cube-only
+        // result.
+        m_manager.prepareExternalFrame(false, false, cb);
+
         QVulkanDeviceFunctions * vkdf =
             m_instance->deviceFunctions(m_window->device());
         vkdf->vkCmdBeginRenderPass(cb, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
@@ -961,6 +989,8 @@ private:
     bool m_pathTracingStart = false;
     bool m_pathTracingActive = false;
     bool m_pathTracingRefining = false;
+    //! Interaction LOD runtime state (single-bounce preview while navigating).
+    bool m_interactionLod = false;
     // Staged authoritative scene lighting (GL host -> RT backend).  The eye-
     // space data is camera-independent, so only a dirty flag (set on push /
     // on an empty reset) triggers a re-push to the manager.
@@ -2242,6 +2272,17 @@ void QuarterVulkanWidget::setPathTracingBounces(int bounces)
         return;
     }
     d->renderer->setPathTracingBounces(bounces);
+    redraw();
+}
+
+void QuarterVulkanWidget::setInteractionLod(bool active)
+{
+    if (!d->renderer) {
+        return;
+    }
+    VK_BREADCRUMB("[VK-TRACE] QuarterVulkanWidget::setInteractionLod active=%d\n",
+                  active ? 1 : 0);
+    d->renderer->setInteractionLod(active);
     redraw();
 }
 

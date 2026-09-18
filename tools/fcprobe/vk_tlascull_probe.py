@@ -28,7 +28,12 @@ from freecad_probe import Session  # noqa: E402
 
 VIEW = "User parameter:BaseApp/Preferences/View"
 
-CULLMODE = "on" if os.environ.get("FC_VULKAN_TLAS_CULL") else "off"
+# Mirror the backend's resolution exactly (SoRTXRenderBackendCore::initialize):
+# culling is enabled only when FC_VULKAN_TLAS_CULL is set to something other
+# than "0".  Unset or "0" means off.  (os.environ.get() alone would treat the
+# literal "0" as truthy and mislabel the control.)
+_CULL = os.environ.get("FC_VULKAN_TLAS_CULL")
+CULLMODE = "on" if _CULL is not None and _CULL != "0" else "off"
 
 
 def log(msg):

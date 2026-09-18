@@ -46,7 +46,20 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
                                              QObject* parent)
     : QObject(parent)
     , _viewer(viewer)
+    , _interactionTimer(new QTimer(this))
 {
+    // Interaction LOD: a camera move engages a single-bounce ray-traced
+    // preview; the timer disengages it once the camera has been still for its
+    // interval, which requests the full-quality restart.  Created for every
+    // build (the setter it drives is a no-op without a Vulkan widget).
+    _interactionTimer->setSingleShot(true);
+    // Long enough that a continuous drag never re-enables full quality
+    // mid-gesture, short enough that the refined image appears promptly on
+    // release.
+    _interactionTimer->setInterval(200);
+    connect(_interactionTimer, &QTimer::timeout, this, [this] {
+        setInteractionLod(false);
+    });
 #ifdef FREECAD_USE_VULKAN
     if (!_viewer) {
         return;
@@ -361,6 +374,12 @@ void VulkanViewportAdapter::pushSettings()
         _pathTracingRtMismatchWarned = false;
     }
 
+    // A preference change can disable interaction LOD mid-gesture; drop the
+    // engaged state so the full-quality render resumes immediately.
+    if (!settings.interactionLod) {
+        setInteractionLod(false);
+    }
+
     // GL-authoritative scene lighting -> both Vulkan backends.  The IR
     // draw-list lighting capture (SoLightElement::getLights) is unreliable on
     // the retained/replayed path tracer (the captured light count can drop to
@@ -496,7 +515,47 @@ void VulkanViewportAdapter::cameraChangedCB(void* data, SoSensor* /*sensor*/)
             fprintf(stderr, "[LTRACE] cameraChangedCB n=%d\n", _n);
         }
     }
-    static_cast<VulkanViewportAdapter*>(data)->requestVulkanFrame();
+    auto* self = static_cast<VulkanViewportAdapter*>(data);
+    self->noteCameraMoved();
+    self->requestVulkanFrame();
+}
+
+void VulkanViewportAdapter::noteCameraMoved()
+{
+#ifdef FREECAD_USE_VULKAN
+    if (!_viewer) {
+        return;
+    }
+    const VulkanViewSettings& settings = _viewer->getVulkanViewSettings();
+    // Interaction LOD is opt-in via the VulkanInteractionLod preference
+    // (default on).  It applies to every Vulkan mode: a ray-traced mode lowers
+    // the RT bounce count, and a raster mode draws wide lines as plain 1px GPU
+    // lines instead of expanding every edge segment into quads on the CPU (the
+    // dominant navigation cost on large edge sets).  When disabled, make sure
+    // any previously engaged state is dropped.
+    if (!settings.interactionLod) {
+        setInteractionLod(false);
+        return;
+    }
+    setInteractionLod(true);
+    if (_interactionTimer) {
+        _interactionTimer->start();
+    }
+#endif
+}
+
+void VulkanViewportAdapter::setInteractionLod(bool active)
+{
+    if (_interactionLod == active) {
+        return;
+    }
+    _interactionLod = active;
+#ifdef FREECAD_USE_VULKAN
+    if (_vulkanViewer) {
+        // The widget's setter requests the frame that shows the new quality.
+        _vulkanViewer->setInteractionLod(active);
+    }
+#endif
 }
 
 void VulkanViewportAdapter::attachSensors()
