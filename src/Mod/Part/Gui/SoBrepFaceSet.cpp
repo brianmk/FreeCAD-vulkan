@@ -836,14 +836,23 @@ void SoBrepFaceSet::IRRender(SoIRRenderAction* action)
     SelContextPtr ctx2;
     SelContextPtr ctx = Gui::SoFCSelectionRoot::getRenderContext(this, selContext, ctx2);
     copyIRRenderContexts(ctx, ctx2);
-    VK_BREADCRUMB_LIMITED(30,
-                          "[VK-TRACE] SoBrepFaceSet::IRRender this=%p ctx=%p "
-                          "hlIdx=%d ctx2=%p selIdx=%zu\n",
-                          this, ctx.get(), ctx ? ctx->highlightIndex : -2,
-                          ctx2.get(), ctx2 ? ctx2->selectionIndex.size() : (size_t)-1);
     const bool hasSecondaryColors = ctx2 && !ctx2->colors.empty();
     const bool hasOverlayFields = (highlightPartIndex.getNum() > 0)
         || (selectionPartIndex.getNum() > 0);
+    // Sampled so the diagnostic still fires after the (large) document has
+    // loaded, when the Voron-class SoBrepFaceSet is actually traversed.
+    VK_BREADCRUMB_LIMITED(120,
+                          "[VK-TRACE] SoBrepFaceSet::IRRender this=%p ctx=%p "
+                          "hlIdx=%d ctx2=%p selIdx=%zu hasSecColors=%d "
+                          "hasOverlay=%d inhibit=%d coordIdx=%d\n",
+                          this, ctx.get(), ctx ? ctx->highlightIndex : -2,
+                          ctx2.get(),
+                          ctx2 ? ctx2->selectionIndex.size() : (size_t)-1,
+                          hasSecondaryColors ? 1 : 0, hasOverlayFields ? 1 : 0,
+                          (!hasOverlayFields && ctx2 &&
+                           ctx2->selectionIndex.empty() && !hasSecondaryColors)
+                              ? 1 : 0,
+                          this->coordIndex.getNum());
     // Parity with GLRender(): an existing-but-empty secondary context
     // inhibits drawing of the base geometry in partial-render scenarios.
     if (!hasOverlayFields && ctx2 && ctx2->selectionIndex.empty() && !hasSecondaryColors) {
