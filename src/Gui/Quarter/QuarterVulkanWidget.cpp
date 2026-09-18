@@ -922,20 +922,6 @@ private:
         rpBegin.clearValueCount = multisample ? 3u : 2u;
         rpBegin.pClearValues = clearValues;
 
-        // GPU geometry-LOD pre-pass (raster).  Vulkan forbids compute inside a
-        // render pass, so prepare the frame and record the sub-pixel
-        // compaction dispatches BEFORE beginning the pass; renderExternal()
-        // below detects the prepared frame and skips the setup it already ran.
-        // No-op in ray-tracing mode.
-        //
-        // NOTE: this only compacts what the manager's draw list actually
-        // contains.  A fresh document's main region is usually just the hidden
-        // nav cube, so "the LOD runs" here says nothing about real document
-        // geometry - see the VALIDATION NOTE in
-        // SoVulkanRenderBackendGeometryLod.cpp before trusting a nav-cube-only
-        // result.
-        m_manager.prepareExternalFrame(false, false, cb);
-
         QVulkanDeviceFunctions * vkdf =
             m_instance->deviceFunctions(m_window->device());
         vkdf->vkCmdBeginRenderPass(cb, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
@@ -944,6 +930,19 @@ private:
         // with the values in rpBegin above, so the backend must not issue
         // its own full-frame clear attachments (a second clear per frame).
         // The overlay block's sub-rect depth clear is unaffected.
+        //
+        // renderExternal() also owns the GPU geometry-LOD pre-pass: because
+        // Vulkan forbids compute inside a render pass and the pass is already
+        // begun here, the backend records the sub-pixel compaction into a
+        // transient command buffer it submits ahead of this pass's submission.
+        // No caller coordination is needed.
+        //
+        // NOTE: this only compacts what the manager's draw list actually
+        // contains.  A fresh document's main region is usually just the hidden
+        // nav cube, so "the LOD runs" here says nothing about real document
+        // geometry - see the VALIDATION NOTE in
+        // SoVulkanRenderBackendGeometryLod.cpp before trusting a nav-cube-only
+        // result.
         const SbBool ok = m_manager.renderExternal(false, false,
                                                    cb,
                                                    m_window->defaultRenderPass(),
