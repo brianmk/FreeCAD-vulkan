@@ -12,6 +12,7 @@
 #include <string>
 
 class QStackedWidget;
+class QTimer;
 class SoNodeSensor;
 class SoSensor;
 
@@ -161,6 +162,19 @@ private:
     /// current camera orientation on every call to follow the view.
     void pushSceneLights();
 
+    /// Engage interaction LOD after a camera change and (re)arm the idle
+    /// timer that disengages it once the camera has been still for a short
+    /// window.  Driven from the camera sensor, so it covers an interactive
+    /// drag, a seek animation and the navcube/view-home animation alike
+    /// without depending on the GL interaction callbacks (which never fire
+    /// for the hidden display-only GL viewer).  Honours the
+    /// VulkanInteractionLod preference.
+    void noteCameraMoved();
+
+    /// Forward the interaction-LOD state to the Vulkan widget (only on a
+    /// change).  A no-op without a Vulkan widget.
+    void setInteractionLod(bool active);
+
     /// SoNodeSensor callbacks (Coin's auditor mechanism fires these on any
     /// field write / structural change of the tracked node).
     static void sceneChangedCB(void* data, SoSensor* sensor);
@@ -186,6 +200,12 @@ private:
     // cheap no-op there.
     std::unique_ptr<SoNodeSensor> _sceneSensor;
     std::unique_ptr<SoNodeSensor> _cameraSensor;
+    //! Single-shot idle timer: armed on every camera change while interaction
+    //! LOD is engaged, it disengages the LOD once the camera has been still
+    //! for its interval.
+    QTimer* _interactionTimer = nullptr;
+    //! Current interaction-LOD state forwarded to the Vulkan widget.
+    bool _interactionLod = false;
 };
 
 }  // namespace Gui
