@@ -27,7 +27,7 @@
 
 #include <Base/Console.h>
 #include <Gui/MainWindow.h>
-#include <Gui/MetaTypes.h>
+#include <App/MetaTypes.h>
 
 #include <Mod/Material/App/Exceptions.h>
 #include <Mod/Material/App/Materials.h>

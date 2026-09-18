@@ -143,7 +143,7 @@
 
 #include "PythonWrapper.h"
 #include "UiLoader.h"
-#include "MetaTypes.h"
+#include <App/MetaTypes.h>
 
 // NOLINTBEGIN
 #if defined(HAVE_SHIBOKEN2)

@@ -29,7 +29,7 @@
 #include <QMetaType>
 #include <QVariant>
 
-#include <Gui/MetaTypes.h>
+#include <App/MetaTypes.h>
 
 #include <Mod/Material/MaterialGlobal.h>
 

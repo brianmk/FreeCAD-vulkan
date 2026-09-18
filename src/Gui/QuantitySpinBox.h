@@ -23,7 +23,7 @@
 
 #pragma once
 
-#include <Gui/MetaTypes.h>
+#include <App/MetaTypes.h>
 #include <Gui/SpinBox.h>
 
 #ifdef Q_MOC_RUN

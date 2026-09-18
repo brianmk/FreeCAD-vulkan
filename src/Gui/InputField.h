@@ -28,7 +28,7 @@
 
 #include "ExpressionBinding.h"
 #include "ExpressionCompleter.h"
-#include "MetaTypes.h"
+#include <App/MetaTypes.h>
 #include "Widgets.h"
 
 

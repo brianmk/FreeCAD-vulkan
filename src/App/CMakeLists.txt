@@ -357,6 +357,7 @@ SET(FreeCADApp_HPP_SRCS
     Material.h
     MeasureManager.h
     Metadata.h
+    MetaTypes.h
     ElementNamingUtils.h
     ProgramInformation.h
     Services.h

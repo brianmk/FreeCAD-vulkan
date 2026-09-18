@@ -10,7 +10,7 @@
 
 #include "Gui/Application.h"
 #include "Gui/Dialogs/DlgObjectSelection.h"
-#include "Gui/MetaTypes.h"
+#include <App/MetaTypes.h>
 
 class ObjectSelectionTest: public QObject
 {
