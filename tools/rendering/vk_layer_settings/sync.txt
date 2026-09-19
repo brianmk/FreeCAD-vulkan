@@ -1,0 +1,8 @@
+# Synchronization validation: hazards, barriers and queue/execution overlap.
+#
+# Selected with FC_VULKAN_VALIDATION_PROFILE=sync.  Use this while touching
+# barriers, the external pre-pass, deferred destruction or async compute.
+
+khronos_validation.validate_core = true
+khronos_validation.validate_sync = true
+khronos_validation.report_flags = error,warn

@@ -1,0 +1,8 @@
+{
+  "description": "Vulkan 1.2-era desktop baseline (VP_LUNARG_desktop_baseline_2022): the conservative extension/feature set a portable desktop Vulkan app may assume. No ray tracing, no descriptor indexing, no timeline semaphores.",
+  "profile_file": "VP_LUNARG_desktop_baseline.json",
+  "profile_name": "VP_LUNARG_desktop_baseline_2022",
+  "env": {
+    "VK_KHRONOS_PROFILES_EMULATE_PORTABILITY": "true"
+  }
+}

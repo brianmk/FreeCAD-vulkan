@@ -128,6 +128,16 @@ macro(SetupBundledCoinPivy)
     # Vulkan viewport.  The OpenGL backend remains built and the default.
     set(COIN_BUILD_VULKAN_RENDERER ${FREECAD_USE_VULKAN} CACHE BOOL
         "Build the bundled Coin Vulkan render backend" FORCE)
+    # Offline std140 layout reflection for the Vulkan shaders: assert the
+    # generated SPIR-V block layouts match the Coin C++ struct mirrors.  Point
+    # the bundled Coin build at the superproject tooling; a standalone Coin
+    # build leaves these unset and the step is skipped.
+    set(COIN_SPIRV_LAYOUT_CHECK
+        "${CMAKE_SOURCE_DIR}/tools/rendering/spirv_layout_check.py"
+        CACHE FILEPATH "SPIR-V std140 layout reflection checker" FORCE)
+    set(COIN_SPIRV_LAYOUTS
+        "${CMAKE_SOURCE_DIR}/tools/rendering/spirv_layouts.json"
+        CACHE FILEPATH "Expected std140 block layouts" FORCE)
     add_subdirectory("${CMAKE_SOURCE_DIR}/src/3rdParty/coin" "${CMAKE_BINARY_DIR}/src/3rdParty/coin")
     if (NOT DEFINED COIN_VERSION OR COIN_VERSION STREQUAL "")
         message(FATAL_ERROR "Bundled Coin did not define COIN_VERSION")

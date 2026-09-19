@@ -1,0 +1,9 @@
+# Best-practices validation: API-usage and performance advisories.
+#
+# Selected with FC_VULKAN_VALIDATION_PROFILE=best-practices.  Performance
+# messages are informative, not correctness failures; do not fail a run on the
+# `perf` report flag alone.
+
+khronos_validation.validate_core = true
+khronos_validation.validate_best_practices = true
+khronos_validation.report_flags = error,warn,perf

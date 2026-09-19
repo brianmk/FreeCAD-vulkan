@@ -1,0 +1,92 @@
+{
+  "_comment": "Expected std140 block layouts mirrored by the C++ structs in src/3rdParty/coin/src/rendering/SoVulkanRenderBackend/SoVulkanRenderBackendP.h. Consumed by spirv_layout_check.py; keep in sync with the struct static_asserts.",
+  "blocks": {
+    "PushConstants": {
+      "size": 112,
+      "members": {
+        "u_color": 0,
+        "u_flags": 16,
+        "u_texParams": 32,
+        "u_texBlend": 48,
+        "u_pointSize": 64,
+        "u_lineParams": 80,
+        "u_lineGeom": 96
+      }
+    },
+    "BackgroundPush": {
+      "size": 48,
+      "members": {
+        "topColor": 0,
+        "bottomColor": 16,
+        "viewport": 32
+      }
+    },
+    "SubPixelCullPush": {
+      "size": 96,
+      "members": {
+        "u_mvp": 0,
+        "u_params": 64,
+        "u_offsets": 80
+      }
+    },
+    "LightingBlock": {
+      "size": 784,
+      "members": {
+        "u_ambientLight": 0,
+        "u_lightType": 16,
+        "u_lightColor": 144,
+        "u_lightDirection": 272,
+        "u_lightPosition": 400,
+        "u_lightAttenuation": 528,
+        "u_lightSpotParams": 656
+      }
+    },
+    "DrawBlock": {
+      "size": 256,
+      "members": {
+        "u_view": 0,
+        "u_model": 64,
+        "u_emissiveColor": 128,
+        "u_materialAmbient": 144,
+        "u_materialSpecular": 160,
+        "u_materialParams": 176,
+        "u_proj": 192
+      }
+    },
+    "RTMaterial": {
+      "size": 880,
+      "members": {
+        "diffuse": 0,
+        "ambient": 16,
+        "specular": 32,
+        "emissive": 48,
+        "params": 64,
+        "lightType": 80,
+        "lightColor": 208,
+        "lightDirection": 336,
+        "lightPosition": 464,
+        "lightAttenuation": 592,
+        "lightSpot": 720,
+        "triangleData": 848,
+        "pbr": 864
+      }
+    },
+    "RaygenPush": {
+      "size": 16,
+      "members": {
+        "u_frameIndex": 0,
+        "u_flags": 4,
+        "u_maxBounces": 8,
+        "u_pad": 12
+      }
+    },
+    "Push": {
+      "size": 48,
+      "members": {
+        "pcFull": 0,
+        "pcReg": 16,
+        "pcNum": 32
+      }
+    }
+  }
+}
