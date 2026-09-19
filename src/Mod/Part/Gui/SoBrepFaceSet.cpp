@@ -1048,8 +1048,8 @@ void SoBrepFaceSet::rayPick(SoRayPickAction* action)
 
         if (cache.usable) {
             // The GPU is authoritative for this ray.  Only the hit node injects
-            // a picked point; every face set (including the hit one) returns
-            // without generating primitives.
+            // a picked point; every other face set (and a clean GPU miss)
+            // returns without generating primitives.
             if (cache.result.hit && cache.result.shape == this) {
                 const int32_t* counts = this->partIndex.getValues(0);
                 const int numParts = this->partIndex.getNum();
@@ -1074,10 +1074,35 @@ void SoBrepFaceSet::rayPick(SoRayPickAction* action)
                         auto* detail = new SoFaceDetail();
                         detail->setPartIndex(face);
                         pp->setDetail(detail, this);
+                        return;
                     }
+                    // The hit mapped to a face but the action refused the
+                    // intersection; fall through to the CPU pick for this
+                    // shape rather than reporting a silent miss.
+                    SoDebugError::postWarning(
+                        "SoBrepFaceSet::rayPick",
+                        "GPU pick hit added no SoPickedPoint; falling back to "
+                        "the CPU ray pick");
+                }
+                else {
+                    // The GPU hit this shape but the primitive does not map to
+                    // a partIndex entry (a stale/desynced pick buffer).  Fall
+                    // back to the CPU pick for this shape instead of silently
+                    // selecting nothing.
+                    SoDebugError::postWarning(
+                        "SoBrepFaceSet::rayPick",
+                        "GPU pick hit has no partIndex entry "
+                        "(primitiveOffset=%u primitiveId=%u); falling back to "
+                        "the CPU ray pick",
+                        static_cast<unsigned>(cache.result.primitiveOffset),
+                        static_cast<unsigned>(cache.result.primitiveId));
                 }
             }
-            return;
+            else {
+                // A miss, or a hit on another shape: the GPU is authoritative
+                // for this ray and this shape injects nothing.
+                return;
+            }
         }
     }
 

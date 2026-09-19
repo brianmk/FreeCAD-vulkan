@@ -453,8 +453,9 @@ def new_sketch(params: Dict[str, Any]) -> Dict[str, Any]:
         try:
             sketch.Placement = App.Placement(
                 App.Vector(*position), sketch.Placement.Rotation)
-        except Exception:
-            pass
+        except Exception as exc:
+            raise RuntimeError(
+                f"failed to apply sketch position {position!r}: {exc}") from exc
     if body is not None:
         body.addObject(sketch)
     _sketch_plane(body, plane, sketch)
@@ -775,8 +776,9 @@ def extrude(params: Dict[str, Any]) -> Dict[str, Any]:
     if taper is not None:
         try:
             e.TaperAngle = taper
-        except Exception:
-            pass
+        except Exception as exc:
+            raise RuntimeError(
+                f"failed to set extrusion taper {taper!r}: {exc}") from exc
     doc.recompute()
     return _feature_result(doc, e)
 
@@ -1303,8 +1305,8 @@ def set_view(params: Dict[str, Any]) -> Dict[str, Any]:
         raise RuntimeError(f"unknown view {name!r}")
     try:
         getattr(view, method)()
-    except Exception:
-        pass
+    except Exception as exc:
+        raise RuntimeError(f"failed to set view {name!r}: {exc}") from exc
     return {"view": name}
 
 

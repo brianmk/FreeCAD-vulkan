@@ -30,6 +30,7 @@
 #include <App/Application.h>
 #include <Base/Builder3D.h>
 #include <Base/Color.h>
+#include <Base/Console.h>
 
 #include "NaviCube.h"
 #include "Navigation/NavigationStyle.h"
@@ -298,8 +299,9 @@ void View3DSettings::ensurePrefTable()
                 }
             }
         }
-        catch (const std::exception&) {
-            // ignore exception
+        catch (const std::exception& e) {
+            Base::Console().warning("Invalid HeadlightDirection preference: %s\n",
+                                    e.what());
         }
     });
     add(m_prefTable, "HeadlightIntensity", true, [this](const ParameterGrp & rGrp) {
@@ -332,8 +334,9 @@ void View3DSettings::ensurePrefTable()
                 }
             }
         }
-        catch (const std::exception&) {
-            // ignore exception
+        catch (const std::exception& e) {
+            Base::Console().warning("Invalid BacklightDirection preference: %s\n",
+                                    e.what());
         }
     });
     add(m_prefTable, "BacklightIntensity", true, [this](const ParameterGrp & rGrp) {
@@ -366,8 +369,9 @@ void View3DSettings::ensurePrefTable()
                 }
             }
         }
-        catch (const std::exception&) {
-            // ignore exception
+        catch (const std::exception& e) {
+            Base::Console().warning("Invalid FillLightDirection preference: %s\n",
+                                    e.what());
         }
     });
     add(m_prefTable, "FillLightIntensity", true, [this](const ParameterGrp & rGrp) {
