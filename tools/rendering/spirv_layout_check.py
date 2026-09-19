@@ -149,6 +149,23 @@ def _type_size(type_id: int, types, structs, constants,
     return 0
 
 
+def _is_member_prefix(present: dict, expected: dict,
+                      min_members: int = 2) -> bool:
+    """True if ``present`` (name -> offset) is an ordered prefix of ``expected``.
+
+    Used to recognise a modelled block that was renamed in the shader: it keeps
+    its member names and offsets but loses its block name, and a stage may also
+    omit trailing members.  Requiring at least ``min_members`` avoids flagging
+    an unrelated one-member block that happens to share a leading member name
+    with a mirror.
+    """
+    if len(present) < min_members or len(present) > len(expected):
+        return False
+    pres = sorted(present.items(), key=lambda kv: kv[1])
+    exp = sorted(expected.items(), key=lambda kv: kv[1])
+    return all(pres[i] == exp[i] for i in range(len(pres)))
+
+
 def check(module: str, layouts: dict, spirv_dis: str) -> int:
     # --raw-id keeps result ids numeric; without it spirv-dis prints friendly
     # (symbolic) names, which the decoration parser cannot key on.
@@ -188,18 +205,17 @@ def check(module: str, layouts: dict, spirv_dis: str) -> int:
 
         if block_name not in expected_blocks:
             # Not recognised by name.  A modelled block renamed in the shader
-            # keeps its members (name + offset) but changes its block name;
-            # matching by name alone skipped it, so a renamed block passed
-            # silently.  Match it against the mirrors by member signature.
+            # keeps its members (name + offset) but changes its block name; a
+            # name-only match skipped it, so a renamed block passed silently.
+            # Match by member signature instead: an exact match, or a prefix
+            # (a stage may omit trailing members), of some modelled block.
             if block_name:
                 for other in expected_blocks:
                     other_members = expected_blocks[other].get("members", {})
-                    if other_members and set(present) == set(other_members) \
-                            and all(present[m] == other_members[m]
-                                    for m in present):
+                    if _is_member_prefix(present, other_members):
                         failures.append(
-                            f"block '{block_name}' has the exact members of "
-                            f"modelled block '{other}' (name + offset) but a "
+                            f"block '{block_name}' matches modelled block "
+                            f"'{other}' by member name+offset but has a "
                             f"different name; its C++ mirror is not verified")
                         break
             continue

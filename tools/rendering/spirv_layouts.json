@@ -87,6 +87,15 @@
         "pcReg": 16,
         "pcNum": 32
       }
+    },
+    "PickPush": {
+      "size": 48,
+      "members": {
+        "origin": 0,
+        "direction": 16,
+        "tMax": 32,
+        "pad": 36
+      }
     }
   }
 }
