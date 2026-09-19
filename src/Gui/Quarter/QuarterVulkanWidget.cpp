@@ -27,12 +27,14 @@
 #include <QVBoxLayout>
 
 #include <QApplication>
+#include <QDir>
 #include <QEvent>
 #include <QFile>
 #include <QKeyEvent>
 #include <QMutex>
 #include <QMouseEvent>
 #include <QPointer>
+#include <QStandardPaths>
 #include <QStringList>
 #include <QTimer>
 #include <QWheelEvent>
@@ -437,6 +439,22 @@ public:
         // re-enumerate the device extension list.
         m_initContext.caps = m_deviceCaps;
         m_initContext.capsValid = m_deviceCapsValid;
+        // Persistent pipeline cache: without it every process start recompiles
+        // the many lazily-created pipeline variants (topology/fill/depth/
+        // blend/stencil/sample-count combinations) on first appearance, which
+        // stutters the first frames of a scene.  The blob is per-device (the
+        // driver's cache header carries the pipelineCacheUUID), so every view
+        // on one GPU shares the file and a stale file is ignored by the
+        // backend.  Best-effort: if the cache directory cannot be created the
+        // renderer simply runs without persistence.
+        {
+            const QString cacheDir =
+                QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
+                + QStringLiteral("/vulkan");
+            QDir().mkpath(cacheDir);
+            m_manager.setPipelineCachePath(
+                (cacheDir + QStringLiteral("/pipeline_cache.bin")).toStdString());
+        }
         // Request the ray-tracing backend BEFORE initialize() only when path
         // tracing is (or will be) used.  Bringing it up unconditionally
         // rebuilds the whole RT stack (acceleration structures + RT
