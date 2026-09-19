@@ -27,7 +27,9 @@
 #pragma once
 
 #include <cstring>
+#include <mutex>
 #include <set>
+#include <vector>
 #include "Console.h"
 #include "Exception.h"
 
@@ -122,7 +124,12 @@ public:
      */
     virtual ~Subject()
     {
-        if (_ObserverSet.size() > 0) {
+        bool hasObservers = false;
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            hasObservers = !_ObserverSet.empty();
+        }
+        if (hasObservers) {
             Base::Console().developerWarning(
                 std::string("~Subject()"),
                 "Not detached all observers yet\n"
@@ -138,6 +145,7 @@ public:
      */
     void Attach(Observer<MsgType>* ToObserv)
     {
+        std::lock_guard<std::mutex> lock(_mutex);
 #ifdef FC_DEBUG
         size_t count = _ObserverSet.size();
         _ObserverSet.insert(ToObserv);
@@ -161,6 +169,7 @@ public:
      */
     void Detach(Observer<MsgType>* ToObserv)
     {
+        std::lock_guard<std::mutex> lock(_mutex);
 #ifdef FC_DEBUG
         size_t count = _ObserverSet.size();
         _ObserverSet.erase(ToObserv);
@@ -184,11 +193,18 @@ public:
      */
     void Notify(MsgType rcReason)
     {
-        for (typename std::set<Observer<MsgType>*>::iterator Iter = _ObserverSet.begin();
-             Iter != _ObserverSet.end();
-             ++Iter) {
+        // Snapshot the observer set under the lock and notify with the lock
+        // released: an observer may attach or detach observers itself, and the
+        // set may be mutated concurrently from another thread.
+        std::vector<Observer<MsgType>*> observers;
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            observers.assign(_ObserverSet.begin(), _ObserverSet.end());
+        }
+
+        for (auto* observer : observers) {
             try {
-                (*Iter)->OnChange(*this, rcReason);  // send OnChange-signal
+                observer->OnChange(*this, rcReason);  // send OnChange-signal
             }
             catch (Base::Exception& e) {
                 Base::Console().error(
@@ -218,6 +234,7 @@ public:
      */
     Observer<MsgType>* Get(const char* Name)
     {
+        std::lock_guard<std::mutex> lock(_mutex);
         const char* OName = nullptr;
         for (typename std::set<Observer<MsgType>*>::iterator Iter = _ObserverSet.begin();
              Iter != _ObserverSet.end();
@@ -236,15 +253,21 @@ public:
      */
     void ClearObserver()
     {
+        std::lock_guard<std::mutex> lock(_mutex);
         _ObserverSet.clear();
     }
 
 protected:
-    FC_DEFAULT_COPY_MOVE(Subject)
+    Subject(const Subject&) = delete;
+    Subject& operator=(const Subject&) = delete;
+    Subject(Subject&&) = delete;
+    Subject& operator=(Subject&&) = delete;
 
 private:
     /// Vector of attached observers
     std::set<Observer<MsgType>*> _ObserverSet;
+    /// Guards _ObserverSet against concurrent attach/detach/notify
+    mutable std::mutex _mutex;
 };
 
 // Workaround for MSVC
