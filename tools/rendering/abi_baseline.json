@@ -14,7 +14,7 @@
   "lib": "libCoin.so",
   "lib_path": "build/debug/lib/libCoin.so",
   "symbols": {
-    "count": 514,
-    "sha256": "fbdb8b0c42caa146fccb01a690d8c2452f818fee0156e9bcbe4185bdd2b64bce"
+    "count": 530,
+    "sha256": "322a0c838ff3908561275cabfec99d1edd16dc89e80c83d08c52d30a3a1da5ff"
   }
 }

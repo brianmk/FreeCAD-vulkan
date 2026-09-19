@@ -116,6 +116,7 @@ protected:
         SoPickedPoint* pp
     ) override;
     void generatePrimitives(SoAction* action) override;
+    void rayPick(SoRayPickAction* action) override;
     void getBoundingBox(SoGetBoundingBoxAction* action) override;
 
 private:

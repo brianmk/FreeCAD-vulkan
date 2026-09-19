@@ -199,6 +199,36 @@ public:
     uint32_t getRenderFrameCount() const;
 
     /*!
+      \brief One GPU ray-query pick result (see pickRay()).
+
+      \a commandIndex is the TLAS instance custom index (the draw-list command
+      index); \a primitiveId is the triangle index within that command's BLAS.
+      Vulkan/RTX only; the GL renderer keeps the CPU SoRayPickAction path.
+    */
+    struct VulkanPickHit {
+        bool hit = false;
+        float t = -1.0f;
+        float worldPos[3] = {0.0f, 0.0f, 0.0f};
+        uint32_t commandIndex = 0;
+        uint32_t primitiveId = 0;
+        // Resolved producer identity: the originating SoShape
+        // (SoRenderCommand::userData) and the command's primitive offset
+        // within the source shape.
+        const void * userData = nullptr;
+        uint32_t primitiveOffset = 0;
+    };
+
+    /*!
+      \brief Cast one world-space ray against the ray-tracing backend's TLAS.
+
+      Returns false when ray tracing is not active or no TLAS has been built
+      yet; the caller keeps the CPU picking path.  Intended to be called from
+      the GUI thread (the same thread that drives rendering).
+    */
+    bool pickRay(const float origin[3], const float direction[3], float tMax,
+                 VulkanPickHit & out) const;
+
+    /*!
       \brief Whether hardware ray tracing is available on this device.
 
       This is a device capability: TRUE when the physical device advertises
