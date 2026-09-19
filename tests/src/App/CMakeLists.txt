@@ -17,6 +17,7 @@ add_executable(App_tests_run
         IndexedName.cpp
         License.cpp
         Link.cpp
+        MainThreadSignal.cpp
         MappedElement.cpp
         MappedName.cpp
         Metadata.cpp

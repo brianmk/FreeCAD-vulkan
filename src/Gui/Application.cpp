@@ -49,7 +49,11 @@
 
 #include <QLoggingCategory>
 #include <fmt/format.h>
+#include <chrono>
+#include <condition_variable>
 #include <list>
+#include <memory>
+#include <mutex>
 #include <ranges>
 
 #include <App/Document.h>
@@ -417,6 +421,70 @@ bool qtIsMainThread()
     return !qApp || (QThread::currentThread() == qApp->thread());
 }
 
+// A blocking main-thread invocation. The emitting worker waits until the GUI
+// thread has run it, unless the GUI thread is itself blocked waiting for that
+// worker (document close, application shutdown). In that case the invocation is
+// abandoned so the two threads cannot deadlock; the worker continues and the
+// pending event, if it is ever dispatched, becomes a no-op.
+class MainThreadInvocation
+{
+public:
+    explicit MainThreadInvocation(std::function<void()> fn)
+        : fn_(std::move(fn))
+    {}
+
+    void run()
+    {
+        std::function<void()> fn;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (abandoned_) {
+                done_ = true;
+                return;
+            }
+            fn = std::move(fn_);
+        }
+
+        try {
+            fn();
+        }
+        catch (const std::exception& e) {
+            Base::Console().error(
+                "Unhandled exception in a main-thread signal delivery: %s\n",
+                e.what()
+            );
+        }
+        catch (...) {
+            Base::Console().error("Unhandled exception in a main-thread signal delivery\n");
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            done_ = true;
+        }
+        cv_.notify_all();
+    }
+
+    void wait()
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        while (!done_) {
+            if (App::MainThreadSignalConfig::mainThreadWaiting()) {
+                abandoned_ = true;
+                return;
+            }
+            cv_.wait_for(lock, std::chrono::milliseconds(1));
+        }
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    std::function<void()> fn_;
+    bool done_ = false;
+    bool abandoned_ = false;
+};
+
 // Hook: invoke a functor on the GUI thread, either blocking or queued.
 void qtInvokeOnMain(std::function<void()>&& fn, bool blocking)
 {
@@ -425,11 +493,24 @@ void qtInvokeOnMain(std::function<void()>&& fn, bool blocking)
         return;
     }
 
+    auto* invoker = MainThreadInvoker::instance();
+
+    if (!blocking) {
+        QMetaObject::invokeMethod(
+            invoker,
+            [f = std::move(fn)]() mutable { f(); },
+            Qt::QueuedConnection
+        );
+        return;
+    }
+
+    auto invocation = std::make_shared<MainThreadInvocation>(std::move(fn));
     QMetaObject::invokeMethod(
-        MainThreadInvoker::instance(),
-        [f = std::move(fn)]() mutable { f(); },
-        blocking ? Qt::BlockingQueuedConnection : Qt::QueuedConnection
+        invoker,
+        [invocation]() { invocation->run(); },
+        Qt::QueuedConnection
     );
+    invocation->wait();
 }
 
 }  // namespace Gui
