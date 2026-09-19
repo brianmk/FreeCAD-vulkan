@@ -410,6 +410,10 @@ Application::Application(std::map<std::string,std::string> &mConfig)
 
 Application::~Application()
 {
+    // A worker parked in a blocking main-thread delivery would deadlock this
+    // join; let the GUI invoker abandon such deliveries while we wait.
+    MainThreadSignalConfig::setMainThreadWaiting(true);
+
     // Signal the recompute worker thread to stop and join it.
     _stopRecomputeThread = true;
     _recomputeRequestAvailable.notify_all();
@@ -872,6 +876,17 @@ void Application::cancelRecomputeRequestsForDocument(const std::string& document
     if (documentName.empty()) {
         return;
     }
+
+    // While this thread waits for the worker to leave the document, a
+    // cross-thread signal delivery from the worker would park it on the main
+    // thread and deadlock. Tell the GUI invoker to abandon such deliveries.
+    MainThreadSignalConfig::setMainThreadWaiting(true);
+    struct ResetWaiting {
+        ~ResetWaiting()
+        {
+            MainThreadSignalConfig::setMainThreadWaiting(false);
+        }
+    } resetWaiting;
 
     std::unique_lock<std::mutex> lock(_recomputeMutex);
     _recomputeStateChanged.wait(lock, [this, &documentName] {

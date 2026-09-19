@@ -24,6 +24,7 @@
 
 #include <Base/Interpreter.h>
 #include <fastsignals/signal.h>
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -65,6 +66,20 @@ public:
         return isMainThreadSlot() && invokeSlot();
     }
 
+    // Set by the main thread while it is blocked waiting for the recompute
+    // worker (document close, application shutdown). A cross-thread delivery
+    // that would otherwise park the worker on the main thread is abandoned
+    // instead, so the two threads cannot deadlock.
+    static inline void setMainThreadWaiting(bool waiting)
+    {
+        mainThreadWaitingFlag().store(waiting, std::memory_order_release);
+    }
+
+    static inline bool mainThreadWaiting()
+    {
+        return mainThreadWaitingFlag().load(std::memory_order_acquire);
+    }
+
     static inline void invoke(std::function<void()>&& fn, bool blocking)
     {
         auto* f = invokeSlot();
@@ -86,6 +101,11 @@ private:
     {
         static InvokeFn fn = nullptr;
         return fn;
+    }
+    static std::atomic<bool>& mainThreadWaitingFlag()
+    {
+        static std::atomic<bool> flag {false};
+        return flag;
     }
 };
 
