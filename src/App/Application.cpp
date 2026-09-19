@@ -287,6 +287,83 @@ RecomputeResult processRecomputeRequest(RecomputeRequest& request)
     return result;
 }
 
+// Stable-handle encoding/decoding for deferred (Queued/Coalesced)
+// MainThreadSignal delivery. Captured on the emitting thread, resolved on the
+// main thread. Resolution returns nullptr for objects that no longer exist, so
+// deferred callbacks are dropped instead of dereferencing freed memory.
+MainThreadSignalConfig::DocumentHandle encodeDocumentHandle(const Document* document)
+{
+    return {document ? document->getName() : std::string()};
+}
+
+MainThreadSignalConfig::ObjectHandle encodeObjectHandle(const DocumentObject* object)
+{
+    MainThreadSignalConfig::ObjectHandle handle;
+    if (!object) {
+        return handle;
+    }
+    if (const char* name = object->getNameInDocument()) {
+        handle.object = name;
+    }
+    if (const Document* document = object->getDocument()) {
+        handle.document = document->getName();
+    }
+    return handle;
+}
+
+MainThreadSignalConfig::PropertyHandle encodePropertyHandle(const Property* property)
+{
+    MainThreadSignalConfig::PropertyHandle handle;
+    if (!property) {
+        return handle;
+    }
+    handle.property = property->getName();
+    if (PropertyContainer* container = property->getContainer()) {
+        if (auto* object = freecad_cast<DocumentObject*>(container)) {
+            if (const char* name = object->getNameInDocument()) {
+                handle.object = name;
+            }
+            if (const Document* document = object->getDocument()) {
+                handle.document = document->getName();
+            }
+        }
+        else if (auto* document = freecad_cast<Document*>(container)) {
+            handle.document = document->getName();
+        }
+    }
+    return handle;
+}
+
+const Document* resolveDocumentHandle(const MainThreadSignalConfig::DocumentHandle& handle)
+{
+    if (handle.name.empty()) {
+        return nullptr;
+    }
+    return GetApplication().getDocument(handle.name.c_str());
+}
+
+const DocumentObject* resolveObjectHandle(const MainThreadSignalConfig::ObjectHandle& handle)
+{
+    const Document* document = resolveDocumentHandle({handle.document});
+    if (!document || handle.object.empty()) {
+        return nullptr;
+    }
+    return document->getObject(handle.object.c_str());
+}
+
+const Property* resolvePropertyHandle(const MainThreadSignalConfig::PropertyHandle& handle)
+{
+    const Document* document = resolveDocumentHandle({handle.document});
+    if (!document) {
+        return nullptr;
+    }
+    if (handle.object.empty()) {
+        return document->getPropertyByName(handle.property.c_str());
+    }
+    const DocumentObject* object = document->getObject(handle.object.c_str());
+    return object ? object->getPropertyByName(handle.property.c_str()) : nullptr;
+}
+
 }  // namespace
 
 //==========================================================================
@@ -404,6 +481,15 @@ Application::Application(std::map<std::string,std::string> &mConfig)
 
     _stopRecomputeThread = false;
     _recomputeThread = std::thread(&Application::recomputeWorker, this);
+
+    MainThreadSignalConfig::setDeferredHooks(
+        &encodeDocumentHandle,
+        &encodeObjectHandle,
+        &encodePropertyHandle,
+        &resolveDocumentHandle,
+        &resolveObjectHandle,
+        &resolvePropertyHandle
+    );
 
     setupPythonTypes();
 }

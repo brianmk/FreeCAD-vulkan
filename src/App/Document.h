@@ -202,6 +202,15 @@ public:
     // Document-scoped signals use MainThreadSignal so GUI observers can rely on
     // main-thread delivery even when recompute runs on a worker. Raw
     // DocumentObject signals intentionally keep their same-thread semantics.
+    //
+    // The second template argument is the per-signal delivery policy:
+    //   Blocking  - hop and wait (default; required for non-void signals and
+    //               for observers that must run before the emitter continues)
+    //   Queued    - hop without waiting; arguments captured as stable handles
+    //   Coalesced - like Queued, but repeated emissions of the same identity
+    //               collapse into one delivery
+    // Signals emitted from a worker recompute must not be Blocking unless the
+    // emitter genuinely needs the observer to have run before it continues.
 
     /// Signal before changing a document property.
     App::MainThreadSignal<void(const Document&, const Property&)> signalBeforeChange;
@@ -209,16 +218,22 @@ public:
     App::MainThreadSignal<void(const Document&, const Property&)> signalChanged;
     /// Signal on new object.
     App::MainThreadSignal<void(const DocumentObject&)> signalNewObject;
-    /// Signal on a deleted object.
+    /// Signal on a deleted object. Blocking: observers must see the object
+    /// before it is destroyed.
     App::MainThreadSignal<void(const DocumentObject&)> signalDeletedObject;
-    /// Signal before changing an object.
-    App::MainThreadSignal<void(const DocumentObject&, const Property&)> signalBeforeChangeObject;
-    /// Signal on a changed object.
-    App::MainThreadSignal<void(const DocumentObject&, const Property&)> signalChangedObject;
-    /// Signal on a manually called DocumentObject::touch().
-    App::MainThreadSignal<void(const DocumentObject&)> signalTouchedObject;
+    /// Signal before changing an object. Queued: only the aggregated App signal
+    /// observes this, so deferred delivery is safe.
+    App::MainThreadSignal<void(const DocumentObject&, const Property&), App::DeliveryPolicy::Queued>
+        signalBeforeChangeObject;
+    /// Signal on a changed object. Coalesced: high frequency during recompute.
+    App::MainThreadSignal<void(const DocumentObject&, const Property&), App::DeliveryPolicy::Coalesced>
+        signalChangedObject;
+    /// Signal on a manually called DocumentObject::touch(). Coalesced: the
+    /// hottest signal during recompute (fine-grained dependency propagation).
+    App::MainThreadSignal<void(const DocumentObject&), App::DeliveryPolicy::Coalesced>
+        signalTouchedObject;
     /// Signal on relabeled object.
-    App::MainThreadSignal<void(const DocumentObject&)> signalRelabelObject;
+    App::MainThreadSignal<void(const DocumentObject&), App::DeliveryPolicy::Queued> signalRelabelObject;
     /// Signal on an activated object.
     App::MainThreadSignal<void(const DocumentObject&)> signalActivatedObject;
     /// Signal on a created object.
@@ -261,8 +276,10 @@ public:
     /// stable again. Observers that require a fully stable post-recompute
     /// state should wait for signalBecameStable().
     App::MainThreadSignal<void(const Document&, const std::vector<DocumentObject*>&)> signalRecomputed;
-    /// Signal after recomputing an object.
-    App::MainThreadSignal<void(const DocumentObject&)> signalRecomputedObject;
+    /// Signal after recomputing an object. Coalesced: one delivery per object
+    /// per recompute burst.
+    App::MainThreadSignal<void(const DocumentObject&), App::DeliveryPolicy::Coalesced>
+        signalRecomputedObject;
     /// Signal on a new opened transaction.
     App::MainThreadSignal<void(const Document&, std::string)> signalOpenTransaction;
     /// Signal on a committed transaction.
@@ -277,9 +294,10 @@ public:
     /// Signal on finishing restoring an object.
     App::MainThreadSignal<void(const DocumentObject&)> signalFinishRestoreObject;
     /// Signal on a changed property in the property editor.
-    App::MainThreadSignal<void(const Document&, const Property&)> signalChangePropertyEditor;
+    App::MainThreadSignal<void(const Document&, const Property&), App::DeliveryPolicy::Queued>
+        signalChangePropertyEditor;
     /// Signal on setting a value in an external link.
-    App::MainThreadSignal<void(std::string)> signalLinkXsetValue;
+    App::MainThreadSignal<void(std::string), App::DeliveryPolicy::Queued> signalLinkXsetValue;
 
     // clang-format on
     /// @}
@@ -1471,6 +1489,12 @@ private:
     void changePropertyOfObject(TransactionalObject* obj, const Property* prop,
                                 const std::function<void()>& changeFunc);
     [[nodiscard]] Base::ScopeGuard setDefiningTransaction();
+
+    /// Remove objects that were queued for removal while a recompute was in
+    /// progress (ObjectStatus::PendingRecompute). Must run on the main thread:
+    /// it mutates the document and emits deletion signals that observers must
+    /// see before the objects are destroyed.
+    static void processPendingRemovals();
 
 private:
     // # Data Member of the document

@@ -3075,6 +3075,31 @@ int Document::recompute(const std::vector<DocumentObject*>& objs,
         }
     }
 
+    // Objects queued for removal during recompute are removed here. That
+    // mutates the document and emits deletion signals whose observers must run
+    // before the objects are destroyed, so it has to happen on the main thread.
+    // When recompute runs on the worker, hand the sweep to the main thread and
+    // wait: the worker is parked, which serializes the sweep against recompute
+    // (no other recompute can run concurrently). If the main thread is itself
+    // waiting on the worker (document close), that hop is abandoned instead of
+    // run, so it cannot deadlock the close.
+    if (MainThreadSignalConfig::isMainThread()) {
+        processPendingRemovals();
+    }
+    else {
+        // Release the GIL while the main thread runs the sweep; observers may
+        // execute Python.
+        Base::PyGILStateRelease release;
+        MainThreadSignalConfig::invoke(
+            [] { Document::processPendingRemovals(); },
+            /*blocking=*/true
+        );
+    }
+    return objectCount;
+}
+
+void Document::processPendingRemovals()
+{
     for (auto doc : GetApplication().getDocuments()) {
         decltype(doc->d->pendingRemove) objects;
         objects.swap(doc->d->pendingRemove);
@@ -3086,12 +3111,12 @@ int Document::recompute(const std::vector<DocumentObject*>& objs,
             }
             catch (Base::Exception& e) {
                 e.reportException();
-                FC_ERR("error when removing object " << o.getDocumentName() << '#'
-                                                     << o.getObjectName());
+                FC_ERR(
+                    "error when removing object " << o.getDocumentName() << '#' << o.getObjectName()
+                );
             }
         }
     }
-    return objectCount;
 }
 
 /*!
