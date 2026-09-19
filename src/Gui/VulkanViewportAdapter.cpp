@@ -8,6 +8,8 @@
 #include "Quarter/QuarterWidget.h"
 #include "View3DInventorViewer.h"
 
+#include "GpuPickService.h"
+
 #include <Base/VulkanBreadcrumbs.h>
 
 #include <Inventor/SbColor.h>
@@ -196,6 +198,35 @@ void VulkanViewportAdapter::useVulkanViewport(bool vulkan)
         return;
     }
     _wantVulkanViewport = vulkan;
+    // Register (or drop) the GPU pick bridge: while the Vulkan page is
+    // displayed, SoBrepFaceSet::rayPick consults the RTX backend's TLAS instead
+    // of generating every triangle on the CPU.  The picker returns false until
+    // hardware ray tracing is actually active, so a raster Vulkan view keeps
+    // the CPU path, and the GL page clears it so GL picking is unchanged.
+    if (vulkan) {
+        Gui::GpuPickService::instance().setPicker(
+            [this](const float origin[3], const float direction[3], float tMax,
+                   Gui::GpuPickResult& out) {
+                if (!_vulkanViewer) {
+                    return false;
+                }
+                SIM::Coin3D::Quarter::QuarterVulkanWidget::VulkanPickHit hit;
+                if (!_vulkanViewer->pickRay(origin, direction, tMax, hit)) {
+                    return false;
+                }
+                out.hit = hit.hit;
+                out.shape = hit.userData;
+                out.primitiveId = hit.primitiveId;
+                out.primitiveOffset = hit.primitiveOffset;
+                out.worldPos[0] = hit.worldPos[0];
+                out.worldPos[1] = hit.worldPos[1];
+                out.worldPos[2] = hit.worldPos[2];
+                return true;
+            });
+    }
+    else {
+        Gui::GpuPickService::instance().clearPicker();
+    }
     // The hidden GL viewer drives picking/navigation, but its own geometry is
     // unreliable (it is never shown, so it keeps a stale/default size).  The
     // render-manager viewport region is the single source of truth and is
@@ -831,6 +862,9 @@ void VulkanViewportAdapter::onSurfaceSizeChanged(const QSize& surfaceSize)
 VulkanViewportAdapter::~VulkanViewportAdapter()
 {
 #ifdef FREECAD_USE_VULKAN
+    // Drop the GPU pick bridge before the widget goes away: its callback
+    // captures this adapter and dereferences _vulkanViewer.
+    Gui::GpuPickService::instance().clearPicker();
     // Detach the change sensors first: their callbacks call into _vulkanViewer,
     // so they must not fire once the widget / scene graph start going away.
     if (_cameraSensor) {

@@ -950,6 +950,7 @@ SET(View3D_CPP_SRCS
     NaviCube.cpp
     VulkanViewportAdapter.cpp
     VulkanViewSettings.cpp
+    GpuPickService.cpp
 )
 SET(View3D_SRCS
     ${View3D_CPP_SRCS}
@@ -971,6 +972,7 @@ SET(View3D_SRCS
     NaviCube.h
     VulkanViewportAdapter.h
     VulkanViewSettings.h
+    GpuPickService.h
 )
 SOURCE_GROUP("View3D" FILES ${View3D_SRCS})
 

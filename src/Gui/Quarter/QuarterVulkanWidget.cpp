@@ -356,6 +356,28 @@ public:
         return m_manager.getRenderFrameCount();
     }
 
+    //! Cast one world-space ray against the RT backend's TLAS (see
+    //! QuarterVulkanWidget::pickRay).  Returns false when ray tracing is not
+    //! active or no TLAS has been built yet.
+    bool pickRay(const float origin[3], const float direction[3], float tMax,
+                 QuarterVulkanWidget::VulkanPickHit & out) const
+    {
+        SoVulkanRenderManager::VulkanPickHit hit;
+        if (!m_manager.pickRay(origin, direction, tMax, hit)) {
+            return false;
+        }
+        out.hit = hit.hit;
+        out.t = hit.t;
+        out.worldPos[0] = hit.worldPos[0];
+        out.worldPos[1] = hit.worldPos[1];
+        out.worldPos[2] = hit.worldPos[2];
+        out.commandIndex = hit.commandIndex;
+        out.primitiveId = hit.primitiveId;
+        out.userData = hit.userData;
+        out.primitiveOffset = hit.primitiveOffset;
+        return true;
+    }
+
     // Whether the RTX backend actually initialized (the device supports
     // hardware ray tracing and it came up).  Two distinct concepts are kept
     // separate: device support (m_rtxBackendAvailable) is a capability the
@@ -1154,11 +1176,15 @@ public:
     // VK_KHR_synchronization2 (Vulkan 1.3 core) is a hard dependency of
     // VK_EXT_opacity_micromap; enabled alongside it when present.
     bool synchronization2Available = false;
+    // Descriptor-indexing update-after-bind: lets the RT backend legally
+    // rewrite a descriptor set an in-flight command buffer still references.
+    bool descriptorIndexingAvailable = false;
     // Feature structs behind the optional extensions above.  They live on the
     // window object (not the modifier lambda) because QVulkanWindowPrivate::
     // init() reads the pNext chain after the callback returns.
     VkPhysicalDeviceRayTracingPositionFetchFeaturesKHR rtPositionFetch {};
     VkPhysicalDeviceOpacityMicromapFeaturesEXT rtOpacityMicromap {};
+    VkPhysicalDeviceDescriptorIndexingFeatures descriptorIndexing {};
 
 private:
     QuarterVulkanRenderer * m_renderer;
@@ -1419,6 +1445,22 @@ void QuarterVulkanWidget::selectPhysicalDevice()
         caps.fillModeNonSolid = feats.fillModeNonSolid != 0;
         caps.fullDrawIndexUint32 = feats.fullDrawIndexUint32 != 0;
         caps.dualSrcBlend = feats.dualSrcBlend != 0;
+        // Descriptor-indexing update-after-bind bits: the RT backend's
+        // descriptor ring cannot always keep a set out of an in-flight
+        // command buffer, so it prefers the UPDATE_AFTER_BIND binding flags
+        // when the device supports (and the widget enables) them.
+        VkPhysicalDeviceDescriptorIndexingFeatures di {};
+        di.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
+        VkPhysicalDeviceFeatures2 feats2 {};
+        feats2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        feats2.pNext = &di;
+        f->vkGetPhysicalDeviceFeatures2(dev, &feats2);
+        caps.descriptorIndexingUpdateAfterBind =
+            di.descriptorBindingSampledImageUpdateAfterBind &&
+            di.descriptorBindingStorageImageUpdateAfterBind &&
+            di.descriptorBindingUniformBufferUpdateAfterBind &&
+            di.descriptorBindingStorageBufferUpdateAfterBind;
         VkPhysicalDeviceProperties props {};
         f->vkGetPhysicalDeviceProperties(dev, &props);
         // Timeline semaphores are a Vulkan 1.2 core feature; the RT backend
@@ -1510,6 +1552,8 @@ void QuarterVulkanWidget::selectPhysicalDevice()
     d->vulkanWindow->rtNvPartitionedAvailable = best.nvPartitioned;
     d->vulkanWindow->rtNvLinearSweptSpheresAvailable = best.nvLinearSweptSpheres;
     d->vulkanWindow->synchronization2Available = best.synchronization2;
+    d->vulkanWindow->descriptorIndexingAvailable =
+        best.descriptorIndexingUpdateAfterBind;
     if (d->rayTracing && !best.externalMemoryFd) {
         vkWarn("QuarterVulkanWidget: the selected device lacks "
                "VK_KHR_external_memory_fd; the CUDA/OptiX denoiser cannot "
@@ -1768,6 +1812,20 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
             d->vulkanWindow->rtOpacityMicromap.micromap = VK_TRUE;
             chainAfterBda(reinterpret_cast<VkBaseOutStructure *>(
                 &d->vulkanWindow->rtOpacityMicromap));
+        }
+        // Descriptor-indexing update-after-bind: the RT backend's descriptor
+        // sets must be updatable while a caller-owned frame is still pending
+        // (VUID-vkUpdateDescriptorSets-None-03047).
+        if (d->vulkanWindow->descriptorIndexingAvailable) {
+            VkPhysicalDeviceDescriptorIndexingFeatures & di =
+                d->vulkanWindow->descriptorIndexing;
+            di.sType =
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
+            di.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+            di.descriptorBindingStorageImageUpdateAfterBind = VK_TRUE;
+            di.descriptorBindingUniformBufferUpdateAfterBind = VK_TRUE;
+            di.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
+            chainAfterBda(reinterpret_cast<VkBaseOutStructure *>(&di));
         }
         features.pNext = &d->vulkanWindow->rtBufferDeviceAddress;
       });
@@ -2155,6 +2213,17 @@ uint32_t QuarterVulkanWidget::getRenderFrameCount() const
         return 0;
     }
     return d->renderer->getRenderFrameCount();
+}
+
+bool QuarterVulkanWidget::pickRay(const float origin[3],
+                                  const float direction[3], float tMax,
+                                  VulkanPickHit & out) const
+{
+    out = VulkanPickHit {};
+    if (!d->renderer) {
+        return false;
+    }
+    return d->renderer->pickRay(origin, direction, tMax, out);
 }
 
 bool QuarterVulkanWidget::isRayTracingAvailable() const

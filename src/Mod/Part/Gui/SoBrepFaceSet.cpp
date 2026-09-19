@@ -22,11 +22,13 @@
  ******************************************************************************/
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <Base/VulkanBreadcrumbs.h>
 #include <limits>
 #include <set>
 #include <vector>
+#include <Inventor/SbLine.h>
 #include <Inventor/SoPickedPoint.h>
 #include <Inventor/SoPrimitiveVertex.h>
 #include <Inventor/actions/SoGetBoundingBoxAction.h>
@@ -41,6 +43,7 @@
 #include <Inventor/elements/SoDepthBufferElement.h>
 #include <Inventor/elements/SoLazyElement.h>
 #include <Inventor/elements/SoMaterialBindingElement.h>
+#include <Inventor/elements/SoModelMatrixElement.h>
 #include <Inventor/elements/SoNormalBindingElement.h>
 #include <Inventor/elements/SoOverrideElement.h>
 #include <Inventor/elements/SoShapeStyleElement.h>
@@ -51,6 +54,7 @@
 
 #include <Base/Profiler.h>
 
+#include <Gui/GpuPickService.h>
 #include <Gui/SoFCInteractiveElement.h>
 #include <Gui/Selection/Selection.h>
 #include <Gui/Selection/SoFCSelectionAction.h>
@@ -982,6 +986,102 @@ void SoBrepFaceSet::IRRender(SoIRRenderAction* action)
 void SoBrepFaceSet::GLRenderBelowPath(SoGLRenderAction* action)
 {
     inherited::GLRenderBelowPath(action);
+}
+
+namespace
+{
+// Per-traversal cache for the Vulkan/RTX GPU pick.  The world-space ray is
+// identical for every shape in a pick traversal, so the first SoBrepFaceSet
+// that sees a given action issues the GPU query and every other one reuses it.
+// Keyed by the action pointer plus the ray (an action object can be reused at
+// the same address for a different event).
+struct GpuPickCache
+{
+    const SoRayPickAction* action = nullptr;
+    SbVec3f origin;
+    SbVec3f direction;
+    bool computed = false;
+    bool usable = false;
+    Gui::GpuPickResult result;
+};
+}  // namespace
+
+void SoBrepFaceSet::rayPick(SoRayPickAction* action)
+{
+    // GPU fast path (Vulkan/RTX viewports only).  When the viewport registered
+    // a picker, one GPU ray query against the render backend's TLAS replaces
+    // the O(triangles) generatePrimitives() traversal: the hit shape injects
+    // the picked face and every other SoBrepFaceSet skips its primitive
+    // generation entirely.  With no picker -- the OpenGL renderer, the raster
+    // Vulkan backend, a view without hardware ray tracing -- available() is
+    // false and this falls straight through to the unchanged CPU path.
+    Gui::GpuPickService& service = Gui::GpuPickService::instance();
+    if (service.available()) {
+        action->computeWorldSpaceRay();
+        // The action only exposes the ray in object space; recover the
+        // world-space ray with the current model matrix (row-vector
+        // convention).  The world ray is the same for every node in this
+        // traversal, so this is not node specific.
+        action->setObjectSpace();
+        const SbLine& objline = action->getLine();
+        const SbMatrix model = SoModelMatrixElement::get(action->getState());
+        SbVec3f origin;
+        SbVec3f direction;
+        model.multVecMatrix(objline.getPosition(), origin);
+        model.multDirMatrix(objline.getDirection(), direction);
+        if (direction.sqrLength() > 0.0f) {
+            direction.normalize();
+        }
+
+        static thread_local GpuPickCache cache;
+        if (!cache.computed || cache.action != action
+            || (cache.origin - origin).sqrLength() > 1e-8f
+            || (cache.direction - direction).sqrLength() > 1e-8f) {
+            cache.action = action;
+            cache.origin = origin;
+            cache.direction = direction;
+            cache.computed = true;
+            cache.result = Gui::GpuPickResult {};
+            cache.usable = service.pick(
+                origin.getValue(), direction.getValue(), 1.0e30f, cache.result);
+        }
+
+        if (cache.usable) {
+            // The GPU is authoritative for this ray.  Only the hit node injects
+            // a picked point; every face set (including the hit one) returns
+            // without generating primitives.
+            if (cache.result.hit && cache.result.shape == this) {
+                const int32_t* counts = this->partIndex.getValues(0);
+                const int numParts = this->partIndex.getNum();
+                const int32_t target = static_cast<int32_t>(
+                    cache.result.primitiveOffset + cache.result.primitiveId);
+                int face = -1;
+                int acc = 0;
+                for (int i = 0; i < numParts; ++i) {
+                    acc += counts[i];
+                    if (target < acc) {
+                        face = i;
+                        break;
+                    }
+                }
+                if (face >= 0) {
+                    const SbVec3f world(cache.result.worldPos[0],
+                                        cache.result.worldPos[1],
+                                        cache.result.worldPos[2]);
+                    SbVec3f objpoint;
+                    model.inverse().multVecMatrix(world, objpoint);
+                    if (SoPickedPoint* pp = action->addIntersection(objpoint)) {
+                        auto* detail = new SoFaceDetail();
+                        detail->setPartIndex(face);
+                        pp->setDetail(detail, this);
+                    }
+                }
+            }
+            return;
+        }
+    }
+
+    inherited::rayPick(action);
 }
 
 void SoBrepFaceSet::generatePrimitives(SoAction* action)
