@@ -31,12 +31,13 @@ python3 tools/fcprobe/freecad_probe.py run tools/fcprobe/vk_live_probe.py \
     --validation-profile sync
 ```
 
-`FC_VULKAN_VALIDATION_PROFILE` is accepted by the harness for symmetry; when
-both are present, an explicit `VK_LAYER_SETTINGS_PATH` / `-e` override wins.
+`--validation-profile <name>` selects one of the profiles above: the harness
+points `VK_LAYER_SETTINGS_PATH` at the matching file here and turns on
+`FC_VULKAN_VALIDATION`.  An explicit `-e VK_LAYER_SETTINGS_PATH=...` override
+wins over the profile.
 
 ## Key names
 
-The keys track the installed validation layer's settings schema.  If the layer
-rejects a key it prints a message naming it; confirm the current spelling with
-`vkconfig` or the layer's shipped `vk_layer_settings.txt`.  The `enables` list
-uses the stable `VK_VALIDATION_FEATURE_ENABLE_*` enum names.
+The keys are the layer's `khronos_validation.*` settings (for example
+`validate_core`, `validate_sync`, `report_flags`).  The older `enables` /
+`VK_VALIDATION_FEATURE_ENABLE_*` form is not used.

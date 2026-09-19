@@ -512,6 +512,9 @@ def run_matrix(script: str, profiles: Iterable[str] = ("vulkan", "gl"),
     """
     binary = binary or _DEFAULT_FREECAD
     reports: dict[str, RunReport] = {}
+    # Materialize once: the keys loop and the run loop below both consume
+    # device_profiles, and a generator would be exhausted by the first.
+    device_profiles = list(device_profiles)
     if device_profiles:
         keys = [f"device:{d}" for d in device_profiles]
         for key, dev in zip(keys, device_profiles):
@@ -1006,7 +1009,10 @@ def run_case(
         else:
             launch_argv = [
                 rdc, "capture",
-                "-d", "/home/phantom/dev/FreeCAD",
+                # Run the target from the harness's own working directory
+                # (nsys inherits it implicitly); a hardcoded path would only
+                # work on one developer's checkout.
+                "-d", os.getcwd(),
                 "-c", os.path.join(artifact_dir, "renderdoc"),
                 "-w",
             ] + launch_argv
@@ -2261,13 +2267,14 @@ def _build_parser() -> Any:
         help="1-based gfxreconstruct frame range to capture, e.g. 1-30 "
              "(default: every frame)",
     )
-    run.add_argument(
+    trace_tool_group = run.add_mutually_exclusive_group()
+    trace_tool_group.add_argument(
         "--nsys",
         action="store_true",
         help="profile the run with Nsight Systems (writes nsys.nsys-rep into "
              "the artifact dir)",
     )
-    run.add_argument(
+    trace_tool_group.add_argument(
         "--renderdoc",
         action="store_true",
         help="capture the run with RenderDoc (writes renderdoc_frame*.rdc into "
@@ -3258,10 +3265,14 @@ class Session:
             get_api.restype = ctypes.c_int
             get_api.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)]
             api_ptr = ctypes.c_void_p()
-            # eRENDERDOC_API_Version_1_7_0 == 10700.  Request the 1.7.0 layout
-            # so the entry-point offsets match /usr/include/renderdoc_app.h,
-            # where TriggerCapture is index 15.
-            if get_api(10700, ctypes.byref(api_ptr)) != 1 or not api_ptr.value:
+            # eRENDERDOC_API_Version_1_0_0 == 10000.  Request the oldest
+            # layout: RENDERDOC_GetAPI returns 0 for a version the installed
+            # RenderDoc predates, so asking for the 1.7.0 layout (10700) would
+            # silently skip the capture on an older RenderDoc.  The members
+            # added in later versions are appended after the ones used here
+            # (TriggerCapture has no "new in" note in renderdoc_app.h), so its
+            # index is the same in every layout.
+            if get_api(10000, ctypes.byref(api_ptr)) != 1 or not api_ptr.value:
                 return False
             entries = ctypes.cast(
                 api_ptr, ctypes.POINTER(ctypes.c_void_p))
