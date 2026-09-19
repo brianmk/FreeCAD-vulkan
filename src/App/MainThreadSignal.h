@@ -528,14 +528,6 @@ public:
         return sig_.connect(std::move(slot), tag);
     }
 
-    void disconnect_all_slots() noexcept
-    {
-        sig_.disconnect_all_slots();
-    }
-    std::size_t num_slots() const noexcept
-    {
-        return sig_.num_slots();
-    }
     bool empty() const noexcept
     {
         return sig_.empty();
@@ -572,16 +564,6 @@ public:
                 return Return();
             }
         };
-    }
-
-    // escape hatch
-    base_sig& underlying()
-    {
-        return sig_;
-    }
-    const base_sig& underlying() const
-    {
-        return sig_;
     }
 
 private:

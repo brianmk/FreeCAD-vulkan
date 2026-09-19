@@ -208,19 +208,6 @@ public:
         QMutexLocker locker(&m_stateMutex);
         return m_viewSettings.backgroundColor;
     }
-    void setBackgroundGradient(bool enabled,
-                               const SbColor4f & top,
-                               const SbColor4f & bottom)
-    {
-        VK_BREADCRUMB("[VK-TRACE] QuarterVulkanRenderer::setBackgroundGradient "
-                      "enabled=%d top=(%.3f,%.3f,%.3f) bottom=(%.3f,%.3f,%.3f)\n",
-                      enabled ? 1 : 0, top[0], top[1], top[2],
-                      bottom[0], bottom[1], bottom[2]);
-        QMutexLocker locker(&m_stateMutex);
-        m_viewSettings.backgroundGradient = enabled;
-        m_viewSettings.backgroundTop = top;
-        m_viewSettings.backgroundBottom = bottom;
-    }
     void setWireframeOverlay(bool enabled)
     {
         QMutexLocker locker(&m_stateMutex);
@@ -231,12 +218,6 @@ public:
         QMutexLocker locker(&m_stateMutex);
         m_viewSettings.pointsOverlay = enabled;
     }
-    void setEdgeColor(const SbColor4f & color)
-    {
-        QMutexLocker locker(&m_stateMutex);
-        m_viewSettings.edgeColor = color;
-    }
-
     // Capabilities probed by the widget's physical-device selection, handed to
     // the render manager through SoVulkanDeviceContext::caps so the renderer
     // does not re-enumerate the device extension list.
@@ -261,37 +242,12 @@ public:
         QMutexLocker locker(&m_stateMutex);
         m_pathTracingStart = start;
     }
-    void setPathTracingBounces(int bounces)
-    {
-        QMutexLocker locker(&m_stateMutex);
-        m_viewSettings.pathTracingBounces = std::clamp(bounces, 1, 16);
-    }
-    void setPathTracingSettleFrames(int frames)
-    {
-        QMutexLocker locker(&m_stateMutex);
-        m_viewSettings.pathTracingSettleFrames = std::clamp(frames, 1, 120);
-    }
     //! Interaction LOD is a runtime navigation state, not a persisted
     //! setting, so it is staged on its own rather than in m_viewSettings.
     void setInteractionLod(bool active)
     {
         QMutexLocker locker(&m_stateMutex);
         m_interactionLod = active;
-    }
-    void setPathTracingMaxSamples(int samples)
-    {
-        QMutexLocker locker(&m_stateMutex);
-        m_viewSettings.pathTracingMaxSamples = std::clamp(samples, 1, 4096);
-    }
-    void setPathTracingDenoiser(const std::string & denoiser)
-    {
-        QMutexLocker locker(&m_stateMutex);
-        m_viewSettings.pathTracingDenoiser = denoiser;
-    }
-    void setPathTracingDenoiserScale(float scale)
-    {
-        QMutexLocker locker(&m_stateMutex);
-        m_viewSettings.pathTracingDenoiserScale = std::clamp(scale, 1.0f, 8.0f);
     }
     bool getPathTracingEnabled() const
     {
@@ -1170,6 +1126,11 @@ public:
     // unknown/unsupported extension is requested, so each must be gated.
     bool rtPositionFetchAvailable = false;
     bool rtOpacityMicromapAvailable = false;
+    // VK_EXT_nested_command_buffer + nestedCommandBufferRendering: lets the
+    // raster backend begin the opaque subpass with the inline+secondary
+    // contents enum so it can execute recorded secondaries; without it the
+    // backend records fully inline.
+    bool rtNestedCommandBufferAvailable = false;
     bool rtNvClusterAvailable = false;
     bool rtNvPartitionedAvailable = false;
     bool rtNvLinearSweptSpheresAvailable = false;
@@ -1196,6 +1157,9 @@ public:
     VkPhysicalDeviceRayTracingPositionFetchFeaturesKHR rtPositionFetch {};
     VkPhysicalDeviceOpacityMicromapFeaturesEXT rtOpacityMicromap {};
     VkPhysicalDeviceDescriptorIndexingFeatures descriptorIndexing {};
+    // VK_EXT_nested_command_buffer: the raster backend uses the
+    // inline+secondary subpass contents enum only when this feature is on.
+    VkPhysicalDeviceNestedCommandBufferFeaturesEXT rtNestedCommandBuffer {};
     // VK_KHR_synchronization2 / Vulkan 1.3 core: the renderer's barriers and
     // submits use the *2 entry points when this feature is enabled.
     VkPhysicalDeviceSynchronization2Features rtSynchronization2 {};
@@ -1470,6 +1434,14 @@ void QuarterVulkanWidget::selectPhysicalDevice()
         VkPhysicalDeviceDescriptorIndexingFeatures di {};
         di.sType =
             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
+        // VK_EXT_nested_command_buffer feature: queried here so the raster
+        // backend can be told whether the device supports the inline+secondary
+        // subpass contents enum.  The struct is on the stack of this lambda
+        // and only read before it returns.
+        VkPhysicalDeviceNestedCommandBufferFeaturesEXT nested {};
+        nested.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_NESTED_COMMAND_BUFFER_FEATURES_EXT;
+        di.pNext = &nested;
         VkPhysicalDeviceFeatures2 feats2 {};
         feats2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
         feats2.pNext = &di;
@@ -1517,6 +1489,11 @@ void QuarterVulkanWidget::selectPhysicalDevice()
         caps.rayTracing = hasExt("VK_KHR_acceleration_structure")
             && hasExt("VK_KHR_ray_tracing_pipeline")
             && hasExt("VK_KHR_ray_query");
+        // The inline+secondary subpass contents enum needs both the extension
+        // and its nestedCommandBufferRendering feature.
+        caps.nestedCommandBuffer =
+            hasExt("VK_EXT_nested_command_buffer") &&
+            nested.nestedCommandBufferRendering != 0;
         return caps;
     };
 
@@ -1571,6 +1548,7 @@ void QuarterVulkanWidget::selectPhysicalDevice()
     d->vulkanWindow->rtTimelineSemaphoreAvailable = best.timelineSemaphore;
     d->vulkanWindow->rtPositionFetchAvailable = best.positionFetch;
     d->vulkanWindow->rtOpacityMicromapAvailable = best.opacityMicromap;
+    d->vulkanWindow->rtNestedCommandBufferAvailable = best.nestedCommandBuffer;
     d->vulkanWindow->rtPipelineCreationFeedbackAvailable =
         best.pipelineCreationFeedback;
     d->vulkanWindow->rtDebugPrintfAvailable = best.debugPrintf;
@@ -1677,6 +1655,12 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
         && d->vulkanWindow->synchronization2Available) {
         deviceExt << QByteArrayLiteral("VK_EXT_opacity_micromap");
     }
+    // VK_EXT_nested_command_buffer: the raster backend begins the opaque
+    // subpass with the inline+secondary contents enum only when the device was
+    // created with this extension and nestedCommandBufferRendering enabled.
+    if (d->vulkanWindow->rtNestedCommandBufferAvailable) {
+        deviceExt << QByteArrayLiteral("VK_EXT_nested_command_buffer");
+    }
     // VK_KHR_synchronization2: add the extension name only when the device
     // advertises it as an extension.  On a Vulkan 1.3+ device the feature is
     // core and the name may not be listed, in which case adding it would fail
@@ -1737,8 +1721,8 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
           }
         }
         if (computeFamily < 0) {
-          vkLog("QuarterVulkanWidget: no compute-capable queue family found; "
-                "async-compute unavailable");
+          vkWarn("QuarterVulkanWidget: no compute-capable queue family found; "
+                 "async-compute unavailable");
           return;
         }
         bool extended = false;
@@ -1905,6 +1889,18 @@ void QuarterVulkanWidget::applyBaseDeviceFeatures(
         d->vulkanWindow->rtSynchronization2.pNext = features.pNext;
         features.pNext = &d->vulkanWindow->rtSynchronization2;
     }
+    // VK_EXT_nested_command_buffer: chained here (not the RT-only path) so the
+    // raster backend gets the inline+secondary subpass contents enum in every
+    // configuration.  The struct lives on the window object because
+    // QVulkanWindowPrivate::init() reads the pNext chain after this returns.
+    if (d->vulkanWindow->rtNestedCommandBufferAvailable) {
+        d->vulkanWindow->rtNestedCommandBuffer.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_NESTED_COMMAND_BUFFER_FEATURES_EXT;
+        d->vulkanWindow->rtNestedCommandBuffer.nestedCommandBufferRendering =
+            VK_TRUE;
+        d->vulkanWindow->rtNestedCommandBuffer.pNext = features.pNext;
+        features.pNext = &d->vulkanWindow->rtNestedCommandBuffer;
+    }
 }
 
 void QuarterVulkanWidget::logSupportedSampleCounts()
@@ -2002,18 +1998,6 @@ void QuarterVulkanWidget::setBackgroundColor(const SbColor4f & color)
     redraw();
 }
 
-void QuarterVulkanWidget::setBackgroundGradient(bool enabled,
-                                                const SbColor4f & topColor,
-                                                const SbColor4f & bottomColor)
-{
-    VK_BREADCRUMB("[VK-TRACE] QuarterVulkanWidget::setBackgroundGradient "
-                  "enabled=%d top=(%.3f,%.3f,%.3f) bottom=(%.3f,%.3f,%.3f)\n",
-                  enabled ? 1 : 0, topColor[0], topColor[1], topColor[2],
-                  bottomColor[0], bottomColor[1], bottomColor[2]);
-    d->renderer->setBackgroundGradient(enabled, topColor, bottomColor);
-    redraw();
-}
-
 void QuarterVulkanWidget::setWireframeOverlay(bool enabled)
 {
     d->renderer->setWireframeOverlay(enabled);
@@ -2023,12 +2007,6 @@ void QuarterVulkanWidget::setWireframeOverlay(bool enabled)
 void QuarterVulkanWidget::setPointsOverlay(bool enabled)
 {
     d->renderer->setPointsOverlay(enabled);
-    redraw();
-}
-
-void QuarterVulkanWidget::setEdgeColor(const SbColor4f & color)
-{
-    d->renderer->setEdgeColor(color);
     redraw();
 }
 
@@ -2208,31 +2186,10 @@ SbColor4f QuarterVulkanWidget::getBackgroundColor() const
     return d->renderer->getBackgroundColor();
 }
 
-void QuarterVulkanWidget::setClearEnabled(bool clearwindow, bool clearzbuffer)
-{
-    // QVulkanWindow's default render pass always clears its attachments
-    // (LOAD_OP_CLEAR), so frame clears cannot be disabled on the Vulkan
-    // path.  Kept for API parity with QuarterWidget; warn once if a caller
-    // requests anything else than the fixed behavior.
-    Q_UNUSED(clearwindow)
-    Q_UNUSED(clearzbuffer)
-    static bool warned = false;
-    if (!warned) {
-        warned = true;
-        vkWarn("setClearEnabled: QVulkanWindow's render pass always clears "
-               "color and depth; request ignored");
-    }
-}
-
 void QuarterVulkanWidget::setSampleCount(int samples)
 {
     vkLog("setSampleCount: requesting %d samples", samples);
     d->window->setSampleCount(samples);
-}
-
-int QuarterVulkanWidget::getSampleCount() const
-{
-    return static_cast<int>(d->window->sampleCountFlagBits());
 }
 
 void QuarterVulkanWidget::setPreferredColorFormat(int vkFormat)
@@ -2245,11 +2202,6 @@ void QuarterVulkanWidget::setPreferredColorFormat(int vkFormat)
 void QuarterVulkanWidget::redraw()
 {
     d->window->requestUpdate();
-}
-
-bool QuarterVulkanWidget::supportsGrab() const
-{
-    return d->window->supportsGrab();
 }
 
 QImage QuarterVulkanWidget::grab() const
@@ -2417,15 +2369,6 @@ bool QuarterVulkanWidget::getPathTracingActive() const
     return d->renderer->getPathTracingActive();
 }
 
-void QuarterVulkanWidget::setPathTracingBounces(int bounces)
-{
-    if (!d->renderer) {
-        return;
-    }
-    d->renderer->setPathTracingBounces(bounces);
-    redraw();
-}
-
 void QuarterVulkanWidget::setInteractionLod(bool active)
 {
     if (!d->renderer) {
@@ -2434,42 +2377,6 @@ void QuarterVulkanWidget::setInteractionLod(bool active)
     VK_BREADCRUMB("[VK-TRACE] QuarterVulkanWidget::setInteractionLod active=%d\n",
                   active ? 1 : 0);
     d->renderer->setInteractionLod(active);
-    redraw();
-}
-
-void QuarterVulkanWidget::setPathTracingSettleFrames(int frames)
-{
-    if (!d->renderer) {
-        return;
-    }
-    d->renderer->setPathTracingSettleFrames(frames);
-    redraw();
-}
-
-void QuarterVulkanWidget::setPathTracingMaxSamples(int samples)
-{
-    if (!d->renderer) {
-        return;
-    }
-    d->renderer->setPathTracingMaxSamples(samples);
-    redraw();
-}
-
-void QuarterVulkanWidget::setPathTracingDenoiser(const std::string & denoiser)
-{
-    if (!d->renderer) {
-        return;
-    }
-    d->renderer->setPathTracingDenoiser(denoiser);
-    redraw();
-}
-
-void QuarterVulkanWidget::setPathTracingDenoiserScale(float scale)
-{
-    if (!d->renderer) {
-        return;
-    }
-    d->renderer->setPathTracingDenoiserScale(scale);
     redraw();
 }
 

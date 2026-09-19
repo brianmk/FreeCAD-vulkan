@@ -95,44 +95,21 @@ App/CMS ID by registering FreeCAD with the NVIDIA DLSS developer program
 
 ## 4. What is next
 
-### Phase 1 (DLSS-RR backend): IMPLEMENTED, runtime-gated
+### Phase 1 (DLSS-RR backend): NOT IMPLEMENTED in this tree
 
-The backend is written and compiles (Coin + FreeCADGui build clean, option ON
-and OFF). It is a **self-authored ABI shim** (no NVIDIA header vendoring —
-see §6 for the licensing correction) that `dlopen`s the proprietary runtime.
+The DLSS-RR integration described in earlier revisions of this document was
+never merged.  None of the claimed sources or build switches exist in the
+coin submodule or the superproject: `ngx_abi.h`, `ngx_loader.h/.cpp`,
+`SoRTXRenderBackendDlssRR.cpp`, the `DenoiseDlssRr` kind, the
+`FC_RTX_DLSS_APPID` gate, the GUI "DLSS-RR" combo item, and the
+`COIN_BUILD_DLSS_RR_DENOISER` CMake option are all absent (only stale local
+build artifacts were ever produced).  `DenoiseKind` currently has
+`DenoiseNone`, `DenoiseOidn`, `DenoiseRtx` and `DenoiseFsr` only.
 
-Delivered:
-
-- **`ngx_abi.h`** (new, MIT) — self-authored interop declarations: result /
-  feature enums, the POD structs we touch, the `NVSDK_NGX_Parameter` vtable
-  interface, and the Vulkan entry typedefs. No NVIDIA headers.
-- **`ngx_loader.h/.cpp`** (new, MIT) — `dlopen`s `libnvidia-ngx.so.1`,
-  resolves the entry points, and provides `ngxSetParam`/`ngxGetParam` vtable
-  helpers (the free-function setters are **not exported** on Linux).
-- **`SoRTXRenderBackendDlssRR.cpp`** (new, MIT) — `createDlssRrBackend`
-  (init w/ retry-once for `FAIL_OutOfDate`, requirements query, param +
-  scratch + output allocation, `CreateFeature1`), `evaluateDlssRr`
-  (device-local buffer binding + `EvaluateFeature`), `teardownDlssRrBackend`.
-- **`SoRTXRenderBackend.h`** — added `DenoiseDlssRr` to `DenoiseKind`,
-  plus the gated NGX backend members.
-- **`SoRTXRenderBackendDenoise.cpp`** — wired create/evaluate/teardown
-  dispatch (`FC_VULKAN_PT_DENOISER=dlssrr` + GUI combo index 4).
-- **`View3DInventorViewer.cpp`** / **`DlgSettings3DView.ui`** — GUI combo
-  item "DLSS-RR (NVIDIA NGX, GPU)" → `"dlssrr"`, and
-  `setDenoiserFilter` now maps `"dlssrr"`.
-- **CMakeLists**: `COIN_BUILD_DLSS_RR_DENOISER` option (default **OFF**),
-  `COIN_BUILD_DLSS_RR_DENOISER_VALUE`, compile definition, and the two new
-  sources in `src/rendering/CMakeLists.txt`.
-
-**Runtime gates**: backend active only when (a) built with the option ON,
-(b) Vulkan device is NVIDIA, (c) `libnvidia-ngx.so.1` is dlopen-able, and
-(d) `FC_RTX_DLSS_APPID` is set. Any gate failure → the denoiser list falls
-back to OIDN (verified). `FC_RTX_DLSS_MODULE_DIR` optionally points at the
-feature .so directory (exact filename `libnvidia-ngx-dlssd.so`).
-
-**Verified**: fcprobe run with `dlssrr` requested and no App ID →
-`[DENOISE] DLSS-RR disabled: FC_RTX_DLSS_APPID not set` → degrades to OIDN
-→ `[VERDICT] PASS`, exit 0, no crash. Default RTX path still passes.
+The Phase-0 probe and the conditional-go decision in §3 still stand; Phase 1
+remains blocked on registering an NVIDIA App/CMS ID (Priority 2).  Any future
+implementation must follow the licensing path in §6 (do not vendor NVIDIA
+headers).
 
 ### Priority 2 — Register App ID (external, blocks activation)
 
@@ -158,11 +135,12 @@ header (`nvsdk_ngx_defs.h`, `nvsdk_ngx_vk.h`, `nvsdk_ngx_params.h`, …) carries
 `SPDX-License-Identifier: LicenseRef-NvidiaProprietary` ("any use, reproduction,
 disclosure or distribution ... without an express license agreement from
 NVIDIA is strictly prohibited"). So we must **not** vendor them into the LGPL
-repo. Instead, the repo now ships a self-authored MIT **ABI shim**
-(`ngx_abi.h`) that reproduces only the interface declarations (interop
+repo. The licensing-clean path chosen by the user is a self-authored MIT
+**ABI shim** that reproduces only the interface declarations (interop
 function-pointer typedefs, POD enums/structs, the `NgxParameter` vtable
-layout). The proprietary runtime is `dlopen`'d and never redistributed. This
-is the licensing-clean path chosen by the user.
+layout), with the proprietary runtime `dlopen`'d and never redistributed.
+That shim is **not present in this tree** (see §4): the DLSS-RR integration
+was never merged, so no `ngx_abi.h` ships today.
 
 ---
 
@@ -174,7 +152,7 @@ is the licensing-clean path chosen by the user.
   (`lib/Linux_x86_64/{dev,rel}/libnvidia-ngx-dlssd.so.310.7.0`).
 - Docs: `/tmp/opencode/dlss_rr_guide.txt`, `/tmp/opencode/dlss_pg.txt`.
 - Backend enum: `src/3rdParty/coin/src/rendering/SoRTXRenderBackend.h`
-  (`DenoiseKind` @ ~713).
+  (`DenoiseKind`).
 - Dispatch points:
   `src/3rdParty/coin/src/rendering/SoRTXRenderBackend/SoRTXRenderBackendDenoise.cpp`.
 - Frame dumps: `/tmp/vk_frame_<ordinal>.png` via

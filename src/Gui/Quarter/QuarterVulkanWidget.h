@@ -95,26 +95,14 @@ public:
     SbColor4f getBackgroundColor() const;
 
     /*!
-      \brief Configure a vertical screen-space background gradient.
-
-      When \a enabled is TRUE the Vulkan surface is filled with a top-to-
-      bottom gradient between \a topColor and \a bottomColor before geometry
-      is drawn, instead of a flat clear color.
-    */
-    void setBackgroundGradient(bool enabled,
-                               const SbColor4f & topColor,
-                               const SbColor4f & bottomColor);
-
-    /*!
       \brief Configure Vulkan-only display overlays (shaded-with-edges /
-      show-vertices) and their edge color.
+      show-vertices).
 
       These do not affect the hidden OpenGL viewer and are only honored by
       the Vulkan backend.
     */
     void setWireframeOverlay(bool enabled);
     void setPointsOverlay(bool enabled);
-    void setEdgeColor(const SbColor4f & color);
 
     /*!
       \brief Forward viewport input events to another widget.
@@ -133,22 +121,12 @@ public:
     void setEventForwardTarget(QWidget * target, qreal targetDevicePixelRatio = -1.0);
 
     /*!
-      \brief No-op kept for API parity with QuarterWidget.
-
-      QVulkanWindow's default render pass always clears color and depth
-      (LOAD_OP_CLEAR), so frame clears cannot be disabled on the Vulkan
-      path.  Calls log a one-time warning.
-    */
-    void setClearEnabled(bool clearwindow, bool clearzbuffer);
-
-    /*!
       \brief Configure MSAA sample count (1, 2, 4, 8...).
 
       Must be called before the window is first shown.  Values unsupported by
       the physical device fall back to QVulkanWindow's default of 1.
     */
     void setSampleCount(int samples);
-    int getSampleCount() const;
 
     /*!
       \brief Request a preferred swapchain color format.
@@ -164,12 +142,6 @@ public:
 
     //! Schedule a redraw on the Vulkan window (safe from any thread).
     void redraw();
-
-    /*!
-      \brief Whether the underlying QVulkanWindow supports grabbing a
-      resolved frame back to the CPU.
-    */
-    bool supportsGrab() const;
 
     /*!
       \brief Grab the last presented frame as a QImage (empty if unsupported).
@@ -333,14 +305,6 @@ public:
     bool getPathTracingActive() const;
 
     /*!
-      \brief Maximum path-tracing bounces (1..16).
-
-      Higher bounce counts add more indirect-light transport at the cost of
-      noisier early frames.  Forwarded to the ray-tracing backend.
-    */
-    void setPathTracingBounces(int bounces);
-
-    /*!
       \brief Enable/disable interaction LOD (quality reduction while the
       camera moves).
 
@@ -350,34 +314,6 @@ public:
       a no-op when it is not active.
     */
     void setInteractionLod(bool active);
-
-    /*!
-      \brief Frames of a static camera before the accumulation auto-restarts
-      (1..120).
-
-      After a camera or scene change the renderer drops to a single-sample
-      live preview; once the camera stays static for this many frames a fresh
-      accumulation starts automatically.  Forwarded to the ray-tracing
-      backend.
-    */
-    void setPathTracingSettleFrames(int frames);
-
-    /*!
-      \brief Select the denoiser backend by name ("rtx", "oidn", "fsr",
-      "none"); an empty string uses the default (backend env / built-in)
-      choice.  Forwarded to the ray-tracing backend.  Denoising itself is
-      required for path tracing and is enabled automatically by the renderer.
-    */
-    void setPathTracingDenoiser(const std::string & denoiser);
-
-    //! Accumulated-sample cap (1..4096) before the run auto-stops; forwarded
-    //! to the ray-tracing backend.
-    void setPathTracingMaxSamples(int samples);
-
-    //! Denoiser upscale factor (>= 1).  A factor > 1 runs the host-side
-    //! denoiser at reduced internal resolution and the present pass upscales
-    //! the result back to the viewport.  Forwarded to the ray-tracing backend.
-    void setPathTracingDenoiserScale(float scale);
 
 protected:
     bool eventFilter(QObject * watched, QEvent * event) override;
