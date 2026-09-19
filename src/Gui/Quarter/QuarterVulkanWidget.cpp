@@ -1176,6 +1176,10 @@ public:
     // VK_KHR_synchronization2 (Vulkan 1.3 core) is a hard dependency of
     // VK_EXT_opacity_micromap; enabled alongside it when present.
     bool synchronization2Available = false;
+    // Whether the device advertises VK_KHR_synchronization2 as an extension
+    // (rather than the core Vulkan 1.3 feature).  Only then may the name be
+    // added to the device extension list.
+    bool synchronization2ExtensionAvailable = false;
     // Descriptor-indexing update-after-bind: lets the RT backend legally
     // rewrite a descriptor set an in-flight command buffer still references.
     bool descriptorIndexingAvailable = false;
@@ -1192,6 +1196,9 @@ public:
     VkPhysicalDeviceRayTracingPositionFetchFeaturesKHR rtPositionFetch {};
     VkPhysicalDeviceOpacityMicromapFeaturesEXT rtOpacityMicromap {};
     VkPhysicalDeviceDescriptorIndexingFeatures descriptorIndexing {};
+    // VK_KHR_synchronization2 / Vulkan 1.3 core: the renderer's barriers and
+    // submits use the *2 entry points when this feature is enabled.
+    VkPhysicalDeviceSynchronization2Features rtSynchronization2 {};
 
 private:
     QuarterVulkanRenderer * m_renderer;
@@ -1506,6 +1513,7 @@ void QuarterVulkanWidget::selectPhysicalDevice()
         caps.nvLinearSweptSpheres = hasExt("VK_NV_ray_tracing_linear_swept_spheres");
         caps.synchronization2 = caps.synchronization2
             || hasExt("VK_KHR_synchronization2");
+        caps.synchronization2Extension = hasExt("VK_KHR_synchronization2");
         caps.rayTracing = hasExt("VK_KHR_acceleration_structure")
             && hasExt("VK_KHR_ray_tracing_pipeline")
             && hasExt("VK_KHR_ray_query");
@@ -1570,6 +1578,8 @@ void QuarterVulkanWidget::selectPhysicalDevice()
     d->vulkanWindow->rtNvPartitionedAvailable = best.nvPartitioned;
     d->vulkanWindow->rtNvLinearSweptSpheresAvailable = best.nvLinearSweptSpheres;
     d->vulkanWindow->synchronization2Available = best.synchronization2;
+    d->vulkanWindow->synchronization2ExtensionAvailable =
+        best.synchronization2Extension;
     d->vulkanWindow->descriptorIndexingAvailable =
         best.descriptorIndexingUpdateAfterBind;
     if (d->rayTracing && !best.externalMemoryFd) {
@@ -1665,8 +1675,14 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
     // vkCreateDevice fails validation (VUID-ppEnabledExtensionNames-01387).
     if (d->vulkanWindow->rtOpacityMicromapAvailable
         && d->vulkanWindow->synchronization2Available) {
-        deviceExt << QByteArrayLiteral("VK_EXT_opacity_micromap")
-                  << QByteArrayLiteral("VK_KHR_synchronization2");
+        deviceExt << QByteArrayLiteral("VK_EXT_opacity_micromap");
+    }
+    // VK_KHR_synchronization2: add the extension name only when the device
+    // advertises it as an extension.  On a Vulkan 1.3+ device the feature is
+    // core and the name may not be listed, in which case adding it would fail
+    // device creation.
+    if (d->vulkanWindow->synchronization2ExtensionAvailable) {
+        deviceExt << QByteArrayLiteral("VK_KHR_synchronization2");
     }
     if (d->vulkanWindow->rtPipelineCreationFeedbackAvailable) {
         deviceExt << QByteArrayLiteral("VK_EXT_pipeline_creation_feedback");
@@ -1876,6 +1892,19 @@ void QuarterVulkanWidget::applyBaseDeviceFeatures(
         d->vulkanWindow->fullDrawIndexUint32 ? VK_TRUE : VK_FALSE;
     features.features.dualSrcBlend =
         d->vulkanWindow->dualSrcBlend ? VK_TRUE : VK_FALSE;
+    // synchronization2: the renderer's barriers and submits take the *2 entry
+    // points whenever this feature is enabled (Vulkan 1.3 core or the
+    // extension).  Chained here so both the raster and RT feature-modifier
+    // paths request it.  The struct lives on the window object because
+    // QVulkanWindowPrivate::init() reads the pNext chain after the modifier
+    // callback returns.
+    if (d->vulkanWindow->synchronization2Available) {
+        d->vulkanWindow->rtSynchronization2.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
+        d->vulkanWindow->rtSynchronization2.synchronization2 = VK_TRUE;
+        d->vulkanWindow->rtSynchronization2.pNext = features.pNext;
+        features.pNext = &d->vulkanWindow->rtSynchronization2;
+    }
 }
 
 void QuarterVulkanWidget::logSupportedSampleCounts()
