@@ -247,12 +247,16 @@ void reportRecomputeException(const Base::Exception& exception)
 {
     if (App::MainThreadSignalConfig::hasHooks()) {
         if (auto* app = QCoreApplication::instance()) {
-            QMetaObject::invokeMethod(
-                app,
-                [exception]() mutable { exception.reportException(); },
-                Qt::QueuedConnection
-            );
-            return;
+            // If the queued post fails there is no other reporter for this
+            // worker-thread exception, so fall through and report it directly
+            // on the current thread rather than dropping it silently.
+            if (QMetaObject::invokeMethod(
+                    app,
+                    [exception]() mutable { exception.reportException(); },
+                    Qt::QueuedConnection
+                )) {
+                return;
+            }
         }
     }
 

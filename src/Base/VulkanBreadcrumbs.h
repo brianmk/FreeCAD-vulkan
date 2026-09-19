@@ -76,20 +76,6 @@ inline const char* envString(const char* name)
     return std::getenv(name);
 }
 
-//! Integer value, or \a defaultValue when unset/empty.
-inline int envInt(const char* name, int defaultValue = 0)
-{
-    const char* value = std::getenv(name);
-    return value ? std::atoi(value) : defaultValue;
-}
-
-//! Floating-point value, or \a defaultValue when unset/empty.
-inline float envFloat(const char* name, float defaultValue = 0.0f)
-{
-    const char* value = std::getenv(name);
-    return value ? static_cast<float>(std::atof(value)) : defaultValue;
-}
-
 //! Append a formatted breadcrumb to the trace log.
 //!
 //! The destination file is created/truncated on the first call of each

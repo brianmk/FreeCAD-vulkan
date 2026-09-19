@@ -298,11 +298,13 @@ void VulkanViewportAdapter::pushSettings()
     // for them -- the mode is the authority.
     const bool raster = settings.rasterOnly();
 
-    // Memoised push: the preferences signal that drives pushSettings() fires
-    // repeatedly with identical values (applyVulkanSettings() re-emits
-    // vulkanSettingsChanged on every call, not only on change).  Only re-apply
-    // to the renderer and emit the [VK-SET] diagnostic when the effective
-    // values actually differ; otherwise this is no-op and keeps the log quiet.
+    // The preferences signal that drives pushSettings() fires repeatedly with
+    // identical values (applyVulkanSettings() re-emits vulkanSettingsChanged on
+    // every call, not only on change).  There is no memoised signature here:
+    // the settings blob is pushed every time and the render manager diffs the
+    // whole blob (SoVulkanRenderManager::setViewSettings), so an unchanged push
+    // is a cheap no-op there.  The [VK-SET] diagnostic below is gated on
+    // FC_VULKAN_BACKEND_DEBUG, not on a change.
     //
     // The edge/point (wireframe) overlay is the one raster-only feature: it is
     // drawn by the raster backend's overlay fill-mode re-draw (see
@@ -663,16 +665,6 @@ void VulkanViewportAdapter::setViewMode(SoVulkanViewMode mode)
 #endif
 }
 
-SoVulkanViewMode VulkanViewportAdapter::getViewMode() const
-{
-#ifdef FREECAD_USE_VULKAN
-    return _vulkanViewer ? _vulkanViewer->getViewMode()
-                         : SoVulkanViewMode::RtxModeOff;
-#else
-    return SoVulkanViewMode::RtxModeOff;
-#endif
-}
-
 void VulkanViewportAdapter::setEnvMap(int index)
 {
 #ifdef FREECAD_USE_VULKAN
@@ -681,15 +673,6 @@ void VulkanViewportAdapter::setEnvMap(int index)
     }
 #else
     Q_UNUSED(index);
-#endif
-}
-
-int VulkanViewportAdapter::getEnvMap() const
-{
-#ifdef FREECAD_USE_VULKAN
-    return _vulkanViewer ? _vulkanViewer->getEnvMap() : -1;
-#else
-    return -1;
 #endif
 }
 

@@ -121,11 +121,6 @@ SoNaviCubeVulkan::~SoNaviCubeVulkan()
     }
 }
 
-void SoNaviCubeVulkan::setVulkanScale(float scale)
-{
-    vulkanScale = std::clamp(scale, 0.1F, 10.0F);
-}
-
 int SoNaviCubeVulkan::faceIndex(int pickId)
 {
     switch (static_cast<PickId>(pickId)) {
@@ -636,14 +631,6 @@ void SoNaviCubeVulkan::updateButtons(float op, int hilitePick) const
             nodes.vertexPersp->touch();
         }
     }
-}
-
-void SoNaviCubeVulkan::resetLabels() const
-{
-    for (auto& nodes : faceLabels) {
-        nodes = {};
-    }
-    labelsSep = nullptr;
 }
 
 void SoNaviCubeVulkan::updateScene() const
