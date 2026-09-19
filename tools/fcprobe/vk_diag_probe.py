@@ -28,7 +28,8 @@ Run it with those flags set (see vk_diag_probe.check.py):
 
 Raster mode keeps it fast and device-agnostic; the pipeline-feedback line only
 appears on a device where the app enabled VK_EXT_pipeline_creation_feedback
-(the RT-capable path).
+(whenever the device advertises the extension, in either the raster or the RT
+path).
 """
 
 import math
