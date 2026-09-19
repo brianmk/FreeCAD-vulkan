@@ -97,6 +97,10 @@ def step():
         # Raster path: no RTX bring-up required, so the probe runs on any
         # device.  The device extensions (incl. pipeline creation feedback) are
         # still requested when the GPU advertises them.
+        # Force the Vulkan renderer: the pref is persisted, so a preceding
+        # forced-GL probe would otherwise leave every later run on OpenGL and
+        # silently starve the [VKCONFIG]/[RTDBG] diagnostics this gate asserts.
+        s.set_pref(VIEW, "UseVulkanRenderer", True)
         s.set_pref(VIEW, "UseVulkanRayTracing", False)
         s.set_pref(VIEW, "VulkanPathTracing", False)
         s.set_pref(VIEW, "VulkanRenderMode", 1)  # RasterVulkan
