@@ -1,6 +1,6 @@
 # Best-practices validation: API-usage and performance advisories.
 #
-# Selected with FC_VULKAN_VALIDATION_PROFILE=best-practices.  Performance
+# Selected with --validation-profile best-practices.  Performance
 # messages are informative, not correctness failures; do not fail a run on the
 # `perf` report flag alone.
 
