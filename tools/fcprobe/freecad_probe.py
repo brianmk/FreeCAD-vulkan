@@ -3265,10 +3265,14 @@ class Session:
             get_api.restype = ctypes.c_int
             get_api.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)]
             api_ptr = ctypes.c_void_p()
-            # eRENDERDOC_API_Version_1_7_0 == 10700.  Request the 1.7.0 layout
-            # so the entry-point offsets match /usr/include/renderdoc_app.h,
-            # where TriggerCapture is index 15.
-            if get_api(10700, ctypes.byref(api_ptr)) != 1 or not api_ptr.value:
+            # eRENDERDOC_API_Version_1_0_0 == 10000.  Request the oldest
+            # layout: RENDERDOC_GetAPI returns 0 for a version the installed
+            # RenderDoc predates, so asking for the 1.7.0 layout (10700) would
+            # silently skip the capture on an older RenderDoc.  The members
+            # added in later versions are appended after the ones used here
+            # (TriggerCapture has no "new in" note in renderdoc_app.h), so its
+            # index is the same in every layout.
+            if get_api(10000, ctypes.byref(api_ptr)) != 1 or not api_ptr.value:
                 return False
             entries = ctypes.cast(
                 api_ptr, ctypes.POINTER(ctypes.c_void_p))
