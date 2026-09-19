@@ -1,0 +1,6 @@
+{
+  "description": "Removes descriptor-indexing (VK_EXT_descriptor_indexing) and descriptor-buffer (VK_EXT_descriptor_buffer) while keeping the device's real limits. The backend must fall back to non-indexed descriptor sets without validation errors.",
+  "env": {
+    "VK_KHRONOS_PROFILES_EXCLUDE_DEVICE_EXTENSIONS": "VK_EXT_descriptor_indexing,VK_EXT_descriptor_buffer"
+  }
+}

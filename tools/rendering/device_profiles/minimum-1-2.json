@@ -1,0 +1,8 @@
+{
+  "description": "Minimum Vulkan 1.2 requirements (VP_LUNARG_minimum_requirements_1_2): the smallest core-only device. No optional extensions at all, so every optional path in the renderer must fall back cleanly.",
+  "profile_file": "VP_LUNARG_minimum_requirements.json",
+  "profile_name": "VP_LUNARG_minimum_requirements_1_2",
+  "env": {
+    "VK_KHRONOS_PROFILES_EMULATE_PORTABILITY": "true"
+  }
+}

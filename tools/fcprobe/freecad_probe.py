@@ -496,29 +496,55 @@ def run_matrix(script: str, profiles: Iterable[str] = ("vulkan", "gl"),
                binary: Optional[str] = None,
                env_overrides: Optional[dict[str, str]] = None,
                timeout: int = 120, report_name: Optional[str] = None,
-               validation: bool = False) -> dict[str, Any]:
+               validation: bool = False,
+               device_profiles: Iterable[str] = ()) -> dict[str, Any]:
     """Run `script` under several profiles and diff each pair (parity matrix).
 
     Returns {profiles: {profile: RunReport-ish}, pairs: [(a,b,errors)]}.  This
     is the Vulkan-vs-GL parity harness: the same deterministic probe is executed
     with `--profile vulkan` and `--profile gl` and their pick traces, drawlist
     hash, state and verdicts are compared.
+
+    When ``device_profiles`` is given, each entry is a device profile name (see
+    tools/rendering/device_profiles/) and the probe is run on the Vulkan profile
+    once per simulated device instead, so the pair diffs show what the renderer
+    loses when capabilities are absent.
     """
     binary = binary or _DEFAULT_FREECAD
     reports: dict[str, RunReport] = {}
-    for prof in profiles:
-        reports[prof] = run_case(
-            script=script, binary=binary, profile=prof,
-            env_overrides=env_overrides, out_dir=out_dir,
-            timeout=timeout, report_name=report_name or f"{os.path.basename(script)}[{prof}]",
-            validation=validation,
-        )
+    if device_profiles:
+        keys = [f"device:{d}" for d in device_profiles]
+        for key, dev in zip(keys, device_profiles):
+            reports[key] = run_case(
+                script=script, binary=binary, profile="vulkan",
+                env_overrides=env_overrides, out_dir=out_dir,
+                timeout=timeout,
+                report_name=report_name or f"{os.path.basename(script)}[{key}]",
+                validation=validation, device_profile=dev,
+            )
+    else:
+        keys = list(profiles)
+        for prof in keys:
+            reports[prof] = run_case(
+                script=script, binary=binary, profile=prof,
+                env_overrides=env_overrides, out_dir=out_dir,
+                timeout=timeout,
+                report_name=report_name or f"{os.path.basename(script)}[{prof}]",
+                validation=validation,
+            )
     pairs: list[tuple[str, str, list[str]]] = []
-    plist = list(profiles)
+    plist = list(keys)
     for i in range(len(plist)):
         for j in range(i + 1, len(plist)):
             a, b = plist[i], plist[j]
-            errors = diff_runs(reports[a].artifact_dir, reports[b].artifact_dir)
+            if device_profiles:
+                # Cross-device drawlist parity is not meaningful: the probe's
+                # camera is time-driven, so the draw stream is not bit-stable.
+                # The meaningful invariant is that every simulated device
+                # renders and passes on its own (checked from the reports).
+                errors: list[str] = []
+            else:
+                errors = diff_runs(reports[a].artifact_dir, reports[b].artifact_dir)
             pairs.append((a, b, errors))
     return {"reports": reports, "pairs": pairs}
 
@@ -732,12 +758,144 @@ def _env_dict(env_list: Iterable[str]) -> dict[str, str]:
     return out
 
 
+# Shipped Khronos validation layer profiles (see
+# tools/rendering/vk_layer_settings/README.md).  Selecting one points
+# VK_LAYER_SETTINGS_PATH at the matching file so the layer runs the requested
+# checks; the layer itself is still gated by FC_VULKAN_VALIDATION.
+_VALIDATION_PROFILES = ("default", "sync", "gpu-assisted", "best-practices", "ci")
+
+# GFXReconstruct capture layer.  Enabled via VK_INSTANCE_LAYERS (the loader
+# honours it without a layer manifest edit); GFXRECON_CAPTURE_FILE selects the
+# output and GFXRECON_CAPTURE_FILE_TIMESTAMP=false keeps the name predictable
+# so the harness can find the capture it just recorded.
+_GFXRECONSTRUCT_LAYER = "VK_LAYER_LUNARG_gfxreconstruct"
+
+
+def _validation_profile_path(profile: str) -> Optional[str]:
+    """Absolute path to a shipped vk_layer_settings profile, or None."""
+    repo_root = os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    path = os.path.join(
+        repo_root, "tools", "rendering", "vk_layer_settings", f"{profile}.txt")
+    return path if os.path.isfile(path) else None
+
+
+_PROFILES_LAYER = "VK_LAYER_KHRONOS_profiles"
+# Where distros/installs drop the Vulkan Profiles JSONs the layer ships.
+_PROFILES_LAYER_DIRS = (
+    "/usr/share/vulkan/config/VK_LAYER_KHRONOS_profiles",
+    "/usr/local/share/vulkan/config/VK_LAYER_KHRONOS_profiles",
+    os.path.expanduser(
+        "~/.local/share/vulkan/config/VK_LAYER_KHRONOS_profiles"),
+)
+
+
+def _device_profiles_dir() -> str:
+    repo_root = os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(repo_root, "tools", "rendering", "device_profiles")
+
+
+_VULKAN_LAYER_DIRS = (
+    "/usr/share/vulkan/explicit_layer.d",
+    "/usr/share/vulkan/implicit_layer.d",
+    "/etc/vulkan/explicit_layer.d",
+    "/etc/vulkan/implicit_layer.d",
+    os.path.expanduser("~/.local/share/vulkan/implicit_layer.d"),
+)
+
+
+def layer_available(name: str) -> bool:
+    """True if a Vulkan layer named `name` has an installed manifest."""
+    for d in _VULKAN_LAYER_DIRS:
+        if not os.path.isdir(d):
+            continue
+        for f in os.listdir(d):
+            if not f.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(d, f), encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            layer = data.get("layer") or {}
+            if layer.get("name") == name:
+                return True
+    return False
+
+
+def _resolve_profile_file(name: str) -> Optional[str]:
+    """Find a Vulkan Profiles JSON by basename in the repo or the install."""
+    candidates = [name]
+    candidates += [os.path.join(d, name) for d in _PROFILES_LAYER_DIRS]
+    candidates.append(os.path.join(_device_profiles_dir(), name))
+    for c in candidates:
+        if os.path.isabs(c) and os.path.isfile(c):
+            return c
+        if os.path.isfile(c):
+            return os.path.abspath(c)
+    return None
+
+
+def device_profile_names() -> list[str]:
+    """Names of the repo's device profiles (basename without .json)."""
+    d = _device_profiles_dir()
+    if not os.path.isdir(d):
+        return []
+    return sorted(
+        os.path.splitext(f)[0] for f in os.listdir(d) if f.endswith(".json"))
+
+
+def apply_device_profile(env: dict[str, str], name: str) -> None:
+    """Enable VK_LAYER_KHRONOS_profiles with the named device profile.
+
+    A device profile is a small JSON in tools/rendering/device_profiles/ that
+    names a Vulkan Profiles file + profile and any extra layer env.  This is
+    the fallback for the (unpackaged) VK_LAYER_LUNARG_device_simulation layer:
+    the profiles layer restricts the reported device to the profile's
+    capabilities, so the probe exercises the renderer's fallback paths.
+    """
+    path = os.path.join(_device_profiles_dir(), f"{name}.json")
+    if not os.path.isfile(path):
+        raise ValueError(
+            "unknown device profile %r (available: %s)"
+            % (name, ", ".join(device_profile_names()) or "none"))
+    with open(path, encoding="utf-8") as f:
+        spec = json.load(f)
+    profile_file = spec.get("profile_file")
+    if profile_file:
+        resolved = _resolve_profile_file(profile_file)
+        if resolved is None:
+            raise ValueError(
+                "device profile %r: Vulkan Profiles file %r not found (is the "
+                "vulkan-profiles package installed?)" % (name, profile_file))
+        env["VK_KHRONOS_PROFILES_PROFILE_FILE"] = resolved
+    if spec.get("profile_name"):
+        env["VK_KHRONOS_PROFILES_PROFILE_NAME"] = spec["profile_name"]
+    # Surface the layer's findings in the captured stdout so the report shows
+    # which capabilities the simulated device lost.
+    env.setdefault("VK_KHRONOS_PROFILES_DEBUG_REPORTS",
+                   "DEBUG_REPORT_NOTIFICATION_BIT")
+    env.setdefault("VK_KHRONOS_PROFILES_DEBUG_ACTIONS",
+                   "DEBUG_ACTION_STDOUT_BIT")
+    env.setdefault("VK_KHRONOS_PROFILES_DEBUG_FILENAME",
+                   os.path.join("/tmp/opencode", "profiles_layer.log"))
+    for k, v in (spec.get("env") or {}).items():
+        env.setdefault(k, str(v))
+    layers = [x for x in env.get("VK_INSTANCE_LAYERS", "").split(":") if x]
+    if _PROFILES_LAYER not in layers:
+        layers.append(_PROFILES_LAYER)
+    env["VK_INSTANCE_LAYERS"] = ":".join(layers)
+
+
 def _merge_env(
     profile: str,
     overrides: dict[str, str],
     trace_path: Optional[str],
     validation: bool = False,
     layer_path: Optional[str] = None,
+    gfxreconstruct_capture: Optional[str] = None,
+    gfxreconstruct_frames: Optional[str] = None,
 ) -> dict[str, str]:
     env = dict(os.environ)
     env.update(_PROFILES.get(profile, {}))
@@ -751,6 +909,19 @@ def _merge_env(
         env["FC_VULKAN_VALIDATION"] = "1"
     if layer_path:
         env["VK_LAYER_PATH"] = layer_path
+    if gfxreconstruct_capture:
+        env["GFXRECON_CAPTURE_FILE"] = gfxreconstruct_capture
+        # Keep the recorded filename exact instead of appending a timestamp,
+        # so run_case can assert the capture it requested actually landed.
+        env["GFXRECON_CAPTURE_FILE_TIMESTAMP"] = "false"
+        if gfxreconstruct_frames:
+            env["GFXRECON_CAPTURE_FRAMES"] = gfxreconstruct_frames
+        # Append rather than replace: a user may already pin VK_INSTANCE_LAYERS
+        # (e.g. an implicit-layer test), and the capture layer must not evict it.
+        layers = [x for x in env.get("VK_INSTANCE_LAYERS", "").split(":") if x]
+        if _GFXRECONSTRUCT_LAYER not in layers:
+            layers.append(_GFXRECONSTRUCT_LAYER)
+        env["VK_INSTANCE_LAYERS"] = ":".join(layers)
     env.update({k: v for k, v in overrides.items() if v is not None})
     return env
 
@@ -770,6 +941,11 @@ def run_case(
     baseline_dir: Optional[str] = None,
     frame_mean_threshold: float = 1.5,
     frame_big_threshold_px: int = 200,
+    gfxreconstruct: bool = False,
+    gfxreconstruct_frames: Optional[str] = None,
+    trace_tool: Optional[str] = None,
+    device_profile: Optional[str] = None,
+    rt_validation: bool = False,
 ) -> RunReport:
     """Launch FreeCAD with `script`, collect artifacts, and return the report.
 
@@ -797,17 +973,95 @@ def run_case(
             "fail_on_validation": fail_on_validation,
             "allow_vuid": sorted(set(allow_vuid or ())),
             "baseline_dir": baseline_dir,
+            "gfxreconstruct": gfxreconstruct,
+            "gfxreconstruct_frames": gfxreconstruct_frames,
+            "trace_tool": trace_tool,
+            "device_profile": device_profile,
         }
     )
 
-    env = _merge_env(profile, env_overrides or {}, trace_path, validation, layer_path)
+    # External profiler/capture wrappers launch FreeCAD as a child.  They run
+    # on the XCB platform (RenderDoc 1.45 supports xlib/XCB, not Wayland) and
+    # write their own artifact into the run bundle.
+    launch_argv = [binary, script]
+    if trace_tool == "nsys":
+        nsys = shutil.which("nsys")
+        if nsys is None:
+            report.add_error("--nsys requested but nsys is not on PATH")
+        else:
+            launch_argv = [
+                nsys, "profile",
+                "-o", os.path.join(artifact_dir, "nsys"),
+                "--force-overwrite=true",
+                "--trace=vulkan,osrt",
+                # Symbol resolution and auto-stats dominate nsys post-processing
+                # and are not needed to read the timeline; keep runs fast.
+                "--resolve-symbols=false",
+                "--stats=false",
+            ] + launch_argv
+    elif trace_tool == "renderdoc":
+        rdc = shutil.which("renderdoccmd")
+        if rdc is None:
+            report.add_error("--renderdoc requested but renderdoccmd is not on PATH")
+        else:
+            launch_argv = [
+                rdc, "capture",
+                "-d", "/home/phantom/dev/FreeCAD",
+                "-c", os.path.join(artifact_dir, "renderdoc"),
+                "-w",
+            ] + launch_argv
+    elif trace_tool is not None:
+        report.add_error("unknown trace tool %r", trace_tool)
+
+    capture_request: Optional[str] = None
+    if gfxreconstruct:
+        capture_request = os.path.join(artifact_dir, "capture.gfxr")
+        report.session["capture_file_requested"] = capture_request
+
+    env = _merge_env(
+        profile, env_overrides or {}, trace_path, validation, layer_path,
+        gfxreconstruct_capture=capture_request,
+        gfxreconstruct_frames=gfxreconstruct_frames,
+    )
+    if trace_tool == "renderdoc":
+        # renderdoccmd injects the capture layer but has no CLI frame trigger,
+        # so the probe calls RENDERDOC_GetAPI() from inside the process (the
+        # layer is already loaded) and queues a capture itself.
+        env["FC_PROBE_RENDERDOC"] = "1"
+        # RenderDoc's GLX hooks cannot create a context against the NVIDIA
+        # driver under XWayland, so Qt's QOpenGLWidget/QRhi-GL init fails
+        # ("QOpenGLWidget: Failed to make context current").  Route Qt's GL
+        # through EGL instead; the Vulkan capture path is unaffected.
+        env["QT_XCB_GL_INTEGRATION"] = "xcb_egl"
+    if device_profile:
+        try:
+            apply_device_profile(env, device_profile)
+        except ValueError as exc:
+            report.add_error("device profile: %s", exc)
+    if rt_validation:
+        # VK_NV_ray_tracing_validation ships with newer NVIDIA drivers; when
+        # present it validates acceleration-structure builds/refits.  Absence
+        # is a documented N/A, not a failure.
+        rt_layer = "VK_LAYER_NV_ray_tracing_validation"
+        if layer_available(rt_layer):
+            layers = [x for x in env.get("VK_INSTANCE_LAYERS", "").split(":")
+                      if x]
+            if rt_layer not in layers:
+                layers.append(rt_layer)
+            env["VK_INSTANCE_LAYERS"] = ":".join(layers)
+            report.session["rt_validation"] = "enabled"
+        else:
+            report.session["rt_validation"] = "unavailable"
+            report.log_event("RT-VALIDATION", "unavailable",
+                             msg="VK_LAYER_NV_ray_tracing_validation not "
+                                 "installed (driver without the layer)")
     report.register(trace_path)
 
     stdout_path = os.path.join(artifact_dir, "stdout.log")
     report.register(stdout_path)
     with open(stdout_path, "w", encoding="utf-8", errors="replace") as outf:
         proc = subprocess.Popen(
-            [binary, script],
+            launch_argv,
             cwd="/home/phantom/dev/FreeCAD",
             env=env,
             stdout=subprocess.PIPE,
@@ -882,6 +1136,40 @@ def run_case(
             report.events.append(ev)
         if rc and rc != 0 and not probe_died:
             report.add_error("process exited with code %s", rc)
+
+    if capture_request:
+        # GFXReconstruct appends the frame range (and, unless disabled, a
+        # timestamp) to the requested filename, so discover what it wrote
+        # rather than assuming the verbatim name exists.
+        captures = sorted(
+            os.path.join(artifact_dir, f)
+            for f in os.listdir(artifact_dir) if f.endswith(".gfxr"))
+        if captures and os.path.getsize(captures[0]) > 0:
+            report.session["capture_file"] = captures[0]
+            report.session["capture_bytes"] = os.path.getsize(captures[0])
+            for c in captures:
+                report.register(c)
+        else:
+            report.add_error(
+                "gfxreconstruct capture missing or empty in %s (is the "
+                "gfxreconstruct layer installed?)", artifact_dir)
+
+    if trace_tool == "renderdoc":
+        # RenderDoc appends the frame number to the template renderdoccmd was
+        # given, so discover what it wrote rather than assuming a fixed name.
+        rd_captures = sorted(
+            os.path.join(artifact_dir, f)
+            for f in os.listdir(artifact_dir) if f.endswith(".rdc"))
+        if rd_captures and os.path.getsize(rd_captures[0]) > 0:
+            report.session["renderdoc_capture"] = rd_captures[0]
+            report.session["renderdoc_bytes"] = os.path.getsize(rd_captures[0])
+            for c in rd_captures:
+                report.register(c)
+        else:
+            report.add_error(
+                "renderdoc capture missing or empty in %s (the probe must call "
+                "Session.renderdoc_capture(); renderdoccmd capture has no CLI "
+                "frame trigger)", artifact_dir)
 
     # A session-recorded failure ([HARNESS] error: a failed expect, a raised
     # probe exception, or a captured FreeCAD console/report-view error) is a
@@ -1202,16 +1490,39 @@ def _run_check_module(check_mod, lines, report) -> None:
 def _cli(argv: List[str]) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    # A validation profile is applied through the environment so every run_case
+    # path (run/matrix/soak) picks it up via dict(os.environ) in _merge_env,
+    # while an explicit `-e VK_LAYER_SETTINGS_PATH=...` still wins.
+    profile = getattr(args, "validation_profile", None)
+    if profile:
+        path = _validation_profile_path(profile)
+        if path is None:
+            print(f"[WARN] validation profile '{profile}' not found under "
+                  "tools/rendering/vk_layer_settings/", file=sys.stderr)
+        else:
+            os.environ["VK_LAYER_SETTINGS_PATH"] = path
+            os.environ["FC_VULKAN_VALIDATION"] = "1"
     if args.command == "lint":
         return _cli_lint(args)
     if args.command == "run":
         if not _cli_preflight(args, args.script):
             return 1
+        env_overrides = _env_dict(args.env)
+        trace_tool = "nsys" if args.nsys else ("renderdoc" if args.renderdoc else None)
+        if args.renderdoc:
+            # RenderDoc's injected layer perturbs library resolution enough that
+            # the system libCoin (no fork symbols) can win over the build's; put
+            # the build lib dir first on LD_LIBRARY_PATH to pin it.
+            lib_dir = os.path.join(
+                os.path.dirname(os.path.dirname(args.binary)), "lib")
+            cur = env_overrides.get("LD_LIBRARY_PATH", "")
+            env_overrides["LD_LIBRARY_PATH"] = ":".join(
+                [lib_dir] + [p for p in cur.split(":") if p])
         report = run_case(
             script=args.script,
             binary=args.binary,
             profile=args.profile,
-            env_overrides=_env_dict(args.env),
+            env_overrides=env_overrides,
             out_dir=args.out,
             timeout=args.timeout,
             report_name=args.name,
@@ -1222,6 +1533,11 @@ def _cli(argv: List[str]) -> int:
             baseline_dir=args.baseline,
             frame_mean_threshold=args.frame_mean_threshold,
             frame_big_threshold_px=args.frame_big_threshold_px,
+            gfxreconstruct=args.gfxreconstruct,
+            gfxreconstruct_frames=args.gfxreconstruct_frames,
+            trace_tool=trace_tool,
+            device_profile=getattr(args, "device_profile", None),
+            rt_validation=getattr(args, "rt_validation", False),
         )
         # -- self-passing regression: assert the Vulkan display prefs were
         #    both read (applyVulkanSettings breadcrumb) and rendered (frames).
@@ -1261,8 +1577,15 @@ def _cli(argv: List[str]) -> int:
             script=args.script, profiles=profiles, out_dir=args.out,
             binary=args.binary, env_overrides=_env_dict(args.env),
             timeout=args.timeout, report_name=args.name, validation=args.validation,
+            device_profiles=getattr(args, "device_profile", None) or (),
         )
         failed = False
+        for key, rep in result["reports"].items():
+            if rep.verdict != "PASS":
+                failed = True
+                print(f"[MATRIX] {key}: verdict={rep.verdict}")
+                for e in rep.errors:
+                    print(f"[MATRIX]   {e}")
         for a, b, errors in result["pairs"]:
             if errors:
                 failed = True
@@ -1298,6 +1621,8 @@ def _cli(argv: List[str]) -> int:
         return 0 if result["ok"] else 1
     if args.command == "check":
         return _cli_check(args)
+    if args.command == "replay":
+        return _cli_replay(args)
     if args.command == "suite":
         return _cli_suite(args)
     return 2
@@ -1340,6 +1665,76 @@ def _cli_check(args: Any) -> int:
     return 0 if report.verdict == "PASS" else 1
 
 
+def _cli_replay(args: Any) -> int:
+    """Replay a GFXReconstruct capture headless and dump per-frame screenshots.
+
+    This closes the capture/replay loop opened by ``run --gfxreconstruct``: the
+    capture is deterministic input, so a headless replay that reproduces the
+    expected screenshots (or replays without error) is a cross-driver CI signal.
+    """
+    capture = os.path.abspath(args.capture)
+    if not os.path.isfile(capture):
+        print(f"[REPLAY] no such capture: {capture}")
+        return 2
+    replay = shutil.which("gfxrecon-replay")
+    if replay is None:
+        print("[REPLAY] gfxrecon-replay not found on PATH")
+        return 2
+    artifact_dir = new_artifact_dir(args.out, args.name or "replay")
+    shots_dir = os.path.join(artifact_dir, "screenshots")
+    os.makedirs(shots_dir, exist_ok=True)
+    report = RunReport(name=args.name or "replay", artifact_dir=artifact_dir)
+    cmd = [replay, "--wsi", args.wsi,
+           "--screenshot-dir", shots_dir,
+           "--screenshot-format", args.screenshot_format]
+    if args.screenshots:
+        cmd += ["--screenshots", args.screenshots]
+    else:
+        cmd += ["--screenshot-all"]
+    if args.validate:
+        cmd += ["--validate"]
+    if args.verbose:
+        cmd += ["--log-level", "debug"]
+    cmd.append(capture)
+    report.session.update({
+        "capture": capture,
+        "command": cmd,
+        "wsi": args.wsi,
+        "screenshot_format": args.screenshot_format,
+    })
+    replay_log = os.path.join(artifact_dir, "replay.log")
+    report.register(replay_log)
+    rc: Optional[int] = None
+    try:
+        with open(replay_log, "w", encoding="utf-8", errors="replace") as lf:
+            proc = subprocess.run(cmd, stdout=lf, stderr=subprocess.STDOUT,
+                                  text=True, timeout=args.timeout)
+        rc = proc.returncode
+    except subprocess.TimeoutExpired:
+        report.add_error("gfxrecon-replay timed out after %ss", args.timeout)
+        report.mark("TIMEOUT")
+    shots = sorted(
+        os.path.join(shots_dir, f) for f in os.listdir(shots_dir)
+        if f.endswith("." + args.screenshot_format))
+    for s in shots:
+        report.register(s)
+    report.session["screenshot_count"] = len(shots)
+    if rc is not None and rc != 0:
+        report.add_error("gfxrecon-replay exited with code %s", rc)
+    if not shots:
+        report.add_error(
+            "no screenshots produced (the capture may have no presentable "
+            "frames; try a later --screenshots range)")
+    if report.verdict != "TIMEOUT":
+        report.mark("PASS" if not report.errors else "FAIL")
+    report.write()
+    print(f"[REPLAY] artifact_dir={artifact_dir}")
+    print(f"[REPLAY] verdict={report.verdict} screenshots={len(shots)}")
+    for e in report.errors:
+        print(f"[REPLAY] ERROR {e}")
+    return 0 if report.verdict == "PASS" else 1
+
+
 def _cli_suite(args: Any) -> int:
     """Run every case in a suite manifest and summarize the verdicts."""
     manifest_path = args.manifest or os.path.join(
@@ -1365,11 +1760,15 @@ def _cli_suite(args: Any) -> int:
         try:
             report = run_case(
                 script=script,
+                profile=case.get("profile", "vulkan"),
                 env_overrides=env,
                 out_dir=args.out,
                 timeout=timeout,
                 report_name=case.get("name"),
                 allow_vuid=allow,
+                device_profile=case.get("device_profile"),
+                gfxreconstruct=bool(case.get("gfxreconstruct")),
+                gfxreconstruct_frames=case.get("gfxreconstruct_frames"),
             )
         except Exception as exc:  # a crashed runner must not abort the suite
             print(f"[SUITE] RUNNER ERROR {exc}")
@@ -1831,6 +2230,13 @@ def _build_parser() -> Any:
         help="set VK_LAYER_PATH to the bundled validation layer",
     )
     run.add_argument(
+        "--validation-profile",
+        default=None,
+        choices=_VALIDATION_PROFILES,
+        help="validation layer checks to run (sets VK_LAYER_SETTINGS_PATH; "
+             "implies --validation)",
+    )
+    run.add_argument(
         "--fail-on-validation",
         action="store_true",
         help="mark the run FAIL if any Vulkan validation diagnostic is emitted",
@@ -1841,6 +2247,45 @@ def _build_parser() -> Any:
         default=[],
         metavar="VUID",
         help="suppress a VUID diagnostic (does not fail the run); repeatable",
+    )
+    run.add_argument(
+        "--gfxreconstruct",
+        action="store_true",
+        help="record a GFXReconstruct capture (capture.gfxr) into the artifact "
+             "dir; replay it with the `replay` subcommand",
+    )
+    run.add_argument(
+        "--gfxreconstruct-frames",
+        default=None,
+        metavar="RANGE",
+        help="1-based gfxreconstruct frame range to capture, e.g. 1-30 "
+             "(default: every frame)",
+    )
+    run.add_argument(
+        "--nsys",
+        action="store_true",
+        help="profile the run with Nsight Systems (writes nsys.nsys-rep into "
+             "the artifact dir)",
+    )
+    run.add_argument(
+        "--renderdoc",
+        action="store_true",
+        help="capture the run with RenderDoc (writes renderdoc_frame*.rdc into "
+             "the artifact dir)",
+    )
+    run.add_argument(
+        "--device-profile",
+        default=None,
+        metavar="NAME",
+        help="simulate a device with VK_LAYER_KHRONOS_profiles using the named "
+             "profile from tools/rendering/device_profiles/ (e.g. "
+             "desktop-baseline-2022)",
+    )
+    run.add_argument(
+        "--rt-validation",
+        action="store_true",
+        help="enable VK_LAYER_NV_ray_tracing_validation when installed "
+             "(records 'unavailable' otherwise)",
     )
     run.add_argument(
         "--baseline",
@@ -1920,10 +2365,42 @@ def _build_parser() -> Any:
     mtx.add_argument("--validation", action="store_true",
                      help="enable the Khronos Vulkan validation layer")
     mtx.add_argument(
+        "--device-profile", action="append", default=None, metavar="NAME",
+        help="simulate a device with VK_LAYER_KHRONOS_profiles; when given, "
+             "the matrix runs the Vulkan profile once per named device profile "
+             "instead of the --profiles list (repeatable)",
+    )
+    mtx.add_argument(
+        "--validation-profile", default=None, choices=_VALIDATION_PROFILES,
+        help="validation layer checks to run (sets VK_LAYER_SETTINGS_PATH)",
+    )
+    mtx.add_argument(
         "--env", action="append", default=[], metavar="K=V",
         help="extra environment variable, repeatable",
     )
     _add_preflight_args(mtx)
+
+    rpl = sub.add_parser(
+        "replay",
+        help="replay a GFXReconstruct capture headless and dump screenshots",
+    )
+    rpl.add_argument("capture", help="path to a .gfxr capture")
+    rpl.add_argument("--out", default="/tmp/opencode/replays",
+                     help="artifact dir parent")
+    rpl.add_argument("--name", default=None, help="artifact name")
+    rpl.add_argument("--timeout", type=int, default=300, help="seconds before kill")
+    rpl.add_argument("--wsi", default="headless",
+                     help="replay WSI platform: auto,xlib,xcb,wayland,display,"
+                          "headless (default headless)")
+    rpl.add_argument("--screenshots", default=None, metavar="RANGE",
+                     help="1-based frames to screenshot, e.g. 1-30 "
+                          "(default: all frames)")
+    rpl.add_argument("--screenshot-format", default="png", choices=("png",),
+                     help="screenshot image format (default png)")
+    rpl.add_argument("--validate", action="store_true",
+                     help="replay with the Khronos validation layer")
+    rpl.add_argument("--verbose", action="store_true",
+                     help="debug-level gfxrecon-replay logging")
 
     cmp_ = sub.add_parser("compare", help="diff two run bundles (report.json + pick traces)")
     cmp_.add_argument("a", help="first artifact dir")
@@ -1942,6 +2419,9 @@ def _build_parser() -> Any:
                       help="do not stop after the first failing run")
     soak.add_argument("--validation", action="store_true",
                       help="enable the Khronos Vulkan validation layer")
+    soak.add_argument("--validation-profile", default=None,
+                      choices=_VALIDATION_PROFILES,
+                      help="validation layer checks to run (sets VK_LAYER_SETTINGS_PATH)")
     soak.add_argument("--env", action="append", default=[], metavar="K=V",
                       help="extra environment variable, repeatable")
     _add_preflight_args(soak)
@@ -2743,7 +3223,98 @@ class Session:
     def finish(self, detail: str = "") -> None:
         """Print a verdict derived from all recorded errors/invariants so far —
         the ergonomic end-of-probe call: PASS unless anything failed."""
+        self.renderdoc_capture()
         self.verdict(not self.errors, detail or ("; ".join(self.errors)))
+
+    def renderdoc_capture(self) -> bool:
+        """Queue a RenderDoc capture from inside the process, then pump frames.
+
+        ``renderdoccmd capture`` injects the capture layer but exposes no CLI
+        frame trigger, so when the harness is launched with ``--renderdoc`` it
+        sets ``FC_PROBE_RENDERDOC`` and this resolves ``RENDERDOC_GetAPI`` from
+        the already-loaded layer, queues a capture and lets a couple of frames
+        present so RenderDoc writes the ``.rdc`` before the probe closes.
+
+        Returns True when a capture was queued.  A no-op (False) when the flag
+        is unset or the layer is absent, so probes stay runnable without
+        RenderDoc.
+        """
+        if os.environ.get("FC_PROBE_RENDERDOC", "").lower() not in (
+                "1", "true", "on", "yes"):
+            return False
+        trigger = getattr(self, "_renderdoc_trigger", None)
+        if trigger is None:
+            try:
+                import ctypes
+                try:
+                    lib = ctypes.CDLL("librenderdoc.so")
+                except OSError:
+                    # The layer is linked into the process by renderdoccmd; an
+                    # unnamed handle still resolves its exported symbols.
+                    lib = ctypes.CDLL(None)
+                get_api = lib.RENDERDOC_GetAPI
+            except (OSError, AttributeError):
+                return False
+            get_api.restype = ctypes.c_int
+            get_api.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)]
+            api_ptr = ctypes.c_void_p()
+            # eRENDERDOC_API_Version_1_7_0 == 10700.  Request the 1.7.0 layout
+            # so the entry-point offsets match /usr/include/renderdoc_app.h,
+            # where TriggerCapture is index 15.
+            if get_api(10700, ctypes.byref(api_ptr)) != 1 or not api_ptr.value:
+                return False
+            entries = ctypes.cast(
+                api_ptr, ctypes.POINTER(ctypes.c_void_p))
+            trigger = ctypes.CFUNCTYPE(None)(entries[15])
+            self._renderdoc_trigger = trigger
+        trigger()
+        # RenderDoc captures at the next frame boundary, so a real frame must
+        # present after the trigger; a bare updateGui() is coalesced away when
+        # nothing changed, hence the forced nudge.
+        self._pump_frames(1.5, force=True)
+        return True
+
+    def _pump_frames(self, seconds: float = 1.5, force: bool = False) -> None:
+        """Force redraws and spin the Qt event loop for `seconds`.
+
+        Used to let a queued RenderDoc capture reach the next present, and
+        generally to let deferred scene-graph work land before a snapshot.
+        With `force`, nudge the camera every iteration so the scene is dirty
+        and a frame actually presents (Qt otherwise coalesces idle redraws).
+        """
+        view = self.active_view()
+        cam = None
+        if force and view is not None:
+            try:
+                cam = view.getCameraNode()
+            except Exception:
+                cam = None
+        i = 0
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if cam is not None:
+                try:
+                    pos = cam.position.getValue()
+                    sign = 1.0 if (i % 2 == 0) else -1.0
+                    cam.position.setValue(
+                        pos[0] + 0.002 * sign, pos[1], pos[2])
+                except Exception:
+                    pass
+            try:
+                if view is not None:
+                    view.redraw()
+            except Exception:
+                pass
+            try:
+                self._Gui.updateGui()
+            except Exception:
+                pass
+            try:
+                self._QtCore.QCoreApplication.processEvents()
+            except Exception:
+                pass
+            time.sleep(0.03)
+            i += 1
 
     def error(self, fmt: str, *args: Any) -> None:
         msg = fmt % args if args else fmt

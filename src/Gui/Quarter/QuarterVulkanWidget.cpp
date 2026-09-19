@@ -1179,6 +1179,13 @@ public:
     // Descriptor-indexing update-after-bind: lets the RT backend legally
     // rewrite a descriptor set an in-flight command buffer still references.
     bool descriptorIndexingAvailable = false;
+    // VK_EXT_pipeline_creation_feedback: lets the backend log pipeline-cache
+    // hits and creation cost (FC_VULKAN_PIPELINE_FEEDBACK).
+    bool rtPipelineCreationFeedbackAvailable = false;
+    // VK_EXT_debug_printf (+ VK_KHR_shader_non_semantic_info): lets shaders
+    // compiled with COIN_ENABLE_DEBUG_PRINTF emit diagnostics
+    // (FC_VULKAN_DEBUG_PRINTF).
+    bool rtDebugPrintfAvailable = false;
     // Feature structs behind the optional extensions above.  They live on the
     // window object (not the modifier lambda) because QVulkanWindowPrivate::
     // init() reads the pNext chain after the callback returns.
@@ -1327,11 +1334,15 @@ void QuarterVulkanWidget::ensureSharedInstance()
         // FD export is usable.  Enabling them is free on 1.2+ and harmless if
         // the loader/driver lacks them (Qt tolerates unsupported instance
         // extensions in its setExtensions list).
+        // VK_EXT_debug_utils is enabled unconditionally: it is the instance
+        // half of the Coin renderer's optional object names / command-buffer
+        // labels (FC_VULKAN_DEBUG_UTILS), and an unused extension is free.
         g_sharedVulkanInstance.instance->setExtensions({
             QByteArrayLiteral("VK_KHR_external_memory_capabilities"),
             QByteArrayLiteral("VK_KHR_external_memory"),
             QByteArrayLiteral("VK_KHR_external_semaphore_capabilities"),
             QByteArrayLiteral("VK_KHR_external_semaphore"),
+            QByteArrayLiteral("VK_EXT_debug_utils"),
         });
         if (!g_sharedVulkanInstance.instance->create()) {
             vkWarn("QuarterVulkanWidget: could not create instance with "
@@ -1486,6 +1497,10 @@ void QuarterVulkanWidget::selectPhysicalDevice()
         caps.externalMemoryFd = hasExt("VK_KHR_external_memory_fd");
         caps.positionFetch = hasExt("VK_KHR_ray_tracing_position_fetch");
         caps.opacityMicromap = hasExt("VK_EXT_opacity_micromap");
+        caps.pipelineCreationFeedback =
+            hasExt("VK_EXT_pipeline_creation_feedback");
+        caps.debugPrintf = hasExt("VK_EXT_debug_printf") &&
+            hasExt("VK_KHR_shader_non_semantic_info");
         caps.nvCluster = hasExt("VK_NV_cluster_acceleration_structure");
         caps.nvPartitioned = hasExt("VK_NV_partitioned_acceleration_structure");
         caps.nvLinearSweptSpheres = hasExt("VK_NV_ray_tracing_linear_swept_spheres");
@@ -1548,6 +1563,9 @@ void QuarterVulkanWidget::selectPhysicalDevice()
     d->vulkanWindow->rtTimelineSemaphoreAvailable = best.timelineSemaphore;
     d->vulkanWindow->rtPositionFetchAvailable = best.positionFetch;
     d->vulkanWindow->rtOpacityMicromapAvailable = best.opacityMicromap;
+    d->vulkanWindow->rtPipelineCreationFeedbackAvailable =
+        best.pipelineCreationFeedback;
+    d->vulkanWindow->rtDebugPrintfAvailable = best.debugPrintf;
     d->vulkanWindow->rtNvClusterAvailable = best.nvCluster;
     d->vulkanWindow->rtNvPartitionedAvailable = best.nvPartitioned;
     d->vulkanWindow->rtNvLinearSweptSpheresAvailable = best.nvLinearSweptSpheres;
@@ -1649,6 +1667,17 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
         && d->vulkanWindow->synchronization2Available) {
         deviceExt << QByteArrayLiteral("VK_EXT_opacity_micromap")
                   << QByteArrayLiteral("VK_KHR_synchronization2");
+    }
+    if (d->vulkanWindow->rtPipelineCreationFeedbackAvailable) {
+        deviceExt << QByteArrayLiteral("VK_EXT_pipeline_creation_feedback");
+    }
+    // Shader-side diagnostics (debugPrintfEXT) are opt-in: the extension is
+    // only requested when FC_VULKAN_DEBUG_PRINTF is set, since it changes the
+    // SPIR-V the shaders must have been compiled with.
+    if (d->vulkanWindow->rtDebugPrintfAvailable &&
+        Base::envFlagEnabled("FC_VULKAN_DEBUG_PRINTF")) {
+        deviceExt << QByteArrayLiteral("VK_EXT_debug_printf")
+                  << QByteArrayLiteral("VK_KHR_shader_non_semantic_info");
     }
     if (d->vulkanWindow->rtNvClusterAvailable) {
         deviceExt << QByteArrayLiteral("VK_NV_cluster_acceleration_structure");
