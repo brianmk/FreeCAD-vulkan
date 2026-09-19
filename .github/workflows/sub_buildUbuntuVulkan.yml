@@ -97,6 +97,13 @@ jobs:
         with:
           submodules: true
 
+      - name: Check committed Vulkan SPIR-V header stamps
+        # Toolchain-free staleness gate: re-derives each shader's source hash
+        # from the GLSL and compares it with the stamp in the committed .spv.h.
+        # Deliberately does not run glslangValidator, so it is independent of
+        # the CI compiler's glslang version.
+        run: python3 tools/rendering/check_spirv_stamps.py
+
       - name: Install FreeCAD dependencies
         run: ./package/ubuntu/install-apt-packages.sh
 

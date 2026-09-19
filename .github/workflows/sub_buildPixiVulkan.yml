@@ -212,6 +212,15 @@ jobs:
         pixi-version: v0.68.1
         cache: false
 
+    - name: Check committed Vulkan SPIR-V header stamps
+      if: "!inputs.skipBuild"
+      # Toolchain-free staleness gate: re-derives each shader's source hash
+      # from the GLSL and compares it with the stamp in the committed .spv.h.
+      # Deliberately does not run glslangValidator, so it is independent of the
+      # CI compiler's glslang version (which need not match the one that
+      # produced the committed SPIR-V bytes).
+      run: pixi run python tools/rendering/check_spirv_stamps.py
+
     - name: Restore Compiler Cache
       id: cache-restore
       if: "!inputs.skipBuild"

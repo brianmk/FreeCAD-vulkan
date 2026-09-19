@@ -141,7 +141,7 @@ next touched.
 | Harness | What it covers | Command |
 |---|---|---|
 | `tools/rendering/verify_renderer.sh` | ABI sentinel + ctest subset (+ optional preci/suite) | `tools/rendering/verify_renderer.sh` |
-| Coin testsuite (`src/3rdParty/coin/testsuite/vulkan`) | 23 headless backend tests (lifecycle, depth, culling, textures, parallel recording, …) | `cmake -DCOIN_BUILD_TESTS=ON` then ctest |
+| Coin testsuite (`src/3rdParty/coin/testsuite/vulkan`) | 22 headless backend tests (lifecycle, depth, culling, textures, parallel recording, …) | `cmake -DCOIN_BUILD_TESTS=ON` then ctest |
 | fcprobe (`tools/fcprobe/freecad_probe.py`) | GUI probes, regression suite `vk_suite.json`, parity matrix, soak | `python3 tools/fcprobe/freecad_probe.py suite` |
 | Frame dumper (`FC_VULKAN_DUMP_FRAME=1`, `DUMP_START/END`) | golden-frame A/B; proves a refactor pixel-identical | `run --baseline DIR` |
 | ABI sentinel (`tools/rendering/abi_sentinel.py`) | exported symbol set vs `abi_baseline.json`; refresh with `--capture` when intentional | part of `verify_renderer.sh` |
@@ -151,10 +151,26 @@ next touched.
 Tracked in the renderer architecture cleanup:
 
 - **Dual frame paths** — `render()` and `renderExternal()` duplicate pass/
-  framebuffer/clear/texture-upload handling.
-- **God class** — `SoVulkanRenderBackend` holds the frame pump, three caches,
-  the worker pool and the CPU wide-line expander in one class; splitting into
-  collaborating parts is the keystone refactor.
+  framebuffer/clear/texture-upload handling.  The per-frame work still needs a
+  single `FramePlan`; the texture side is now factored out (below).
+- **God class** — `SoVulkanRenderBackend` holds the frame pump, caches, the
+  worker pool and the CPU wide-line expander in one class; splitting into
+  collaborating parts is the keystone refactor.  Extracted so far:
+  `SoVulkanGpuTimers`, `SoVulkanPipelineCache`, `SoVulkanRenderPassCache`,
+  `SoVulkanSamplerCache`, `SoVulkanStagingPool`, `SoVulkanBufferFactory`,
+  `SoVulkanFrameRing` (primary command buffers + fences) and
+  `SoVulkanTextureCache` (per-command entries, staging/upload path, eviction
+  sweep, white fallback).  The texture cache moved the generation sweep and
+  index re-resolution out of `updateGeometryCache()`, so the geometry loop now
+  just calls `prepareCommand()`/`sweep()`; it borrows the shared set-1
+  descriptor pool and the deferred-destruction ring from the backend via
+  callbacks.  The secondary command buffers/pools and the record pool stay in
+  the backend (the parallel-recording subsystem, not the frame ring).  The
+  device handles themselves (`device`/`physicalDevice`/`vmaAllocator`/…) are
+  still backend members used directly in ~100+ places, so the buffer factory
+  *borrows* them rather than owning them; a true `SoVulkanDevice` that owns the
+  handles is a later, higher-churn step.  The geometry cache remains grouped
+  with the `FramePlan` work.
 - **Two geometry stacks** — the raster and RT backends each upload meshes in
   their own format with their own cache and memory policy.  While ray tracing
   is active the raster backend is only compositing overlays/residue and
