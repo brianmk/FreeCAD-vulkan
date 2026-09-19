@@ -155,8 +155,13 @@ Tracked in the renderer architecture cleanup:
 - **God class** — `SoVulkanRenderBackend` holds the frame pump, three caches,
   the worker pool and the CPU wide-line expander in one class; splitting into
   collaborating parts is the keystone refactor.
-- **Two geometry stacks** — the raster and RT backends each upload the same
-  meshes in their own format with their own cache and memory policy.
+- **Two geometry stacks** — the raster and RT backends each upload meshes in
+  their own format with their own cache and memory policy.  While ray tracing
+  is active the raster backend is only compositing overlays/residue and
+  releases the traced triangle geometry
+  (`SoVulkanRenderBackend::setOverlayCompositeMode`), so the two stacks do not
+  hold the same meshes resident at once; the formats and caches are still
+  separate.
 - **Hidden GL viewer as interaction authority** — navigation/picking still run
   on the never-rendered OpenGL viewer, so viewport features must work in both
   stacks and coordinate systems are hand-synced.
