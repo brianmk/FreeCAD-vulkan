@@ -512,6 +512,9 @@ def run_matrix(script: str, profiles: Iterable[str] = ("vulkan", "gl"),
     """
     binary = binary or _DEFAULT_FREECAD
     reports: dict[str, RunReport] = {}
+    # Materialize once: the keys loop and the run loop below both consume
+    # device_profiles, and a generator would be exhausted by the first.
+    device_profiles = list(device_profiles)
     if device_profiles:
         keys = [f"device:{d}" for d in device_profiles]
         for key, dev in zip(keys, device_profiles):
@@ -1006,7 +1009,10 @@ def run_case(
         else:
             launch_argv = [
                 rdc, "capture",
-                "-d", "/home/phantom/dev/FreeCAD",
+                # Run the target from the harness's own working directory
+                # (nsys inherits it implicitly); a hardcoded path would only
+                # work on one developer's checkout.
+                "-d", os.getcwd(),
                 "-c", os.path.join(artifact_dir, "renderdoc"),
                 "-w",
             ] + launch_argv
@@ -2261,13 +2267,14 @@ def _build_parser() -> Any:
         help="1-based gfxreconstruct frame range to capture, e.g. 1-30 "
              "(default: every frame)",
     )
-    run.add_argument(
+    trace_tool_group = run.add_mutually_exclusive_group()
+    trace_tool_group.add_argument(
         "--nsys",
         action="store_true",
         help="profile the run with Nsight Systems (writes nsys.nsys-rep into "
              "the artifact dir)",
     )
-    run.add_argument(
+    trace_tool_group.add_argument(
         "--renderdoc",
         action="store_true",
         help="capture the run with RenderDoc (writes renderdoc_frame*.rdc into "
