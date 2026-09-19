@@ -28,7 +28,7 @@
 
 #include <App/Application.h>
 #include <Base/Quantity.h>
-#include <Gui/MetaTypes.h>
+#include <App/MetaTypes.h>
 #include <src/App/InitApplication.h>
 #include <src/TempDirectory.h>
 

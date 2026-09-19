@@ -133,6 +133,14 @@ if(FREECAD_USE_VULKAN)
     # when this macro is set, so FreeCAD must define it for its own
     # compilation of those headers (e.g. QuarterVulkanWidget.cpp).
     target_compile_definitions(FreeCADGui PRIVATE COIN_BUILD_VULKAN_RENDERER=1)
+    # Debug/test hooks (synthetic mouse injector + frame dumper).  Auto-on for
+    # Debug builds, where the fcprobe harness uses them; a release build only
+    # gets them with an explicit -DFREECAD_USE_VULKAN_DEBUG_HOOKS=ON.
+    # $<CONFIG:Debug> (not CMAKE_BUILD_TYPE) so multi-config generators
+    # (MSVC/Xcode/Ninja Multi-Config) -- where CMAKE_BUILD_TYPE is empty -- still
+    # define the hooks for their Debug configuration.
+    target_compile_definitions(FreeCADGui PRIVATE
+        "$<$<OR:$<BOOL:${FREECAD_USE_VULKAN_DEBUG_HOOKS}>,$<CONFIG:Debug>>:FREECAD_VULKAN_DEBUG_HOOKS=1>")
     target_include_directories(FreeCADGui SYSTEM PRIVATE
         ${QtGui_INCLUDE_DIRS}
     )
@@ -1444,7 +1452,6 @@ SET(FreeCADGui_SRCS
     InputHintWidget.h
     Macro.h
     MergeDocuments.h
-    MetaTypes.h
     ModuleIO.h
     Notifications.h
     PreCompiled.h

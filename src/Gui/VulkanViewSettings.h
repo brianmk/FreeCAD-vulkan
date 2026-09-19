@@ -113,10 +113,13 @@ struct VulkanViewSettings
     //! Wireframe (edge) overlay and point overlay for the raster backend.
     bool wireframe = false;
     bool showPoints = false;
-    //! Interaction LOD: while the camera is navigating, drop the ray-traced
-    //! render to a single-bounce preview so an orbit/pan of a heavy scene
-    //! stays responsive; a clean full-quality accumulation restarts once the
-    //! camera settles.  Only affects the ray-traced view modes.
+    //! Interaction LOD: while the camera is navigating, reduce per-frame work
+    //! so an orbit/pan of a heavy scene stays responsive, then restore full
+    //! quality once the camera settles.  Applies to every Vulkan mode: a
+    //! ray-traced mode drops to a single-bounce preview, and a raster mode
+    //! draws wide lines as plain 1px GPU lines instead of expanding every edge
+    //! segment into quads on the CPU (the dominant navigation cost on large
+    //! edge sets).  The classic Coin/GL viewport is unaffected.
     bool interactionLod = true;
     SbColor4f edgeColor = SbColor4f(0.05f, 0.05f, 0.05f, 1.0f);
     // Path-tracing tuning (see the View preferences dialog).

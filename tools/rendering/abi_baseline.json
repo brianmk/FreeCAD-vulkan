@@ -1,0 +1,20 @@
+{
+  "layout": {
+    "SoGeometryDesc": 136,
+    "SoLightData": 60,
+    "SoLightingBlock": 784,
+    "SoLightingData": 40,
+    "SoMaterialData": 184,
+    "SoRenderBackendInitParams": 24,
+    "SoRenderCommand": 672,
+    "SoRenderParams": 256,
+    "SoRenderState": 124,
+    "SoTextureData": 48
+  },
+  "lib": "libCoin.so",
+  "lib_path": "build/debug/lib/libCoin.so",
+  "symbols": {
+    "count": 514,
+    "sha256": "fbdb8b0c42caa146fccb01a690d8c2452f818fee0156e9bcbe4185bdd2b64bce"
+  }
+}

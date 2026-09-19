@@ -39,7 +39,7 @@
 #include <Base/Vector3D.h>
 #include <Base/UnitsApi.h>
 #include <Gui/ExpressionBinding.h>
-#include <Gui/MetaTypes.h>
+#include <App/MetaTypes.h>
 #include <Gui/Widgets.h>
 
 #include <FCGlobal.h>

@@ -141,6 +141,11 @@ jobs:
         if: always()
         run: python3 src/Tools/sync_version.py --check
 
+    # Architecture layer guard: App-layer code must not include Gui/ headers.
+      - name: Check App layer does not include Gui headers
+        if: always()
+        run: python3 tools/lint/app_layer_includes.py
+
     # Generic lints steps
       - name: Check File Case Sensitivity
         uses: credfeto/action-case-checker@cb652aeab29ed363bbdb7d9ee1bfcc010c46cac5 # v1.3.0
