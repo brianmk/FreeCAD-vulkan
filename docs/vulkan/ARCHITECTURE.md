@@ -150,27 +150,39 @@ next touched.
 
 Tracked in the renderer architecture cleanup:
 
-- **Dual frame paths** — `render()` and `renderExternal()` duplicate pass/
-  framebuffer/clear/texture-upload handling.  The per-frame work still needs a
-  single `FramePlan`; the texture side is now factored out (below).
+- **Dual frame paths** — `render()` and `renderExternal()` now share a single
+  `FramePlan` (`beginFramePlan()` / `recordFramePlan()` in
+  `SoVulkanRenderBackendFrame.cpp`): target validation, frame matrices, the
+  frame boundary, lighting setup, the geometry-cache update and the composite
+  slot reservation are resolved once, and the record step is dispatched from
+  the same decision.  What still differs is the pass/framebuffer/command-buffer
+  lifecycle (the internal path owns it, the external path borrows the caller's)
+  and the texture-upload step (`SoVulkanTextureCache::recordPending()` inline
+  versus the external pre-pass).
 - **God class** — `SoVulkanRenderBackend` holds the frame pump, caches, the
   worker pool and the CPU wide-line expander in one class; splitting into
   collaborating parts is the keystone refactor.  Extracted so far:
   `SoVulkanGpuTimers`, `SoVulkanPipelineCache`, `SoVulkanRenderPassCache`,
   `SoVulkanSamplerCache`, `SoVulkanStagingPool`, `SoVulkanBufferFactory`,
-  `SoVulkanFrameRing` (primary command buffers + fences) and
+  `SoVulkanFrameRing` (primary command buffers + fences),
   `SoVulkanTextureCache` (per-command entries, staging/upload path, eviction
-  sweep, white fallback).  The texture cache moved the generation sweep and
-  index re-resolution out of `updateGeometryCache()`, so the geometry loop now
-  just calls `prepareCommand()`/`sweep()`; it borrows the shared set-1
-  descriptor pool and the deferred-destruction ring from the backend via
-  callbacks.  The secondary command buffers/pools and the record pool stay in
-  the backend (the parallel-recording subsystem, not the frame ring).  The
-  device handles themselves (`device`/`physicalDevice`/`vmaAllocator`/…) are
-  still backend members used directly in ~100+ places, so the buffer factory
-  *borrows* them rather than owning them; a true `SoVulkanDevice` that owns the
-  handles is a later, higher-churn step.  The geometry cache remains grouped
-  with the `FramePlan` work.
+  sweep, white fallback), `SoVulkanGeometryArena` (the shared vertex/index
+  blocks the cache carves per-command ranges out of) and
+  `SoVulkanGeometryCache` (the per-command entries + lookup map, the
+  per-command and shared-arena upload paths, and the generation/composite
+  eviction sweep).  The texture cache moved the generation sweep and index
+  re-resolution out of `updateGeometryCache()`, so the geometry loop now just
+  calls `prepareCommand()`/`sweep()`; it borrows the shared set-1 descriptor
+  pool and the deferred-destruction ring from the backend via callbacks.  The
+  geometry cache similarly borrows the arena, the buffer factory and the
+  deferred ring, and `updateGeometryCache()` is now the orchestrator that
+  drives it plus the texture cache.  The secondary command buffers/pools and
+  the record pool stay in the backend (the parallel-recording subsystem, not
+  the frame ring).  The device handles themselves (`device`/`physicalDevice`/
+  `vmaAllocator`/…) are still backend members used directly in ~100+ places, so
+  the buffer factory, the arena and the geometry cache *borrow* them rather
+  than owning them; a true `SoVulkanDevice` that owns the handles is a later,
+  higher-churn step.
 - **Two geometry stacks** — the raster and RT backends each upload meshes in
   their own format with their own cache and memory policy.  While ray tracing
   is active the raster backend is only compositing overlays/residue and
