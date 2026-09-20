@@ -58,8 +58,12 @@ ViewProviderSheet::ViewProviderSheet()
 
 ViewProviderSheet::~ViewProviderSheet()
 {
+    // A view provider can be destroyed during application shutdown, after the
+    // main window instance has been cleared.
     if (!view.isNull()) {
-        Gui::getMainWindow()->removeWindow(view);
+        if (auto* mw = Gui::getMainWindow()) {
+            mw->removeWindow(view);
+        }
     }
 }
 

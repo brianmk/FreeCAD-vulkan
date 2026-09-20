@@ -870,6 +870,11 @@ MainWindow::~MainWindow()
     }
     delete d->status;
     delete d;
+    // Child widgets are destroyed by ~QWidget *after* this body, and some of
+    // them (e.g. a TaskDlgAttacher) call back into MainWindow.  Null d so any
+    // such call that slips through a stale pointer is a guarded no-op rather
+    // than a use-after-free.
+    d = nullptr;
     instance = nullptr;
 }
 
@@ -3295,12 +3300,16 @@ void MainWindow::showStatus(int type, const QString& message)
 
 void MainWindow::showHints(const std::list<InputHint>& hints)
 {
-    d->hintLabel->showHints(hints);
+    if (d && d->hintLabel) {
+        d->hintLabel->showHints(hints);
+    }
 }
 
 void MainWindow::hideHints()
 {
-    d->hintLabel->clearHints();
+    if (d && d->hintLabel) {
+        d->hintLabel->clearHints();
+    }
 }
 
 // set text to the pane
