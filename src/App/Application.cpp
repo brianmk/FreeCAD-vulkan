@@ -2527,6 +2527,7 @@ void parseProgramOptions(int ac, char ** av, const std::string& exe, boost::prog
     ("set-config", boost::program_options::value< std::vector<std::string> >()->multitoken(), "Sets the value of a configuration key")
     ("keep-deprecated-paths", "If set then config files are kept on the old location")
     ("enable-vulkan", "Force enable the Vulkan renderer for 3D views (only when built with FREECAD_USE_VULKAN)")
+    ("no-focus", "Do not steal focus: open FreeCAD without activating its windows (best effort; on Wayland the compositor decides focus policy)")
     ;
 
     // Declare a group of options that will be
@@ -2806,6 +2807,13 @@ void processProgramOptions(const boost::program_options::variables_map& vm, std:
     if (vm.contains("enable-vulkan")) {
         VK_BREADCRUMB("[VK-TRACE] Application: --enable-vulkan -> UseVulkanRenderer=1\n");
         mConfig["UseVulkanRenderer"] = "1";
+    }
+
+    if (vm.contains("no-focus")) {
+        // Read by the GUI (MainWindow / StartupProcess) to show windows without
+        // activating them, so launching FreeCAD from a script/terminal does not
+        // pull focus away from the application the user is working in.
+        mConfig["SuppressFocusStealing"] = "1";
     }
 
     if (vm.contains("dump-config")) {

@@ -741,6 +741,23 @@ _PROFILES = {
         "LD_LIBRARY_PATH": "/tmp/opencode/boost91",
         "FC_SKIP_UNSAVED_PROMPT": "1",
     },
+    # Native Wayland variants: same as the xcb profiles above but without
+    # forcing the platform plugin, so Qt picks Wayland (the session's native
+    # platform) and the Vulkan viewport runs through VK_KHR_wayland_surface
+    # instead of XWayland.  Requires a live Wayland session.
+    "wayland": {
+        "QT_STYLE_OVERRIDE": "fusion",
+        "QT_QPA_PLATFORM": "wayland",
+        "LD_LIBRARY_PATH": "/tmp/opencode/boost91",
+        "FC_SKIP_UNSAVED_PROMPT": "1",
+        "FC_VULKAN_BREADCRUMBS": "1",
+    },
+    "gl-wayland": {
+        "QT_STYLE_OVERRIDE": "fusion",
+        "QT_QPA_PLATFORM": "wayland",
+        "LD_LIBRARY_PATH": "/tmp/opencode/boost91",
+        "FC_SKIP_UNSAVED_PROMPT": "1",
+    },
 }
 
 _DEFAULT_FREECAD = "/home/phantom/dev/FreeCAD/build/debug/bin/FreeCAD"
@@ -949,6 +966,7 @@ def run_case(
     trace_tool: Optional[str] = None,
     device_profile: Optional[str] = None,
     rt_validation: bool = False,
+    no_focus: bool = False,
 ) -> RunReport:
     """Launch FreeCAD with `script`, collect artifacts, and return the report.
 
@@ -986,7 +1004,9 @@ def run_case(
     # External profiler/capture wrappers launch FreeCAD as a child.  They run
     # on the XCB platform (RenderDoc 1.45 supports xlib/XCB, not Wayland) and
     # write their own artifact into the run bundle.
-    launch_argv = [binary, script]
+    # --no-focus makes FreeCAD set Qt::WA_ShowWithoutActivating so a headless
+    # probe never steals focus from the developer's desktop.
+    launch_argv = [binary] + (["--no-focus"] if no_focus else []) + [script]
     if trace_tool == "nsys":
         nsys = shutil.which("nsys")
         if nsys is None:
@@ -1544,6 +1564,7 @@ def _cli(argv: List[str]) -> int:
             trace_tool=trace_tool,
             device_profile=getattr(args, "device_profile", None),
             rt_validation=getattr(args, "rt_validation", False),
+            no_focus=getattr(args, "no_focus", False),
         )
         # -- self-passing regression: assert the Vulkan display prefs were
         #    both read (applyVulkanSettings breadcrumb) and rendered (frames).
@@ -1775,6 +1796,7 @@ def _cli_suite(args: Any) -> int:
                 device_profile=case.get("device_profile"),
                 gfxreconstruct=bool(case.get("gfxreconstruct")),
                 gfxreconstruct_frames=case.get("gfxreconstruct_frames"),
+                no_focus=getattr(args, "no_focus", False),
             )
         except Exception as exc:  # a crashed runner must not abort the suite
             print(f"[SUITE] RUNNER ERROR {exc}")
@@ -2336,6 +2358,12 @@ def _build_parser() -> Any:
         help="(deprecated; the pre-flight now always runs) run pre-flight "
              "checks and abort before launching FreeCAD if any ERROR is found",
     )
+    run.add_argument(
+        "--no-focus",
+        action="store_true",
+        help="pass --no-focus to FreeCAD so the probe run never steals focus "
+             "(Qt::WA_ShowWithoutActivating)",
+    )
     _add_preflight_args(run)
     lint = sub.add_parser(
         "lint",
@@ -2445,6 +2473,11 @@ def _build_parser() -> Any:
     suite.add_argument("--out", default="/tmp/opencode/runs", help="artifact parent dir")
     suite.add_argument("--timeout", type=int, default=300,
                        help="default seconds per case (cases may override)")
+    suite.add_argument(
+        "--no-focus",
+        action="store_true",
+        help="pass --no-focus to FreeCAD so no suite case steals focus",
+    )
     _add_preflight_args(suite)
     return p
 

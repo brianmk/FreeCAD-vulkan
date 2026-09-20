@@ -470,7 +470,11 @@ void StartupPostProcess::showMainWindow()
     // stop splash screen and set immediately the active window that may be of interest
     // for scripts using Python binding for Qt
     mainWindow->stopSplasher();
-    mainWindow->activateWindow();
+    // --no-focus suppresses the startup activation so launching FreeCAD does
+    // not pull focus from the application the user is working in.
+    if (App::Application::Config()["SuppressFocusStealing"] != "1") {
+        mainWindow->activateWindow();
+    }
 }
 
 void StartupPostProcess::activateWorkbench()

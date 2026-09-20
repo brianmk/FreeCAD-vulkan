@@ -9,8 +9,14 @@ export PATH_TO_FREECAD_LIBDIR=${HERE}/usr/lib
 export FONTCONFIG_FILE=/etc/fonts/fonts.conf
 export FONTCONFIG_PATH=/etc/fonts
 
-# Fix: Use X to run on Wayland
-export QT_QPA_PLATFORM=xcb
+# Use the session's native platform.  Qt 6 auto-selects Wayland when
+# WAYLAND_DISPLAY is set, so do not hardcode xcb here: the Vulkan viewport
+# supports native Wayland.  An explicit QT_QPA_PLATFORM is always honored, and
+# FREECAD_QPA_PLATFORM is an override for forcing XWayland (e.g.
+# FREECAD_QPA_PLATFORM=xcb) or another platform plugin.
+if [ -n "${FREECAD_QPA_PLATFORM:-}" ]; then
+    export QT_QPA_PLATFORM="${FREECAD_QPA_PLATFORM}"
+fi
 
 # Show packages info if DEBUG env variable is set
 if [ "$DEBUG" = 1 ]; then
