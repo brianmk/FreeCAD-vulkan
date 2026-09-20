@@ -428,9 +428,12 @@ void View3DInventor::setPathTracingEnabled(bool enabled)
     if (_vulkanAdapter) {
         _vulkanAdapter->setPathTracingEnabled(enabled);
     }
+#ifdef FREECAD_USE_VULKAN
     // Persist through the single VulkanRenderMode pref: enabling path tracing
     // is the PathTracing mode, disabling it falls back to the Vulkan raster
     // viewport, so a view reopen stays consistent with the mode selector.
+    // ViewRenderMode is declared only when the Vulkan renderer is built
+    // (VulkanViewSettings.h), so this must stay inside the guard.
     if (auto grp = App::GetApplication().GetParameterGroupByPath(
             "User parameter:BaseApp/Preferences/View")) {
         grp->SetInt(
@@ -440,6 +443,7 @@ void View3DInventor::setPathTracingEnabled(bool enabled)
             )
         );
     }
+#endif
 }
 
 void View3DInventor::setPathTracingStart(bool start)
