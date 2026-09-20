@@ -4,6 +4,7 @@
 
 #include "QuarterVulkanWidget.h"
 #include "devices/InputDevice.h"
+#include "eventhandlers/EventFilter.h"
 #include "QuarterWidget.h"
 #include "VulkanFrameDumper.h"
 #include <Base/VulkanBreadcrumbs.h>
@@ -1236,9 +1237,13 @@ public:
     SoNode * decorationScene = nullptr;
     SoCamera * camera = nullptr;
     bool rayTracing = false;
-    // Auto-nulled when the forwarded widget is destroyed, so the event
+    // Auto-nulled when the raw-event widget is destroyed, so the event
     // filter below can never dereference a dangling pointer.
-    QPointer<QWidget> forwardTarget;
+    QPointer<QWidget> rawEventTarget;
+    //! Translates mouse/wheel/keyboard events into Coin events (the widget is
+    //! an InputDeviceHost) and delivers them through eventSink.
+    EventFilter* eventFilter = nullptr;
+    std::function<bool(const SoEvent*)> eventSink;
 
     // Debug-only synthetic mouse injector state (see pollInjectFile()).
 #ifdef FREECAD_VULKAN_DEBUG_HOOKS
@@ -1282,9 +1287,15 @@ QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent, bool rayTracing)
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(d->container);
 
-    // Forward input events arriving on the Vulkan surface to the hidden
-    // OpenGL viewer (configured via setEventForwardTarget()) so navigation,
-    // picking and other viewport interaction keep working.
+    // The widget is an InputDeviceHost: translate mouse/wheel/keyboard events
+    // itself (via a Coin EventFilter) and deliver them to the event sink the
+    // viewport adapter wires to the InteractionController.  Events this filter
+    // does not handle (tablet/touch/context-menu) fall through to the widget's
+    // own event filter below, which relays them to the raw-event target.
+    d->eventFilter = new EventFilter(this);
+    d->container->installEventFilter(d->eventFilter);
+    d->window->installEventFilter(d->eventFilter);
+
     d->container->installEventFilter(this);
     d->window->installEventFilter(this);
 
@@ -1582,6 +1593,20 @@ void QuarterVulkanWidget::selectPhysicalDevice()
         best.synchronization2Extension;
     d->vulkanWindow->descriptorIndexingAvailable =
         best.descriptorIndexingUpdateAfterBind;
+    // Report the optional-capability probe once per device selection.  These
+    // caps gate which extensions/features are requested below, so a run that
+    // reports them absent is the signal that the selected device is a fallback
+    // (e.g. RADV) or that the extension names changed.  Gated on
+    // FC_VULKAN_RT_DEBUG like the backend's [RTDBG] lines; the Phase-0 probe
+    // (vk_rt_phase0_probe) parses it.
+    if (Base::envFlagEnabled("FC_VULKAN_RT_DEBUG")) {
+        std::fprintf(stderr,
+                     "[RTDBG] caps positionFetch=%d opacityMicromap=%d "
+                     "nvCluster=%d nvPartitioned=%d nvLinearSweptSpheres=%d\n",
+                     best.positionFetch ? 1 : 0, best.opacityMicromap ? 1 : 0,
+                     best.nvCluster ? 1 : 0, best.nvPartitioned ? 1 : 0,
+                     best.nvLinearSweptSpheres ? 1 : 0);
+    }
     if (d->rayTracing && !best.externalMemoryFd) {
         vkWarn("QuarterVulkanWidget: the selected device lacks "
                "VK_KHR_external_memory_fd; the CUDA/OptiX denoiser cannot "
@@ -1923,15 +1948,18 @@ void QuarterVulkanWidget::logSupportedSampleCounts()
 QuarterVulkanWidget::~QuarterVulkanWidget()
 {
     vkLog("QuarterVulkanWidget: destroying");
-    // Stop forwarding events before anything is freed: deferred events
-    // delivered to the container/window after `d` is gone would otherwise
-    // hit the event filter with a dangling private pointer.
+    // Stop translating/forwarding events before anything is freed: deferred
+    // events delivered to the container/window after `d` is gone would
+    // otherwise hit the event filter with a dangling private pointer.
     if (d->container) {
         d->container->removeEventFilter(this);
     }
     if (d->window) {
         d->window->removeEventFilter(this);
     }
+    delete d->eventFilter;
+    d->eventFilter = nullptr;
+    d->eventSink = nullptr;
     // The container owns the QVulkanWindow child; destroying it destroys
     // the window and the renderer it owns while the QVulkanInstance is
     // still alive (the renderer shutdown needs the device/queue).
@@ -2032,16 +2060,43 @@ void QuarterVulkanWidget::setEdgeColor(const SbColor4f & color)
     redraw();
 }
 
-void QuarterVulkanWidget::setEventForwardTarget(QWidget * target,
-                                                qreal targetDevicePixelRatio)
+void QuarterVulkanWidget::setRawEventTarget(QWidget * target)
 {
-    // The per-event scale is derived from both widgets' *live* device pixel
-    // ratios by InputDevice::crossWidgetPositionScale(); the ratio argument
-    // is kept only for API compatibility.  targetDevicePixelRatio is unused:
-    // reading a stale snapshot here is exactly what caused the forwarded pick
-    // point to be rescaled by 1/dpr on fractional-scaling displays.
-    Q_UNUSED(targetDevicePixelRatio);
-    d->forwardTarget = target;
+    d->rawEventTarget = target;
+}
+
+void QuarterVulkanWidget::setEventSink(std::function<bool(const SoEvent *)> sink)
+{
+    d->eventSink = std::move(sink);
+}
+
+qreal QuarterVulkanWidget::devicePixelRatio() const
+{
+    return QWidget::devicePixelRatio();
+}
+
+bool QuarterVulkanWidget::vulkanDevicePixels() const
+{
+    // The Vulkan surface region is reported to the InteractionController in
+    // device pixels (see VulkanViewportAdapter::applySurfaceViewportToGL).
+    return true;
+}
+
+QSize QuarterVulkanWidget::inputSize() const
+{
+    return d->container ? d->container->size() : this->size();
+}
+
+SbVec2s QuarterVulkanWidget::inputWindowSize() const
+{
+    const QSize logical = inputSize();
+    return SbVec2s(static_cast<short>(logical.width()),
+                   static_cast<short>(logical.height()));
+}
+
+bool QuarterVulkanWidget::processSoEvent(const SoEvent * event)
+{
+    return d->eventSink ? d->eventSink(event) : false;
 }
 
 #ifdef FREECAD_VULKAN_DEBUG_HOOKS
@@ -2108,7 +2163,13 @@ void QuarterVulkanWidget::pollInjectFile()
 bool QuarterVulkanWidget::eventFilter(QObject * watched, QEvent * event)
 {
     Q_UNUSED(watched);
-    if (!d->forwardTarget) {
+
+    // Mouse, wheel and keyboard are translated by d->eventFilter (this widget
+    // is an InputDeviceHost) and delivered to the InteractionController.  The
+    // remaining events -- tablet, touch and context menu -- are not handled by
+    // the Coin input devices, so relay them to the raw-event target (the
+    // hidden GL viewer that owns FreeCAD's gesture/tablet devices).
+    if (!d->rawEventTarget) {
         return QWidget::eventFilter(watched, event);
     }
 
@@ -2116,11 +2177,9 @@ bool QuarterVulkanWidget::eventFilter(QObject * watched, QEvent * event)
         || event->type() == QEvent::MouseButtonPress
         || event->type() == QEvent::MouseButtonRelease) {
         const auto* me = static_cast<const QMouseEvent*>(event);
-        const QWidget* gl = d->forwardTarget;
         const QWidget* container = d->container;
         VK_BREADCRUMB_SAMPLED(32, "[VK-TRACE] eventFilter watched=%s type=%d pos=(%.1f,%.1f) "
-                      "global=(%.1f,%.1f) | container rect=(%d,%d %dx%d) dpr=%.2f "
-                      "| glWidget rect=(%d,%d %dx%d) dpr=%.2f\n",
+                      "global=(%.1f,%.1f) | container rect=(%d,%d %dx%d) dpr=%.2f\n",
                       watched == d->container ? "container"
                       : (watched == static_cast<QObject*>(d->window) ? "window"
                                                                      : "other"),
@@ -2128,63 +2187,10 @@ bool QuarterVulkanWidget::eventFilter(QObject * watched, QEvent * event)
                       me->position().x(), me->position().y(),
                       me->globalPosition().x(), me->globalPosition().y(),
                       container->x(), container->y(), container->width(),
-                      container->height(), container->devicePixelRatioF(),
-                      gl->x(), gl->y(), gl->width(), gl->height(),
-                      gl->devicePixelRatioF());
+                      container->height(), container->devicePixelRatioF());
     }
-
-    // Forward input events from the visible Vulkan container to the hidden
-    // OpenGL viewer (set via setEventForwardTarget()).  The two widgets share
-    // the same window/screen and therefore the same (possibly fractional)
-    // system device pixel ratio, so the container-to-viewer position scale is
-    // exactly 1.0 on any OS (Windows 100-200%, macOS Retina 2.0, Linux 1.25,
-    // ...): the position passes through unscaled and the GL side applies its
-    // own live ratio in InputDevice::toDevicePixelPosition().  The scale is
-    // taken from the *live* devicePixelRatioF() of both widgets (single source
-    // of truth), never a cached/pre-rounded ratio, so fractional scales cannot
-    // rescaled the forwarded point by 1/dpr and drift hovering/picking off
-    // center towards the origin.
-    const qreal dprScale = InputDevice::crossWidgetPositionScale(
-        d->container, d->forwardTarget.data());
 
     switch (event->type()) {
-    case QEvent::MouseButtonPress:
-    case QEvent::MouseButtonRelease:
-    case QEvent::MouseButtonDblClick:
-    case QEvent::MouseMove: {
-        const auto * me = static_cast<const QMouseEvent *>(event);
-        if (qFuzzyCompare(dprScale, 1.0)) {
-            if (QCoreApplication::sendEvent(d->forwardTarget, event)) {
-                return true;
-            }
-            break;
-        }
-        QMouseEvent scaled(me->type(), me->position() * dprScale,
-                           me->globalPosition(), me->button(), me->buttons(),
-                           me->modifiers(), me->pointingDevice());
-        if (QCoreApplication::sendEvent(d->forwardTarget, &scaled)) {
-            return true;
-        }
-        break;
-    }
-    case QEvent::Wheel: {
-        const auto * we = static_cast<const QWheelEvent *>(event);
-        if (qFuzzyCompare(dprScale, 1.0)) {
-            if (QCoreApplication::sendEvent(d->forwardTarget, event)) {
-                return true;
-            }
-            break;
-        }
-        QWheelEvent scaled(we->position() * dprScale, we->globalPosition(),
-                           we->pixelDelta(), we->angleDelta(), we->buttons(),
-                           we->modifiers(), we->phase(), we->inverted());
-        if (QCoreApplication::sendEvent(d->forwardTarget, &scaled)) {
-            return true;
-        }
-        break;
-    }
-    case QEvent::KeyPress:
-    case QEvent::KeyRelease:
     case QEvent::TabletPress:
     case QEvent::TabletRelease:
     case QEvent::TabletMove:
@@ -2192,7 +2198,7 @@ bool QuarterVulkanWidget::eventFilter(QObject * watched, QEvent * event)
     case QEvent::TouchUpdate:
     case QEvent::TouchEnd:
     case QEvent::ContextMenu:
-        if (QCoreApplication::sendEvent(d->forwardTarget, event)) {
+        if (QCoreApplication::sendEvent(d->rawEventTarget, event)) {
             return true;
         }
         break;
@@ -2494,6 +2500,33 @@ SIM::Coin3D::Quarter::QuarterVulkanWidget::QuarterVulkanWidget
 }
 
 SIM::Coin3D::Quarter::QuarterVulkanWidget::~QuarterVulkanWidget() = default;
+
+// InputDeviceHost overrides (virtual, so the vtable needs definitions even in
+// the Vulkan-off build; never called there).
+qreal SIM::Coin3D::Quarter::QuarterVulkanWidget::devicePixelRatio() const
+{
+    return 1.0;
+}
+
+bool SIM::Coin3D::Quarter::QuarterVulkanWidget::vulkanDevicePixels() const
+{
+    return false;
+}
+
+QSize SIM::Coin3D::Quarter::QuarterVulkanWidget::inputSize() const
+{
+    return QSize();
+}
+
+SbVec2s SIM::Coin3D::Quarter::QuarterVulkanWidget::inputWindowSize() const
+{
+    return SbVec2s(0, 0);
+}
+
+bool SIM::Coin3D::Quarter::QuarterVulkanWidget::processSoEvent(const SoEvent *)
+{
+    return false;
+}
 
 bool SIM::Coin3D::Quarter::QuarterVulkanWidget::eventFilter
     (QObject * watched, QEvent * event)

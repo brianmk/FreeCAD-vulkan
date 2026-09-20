@@ -58,8 +58,8 @@ using namespace SIM::Coin3D::Quarter;
   keyboard and mouse. It can be subclassed to support other devices.
 */
 
-InputDevice::InputDevice(QuarterWidget* quarter) :
-    quarter(quarter)
+InputDevice::InputDevice(InputDeviceHost* host) :
+    host(host)
 {
   this->mousepos = SbVec2s(0, 0);
 }

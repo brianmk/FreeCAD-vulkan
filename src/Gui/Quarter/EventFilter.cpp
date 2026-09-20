@@ -39,7 +39,6 @@
 
 #include <Base/VulkanBreadcrumbs.h>
 
-#include "QuarterWidget.h"
 #include "devices/Keyboard.h"
 #include "devices/Mouse.h"
 #include "devices/SpaceNavigatorDevice.h"
@@ -64,7 +63,7 @@ QPointF getLocalPosition(const QMouseEvent* event)
 class EventFilterP {
 public:
   QList<InputDevice *> devices;
-  QuarterWidget * quarterwidget;
+  InputDeviceHost * host;
   QPoint globalmousepos;
   SbVec2s windowsize;
 
@@ -87,13 +86,13 @@ public:
     this->globalmousepos = event->globalPos();
 #endif
 
-    const SbVec2s windowLogical = quarterwidget->vulkanDevicePixels()
-        ? effectiveWindowSize(quarterwidget)
+    const SbVec2s windowLogical = host->vulkanDevicePixels()
+        ? host->inputWindowSize()
         : this->windowsize;
     SbVec2s mousepos = InputDevice::toDevicePixelPosition(
         getLocalPosition(event),
         windowLogical,
-        quarterwidget->devicePixelRatio());
+        host->devicePixelRatio());
     // Duplicate of InputDevice::toDevicePixelPosition's own trace; the helper
     // already logs the dpr/window mapping once, so log this around the same
     // (constant) values at most once to avoid per-event repetition.
@@ -102,7 +101,7 @@ public:
             "windowLogical=%dx%d dpr=%.2f -> device=%d,%d\n",
             getLocalPosition(event).x(), getLocalPosition(event).y(),
             this->windowsize[0], this->windowsize[1],
-            quarterwidget->devicePixelRatio(),
+            host->devicePixelRatio(),
             mousepos[0], mousepos[1]);
     Q_FOREACH(InputDevice * device, this->devices) {
       device->setMousePosition(mousepos);
@@ -121,18 +120,18 @@ EventFilter::EventFilter(QObject * parent)
 {
   PRIVATE(this) = new EventFilterP;
 
-  QuarterWidget* quarter = dynamic_cast<QuarterWidget *>(parent);
-  PRIVATE(this)->quarterwidget = quarter;
-  assert(PRIVATE(this)->quarterwidget);
+  InputDeviceHost* host = dynamic_cast<InputDeviceHost *>(parent);
+  PRIVATE(this)->host = host;
+  assert(PRIVATE(this)->host);
 
-  PRIVATE(this)->windowsize = SbVec2s(PRIVATE(this)->quarterwidget->width(),
-                                      PRIVATE(this)->quarterwidget->height());
+  PRIVATE(this)->windowsize = SbVec2s(PRIVATE(this)->host->inputSize().width(),
+                                      PRIVATE(this)->host->inputSize().height());
 
-  PRIVATE(this)->devices += new Mouse(quarter);
-  PRIVATE(this)->devices += new Keyboard(quarter);
+  PRIVATE(this)->devices += new Mouse(host);
+  PRIVATE(this)->devices += new Keyboard(host);
 
 #ifdef HAVE_SPACENAV_LIB
-  PRIVATE(this)->devices += new SpaceNavigatorDevice(quarter);
+  PRIVATE(this)->devices += new SpaceNavigatorDevice(host);
 #endif // HAVE_SPACENAV_LIB
 
 }
@@ -193,7 +192,7 @@ EventFilter::eventFilter(QObject * obj, QEvent * qevent)
   // graph
   Q_FOREACH(InputDevice * device, PRIVATE(this)->devices) {
     const SoEvent * soevent = device->translateEvent(qevent);
-    if (soevent && PRIVATE(this)->quarterwidget->processSoEvent(soevent)) {
+    if (soevent && PRIVATE(this)->host->processSoEvent(soevent)) {
       return true;
     }
   }

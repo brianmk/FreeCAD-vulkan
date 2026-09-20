@@ -614,6 +614,18 @@ QuarterWidget::devicePixelRatio() const
   return PRIVATE(this)->device_pixel_ratio;
 }
 
+QSize
+QuarterWidget::inputSize() const
+{
+  return QSize(this->width(), this->height());
+}
+
+SbVec2s
+QuarterWidget::inputWindowSize() const
+{
+  return effectiveWindowSize(this);
+}
+
 /*!
   Sets the Inventor scenegraph to be rendered
  */
@@ -667,10 +679,16 @@ QuarterWidget::setSceneGraph(SoNode * node)
     superscene->addChild(node);
   }
 
-  PRIVATE(this)->soeventmanager->setCamera(camera);
-  PRIVATE(this)->sorendermanager->setCamera(camera);
-  PRIVATE(this)->soeventmanager->setSceneGraph(superscene);
-  PRIVATE(this)->sorendermanager->setSceneGraph(superscene);
+  // The event manager can be externally owned (InteractionController) and
+  // detached before the widget is destroyed, so guard against a null manager.
+  if (PRIVATE(this)->soeventmanager) {
+    PRIVATE(this)->soeventmanager->setCamera(camera);
+    PRIVATE(this)->soeventmanager->setSceneGraph(superscene);
+  }
+  if (PRIVATE(this)->sorendermanager) {
+    PRIVATE(this)->sorendermanager->setCamera(camera);
+    PRIVATE(this)->sorendermanager->setSceneGraph(superscene);
+  }
 
   if (viewall) { this->viewAll(); }
   if (superscene) { superscene->touch(); }

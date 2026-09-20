@@ -33,6 +33,7 @@
 \**************************************************************************/
 
 #include <Quarter/Basic.h>
+#include <Quarter/InputDeviceHost.h>
 #include <Inventor/SbVec2s.h>
 
 class QEvent;
@@ -43,11 +44,9 @@ class QWidget;
 
 namespace SIM { namespace Coin3D { namespace Quarter {
 
-class QuarterWidget;
-
 class QUARTER_DLL_API InputDevice {
 public:
-  explicit InputDevice(QuarterWidget* quarter);
+  explicit InputDevice(InputDeviceHost* host);
   virtual ~InputDevice() {}
 
   /*!
@@ -85,7 +84,7 @@ public:
 protected:
   SbVec2s mousepos;
   SbVec2s windowsize;
-  QuarterWidget* quarter;
+  InputDeviceHost* host;
 };
 
 }}} // namespace

@@ -14,16 +14,17 @@ import re
 
 STATE_LINE = re.compile(
     r"\[RTDBG\] ptState frame=(\d+) viewChanged=(\d) sceneChanged=(\d) "
-    r"accum=(\d) frameIndex=(\d+) idle=(\d+) reproject=(\d)")
+    r"bgChanged=(\d) latch=(\d) accum=(\d) frameIndex=(\d+) idle=(\d+) "
+    r"reproject=(\d)")
 ADAPT_LINE = re.compile(
     r"\[RTDBG\] adaptive frame=(\d+) active=(\d+)/(\d+) fraction=([0-9.]+) "
     r"frameIndex=(\d+) accum=(\d)")
 
 
 def _states(lines):
-    # groups: 1=frame, 2=viewChanged, 3=sceneChanged, 4=accum, 5=frameIndex,
-    # 6=idle, 7=reproject.
-    return [(m, int(m.group(4)), int(m.group(5)), int(m.group(6)))
+    # groups: 1=frame, 2=viewChanged, 3=sceneChanged, 4=bgChanged, 5=latch,
+    # 6=accum, 7=frameIndex, 8=idle, 9=reproject.
+    return [(m, int(m.group(6)), int(m.group(7)), int(m.group(8)))
             for line in lines for m in [STATE_LINE.search(line)] if m]
 
 

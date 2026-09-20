@@ -4,10 +4,10 @@ and the object coords fit the half range, buildBlas() uploads R16G16B16_SFLOAT
 positions (half AS memory).  The mode is read from os.environ so the shared
 check can assert per-mode invariants.
 
-  mode=on  : some (RTDBG) blasFmt build=1 packed=1 line -> packing engaged.
+  mode=on  : some (RTDBG) blasFmt <tag> packed=1 line -> packing engaged.
   mode=off : every blasFmt line has packed=0 -> 32-bit default path.
 
-Observable: the [RTDBG] blasFmt build=1 packed=N stride=U fmt=0xV line.
+Observable: the [RTDBG] blasFmt <tag> packed=N stride=U fmt=0xV line.
 """
 
 import os

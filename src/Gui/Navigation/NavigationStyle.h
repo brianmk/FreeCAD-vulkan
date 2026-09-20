@@ -59,6 +59,7 @@ namespace Gui
 {
 
 class View3DInventorViewer;
+class InteractionHost;
 class NavigationAnimator;
 class AbstractMouseSelection;
 class NavigationAnimation;
@@ -182,7 +183,7 @@ public:
     NavigationStyle(const NavigationStyle&) = delete;
 
     NavigationStyle& operator=(const NavigationStyle& ns);
-    void setViewer(View3DInventorViewer*);
+    void setViewer(InteractionHost*);
 
     void setAnimationEnabled(const SbBool enable);
     void setSpinningAnimationEnabled(const SbBool enable);
@@ -401,7 +402,7 @@ protected:
         SbTime* time;
     } log;
 
-    View3DInventorViewer* viewer {nullptr};
+    InteractionHost* viewer {nullptr};
     NavigationAnimator* animator;
     SbBool animationEnabled;
     ViewerMode currentmode;

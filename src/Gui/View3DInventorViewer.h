@@ -61,6 +61,7 @@
 #include "Selection/Selection.h"
 
 #include "CornerCrossLetters.h"
+#include "InteractionSurface.h"
 #include "View3DInventorSelection.h"
 #include "Quarter/SoQTQuarterAdaptor.h"
 
@@ -102,6 +103,7 @@ class BoundBox2d;
 namespace Gui
 {
 class NavigationAnimation;
+class InteractionController;
 class View3DInventor;
 class ViewProvider;
 class SoFCBackgroundGradient;
@@ -124,7 +126,9 @@ double navigationCameraMoveAgeMs();
 /** GUI view into a 3D scene provided by View3DInventor
  *
  */
-class GuiExport View3DInventorViewer: public Quarter::SoQTQuarterAdaptor, public SelectionObserver
+class GuiExport View3DInventorViewer: public Quarter::SoQTQuarterAdaptor,
+                                      public InteractionSurface,
+                                      public SelectionObserver
 {
     using inherited = Quarter::SoQTQuarterAdaptor;
     Q_OBJECT
@@ -227,8 +231,8 @@ public:
         const SbVec3f& translation,
         int duration = -1,
         bool wait = false
-    ) const;
-    void startSpinningAnimation(const SbVec3f& axis, float velocity);
+    ) const override;
+    void startSpinningAnimation(const SbVec3f& axis, float velocity) override;
     void stopAnimating();
 
     void setPopupMenuEnabled(bool on);
@@ -293,7 +297,7 @@ public:
     /// set the ViewProvider in special edit mode
     void setEditingViewProvider(Gui::ViewProvider* vp, int ModNum);
     /// return whether a view provider is edited
-    bool isEditingViewProvider() const;
+    bool isEditingViewProvider() const override;
     /// return currently editing view provider
     ViewProvider* getEditingViewProvider() const;
     /// reset from edit mode
@@ -355,7 +359,7 @@ public:
     std::vector<SbVec2f> getGLPolygon(const std::vector<SbVec2s>&) const;
     const std::vector<SbVec2s>& getPolygon(SelectionRole* role = nullptr) const;
     void setSelectionEnabled(bool enable);
-    bool isSelectionEnabled() const;
+    bool isSelectionEnabled() const override;
     //@}
 
     /// Returns the screen coordinates of the origin of the path's tail object
@@ -365,7 +369,7 @@ public:
     /** @name Edit methods */
     //@{
     void setEditing(bool edit);
-    bool isEditing() const
+    bool isEditing() const override
     {
         return this->editing;
     }
@@ -436,7 +440,7 @@ public:
     Base::BoundBox2d getViewportOnXYPlaneOfPlacement(Base::Placement plc) const;
 
     /** Returns the 2d coordinates on the viewport to the given 3d point. */
-    SbVec2s getPointOnViewport(const SbVec3f&) const;
+    SbVec2s getPointOnViewport(const SbVec3f&) const override;
 
     /** Returns the per-axis scale between viewport-region pixels and widget
      * pixels (region size / widget size).  The hidden GL viewer's viewport
@@ -510,7 +514,7 @@ public:
     std::shared_ptr<NavigationAnimation> setCameraOrientation(
         const SbRotation& orientation,
         bool moveToCenter = false
-    ) const;
+    ) const override;
     void setCameraType(SoType type) override;
     bool setCamera(const char* pCamera);
     void moveCameraTo(const SbRotation& orientation, const SbVec3f& position, int duration = -1);
@@ -579,8 +583,8 @@ public:
     bool hasGroundPlane();
     void setGroundPlaneOpacity(float opacity);
 
-    void showRotationCenter(bool show);
-    void changeRotationCenterPosition(const SbVec3f& newCenter);
+    void showRotationCenter(bool show) override;
+    void changeRotationCenterPosition(const SbVec3f& newCenter) override;
 
     void setEnabledFPSCounter(bool on);
     void setEnabledNaviCube(bool on);
@@ -617,9 +621,21 @@ public:
 
     void getDimensions(float& fHeight, float& fWidth) const;
     float getMaxDimension() const;
-    SbVec3f getFocalPoint() const;
+    SbVec3f getFocalPoint() const override;
 
     NavigationStyle* navigationStyle() const;
+    //! The interaction controller that owns navigation + the Coin event
+    //! pipeline for this surface (see InteractionController).
+    InteractionController* getInteractionController() const;
+
+    /** Route navigation's cursor shapes to \a target instead of the GL widget.
+     *
+     *  When the Vulkan page is current the visible surface is the Vulkan
+     *  container, so the adapter points this at it; navigation then sets the
+     *  cursor directly on the visible surface instead of the adapter mirroring
+     *  the hidden GL widget's cursor.  Pass nullptr to restore the GL widget.
+     */
+    void setCursorTarget(QWidget* target);
 
     void setDocument(Gui::Document* pcDocument);
     Gui::Document* getDocument();
@@ -639,6 +655,50 @@ public:
         return vulkanSettings_;
     }
     void applyVulkanSettings();
+
+    //! @name InteractionHost implementation
+    //!
+    //! These forward to the Quarter/QOpenGLWidget base or to the viewer's own
+    //! state.  The explicit overrides are required because `View3DInventorViewer`
+    //! inherits the same-named accessors from the Quarter base classes as well as
+    //! the `InteractionHost` interface; without an override the lookup would be
+    //! ambiguous.  See `docs/vulkan/INTERACTION_AUTHORITY.md` (Phase 1).
+    //@{
+    SoCamera* getCamera() const override;
+    SoNode* getSceneGraph() const override;
+    const SbViewportRegion& getViewportRegion() const override;
+    SoRenderManager* getSoRenderManager() const override;
+    SoEventManager* getSoEventManager() const override;
+    float getPickRadius() const override;
+    QWidget* getGLWidget() const override;
+    QWidget* getGLWidget();
+    bool isViewing() const override;
+    bool isSeekMode() const override;
+    bool seekToPoint(const SbVec2s& screenpos) override;
+    void seekToPoint(const SbVec3f& scenepos) override;
+    void interactiveCountInc() override;
+    void interactiveCountDec() override;
+    int getInteractiveCount() const override;
+    void scheduleRedraw() override;
+    SoGroup* getObjectGroup() const override
+    {
+        return objectGroup;
+    }
+    SoSeparator* getForegroundRoot() const override
+    {
+        return foregroundroot;
+    }
+    void bindMouseSelection(AbstractMouseSelection* selection) override;
+    //@}
+
+    //! @name InteractionSurface hooks (see docs/vulkan/INTERACTION_AUTHORITY.md)
+    //@{
+    bool surfaceNaviCubeEnabled() const override;
+    bool surfaceProcessNaviCubeEvent(const SoEvent* ev) override;
+    bool surfaceIsRedirectedToSceneGraph() const override;
+    void surfaceNotifyCameraMoved() override;
+    void surfaceSetEventManager(SoEventManager* manager) override;
+    //@}
 
 Q_SIGNALS:
     void cameraChanged();
@@ -693,7 +753,7 @@ protected:
     void dragEnterEvent(QDragEnterEvent* ev) override;
     void dragMoveEvent(QDragMoveEvent* ev) override;
     void dragLeaveEvent(QDragLeaveEvent* ev) override;
-    bool processSoEventBase(const SoEvent* const ev);
+    bool processSoEventBase(const SoEvent* const ev) override;
     void printDimension() const;
     void selectAll();
 
@@ -728,7 +788,7 @@ private:
     void renderDelayedAnnotations(SoGLRenderAction* glra);
     void renderGLActionScene(const QColor& backgroundColor, SoGLRenderAction* glra);
     bool renderToFramebuffer(QOpenGLFramebufferObject*, bool includeViewerLighting = true);
-    void setCursorRepresentation(int mode);
+    void setCursorRepresentation(int mode) override;
     void aboutToDestroyGLContext();
     void createStandardCursors();
     bool applyCameraState(const SoCamera& camera);
@@ -768,7 +828,7 @@ private:
     SoTransform* pcEditingTransform;
     bool restoreEditingRoot;
     SoEventCallback* pEventCallback;
-    NavigationStyle* navigation;
+    std::unique_ptr<InteractionController> interactionController;
     SoFCUnifiedSelection* selectionRoot;
 
     SoClipPlane* pcClipPlane;
@@ -811,6 +871,8 @@ private:
 
     bool editing;
     QCursor editCursor, zoomCursor, panCursor, spinCursor;
+    //! Where setCursorRepresentation() applies the cursor; null = GL widget.
+    QWidget* cursorTarget {nullptr};
     bool redirected;
     bool allowredir;
 

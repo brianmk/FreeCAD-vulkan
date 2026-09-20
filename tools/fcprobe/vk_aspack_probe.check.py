@@ -4,7 +4,7 @@
 The probe reads FC_VULKAN_AS_PACK itself and logs a [ASPACK:on|off] marker so
 this shared check can assert per-mode invariants:
 
-  mode=on  : some [RTDBG] blasFmt build=1 packed=1 line exists (payload
+  mode=on  : some [RTDBG] blasFmt <tag> packed=1 line exists (payload
              uploaded as R16G16B16_SFLOAT).
   mode=off : every [RTDBG] blasFmt line has packed=0 (32-bit default path).
 
@@ -13,7 +13,7 @@ Requires FC_VULKAN_RT_DEBUG=1 (the blasFmt line is gated on it).
 
 import re
 
-FMT_LINE = re.compile(r"\[RTDBG\] blasFmt build=(\d+) packed=(\d+) stride=(\d+)")
+FMT_LINE = re.compile(r"\[RTDBG\] blasFmt (\S+) packed=(\d+) stride=(\d+)")
 MODE_LINE = re.compile(r"ASPACK\[(on|off)\]")
 
 
@@ -22,7 +22,7 @@ def _fmt(lines):
     for line in lines:
         m = FMT_LINE.search(line)
         if m:
-            out.append(tuple(int(m.group(i)) for i in range(1, 4)))
+            out.append((m.group(1), int(m.group(2)), int(m.group(3))))
     return out
 
 

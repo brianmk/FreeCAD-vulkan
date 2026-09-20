@@ -6,6 +6,7 @@
 
 #include "Quarter/QuarterVulkanWidget.h"
 #include "Quarter/QuarterWidget.h"
+#include "InteractionController.h"
 #include "View3DInventorViewer.h"
 
 #include "GpuPickService.h"
@@ -48,8 +49,13 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
                                              QObject* parent)
     : QObject(parent)
     , _viewer(viewer)
+    , _glSurface(viewer)
     , _interactionTimer(new QTimer(this))
 {
+    // The GL viewer is the controller's base surface: it owns the camera,
+    // scene graph and Coin event manager.  When the Vulkan page is current the
+    // controller is swapped to this adapter (see useVulkanViewport), which
+    // forwards everything here except getGLWidget()/scheduleRedraw().
     // Interaction LOD: a camera move engages a single-bounce ray-traced
     // preview; the timer disengages it once the camera has been still for its
     // interval, which requests the full-quality restart.  Created for every
@@ -113,18 +119,22 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
     // useVulkanViewport(true) below (deferred one event-loop turn).  setRenderMode()
     // calls useVulkanViewport() right after construction, so the intended page
     // is selected there.
-    // The Vulkan widget is display-only; relay its viewport input events
-    // to the (hidden) OpenGL viewer so navigation and picking still work.
-    // The container<->viewer coordinate scale is derived live from both
-    // widgets' devicePixelRatioF() by InputDevice::crossWidgetPositionScale()
-    // at event time (single source of truth, portable across 1.25/1.5/2.0
-    // display scales); the ratio argument is unused, so pass the default.
-    _vulkanViewer->setEventForwardTarget(_viewer->getWidget(), -1.0);
-    // Navigation and picking run on the hidden OpenGL viewer, so cursor
-    // shape changes land on its widget.  Mirror them onto the visible
-    // Vulkan container (see eventFilter) and pick up the initial state.
+    // The Vulkan widget translates its own mouse/wheel/keyboard input (it is
+    // an InputDeviceHost) and delivers Coin events to this sink, which drives
+    // the InteractionController.  Navigation and picking therefore run on the
+    // shared controller without the hidden GL viewer's event manager.  Tablet/
+    // touch/context-menu events are not translated by the Coin devices, so
+    // relay them to the hidden GL viewer that owns FreeCAD's gesture devices.
+    _vulkanViewer->setRawEventTarget(_viewer->getWidget());
+    _vulkanViewer->setEventSink([this](const SoEvent* ev) {
+        auto* controller = _viewer ? _viewer->getInteractionController() : nullptr;
+        return controller && controller->processSoEvent(ev);
+    });
+    // Navigation's cursor shapes are routed to the visible surface by
+    // View3DInventorViewer::setCursorTarget() (set in useVulkanViewport), so
+    // no cursor mirroring is needed.  The event filter on the GL widget only
+    // re-imposes the surface viewport region after a hidden-widget resize.
     _viewer->getWidget()->installEventFilter(this);
-    _vulkanViewer->setCursor(_viewer->getWidget()->cursor());
     // Keep the hidden GL viewer's viewport region in sync with the
     // Vulkan surface so navigation (aspect/near-far) and ray picking
     // use the visible surface size rather than a stale default.
@@ -238,6 +248,17 @@ void VulkanViewportAdapter::useVulkanViewport(bool vulkan)
     // region tracks the visible widget, so the flag is cleared and the cached
     // logical size is used (upstream behavior).
     _viewer->setVulkanDevicePixels(vulkan);
+    // Route navigation's cursor shapes to the visible surface: the Vulkan
+    // container while the Vulkan page is current, the GL widget otherwise.
+    _viewer->setCursorTarget(
+        vulkan ? _vulkanViewer->getNativeWidget() : nullptr);
+    // Swap the controller's surface so surface-presentation calls
+    // (getGLWidget for context menus, scheduleRedraw) reach the visible
+    // surface.  Everything else is delegated back to the GL viewer.
+    if (auto* controller = _viewer->getInteractionController()) {
+        controller->setSurface(vulkan ? static_cast<InteractionSurface*>(this)
+                                      : _glSurface);
+    }
     auto* host = qobject_cast<QStackedWidget*>(_vulkanViewer->parentWidget());
     if (!host) {
         return;
@@ -788,7 +809,15 @@ void VulkanViewportAdapter::applySurfaceViewportToGL(const QSize& surfaceSize)
     // shift hover picking and navigation by the DPI factor.
     SbViewportRegion vp(static_cast<short>(pw), static_cast<short>(ph));
     _viewer->getSoRenderManager()->setViewportRegion(vp);
-    _viewer->getSoEventManager()->setViewportRegion(vp);
+
+    // The interaction controller owns the canonical region now: picking and
+    // navigation read it instead of the hidden GL viewer's render-manager copy,
+    // and the controller pushes it into the (controller-owned) event manager.
+    // The render-manager region above is kept only for the GL/IR render path
+    // (line widths / point sizes).
+    if (auto* controller = _viewer->getInteractionController()) {
+        controller->setViewportRegion(vp, static_cast<float>(dpr));
+    }
 
     // The viewport region is in device pixels (dpr * logical), so tell the
     // render manager the real device-pixel ratio.  This propagates to the
@@ -861,6 +890,16 @@ void VulkanViewportAdapter::onSurfaceSizeChanged(const QSize& surfaceSize)
 
 VulkanViewportAdapter::~VulkanViewportAdapter()
 {
+    // If this adapter is the controller's active surface, hand it back to the
+    // GL viewer before we are destroyed.  The viewer (and its controller) still
+    // exist here -- View3DInventor deletes the adapter before _viewer -- so a
+    // later controller call would otherwise reach freed memory.
+    if (_viewer) {
+        auto* controller = _viewer->getInteractionController();
+        if (controller && controller->surface() == this) {
+            controller->setSurface(_glSurface);
+        }
+    }
 #ifdef FREECAD_USE_VULKAN
     // Drop the GPU pick bridge before the widget goes away: its callback
     // captures this adapter and dereferences _vulkanViewer.
@@ -882,8 +921,9 @@ VulkanViewportAdapter::~VulkanViewportAdapter()
     // from the viewer and drop it from the stack so the QVulkanWindow shuts
     // down synchronously here, before _viewer is destroyed.
     if (_vulkanViewer) {
-        // Stop forwarding input to the (soon-dead) GL viewer.
-        _vulkanViewer->setEventForwardTarget(nullptr, 1.0);
+        // Stop delivering input to the (soon-dead) GL viewer/controller.
+        _vulkanViewer->setEventSink(nullptr);
+        _vulkanViewer->setRawEventTarget(nullptr);
         QWidget* host = _vulkanViewer->parentWidget();
         if (auto* stack = qobject_cast<QStackedWidget*>(host)) {
             stack->removeWidget(_vulkanViewer);
@@ -897,16 +937,6 @@ VulkanViewportAdapter::~VulkanViewportAdapter()
 bool VulkanViewportAdapter::eventFilter(QObject* watched, QEvent* event)
 {
 #ifdef FREECAD_USE_VULKAN
-    // The hidden OpenGL viewer drives navigation and picking, and its widget
-    // is where the navigation code sets cursor shapes.  Mirror them onto the
-    // visible Vulkan container so modes like spin/zoom/pan show the right
-    // pointer shape over the viewport.
-    if (_vulkanViewer && event->type() == QEvent::CursorChange) {
-        auto* widget = qobject_cast<QWidget*>(watched);
-        if (widget && _viewer && widget == _viewer->getWidget()) {
-            _vulkanViewer->setCursor(widget->cursor());
-        }
-    }
     // The hidden GL widget's resizeEvent resets its render-manager viewport
     // region to the GL widget's own size (default 400x400 after a document
     // re-layout).  Re-impose the surface size so picking/navigation stay
@@ -917,6 +947,279 @@ bool VulkanViewportAdapter::eventFilter(QObject* watched, QEvent* event)
             applySurfaceViewportToGL(QSize());
         }
     }
+#else
+    Q_UNUSED(watched);
+    Q_UNUSED(event);
 #endif
     return QObject::eventFilter(watched, event);
+}
+
+// ---------------------------------------------------------------------------
+// InteractionSurface: this adapter acting as the controller's active surface.
+//
+// Only used while the Vulkan page is current (useVulkanViewport).  The GL
+// viewer stays the base surface for everything surface-independent; only
+// getGLWidget() and scheduleRedraw() target the visible Vulkan surface, and
+// surfaceSetEventManager() must stay on the GL viewer (it owns the manager).
+// ---------------------------------------------------------------------------
+
+SoCamera* VulkanViewportAdapter::getCamera() const
+{
+    return _glSurface ? _glSurface->getCamera() : nullptr;
+}
+
+SoNode* VulkanViewportAdapter::getSceneGraph() const
+{
+    return _glSurface ? _glSurface->getSceneGraph() : nullptr;
+}
+
+const SbViewportRegion& VulkanViewportAdapter::getViewportRegion() const
+{
+    if (_glSurface) {
+        return _glSurface->getViewportRegion();
+    }
+    static const SbViewportRegion empty;
+    return empty;
+}
+
+SoRenderManager* VulkanViewportAdapter::getSoRenderManager() const
+{
+    return _glSurface ? _glSurface->getSoRenderManager() : nullptr;
+}
+
+SoEventManager* VulkanViewportAdapter::getSoEventManager() const
+{
+    return _glSurface ? _glSurface->getSoEventManager() : nullptr;
+}
+
+SbVec3f VulkanViewportAdapter::getFocalPoint() const
+{
+    return _glSurface ? _glSurface->getFocalPoint() : SbVec3f();
+}
+
+float VulkanViewportAdapter::getPickRadius() const
+{
+    return _glSurface ? _glSurface->getPickRadius() : 0.0F;
+}
+
+QWidget* VulkanViewportAdapter::getGLWidget() const
+{
+    // Presentation difference: navigation parents its context menu to the
+    // surface on screen, which is the Vulkan container, not the hidden GL
+    // widget.
+#ifdef FREECAD_USE_VULKAN
+    if (_vulkanViewer) {
+        return _vulkanViewer->getNativeWidget();
+    }
+#endif
+    return _glSurface ? _glSurface->getGLWidget() : nullptr;
+}
+
+bool VulkanViewportAdapter::isEditing() const
+{
+    return _glSurface && _glSurface->isEditing();
+}
+
+bool VulkanViewportAdapter::isEditingViewProvider() const
+{
+    return _glSurface && _glSurface->isEditingViewProvider();
+}
+
+bool VulkanViewportAdapter::isSelectionEnabled() const
+{
+    return _glSurface && _glSurface->isSelectionEnabled();
+}
+
+bool VulkanViewportAdapter::isViewing() const
+{
+    return _glSurface && _glSurface->isViewing();
+}
+
+bool VulkanViewportAdapter::isSeekMode() const
+{
+    return _glSurface && _glSurface->isSeekMode();
+}
+
+void VulkanViewportAdapter::setViewing(bool enable)
+{
+    if (_glSurface) {
+        _glSurface->setViewing(enable);
+    }
+}
+
+void VulkanViewportAdapter::setSeekMode(bool enable)
+{
+    if (_glSurface) {
+        _glSurface->setSeekMode(enable);
+    }
+}
+
+bool VulkanViewportAdapter::seekToPoint(const SbVec2s& screenpos)
+{
+    return _glSurface && _glSurface->seekToPoint(screenpos);
+}
+
+void VulkanViewportAdapter::seekToPoint(const SbVec3f& scenepos)
+{
+    if (_glSurface) {
+        _glSurface->seekToPoint(scenepos);
+    }
+}
+
+bool VulkanViewportAdapter::processSoEventBase(const SoEvent* ev)
+{
+    return _glSurface && _glSurface->processSoEventBase(ev);
+}
+
+void VulkanViewportAdapter::interactiveCountInc()
+{
+    if (_glSurface) {
+        _glSurface->interactiveCountInc();
+    }
+}
+
+void VulkanViewportAdapter::interactiveCountDec()
+{
+    if (_glSurface) {
+        _glSurface->interactiveCountDec();
+    }
+}
+
+int VulkanViewportAdapter::getInteractiveCount() const
+{
+    return _glSurface ? _glSurface->getInteractiveCount() : 0;
+}
+
+std::shared_ptr<NavigationAnimation> VulkanViewportAdapter::setCameraOrientation(
+    const SbRotation& orientation,
+    bool moveToCenter
+) const
+{
+    return _glSurface ? _glSurface->setCameraOrientation(orientation, moveToCenter)
+                      : std::shared_ptr<NavigationAnimation>();
+}
+
+std::shared_ptr<NavigationAnimation> VulkanViewportAdapter::startAnimation(
+    const SbRotation& orientation,
+    const SbVec3f& rotationCenter,
+    const SbVec3f& translation,
+    int duration,
+    bool wait
+) const
+{
+    return _glSurface ? _glSurface->startAnimation(
+               orientation,
+               rotationCenter,
+               translation,
+               duration,
+               wait
+           )
+                      : std::shared_ptr<NavigationAnimation>();
+}
+
+void VulkanViewportAdapter::startSpinningAnimation(const SbVec3f& axis, float velocity)
+{
+    if (_glSurface) {
+        _glSurface->startSpinningAnimation(axis, velocity);
+    }
+}
+
+void VulkanViewportAdapter::viewAll()
+{
+    if (_glSurface) {
+        _glSurface->viewAll();
+    }
+}
+
+void VulkanViewportAdapter::showRotationCenter(bool show)
+{
+    if (_glSurface) {
+        _glSurface->showRotationCenter(show);
+    }
+}
+
+void VulkanViewportAdapter::changeRotationCenterPosition(const SbVec3f& newCenter)
+{
+    if (_glSurface) {
+        _glSurface->changeRotationCenterPosition(newCenter);
+    }
+}
+
+SbVec2s VulkanViewportAdapter::getPointOnViewport(const SbVec3f& point) const
+{
+    return _glSurface ? _glSurface->getPointOnViewport(point) : SbVec2s();
+}
+
+void VulkanViewportAdapter::setCursorRepresentation(int mode)
+{
+    // The GL viewer applies this to its cursorTarget, which useVulkanViewport()
+    // points at the visible Vulkan container.
+    if (_glSurface) {
+        _glSurface->setCursorRepresentation(mode);
+    }
+}
+
+void VulkanViewportAdapter::scheduleRedraw()
+{
+    // Presentation difference: wake the visible Vulkan surface, not the hidden
+    // GL render manager.
+#ifdef FREECAD_USE_VULKAN
+    if (_vulkanViewer) {
+        requestVulkanFrame();
+        return;
+    }
+#endif
+    if (_glSurface) {
+        _glSurface->scheduleRedraw();
+    }
+}
+
+SoGroup* VulkanViewportAdapter::getObjectGroup() const
+{
+    return _glSurface ? _glSurface->getObjectGroup() : nullptr;
+}
+
+SoSeparator* VulkanViewportAdapter::getForegroundRoot() const
+{
+    return _glSurface ? _glSurface->getForegroundRoot() : nullptr;
+}
+
+void VulkanViewportAdapter::bindMouseSelection(AbstractMouseSelection* selection)
+{
+    if (_glSurface) {
+        _glSurface->bindMouseSelection(selection);
+    }
+}
+
+bool VulkanViewportAdapter::surfaceNaviCubeEnabled() const
+{
+    return _glSurface && _glSurface->surfaceNaviCubeEnabled();
+}
+
+bool VulkanViewportAdapter::surfaceProcessNaviCubeEvent(const SoEvent* ev)
+{
+    return _glSurface && _glSurface->surfaceProcessNaviCubeEvent(ev);
+}
+
+bool VulkanViewportAdapter::surfaceIsRedirectedToSceneGraph() const
+{
+    return _glSurface && _glSurface->surfaceIsRedirectedToSceneGraph();
+}
+
+void VulkanViewportAdapter::surfaceNotifyCameraMoved()
+{
+    // Let the GL viewer run its bookkeeping; the adapter's camera sensor is
+    // what actually requests the Vulkan frame.
+    if (_glSurface) {
+        _glSurface->surfaceNotifyCameraMoved();
+    }
+}
+
+void VulkanViewportAdapter::surfaceSetEventManager(SoEventManager* manager)
+{
+    // The Coin event manager stays on the GL viewer (the base dispatch
+    // authority); never install it on the Vulkan widget.
+    if (_glSurface) {
+        _glSurface->surfaceSetEventManager(manager);
+    }
 }

@@ -24,7 +24,8 @@ import re
 
 STATE_LINE = re.compile(
     r"\[RTDBG\] ptState frame=(\d+) viewChanged=(\d) sceneChanged=(\d) "
-    r"accum=(\d) frameIndex=(\d+) idle=(\d+) reproject=(\d)")
+    r"bgChanged=(\d) latch=(\d) accum=(\d) frameIndex=(\d+) idle=(\d+) "
+    r"reproject=(\d)")
 ADAPT_LINE = re.compile(
     r"\[RTDBG\] adaptive frame=(\d+) active=(\d+)/(\d+) fraction=([0-9.]+) "
     r"frameIndex=(\d+) accum=(\d) .*reprojected=(\d+)")
@@ -85,8 +86,8 @@ def check(lines, report):
     states = [(p, m) for p, k, m in events if k == "state"]
     adaptives = [(p, m) for p, k, m in events if k == "adaptive"]
 
-    # ptState groups: 1=frame, 2=viewChanged, 3=sceneChanged, 4=accum,
-    # 5=frameIndex, 6=idle, 7=reproject.
+    # ptState groups: 1=frame, 2=viewChanged, 3=sceneChanged, 4=bgChanged,
+    # 5=latch, 6=accum, 7=frameIndex, 8=idle, 9=reproject.
     def sc(m):
         return m.group(3)
 
@@ -94,13 +95,13 @@ def check(lines, report):
         return m.group(2)
 
     def accum(m):
-        return m.group(4)
+        return m.group(6)
 
     def fridx(m):
-        return m.group(5)
+        return m.group(7)
 
     def reproj(m):
-        return m.group(7)
+        return m.group(9)
 
     # Reset-on-move: no reprojection frame may ever appear.
     reprojects = [m for _, m in states if reproj(m) == "1"]

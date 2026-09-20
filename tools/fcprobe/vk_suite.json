@@ -159,6 +159,17 @@
       "timeout": 180
     },
     {
+      "name": "interaction",
+      "script": "vk_interaction_probe.py",
+      "env": {
+        "FC_INTERACTION_RENDER": "vulkan"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 240
+    },
+    {
       "name": "prefs",
       "script": "vk_prefs_probe.py",
       "env": {

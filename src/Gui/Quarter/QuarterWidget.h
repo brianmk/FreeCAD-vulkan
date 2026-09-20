@@ -40,6 +40,7 @@
 #include <QUrl>
 
 #include "Basic.h"
+#include "InputDeviceHost.h"
 
 class QOpenGLContext;
 class QOpenGLWidget;
@@ -59,7 +60,7 @@ namespace SIM { namespace Coin3D { namespace Quarter {
 class EventFilter;
 const char DEFAULT_NAVIGATIONFILE []  = "coin:///scxml/navigation/examiner.xml";
 
-class QUARTER_DLL_API QuarterWidget : public QGraphicsView {
+class QUARTER_DLL_API QuarterWidget : public QGraphicsView, public InputDeviceHost {
   typedef QGraphicsView inherited;
   Q_OBJECT
 
@@ -128,7 +129,7 @@ public:
   void setBackgroundColor(const QColor & color);
   QColor backgroundColor() const;
 
-  qreal devicePixelRatio() const;
+  qreal devicePixelRatio() const override;
 
   void resetNavigationModeFile();
   void setNavigationModeFile(const QUrl & url = QUrl(QString::fromLatin1(DEFAULT_NAVIGATIONFILE)));
@@ -177,7 +178,7 @@ public:
   void addStateMachine(SoScXMLStateMachine * statemachine);
   void removeStateMachine(SoScXMLStateMachine * statemachine);
 
-  virtual bool processSoEvent(const SoEvent * event);
+  bool processSoEvent(const SoEvent * event) override;
   QSize minimumSizeHint() const override;
 
   QList<QAction *> transparencyTypeActions() const;
@@ -220,7 +221,12 @@ public:
   //! event/DPR handling only uses the live ratio + region normalization in the
   //! Vulkan case, so GL picking stays in logical space (no 1/dpr drift).
   void setVulkanDevicePixels(bool on) { _vulkanDevicePixels = on; }
-  bool vulkanDevicePixels() const { return _vulkanDevicePixels; }
+  bool vulkanDevicePixels() const override { return _vulkanDevicePixels; }
+
+  //! InputDeviceHost: the widget's own logical size.
+  QSize inputSize() const override;
+  //! InputDeviceHost: logical size cursor positions are normalized against.
+  SbVec2s inputWindowSize() const override;
 
 private:
   bool _vulkanDevicePixels = false;

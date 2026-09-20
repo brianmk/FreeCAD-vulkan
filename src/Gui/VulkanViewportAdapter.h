@@ -8,6 +8,8 @@
 
 #include <Inventor/rendering/SoVulkanViewMode.h>
 
+#include "InteractionSurface.h"
+
 #include <memory>
 #include <string>
 
@@ -47,7 +49,7 @@ class View3DInventorViewer;
  *  Only compiled and used when FREECAD_USE_VULKAN is enabled; every method
  *  is a no-op otherwise.
  */
-class VulkanViewportAdapter : public QObject
+class VulkanViewportAdapter : public QObject, public InteractionSurface
 {
     Q_OBJECT
 
@@ -132,6 +134,69 @@ public:
     /// lighting (a bare redraw() would reuse the previous frame's lights).
     void requestVulkanFrame();
 
+    //! @name InteractionSurface (active only while the Vulkan page is current)
+    //!
+    //! The controller keeps the GL viewer as its base surface for everything
+    //! surface-independent (camera/scene/event manager/base dispatch); the
+    //! adapter is swapped in only to own the surface-presentation bits.  Every
+    //! method therefore forwards to the GL viewer except `getGLWidget()` and
+    //! `scheduleRedraw()`, which target the visible Vulkan surface, and
+    //! `surfaceSetEventManager()`, which must stay on the GL viewer.
+    //@{
+    SoCamera* getCamera() const override;
+    SoNode* getSceneGraph() const override;
+    const SbViewportRegion& getViewportRegion() const override;
+    SoRenderManager* getSoRenderManager() const override;
+    SoEventManager* getSoEventManager() const override;
+    SbVec3f getFocalPoint() const override;
+    float getPickRadius() const override;
+    QWidget* getGLWidget() const override;
+
+    bool isEditing() const override;
+    bool isEditingViewProvider() const override;
+    bool isSelectionEnabled() const override;
+    bool isViewing() const override;
+    bool isSeekMode() const override;
+    void setViewing(bool enable) override;
+    void setSeekMode(bool enable) override;
+    bool seekToPoint(const SbVec2s& screenpos) override;
+    void seekToPoint(const SbVec3f& scenepos) override;
+
+    bool processSoEventBase(const SoEvent* ev) override;
+    void interactiveCountInc() override;
+    void interactiveCountDec() override;
+    int getInteractiveCount() const override;
+
+    std::shared_ptr<NavigationAnimation> setCameraOrientation(
+        const SbRotation& orientation,
+        bool moveToCenter = false
+    ) const override;
+    std::shared_ptr<NavigationAnimation> startAnimation(
+        const SbRotation& orientation,
+        const SbVec3f& rotationCenter,
+        const SbVec3f& translation,
+        int duration = -1,
+        bool wait = false
+    ) const override;
+    void startSpinningAnimation(const SbVec3f& axis, float velocity) override;
+    void viewAll() override;
+    void showRotationCenter(bool show) override;
+    void changeRotationCenterPosition(const SbVec3f& newCenter) override;
+    SbVec2s getPointOnViewport(const SbVec3f&) const override;
+
+    void setCursorRepresentation(int mode) override;
+    void scheduleRedraw() override;
+    SoGroup* getObjectGroup() const override;
+    SoSeparator* getForegroundRoot() const override;
+    void bindMouseSelection(AbstractMouseSelection* selection) override;
+
+    bool surfaceNaviCubeEnabled() const override;
+    bool surfaceProcessNaviCubeEvent(const SoEvent* ev) override;
+    bool surfaceIsRedirectedToSceneGraph() const override;
+    void surfaceNotifyCameraMoved() override;
+    void surfaceSetEventManager(SoEventManager* manager) override;
+    //@}
+
 private:
     void onSurfaceSizeChanged(const QSize& surfaceSize);
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -181,6 +246,10 @@ private:
     static void cameraChangedCB(void* data, SoSensor* sensor);
 
     View3DInventorViewer* _viewer = nullptr;
+    //! The controller's base surface: the GL viewer, which owns the
+    //! camera/scene/event manager.  When this adapter is the controller's
+    //! active surface it forwards every non-presentation call here.
+    InteractionSurface* _glSurface = nullptr;
     SIM::Coin3D::Quarter::QuarterVulkanWidget* _vulkanViewer = nullptr;
     //! True once the Vulkan page has been made current at least once.  The
     //! first activation is deferred one event-loop turn so the one-time Vulkan

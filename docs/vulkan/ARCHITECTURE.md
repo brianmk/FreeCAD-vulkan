@@ -13,9 +13,11 @@ Path-tracing status and roadmap live in [`RTX_STATUS.md`](../../RTX_STATUS.md).
 FreeCAD Gui (Qt)                                Coin (Qt-free, submodule)
 ────────────────────────────────────────────    ─────────────────────────────────────────────
 View3DInventorViewer                             SoVulkanRenderManager (pimpl)
-  ├─ hidden GL viewer  ── interaction authority    ├─ SoIRRenderAction ──► SoDrawList (retained IR)
-  └─ VulkanViewportAdapter (QStackedWidget)        ├─ SoVulkanRenderBackend  (raster)
-       └─ QuarterVulkanWidget (QWidget)            └─ SoRTXRenderBackend     (path tracing, lazy)
+  ├─ InteractionController ── interaction authority ├─ SoIRRenderAction ──► SoDrawList (retained IR)
+  │    (navigation + controller-owned SoEventManager)  ├─ SoVulkanRenderBackend  (raster)
+  ├─ hidden GL viewer (RasterCoin fallback + IR path)  └─ SoRTXRenderBackend     (path tracing, lazy)
+  └─ VulkanViewportAdapter (QStackedWidget)
+       └─ QuarterVulkanWidget (QWidget, InputDeviceHost) ── drives the controller
             └─ QVulkanWindow
                  └─ QuarterVulkanRenderer
                       └─ SoVulkanRenderManager
@@ -190,6 +192,11 @@ Tracked in the renderer architecture cleanup:
   (`SoVulkanRenderBackend::setOverlayCompositeMode`), so the two stacks do not
   hold the same meshes resident at once; the formats and caches are still
   separate.
-- **Hidden GL viewer as interaction authority** — navigation/picking still run
-  on the never-rendered OpenGL viewer, so viewport features must work in both
-  stacks and coordinate systems are hand-synced.
+- **Hidden GL viewer as interaction authority** — resolved by the interaction
+  controller: navigation, `processSoEvent` dispatch and the Coin `SoEventManager`
+  now live in `Gui::InteractionController`, and the Vulkan surface translates
+  its own input (`InputDeviceHost`) and drives that controller, so picking/
+  navigation no longer depend on the hidden GL viewer's event manager.  Cursor
+  mirroring and the render-manager region/DPR sync remain because navigation
+  still runs on the GL `InteractionSurface`; see
+  [`INTERACTION_AUTHORITY.md`](INTERACTION_AUTHORITY.md) §9.

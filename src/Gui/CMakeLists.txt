@@ -944,6 +944,7 @@ SET(View3D_CPP_SRCS
     View3DInventor.cpp
     View3DInventorSelection.cpp
     View3DInventorViewer.cpp
+    InteractionController.cpp
     View3DSettings.cpp
     View3DPy.cpp
     View3DViewerPy.cpp
@@ -966,6 +967,9 @@ SET(View3D_SRCS
     View3DInventor.h
     View3DInventorSelection.h
     View3DInventorViewer.h
+    InteractionHost.h
+    InteractionSurface.h
+    InteractionController.h
     View3DPy.h
     View3DSettings.h
     View3DViewerPy.h

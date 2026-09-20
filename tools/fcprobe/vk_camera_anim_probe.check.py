@@ -13,7 +13,8 @@ import re
 
 STATE_LINE = re.compile(
     r"\[RTDBG\] ptState frame=(\d+) viewChanged=(\d) sceneChanged=(\d) "
-    r"accum=(\d) frameIndex=(\d+) idle=(\d+) reproject=(\d)")
+    r"bgChanged=(\d) latch=(\d) accum=(\d) frameIndex=(\d+) idle=(\d+) "
+    r"reproject=(\d)")
 ADAPT_LINE = re.compile(
     r"\[RTDBG\] adaptive frame=(\d+) active=(\d+)/(\d+) fraction=([0-9.]+) "
     r"frameIndex=(\d+) accum=(\d)")
@@ -63,7 +64,7 @@ def check(lines, report):
         return
 
     # Reset-on-move: no reprojection may appear.
-    if any(m.group(7) == "1" for _, m in states):
+    if any(m.group(9) == "1" for _, m in states):
         err("reprojection frames appeared (reset-on-move must never reproject)")
 
     # Motion window: every animated frame is a view change that resets the run.
@@ -71,15 +72,15 @@ def check(lines, report):
     if not anim:
         err("no frames observed in the anim window (camera never moved?)")
     else:
-        if not any(m.group(2) == "1" and m.group(5) == "0" for m in anim):
+        if not any(m.group(2) == "1" and m.group(7) == "0" for m in anim):
             err("anim window: no viewChanged frame that reset to frameIndex=0")
 
     # Static resume: a non-view/scene-changing accumulating frame with a fresh
     # (small) frameIndex appears after the motion stops, and it converges.
     resumed = False
     static = [m for p, m in states if p == "static"]
-    if any(m.group(2) == "0" and m.group(3) == "0" and m.group(4) == "1"
-           and int(m.group(5)) >= 1 for m in static):
+    if any(m.group(2) == "0" and m.group(3) == "0" and m.group(6) == "1"
+           and int(m.group(7)) >= 1 for m in static):
         resumed = True
     if not resumed:
         err("static: no resuming accumulating frame after motion stopped")
