@@ -348,6 +348,19 @@
       "timeout": 300
     },
     {
+      "name": "denoise-switch",
+      "script": "vk_denoise_switch_probe.py",
+      "env": {
+        "FC_VULKAN_PT_DENOISER_DEBUG": "1",
+        "FC_VULKAN_PT_DENOISE_TIMING": "1",
+        "FC_VULKAN_PT_MAXSAMPLES": "32"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 300
+    },
+    {
       "name": "hover",
       "script": "vk_hover_glass_probe.py",
       "env": {

@@ -18,7 +18,6 @@ Exit: [VERDICT] prefs PASS only if every phase completes without error.
 
 import os
 import sys
-import time
 
 import FreeCAD
 import FreeCADGui

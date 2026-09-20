@@ -14,7 +14,6 @@ nodes have no clean Python read-back; those are guarded by the static coverage
 checker (vk_viewsettings_keys --new) and a verbatim-transcription diff.
 """
 import re
-import sys
 
 CAM = re.compile(r"^PFX (\S+) cam=(\w+)")
 NAVTYPE = re.compile(r"^PFX navtype-touchpad cam=(\w+) nav=(\S+)")

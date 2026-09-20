@@ -113,7 +113,6 @@ def install_output_capture() -> None:
     if _log_meta["captured"]:
         return
     try:
-        import fcntl
         orig_out = os.dup(1)
         orig_err = os.dup(2)
         r, w = os.pipe()
@@ -2248,18 +2247,20 @@ def _drain_headless() -> None:
 _keep_alive: List[Any] = []
 
 
-def _drain_gui() -> None:
+def _drain_gui() -> Any:
     """Qt pump for the GUI mode: process queued requests on the Qt main thread.
 
     We take over the running Qt loop (FreeCAD's own main loop keeps spinning),
     so we only install a QTimer that drains the RPC queue every tick and keep a
-    strong reference to it so it is not garbage-collected.
+    strong reference to it so it is not garbage-collected.  Returns the timer so
+    ``stop_guest`` can stop it.
     """
     from PySide import QtCore
     timer = QtCore.QTimer()
     timer.timeout.connect(lambda: _process_one())
     timer.start(10)
     _keep_alive.append(timer)
+    return timer
 
 
 def _is_gui() -> bool:
@@ -2295,24 +2296,85 @@ def _install_sigint_handler() -> None:
         pass
 
 
-def run_guest() -> None:
-    """Open the socket, serve until killed.  Called at module import (FreeCAD
-    executes this script as top-level code)."""
+# Live server state.  ``start_guest``/``stop_guest`` let an in-FreeCAD host
+# (the Assistant's MCP toggle, or a probe) bring the socket listener up and
+# down at runtime instead of the one-shot ``run_guest`` at import.
+_server_sock: Optional[socket.socket] = None
+_server_thread: Optional[threading.Thread] = None
+_server_timer: Any = None
+_server_path: Optional[str] = None
+
+
+def guest_running() -> bool:
+    """True while the socket listener is up."""
+    return _server_sock is not None
+
+
+def start_guest(socket_path: Optional[str] = None) -> Dict[str, Any]:
+    """Open the socket and serve in the background (idempotent).
+
+    GUI: installs the Qt drain timer and returns immediately.  Headless: the
+    caller must pump (``_drain_headless``) -- ``run_guest`` does that.
+    """
+    global _server_sock, _server_thread, _server_timer, _server_path
+    if _server_sock is not None:
+        return {"ok": True, "running": True, "socket": _server_path}
+    path = socket_path or SOCKET_PATH
     install_output_capture()
     _install_sigint_handler()
     try:
-        os.unlink(SOCKET_PATH)
+        os.unlink(path)
     except OSError:
         pass
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.bind(SOCKET_PATH)
+    sock.bind(path)
     sock.listen(8)
+    _server_sock = sock
+    _server_path = path
     # Listener thread does the socket I/O; the main thread executes each job so
     # scene/UI mutations always happen on FreeCAD's main thread (never a race).
-    threading.Thread(target=_listener, args=(sock,), daemon=True).start()
+    _server_thread = threading.Thread(target=_listener, args=(sock,), daemon=True)
+    _server_thread.start()
     if _is_gui():
-        _drain_gui()
-    else:
+        _server_timer = _drain_gui()
+    return {"ok": True, "running": True, "socket": path}
+
+
+def stop_guest() -> Dict[str, Any]:
+    """Close the socket and stop draining (idempotent)."""
+    global _server_sock, _server_thread, _server_timer, _server_path
+    if _server_sock is None:
+        return {"ok": True, "running": False}
+    try:
+        _server_sock.close()
+    except OSError:
+        pass
+    _server_sock = None
+    _server_thread = None
+    if _server_timer is not None:
+        try:
+            _server_timer.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            _keep_alive.remove(_server_timer)
+        except ValueError:
+            pass
+        _server_timer = None
+    if _server_path:
+        try:
+            os.unlink(_server_path)
+        except OSError:
+            pass
+    _server_path = None
+    return {"ok": True, "running": False}
+
+
+def run_guest() -> None:
+    """Open the socket, serve until killed.  Called at module import (FreeCAD
+    executes this script as top-level code)."""
+    start_guest()
+    if not _is_gui():
         # headless: block here so FreeCADCmd stays alive
         try:
             _drain_headless()
