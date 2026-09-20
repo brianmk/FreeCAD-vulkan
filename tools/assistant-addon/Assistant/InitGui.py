@@ -9,7 +9,10 @@ on ``sys.path`` so ``import init_impl`` resolves.
 
 import FreeCADGui  # noqa: E402
 import init_impl  # noqa: E402
+import Preferences  # noqa: E402
 
 FreeCADGui.addWorkbench(init_impl.AssistantWorkbench)
 FreeCADGui.addCommand("Assistant_Toggle", init_impl.AssistantToggleCmd())
 FreeCADGui.addCommand("Assistant_Clear", init_impl.AssistantClearCmd())
+FreeCADGui.addCommand("Assistant_McpToggle", init_impl.AssistantMcpToggleCmd())
+FreeCADGui.addPreferencePage(Preferences.PreferencesPage, "Assistant")
