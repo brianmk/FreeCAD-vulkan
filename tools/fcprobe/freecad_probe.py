@@ -1083,6 +1083,20 @@ def run_case(
                                  "installed (driver without the layer)")
     report.register(trace_path)
 
+    # Clear stale frame dumps from a previous run.  The Vulkan frame dumper
+    # (FC_VULKAN_DUMP_FRAME, a Debug-only hook) writes a FIXED path
+    # /tmp/vk_frame_<n>.png, and collect_frame_dumps() below copies every
+    # matching file into this run's bundle.  Without this clear a run that
+    # dumps fewer frames (or dumps none, e.g. a build without the debug hooks)
+    # silently inherits the previous run's frames, so the bundled images -- and
+    # any pixel assertion over them -- describe the wrong scene.
+    import glob as _glob
+    for _stale in _glob.glob("/tmp/vk_frame_*.png"):
+        try:
+            os.remove(_stale)
+        except OSError:
+            pass
+
     stdout_path = os.path.join(artifact_dir, "stdout.log")
     report.register(stdout_path)
     with open(stdout_path, "w", encoding="utf-8", errors="replace") as outf:

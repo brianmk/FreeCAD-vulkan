@@ -166,22 +166,27 @@ The `fsr` denoiser slot is a real backend, not the old OIDN-degrading stub.
   DX12 + SM 6.6 + Windows 11 + Radeon RX 9000+ only, with no Vulkan backend.
   DNSR (reflection ray-regeneration) is the MIT source that ports to Vulkan.
 - **Port**: `data/shaders/vulkan/rt/FsrPrefilter.glsl` (+ `FsrCommon.glsl`)
-  reimplements the DNSR reflection **prefilter** stage in GLSL compute (the
-  15-tap edge-stopping filter over a 16x16 shared tile). It runs on the GPU
-  over the path tracer's device-local G-buffers (accum, sums-of-squares,
-  normal, position) at native resolution — no host staging. The reference
-  filter's per-8x8 average-radiance mip is approximated by the center sample;
-  the temporal reproject/resolve stages are future work.
+  reimplements the DNSR reflection **prefilter** (the 15-tap edge-stopping
+  filter over a 16x16 shared tile) and `FsrResolveTemporal.glsl` the **temporal
+  reproject + resolve** (motion-vector reprojection, normal/depth disocclusion
+  rejection, local color-AABB clip, `1/numSamples` accumulation). Both run on
+  the GPU over the path tracer's device-local G-buffers (accum,
+  sums-of-squares, normal, position, motion) at native resolution — no host
+  staging. Committed SPIR-V; regenerate with `make
+  coin_regenerate_vulkan_spirv` (not part of the default build).
 - **Build**: `COIN_BUILD_FSR_DENOISER` (default **OFF**). OFF keeps the old
-  "not built in → OIDN" degradation; ON compiles the pass in.
+  "not built in → OIDN" degradation; ON compiles the passes in.
 - **Wiring**: `SoRTXRenderBackendFsr.cpp` (`createFsrPipeline` /
   `dispatchFsrDenoise` / `destroyFsrResources`), dispatched from
   `SoRTXRenderBackendDenoise.cpp` like the RTX path. `denoiseScale` is forced
-  to 1 for FSR (native-resolution filter).
+  to 1 for FSR (native-resolution filter). The history is zero-initialized at
+  creation and the per-pixel sample count is packed into the history radiance
+  `.w`, so no separate count buffer is allocated.
 - **Verified**: fcprobe `vk_fsr_probe.py` with `FC_VULKAN_PT_DENOISER=fsr` →
-  `[DENOISE] FSR (DNSR prefilter) pipeline ready` →
-  `[DENOISE] kind=3 FSR prefilter took 0.4 ms (2758x1681)` → `ready=1` →
-  `[VERDICT] PASS`, no fallback. In `vk_suite.json` as `fsr-denoise`.
+  `[DENOISE] FSR (DNSR prefilter+temporal) pipeline ready` →
+  `[DENOISE] FSR (DNSR prefilter+temporal) dispatched (2758x1681)` →
+  `ready=1`, plus a pixel-level non-black frame assertion → `[VERDICT] PASS`,
+  no fallback. In `vk_suite.json` as `fsr-denoise`.
 
 ### Priority 2 — Register App ID (external, blocks activation)
 
