@@ -12,11 +12,40 @@ _GROUP = "BaseApp/Preferences/Mod/Assistant"
 
 
 class PreferencesPage:
-    """Minimal preferences entry so FreeCAD's workbench discovery does not choke
-    looking for a ``Preferences.PreferencesPage`` attribute."""
+    """Preferences page (Edit > Preferences > Assistant).
 
-    def __init__(self):
-        self.form = None
+    FreeCAD instantiates it and calls ``loadSettings``/``saveSettings`` around
+    the dialog.  The MCP checkbox is the persistent form of the toolbar LED
+    button's state."""
+
+    def __init__(self, parent=None):
+        from PySide import QtGui
+
+        self.form = QtGui.QWidget()
+        self.form.setWindowTitle("Assistant")
+
+        layout = QtGui.QVBoxLayout(self.form)
+        self._mcp = QtGui.QCheckBox("Enable the MCP server for external clients")
+        self._mcp.setToolTip(
+            "Expose FreeCAD's MCP tool socket while this session runs, so an "
+            "external MCP client can drive it. The LED button in the Assistant "
+            "toolbar toggles the same setting at runtime."
+        )
+        layout.addWidget(self._mcp)
+        layout.addStretch(1)
+        self.loadSettings()
+
+    def loadSettings(self):
+        self._mcp.setChecked(mcp_enabled())
+
+    def saveSettings(self):
+        set_mcp_enabled(self._mcp.isChecked())
+        # Apply immediately (the dialog's OK may be the only interaction).
+        try:
+            import McpControl
+            McpControl.apply_setting()
+        except Exception:  # noqa: BLE001
+            pass
 
 MODE_AUTO = "auto"
 MODE_APPROVE = "approve"
@@ -38,6 +67,7 @@ _DEFAULTS = {
     "IncludeLogs": True,
     "VisionEnabled": True,
     "Debug": False,
+    "McpEnabled": True,
 }
 
 # Model names that deepseek no longer accepts (legacy defaults we shipped).  If a
@@ -186,3 +216,12 @@ def vision_enabled():
 
 def debug():
     return bool(get("Debug", False))
+
+
+def mcp_enabled():
+    """Whether the MCP socket server should be running (persisted setting)."""
+    return bool(get("McpEnabled", True))
+
+
+def set_mcp_enabled(value):
+    return set("McpEnabled", bool(value))
