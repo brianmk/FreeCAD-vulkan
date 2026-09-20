@@ -16,8 +16,9 @@ Assertions:
   - the scene edit (edit-box) resets too: sceneChanged frame with accum=0
     reproject=0.
   - after a move the run re-accumulates: some static frame resumes with
-    frameIndex growing from 0 (the settle auto-restart), and the active-pixel
-    fraction declines below 1.0 as convergence resumes.
+    frameIndex growing from 0 (the settle auto-restart).  The resumed run is
+    a forced full-resolve run (the adaptive freeze is gated off until the hard
+    cap), so the active-pixel fraction stays 1.0 and the run reaches the cap.
 """
 
 import re
@@ -28,7 +29,8 @@ STATE_LINE = re.compile(
     r"reproject=(\d)")
 ADAPT_LINE = re.compile(
     r"\[RTDBG\] adaptive frame=(\d+) active=(\d+)/(\d+) fraction=([0-9.]+) "
-    r"frameIndex=(\d+) accum=(\d) .*reprojected=(\d+)")
+    r"frameIndex=(\d+) accum=(\d) .*reprojected=(\d+) maxSamp=(\d+) "
+    r"minSamp=(\d+) fill=(\d)")
 # The harness emits ordinal-bearing `[HARNESS] frame_phase phase=NAME frame=N`;
 # the probe also prints `TEMPORAL phase=...` (stderr) without an ordinal.
 HARNESS_PHASE = re.compile(r"\[HARNESS\] frame_phase phase=(\S+) frame=(\d+)")
@@ -144,20 +146,35 @@ def check(lines, report):
         err("no static accumulating frame observed after a camera move "
             "(re-accumulation never resumed)")
 
-    # Convergence resumes: an adaptive framework with fraction < 1.0 appears
-    # after move-small.
+    # After a camera move the run re-accumulates as a forced full-resolve run:
+    # the adaptive freeze is gated off (fraction stays 1.0) until the hard
+    # sample cap, so there is no early convergence.
     seen_move = False
-    resumed = False
+    post_move_adapt = []
     for p, k, m in events:
         if p == "move-small":
             seen_move = True
         if seen_move and p in ("move-big", "edit-box"):
             break
-        if seen_move and k == "adaptive" and float(m.group(4)) < 1.0:
-            resumed = True
-    if not resumed:
-        err("fraction never declined below 1.0 after the camera move "
-            "(fresh run did not converge)")
+        if seen_move and k == "adaptive":
+            post_move_adapt.append(m)
+    if not post_move_adapt:
+        err("no adaptive frames observed after the camera move")
+    else:
+        # Exclude the cap-transition frame (frameIndex == maxSamp, fill just
+        # cleared, active counter reads 0).
+        active = [m for m in post_move_adapt
+                  if m.group(6) == "1"
+                  and int(m.group(5)) < int(m.group(8))
+                  and float(m.group(4)) != 1.0]
+        if active:
+            err(f"fraction != 1.0 on {len(active)} forced full-resolve frames "
+                "after the camera move (freeze fired during the forced run)")
+        cap = max(int(m.group(8)) for m in post_move_adapt)
+        max_fi = max(int(m.group(5)) for m in post_move_adapt)
+        if max_fi < cap:
+            err("forced full-resolve run after the camera move did not reach "
+                "the cap")
 
     # Scene edit: must reset to preview WITHOUT reprojecting.
     edit_states = [m for p, m in states if p == "edit-box"]

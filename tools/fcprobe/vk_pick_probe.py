@@ -43,11 +43,30 @@ SWEEP_Y_FRAC = float(os.environ.get("PROBE_Y", "0.5"))
 
 
 def log(msg):
-    print("PICKHARNESS " + msg, flush=True)
+    # sys.__stdout__ (not print/sys.stdout): FreeCAD's GUI redirects sys.stdout
+    # to its Python console, so a plain print() never reaches the harness.
+    sys.__stdout__.write("PICKHARNESS " + msg + "\n")
+    sys.__stdout__.flush()
+
+
+def settle(ms):
+    # The camera/scene are set synchronously, but the pick path only reflects
+    # the new scene after a few event-loop turns (the viewport's first frame
+    # with the new camera).  Sweeping immediately picks into a stale view and
+    # misses everything, so pump the loop for a moment first.
+    timer = QtCore.QElapsedTimer()
+    timer.start()
+    while timer.elapsed() < ms:
+        QtCore.QCoreApplication.processEvents()
+        QtCore.QThread.msleep(10)
 
 
 def sample_hover(s, x, y):
     s.move(x, y)
+    # The preselection is updated asynchronously by the viewport's event path;
+    # reading it right after move() returns the previous position's value (a
+    # stale Edge2 at the right edge).  Let it settle before reading.
+    settle(60)
     pre = FreeCADGui.Selection.getPreselection()
     hover = None
     if pre and pre.ObjectName:
@@ -76,6 +95,7 @@ def main():
     view = FreeCADGui.activeView()
     view.viewTop()
     view.fitAll()
+    settle(600)
 
     s = Session("PICKPROBE")
     if not s.available:
@@ -234,20 +254,13 @@ def main():
     return 0
 
 
-result = 0
-steps = [0]
+def run():
+    # main() is synchronous (setup + settle + sweep), so it must not race a
+    # repeating step timer: a single shot runs it once, then closes.
+    main()
+    sys.__stdout__.write("PICKHARNESS DONE\n")
+    sys.__stdout__.flush()
+    FreeCADGui.getMainWindow().close()
 
 
-def step():
-    global result
-    steps[0] += 1
-    if steps[0] == 2:
-        result = main()
-    if steps[0] >= 4:
-        print("PICKHARNESS DONE", flush=True)
-        FreeCADGui.getMainWindow().close()
-        return
-    QtCore.QTimer.singleShot(200, step)
-
-
-QtCore.QTimer.singleShot(500, step)
+QtCore.QTimer.singleShot(500, run)

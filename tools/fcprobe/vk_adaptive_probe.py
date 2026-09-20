@@ -52,6 +52,12 @@ def step():
         s.set_pref(VIEW, "VulkanRenderMode", 4)  # 4=RayTracing: the real RT gate
         s.set_pref(VIEW, "VulkanPathTracingBounces", 2)
         s.set_pref(VIEW, "VulkanPathTracingSettle", 2)
+        # The View preference overrides the FC_VULKAN_PT_MAXSAMPLES env the
+        # manifest sets, so pin the cap to the env value: otherwise a saved
+        # pref (e.g. 8) becomes the real cap and the test's "stops below the
+        # cap" assertions no longer mean what they say.
+        s.set_pref(VIEW, "VulkanPathTracingMaxSamples",
+                   int(os.environ.get("FC_VULKAN_PT_MAXSAMPLES", "256")))
         FreeCADGui.activateWorkbench("PartWorkbench")
         doc = FreeCAD.newDocument("Adaptive")
         box = doc.addObject("Part::Box", "Box")
