@@ -4784,6 +4784,51 @@ void View3DInventorViewer::viewHome()
     viewAll();
 }
 
+void View3DInventorViewer::applyDefaultOrientation()
+{
+    SoCamera* camera = getCamera();
+    if (!camera) {
+        return;
+    }
+
+    const SbRotation orientation = Camera::defaultOrientation("Trimetric");
+    if (auto* navigation = interactionController ? interactionController->navigationStyle()
+                                                 : nullptr) {
+        navigation->setCameraOrientationValue(
+            camera,
+            orientation,
+            NavigationStyle::OrientationChangeSource::Programmatic
+        );
+    }
+    else {
+        camera->orientation.setValue(orientation);
+    }
+
+    // New-document zoom, mirroring View3DInventorPy::setDefaultCameraHeight():
+    // the orthographic height (or the perspective focal distance) is the
+    // configured scale and the camera sits that far along the view axis.
+    ParameterGrp::handle hGrp = App::GetApplication().GetParameterGroupByPath(
+        "User parameter:BaseApp/Preferences/View"
+    );
+    const float scale = hGrp->GetFloat("NewDocumentCameraScale", 100.0f);
+    if (scale <= 1e-7f) {
+        return;
+    }
+    float f = 0.0f;
+    if (camera->isOfType(SoOrthographicCamera::getClassTypeId())) {
+        static_cast<SoOrthographicCamera*>(camera)->height = scale;
+        f = scale;
+    }
+    else if (camera->isOfType(SoPerspectiveCamera::getClassTypeId())) {
+        const float ang = static_cast<SoPerspectiveCamera*>(camera)->heightAngle.getValue();
+        f = 0.5f * scale / std::sin(ang * 0.5f);
+    }
+    SbVec3f lookDir;
+    orientation.multVec(SbVec3f(0, 0, -1), lookDir);
+    camera->focalDistance = f;
+    camera->position = lookDir * -f;
+}
+
 void View3DInventorViewer::viewAll()
 {
     SbBox3f box;
@@ -4798,10 +4843,9 @@ void View3DInventorViewer::viewAll()
         static_cast<SoPerspectiveCamera*>(cam)->heightAngle = (float)(M_PI / 4.0);
     }
 
-    if (isAnimationEnabled()) {
-        animatedViewAll(box, 10, 20);
-    }
-
+    // viewBoundBox() already runs the fit animation when animation is enabled
+    // (animatedViewAll) before snapping to the exact box, so animating here too
+    // made the fit run twice on every viewAll().
     viewBoundBox(box);
 }
 

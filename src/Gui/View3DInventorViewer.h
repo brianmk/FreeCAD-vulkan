@@ -531,6 +531,14 @@ public:
      */
     void viewHome();
     /**
+     * Apply the configured new-document camera: the NewDocumentCameraOrientation
+     * rotation and the NewDocumentCameraScale zoom, without fitting the scene.
+     * Mirrors what Std_New's viewDefaultOrientation() does, so every
+     * view-creation path (File > New, Python App.newDocument, paste) opens the
+     * same way instead of at the identity rotation / framework default zoom.
+     */
+    void applyDefaultOrientation();
+    /**
      * Reposition the current camera so we can see the complete scene.
      */
     void viewAll() override;

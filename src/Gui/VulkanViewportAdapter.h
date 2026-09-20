@@ -78,6 +78,12 @@ public:
     /// -- that do not go through a full syncViewer().
     void redraw();
 
+    /// Mark that the user has interactively moved the camera.  The one-time
+    /// initial re-fit (which corrects a viewAll() that ran before the surface
+    /// had a real size) is skipped afterwards so it can never snap the camera
+    /// back while the user is navigating.
+    void noteUserCameraMoved();
+
     void setPathTracingEnabled(bool enabled);
     void setPathTracingStart(bool start);
     bool isPathTracingEnabled() const;
@@ -95,6 +101,15 @@ public:
     /// effect when a Vulkan renderer is active; re-syncs the Vulkan surface
     /// (scene/camera/background) before it is brought back on top.
     void useVulkanViewport(bool vulkan);
+
+    /// Re-impose the visible surface size on the hidden GL viewer's pick /
+    /// navigation region and re-push scene, camera and background.  A view
+    /// created for a brand-new document can hold a stale viewport region or
+    /// scene binding until the render mode is re-applied -- the same effect a
+    /// manual renderer switch has -- which leaves hover preselection dead
+    /// until then.  Idempotent; safe to call whenever the layout may have
+    /// changed.
+    void resyncViewport();
 
 Q_SIGNALS:
     /// Re-emitted from QuarterVulkanWidget::rayTracingUnavailable: a
@@ -262,6 +277,8 @@ private:
     //! queued show runs.
     bool _wantVulkanViewport = false;
     bool _initialVulkanFitDone = false;
+    //! Set once the user navigates the camera; suppresses the initial re-fit.
+    bool _userCameraMoved = false;
     bool _pathTracingRtMismatchWarned = false;
     // No memoised settings signature: the render manager now diffs the whole
     // settings blob (SoVulkanRenderManager::setViewSettings), so re-pushing

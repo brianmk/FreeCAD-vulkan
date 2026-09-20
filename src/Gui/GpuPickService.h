@@ -51,8 +51,14 @@ public:
 
     static GpuPickService& instance();
 
-    void setPicker(Picker picker);
-    void clearPicker();
+    //! Install \a picker and record \a owner as the current owner.  Several
+    //! viewport adapters can exist at once, so the owner token lets a view
+    //! only remove the picker it installed itself.
+    void setPicker(const void* owner, Picker picker);
+    //! Drop the picker, but only if \a owner is the adapter that installed it.
+    //! A second view switching to Coin, or being destroyed, must not disable
+    //! GPU picking for a different, still-active Vulkan view.
+    void clearPicker(const void* owner);
     bool available() const;
     bool pick(const float origin[3],
               const float direction[3],
@@ -64,6 +70,8 @@ private:
 
     mutable std::mutex mutex;
     Picker picker;
+    //! Adapter that installed \a picker (null when none).
+    const void* pickerOwner = nullptr;
 };
 
 }  // namespace Gui

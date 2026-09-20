@@ -6,7 +6,9 @@
 
 #include "Quarter/QuarterVulkanWidget.h"
 #include "Quarter/QuarterWidget.h"
+#include "Application.h"
 #include "InteractionController.h"
+#include "View3DInventor.h"
 #include "View3DInventorViewer.h"
 
 #include "GpuPickService.h"
@@ -224,9 +226,21 @@ void VulkanViewportAdapter::useVulkanViewport(bool vulkan)
     // the CPU path, and the GL page clears it so GL picking is unchanged.
     if (vulkan) {
         Gui::GpuPickService::instance().setPicker(
+            this,
             [this](const float origin[3], const float direction[3], float tMax,
                    Gui::GpuPickResult& out) {
                 if (!_vulkanViewer) {
+                    return false;
+                }
+                // The service is process-global: with more than one Vulkan view
+                // open the picker belongs to whichever adapter registered last.
+                // A non-active view must answer false so its own scene graph
+                // falls back to the CPU pick -- otherwise SoBrepFaceSet trusts
+                // a GPU "usable" result that names a shape from another view and
+                // silently skips its own primitive traversal (hover then misses).
+                auto* active = dynamic_cast<Gui::View3DInventor*>(
+                    Gui::Application::Instance->activeView());
+                if (!active || active->getViewer() != _viewer) {
                     return false;
                 }
                 SIM::Coin3D::Quarter::QuarterVulkanWidget::VulkanPickHit hit;
@@ -244,7 +258,7 @@ void VulkanViewportAdapter::useVulkanViewport(bool vulkan)
             });
     }
     else {
-        Gui::GpuPickService::instance().clearPicker();
+        Gui::GpuPickService::instance().clearPicker(this);
     }
     // The hidden GL viewer drives picking/navigation, but its own geometry is
     // unreliable (it is never shown, so it keeps a stale/default size).  The
@@ -300,6 +314,15 @@ void VulkanViewportAdapter::useVulkanViewport(bool vulkan)
                     return;
                 }
                 h->setCurrentWidget(_vulkanViewer);
+                // Making the Vulkan page current re-lays-out the stacked
+                // widget, which resets the hidden GL viewer's viewport region
+                // to its own default size (the pick/navigation authority).
+                // Re-impose the surface size now instead of waiting for the
+                // first frame's size notification, so a freshly created view
+                // is pickable immediately.
+                if (QWidget* c = _vulkanViewer->getNativeWidget()) {
+                    applySurfaceViewportToGL(c->size());
+                }
                 _vulkanViewer->redraw();
             });
             return;
@@ -307,10 +330,32 @@ void VulkanViewportAdapter::useVulkanViewport(bool vulkan)
     }
     host->setCurrentWidget(target);
     if (vulkan) {
+        if (QWidget* c = _vulkanViewer->getNativeWidget()) {
+            applySurfaceViewportToGL(c->size());
+        }
         _vulkanViewer->redraw();
     }
 #else
     Q_UNUSED(vulkan);
+#endif
+}
+
+void VulkanViewportAdapter::resyncViewport()
+{
+#ifdef FREECAD_USE_VULKAN
+    if (!_vulkanViewer || !_viewer) {
+        return;
+    }
+    // The hidden GL viewer is the pick/navigation authority; its viewport
+    // region is the source for SoRayPickAction's normalized coordinates.  It
+    // is reset to the GL widget's own size on every re-layout (a new document
+    // or the attachment task panel), so re-impose the visible surface size
+    // before re-pushing the scene.  Without this a freshly created view can
+    // keep picking against a stale region until the render mode is re-applied.
+    if (QWidget* container = _vulkanViewer->getNativeWidget()) {
+        applySurfaceViewportToGL(container->size());
+    }
+    syncViewer();
 #endif
 }
 
@@ -614,6 +659,11 @@ void VulkanViewportAdapter::noteCameraMoved()
 #endif
 }
 
+void VulkanViewportAdapter::noteUserCameraMoved()
+{
+    _userCameraMoved = true;
+}
+
 void VulkanViewportAdapter::setInteractionLod(bool active)
 {
     if (_interactionLod == active) {
@@ -890,7 +940,7 @@ void VulkanViewportAdapter::onSurfaceSizeChanged(const QSize& surfaceSize)
     // repositions the camera outside the object.
     QWidget* container = _vulkanViewer->getNativeWidget();
     if (container && container->width() > 1 && container->height() > 1
-        && !_initialVulkanFitDone) {
+        && !_initialVulkanFitDone && !_userCameraMoved) {
         _initialVulkanFitDone = true;
         const bool animation = _viewer->isAnimationEnabled();
         if (animation) {
@@ -921,7 +971,7 @@ VulkanViewportAdapter::~VulkanViewportAdapter()
 #ifdef FREECAD_USE_VULKAN
     // Drop the GPU pick bridge before the widget goes away: its callback
     // captures this adapter and dereferences _vulkanViewer.
-    Gui::GpuPickService::instance().clearPicker();
+    Gui::GpuPickService::instance().clearPicker(this);
     // Detach the change sensors first: their callbacks call into _vulkanViewer,
     // so they must not fire once the widget / scene graph start going away.
     if (_cameraSensor) {

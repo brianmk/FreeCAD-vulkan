@@ -12,16 +12,22 @@ GpuPickService& GpuPickService::instance()
     return service;
 }
 
-void GpuPickService::setPicker(Picker newPicker)
+void GpuPickService::setPicker(const void* owner, Picker newPicker)
 {
     std::lock_guard<std::mutex> lock(mutex);
+    pickerOwner = owner;
     picker = std::move(newPicker);
 }
 
-void GpuPickService::clearPicker()
+void GpuPickService::clearPicker(const void* owner)
 {
     std::lock_guard<std::mutex> lock(mutex);
-    picker = nullptr;
+    // Only the owner may drop the picker: another view switching to Coin (or
+    // being torn down) must not disable GPU picking for a live Vulkan view.
+    if (pickerOwner == owner) {
+        picker = nullptr;
+        pickerOwner = nullptr;
+    }
 }
 
 bool GpuPickService::available() const
