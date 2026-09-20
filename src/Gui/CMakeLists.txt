@@ -1142,6 +1142,7 @@ SET(Inventor_CPP_SRCS
     Inventor/SoNaviCubeVulkan.cpp
     Inventor/SoGroundPlane.cpp
     Inventor/SoAxisCrossOverlay.cpp
+    Inventor/SoRasterOverlay.cpp
     Inventor/SoMouseWheelEvent.cpp
     Inventor/SoFCTransform.cpp
     Inventor/SoToggleSwitch.cpp
@@ -1186,6 +1187,7 @@ SET(Inventor_SRCS
     Inventor/SoNaviCubeVulkan.h
     Inventor/SoGroundPlane.h
     Inventor/SoAxisCrossOverlay.h
+    Inventor/SoRasterOverlay.h
     Inventor/SoMouseWheelEvent.h
     Inventor/SoFCTransform.h
     Inventor/SoToggleSwitch.h

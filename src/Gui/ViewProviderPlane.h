@@ -34,6 +34,7 @@ class SoSwitch;
 class SoTranslation;
 class SoAsciiText;
 class SoCoordinate3;
+class SoMaterial;
 
 namespace Gui
 {
@@ -56,6 +57,9 @@ public:
 
     void onSelectionChanged(const SelectionChanges&) override;
 
+protected:
+    void onTemporaryScaleChanged() override;
+
 private:
     void updatePlaneSize();
 
@@ -66,6 +70,7 @@ private:
     CoinPtr<SoAsciiText> pLabel;
     CoinPtr<SoCoordinate3> pCoords;
     CoinPtr<SoTranslation> pTextTranslation;
+    CoinPtr<SoMaterial> pFaceMaterial;
 
     ParamHandlers handlers;
 };

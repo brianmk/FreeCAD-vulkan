@@ -65,9 +65,17 @@ public:
     void setTemporaryScale(double factor);
     void resetTemporarySize();
 
+    //! True while the datum is drawn with the temporary (viewport-relative)
+    //! enlargement used by the attachment/plane-pick UI.
+    bool isTemporarilyScaled() const;
+
 protected:
     void onChanged(const App::Property* prop) override;
     bool onDelete(const std::vector<std::string>&) override;
+
+    //! Called after setTemporaryScale()/resetTemporarySize() so derived view
+    //! providers can refresh geometry that depends on the temporary size.
+    virtual void onTemporaryScaleChanged();
 
 protected:
     SoSeparator* pRoot;

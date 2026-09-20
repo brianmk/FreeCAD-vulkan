@@ -35,6 +35,7 @@
 
 #include "ViewProviderDatum.h"
 #include "Inventor/SoAxisCrossKit.h"
+#include "Inventor/SoRasterOverlay.h"
 #include "SoFCSelection.h"
 #include "ViewProviderCoordinateSystem.h"
 
@@ -133,7 +134,13 @@ void ViewProviderDatum::attach(App::DocumentObject* pcObject)
     soScale->setPart("shape", sep);
     resetTemporarySize();
 
-    highlight->addChild(soScale);
+    // Datum geometry is annotation-like: raster it in the overlay pass instead
+    // of path tracing it. It stays crisp (no denoiser noise), stays aligned
+    // with the pick geometry, and a hover highlight no longer forces the whole
+    // scene to re-trace.
+    auto overlay = new SoRasterOverlay();
+    overlay->addChild(soScale);
+    highlight->addChild(overlay);
 
     addDisplayMaskMode(highlight, "Base");
 }
@@ -145,6 +152,7 @@ void ViewProviderDatum::setTemporaryScale(double factor)
     // screen resolution.
     soScale->scaleAsFraction = true;
     soScale->scaleFactor = factor;
+    onTemporaryScaleChanged();
 }
 
 void ViewProviderDatum::resetTemporarySize()
@@ -155,6 +163,17 @@ void ViewProviderDatum::resetTemporarySize()
 
     soScale->scaleAsFraction = false;
     soScale->scaleFactor = sz;
+    onTemporaryScaleChanged();
+}
+
+bool ViewProviderDatum::isTemporarilyScaled() const
+{
+    return soScale && soScale->scaleAsFraction.getValue();
+}
+
+void ViewProviderDatum::onTemporaryScaleChanged()
+{
+    // Base class has no geometry that depends on the temporary size.
 }
 
 void ViewProviderDatum::onChanged(const App::Property* prop)
