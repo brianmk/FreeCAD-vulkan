@@ -113,6 +113,20 @@ struct VulkanViewSettings
     //! Wireframe (edge) overlay and point overlay for the raster backend.
     bool wireframe = false;
     bool showPoints = false;
+    //! HDR output (HDR10 / BT.2020 + ST 2084 PQ) for the Vulkan viewport.
+    //! Only effective on a native Wayland session whose compositor exposes the
+    //! color-management protocol and an HDR-capable output; the viewport falls
+    //! back to SDR when the capability probe fails.  Ignored by the classic
+    //! Coin/OpenGL viewport.
+    bool hdrEnabled = false;
+    //! Linear exposure/gain applied to scene radiance before the PQ encode in
+    //! the HDR output pass.  Scene-white (radiance 1.0) lands at
+    //! hdrExposure * 10000 cd/m^2, so 0.02 maps diffuse white to the ~200
+    //! cd/m^2 SDR reference white while highlights (radiance > 1) can still
+    //! exceed it up to the 10000 cd/m^2 PQ peak.  A scene tone map is
+    //! deliberately not applied: it would compress exactly the highlights HDR
+    //! exists to preserve.
+    float hdrExposure = 0.02f;
     //! Interaction LOD: while the camera is navigating, reduce per-frame work
     //! so an orbit/pan of a heavy scene stays responsive, then restore full
     //! quality once the camera settles.  Applies to every Vulkan mode: a

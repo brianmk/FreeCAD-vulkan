@@ -77,6 +77,15 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
     // QVulkanWindow::grab() only converts 8-bit swapchain formats;
     // request B8G8R8A8_UNORM so screenshot tests read exact pixels.
     _vulkanViewer->setPreferredColorFormat(VK_FORMAT_B8G8R8A8_UNORM);
+    // HDR output is a window/swapchain property: the preferred format and the
+    // surface color space must be chosen before QVulkanWindow creates the
+    // surface, so the preference is read here rather than in pushSettings().
+    // Seed the single-source settings first (applyVulkanSettings() is
+    // idempotent and its change signal has no listeners yet).
+    _viewer->applyVulkanSettings();
+    if (_viewer->getVulkanViewSettings().hdrEnabled) {
+        _vulkanViewer->setHdrOutputEnabled(true);
+    }
     stack->addWidget(_vulkanViewer);
     VK_BREADCRUMB("[VK-TRACE] View3DInventor: QuarterVulkanWidget created\n");
     syncViewer();
@@ -386,16 +395,25 @@ void VulkanViewportAdapter::pushSettings()
     vs.wireframeOverlay = effWireframe;
     vs.pointsOverlay = effPoints;
     vs.edgeColor = settings.edgeColor;
+    // HDR output: encode only when the preference asked for it AND the live
+    // swapchain actually came up with an HDR format (the window chooses the
+    // format before the settings can be pushed).  Otherwise the output stays
+    // SDR, matching the 8-bit surface.
+    vs.hdrOutput = settings.hdrEnabled && _vulkanViewer->isHdrOutputActive();
+    // Map scene-white to the user's reference white (see VulkanViewSettings).
+    vs.hdrExposure = settings.hdrExposure;
 
     if (Base::envFlagEnabled("FC_VULKAN_BACKEND_DEBUG")) {
         Base::Console().message(
             "[VK-SET] pushSettings raster=%d wireframe=%d points=%d "
             "edgeColor=(%.2f,%.2f,%.2f,%.2f) pt=%d bounces=%d settle=%d "
+            "hdr=%d hdrExposure=%.4f "
             "(prefWireframe=%d prefPoints=%d)\n",
             raster ? 1 : 0, effWireframe ? 1 : 0, effPoints ? 1 : 0,
             settings.edgeColor[0], settings.edgeColor[1],
             settings.edgeColor[2], settings.edgeColor[3], !raster ? 1 : 0,
             settings.pathTracingBounces, settings.pathTracingSettleFrames,
+            vs.hdrOutput ? 1 : 0, vs.hdrExposure,
             settings.wireframe ? 1 : 0, settings.showPoints ? 1 : 0);
     }
     _vulkanViewer->setViewSettings(vs);

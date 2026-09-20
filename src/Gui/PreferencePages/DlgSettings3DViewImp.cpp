@@ -80,6 +80,8 @@ void DlgSettings3DViewImp::saveSettings()
     ui->CheckBox_UseVulkanRayTracing->onSave();
     ui->CheckBox_VulkanWireframe->onSave();
     ui->CheckBox_VulkanShowPoints->onSave();
+    ui->CheckBox_VulkanHDR->onSave();
+    ui->DoubleSpinBox_VulkanHdrExposure->onSave();
     // The "Path tracing" checkbox is a convenience view onto the single
     // VulkanRenderMode pref (checked => PathTracing, unchecked => the Vulkan
     // raster viewport), so it and the status-bar mode selector share one source
@@ -128,6 +130,8 @@ void DlgSettings3DViewImp::loadSettings()
     ui->CheckBox_UseVulkanRayTracing->onRestore();
     ui->CheckBox_VulkanWireframe->onRestore();
     ui->CheckBox_VulkanShowPoints->onRestore();
+    ui->CheckBox_VulkanHDR->onRestore();
+    ui->DoubleSpinBox_VulkanHdrExposure->onRestore();
     // The checkbox mirrors the single VulkanRenderMode pref.
 #ifdef FREECAD_USE_VULKAN
     {

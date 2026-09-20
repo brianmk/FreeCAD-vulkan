@@ -67,6 +67,12 @@ View3DInventorViewer                             SoVulkanRenderManager (pimpl)
        - `submitExternalPrepass()` — submit the transient buffer and wait, so
          the copies and compaction are visible before the caller's submission;
      - `vkCmdEndRenderPass(cb)`;
+     - **HDR branch** — when `isHdrRasterActive()` (HDR requested *and* a 10-bit
+       swapchain is live *and* the mode is raster), the widget instead calls
+       `m_manager.renderExternalHdr(cb, cb-pass, cb-framebuffer)` and does *not*
+       begin Qt's pass: the manager renders into a backend-owned linear RGBA16F
+       intermediate and runs the output pass into the caller's framebuffer.  See
+       §6 "HDR output" for the pipeline;
    - `frameReady()` (Qt submits/presents); `requestUpdate()` while path
      tracing is refining.
 4. `releaseSwapChainResources()` / `releaseResources()` — `m_manager.shutdown()`
@@ -137,6 +143,57 @@ presence-only.  The remaining direct `getenv` sites are debug/timing flags
 (`FC_VULKAN_BACKEND_DEBUG`, `FC_VULKAN_FRAME_TIMING`, `FC_VULKAN_CLIP_DEBUG`,
 …) and the RT behavioral/material flags; they migrate when their subsystem is
 next touched.
+
+### HDR output (HDR10 / PQ)
+
+The Vulkan viewport can present in high dynamic range.  Two preferences drive it
+(`View` group, `Vulkan*` prefix, so `VulkanViewSettings::isDisplayPref` re-applies
+them on change):
+
+| Pref | Meaning |
+|---|---|
+| `VulkanHDR` (bool) | Request HDR10 output.  Ineffective unless the session/capability gate below passes. |
+| `VulkanHDRExposure` (float, default `0.02`) | Linear gain applied to scene radiance before the PQ encode.  Scene-white (radiance `1.0`) is presented at `exposure × 10000 cd/m²`, so `0.02` maps diffuse white to the ~200 cd/m² SDR reference white while highlights still exceed it. |
+
+**Pipeline (raster).**  `recordScenePass()` takes the HDR branch (see §2) and
+`SoVulkanRenderBackend::renderExternalHdr()` renders the scene into a
+backend-owned **linear RGBA16F** intermediate (its own render pass + framebuffer
+in the render-pass cache), barriers it to `SHADER_READ_ONLY`, then runs a
+fullscreen output pass (`data/shaders/vulkan/output/Output*.glsl`) into the
+caller's swapchain framebuffer.  That pass applies `exposure` and the SMPTE
+ST 2084 (PQ) inverse-EOTF **once, after all geometry/transparency has blended in
+linear light** — which is what makes it color-correct; blending and MSAA resolve
+must happen on linear radiance, never on PQ-encoded values.  A scene tone map is
+deliberately *not* applied: it would compress exactly the highlights HDR exists
+to preserve.  Path tracing keeps its own present pass, which applies the same
+exposure + PQ encode (`rt/PresentFragment.glsl`); the two paths coexist because
+the RT backend owns its present pass while the raster path borrows the caller's.
+
+**Capability gate.**  HDR is *requested* by the pref but only *active* when
+`isHdrOutputActive()` is true, i.e. the live swapchain came up 10-bit
+(`VK_FORMAT_A2B10G10R10_UNORM_PACK32`, or FP16 scRGB).  Qt on Wayland selects
+`VK_COLOR_SPACE_PASS_THROUGH_EXT` and carries the BT.2020 + ST 2084 mapping in a
+`wp_image_description` derived from the window's `QColorSpace`
+(`QColorSpace::Bt2100Pq`, set before the window is shown).  The widget logs the
+surface's HDR formats (`[VK-HDR]` breadcrumbs, `logHdrSurfaceFormats`).  When any
+of this is unavailable the viewport silently stays SDR.
+
+**Driver guard.**  `hdrDriverBlocked()` refuses HDR on the NVIDIA 610.x series:
+that driver forwards invalid HDR10 mastering metadata
+(`min_luminance >= max_luminance`) to the compositor unfiltered, and KWin then
+raises `wp_color_manager_v1` `invalid_luminance` and kills the client (Mesa's WSI
+sanitizes the same values).  Qt's color-management path does not call
+`vkSetHdrMetadataEXT`, so FreeCAD is not expected to trigger it, but a
+compositor-side client kill is not an acceptable default.  Override with
+`FREECAD_VULKAN_HDR_ALLOW_UNSAFE_DRIVER=1`; `FREECAD_VULKAN_HDR_FORCE_BLOCK_DRIVER=<major>`
+exercises the gate.  No NVIDIA driver release had fixed this as of the last
+report (610.57.04).
+
+**Limitations.**  HDR output is native-Wayland only (the compositor
+color-management protocol); X11 and non-HDR outputs fall back to SDR.  The raster
+HDR intermediate is single-sample, so HDR mode drops MSAA until a resolve step is
+added.  When HDR is off the SDR path is byte-identical to the pre-HDR renderer
+(the manager uses `renderExternal()` and never allocates the intermediate).
 
 ## 7. Verification
 

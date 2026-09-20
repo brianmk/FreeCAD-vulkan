@@ -179,6 +179,26 @@ public:
     */
     void setPreferredColorFormat(int vkFormat);
 
+    /*!
+      \brief Request HDR10 (BT.2020 + ST 2084 / PQ) output for the viewport.
+
+      Must be called before the window is first shown.  When enabled, the
+      swapchain is asked for a 10-bit VK_FORMAT_A2B10G10R10_UNORM_PACK32 image
+      (falling back to 8-bit when unavailable) and the window's surface format
+      is tagged with QColorSpace::Bt2100Pq, which Qt's Wayland platform turns
+      into a wp_image_description on the surface (the compositor's
+      color-management protocol).  The renderer is responsible for actually
+      encoding its output as PQ; see SoVulkanViewSettings::hdrOutput.  This is a
+      request: isHdrOutputActive() reports whether the swapchain actually came
+      up with an HDR format.
+    */
+    void setHdrOutputEnabled(bool enabled);
+
+    //! Whether setHdrOutputEnabled(true) was requested.
+    bool isHdrOutputRequested() const;
+    //! Whether the live swapchain uses an HDR (10-bit) color format.
+    bool isHdrOutputActive() const;
+
     //! Schedule a redraw on the Vulkan window (safe from any thread).
     void redraw();
 

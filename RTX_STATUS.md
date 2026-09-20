@@ -33,6 +33,28 @@ expected until the parent integrates it.
 `VulkanPathTracing` toggled on, **PASS**; 134 accumulating pt-state frames,
 no crash. Offscreen composite proof: `/tmp/vk_frame_134.png`.
 
+### HDR output (HDR10 / PQ) — IMPLEMENTED
+
+The viewport can present in HDR10 (BT.2020 primaries + SMPTE ST 2084 PQ) through
+the compositor's color-management protocol (`VulkanHDR` pref).  Both backends
+apply the transfer function **once, after blending, from linear radiance**:
+
+- **Raster** — `SoVulkanRenderBackend::renderExternalHdr()` renders the scene
+  into a backend-owned linear RGBA16F intermediate, then a fullscreen output
+  pass (`data/shaders/vulkan/output/Output*.glsl`) applies `VulkanHDRExposure`
+  + the PQ encode into the caller's swapchain framebuffer.
+- **Path tracing** — the RT present pass
+  (`data/shaders/vulkan/rt/PresentFragment.glsl`) applies the same exposure + PQ
+  encode to the denoised/accumulated radiance.
+
+See [`docs/vulkan/ARCHITECTURE.md`](docs/vulkan/ARCHITECTURE.md) §6 "HDR output".
+HDR is native-Wayland only and falls back to SDR when the capability probe
+(10-bit swapchain + `wp_color_manager_v1` ST 2084) fails; the SDR path is
+byte-identical when HDR is off.  Known limitation: the raster HDR intermediate
+is single-sample, so HDR mode drops MSAA until a resolve step is added.  The
+NVIDIA 610.x driver series is gated off by `hdrDriverBlocked()` (it forwards
+invalid HDR10 luminance metadata and KWin kills the client).
+
 ---
 
 ## 2. Present blocker: DLSS-RR `CreateFeature1` returns `FAIL_NotInitialized`
@@ -133,6 +155,33 @@ feature .so directory (exact filename `libnvidia-ngx-dlssd.so`).
 **Verified**: fcprobe run with `dlssrr` requested and no App ID →
 `[DENOISE] DLSS-RR disabled: FC_RTX_DLSS_APPID not set` → degrades to OIDN
 → `[VERDICT] PASS`, exit 0, no crash. Default RTX path still passes.
+
+### AMD FSR (FidelityFX DNSR) denoiser — IMPLEMENTED, build-gated
+
+The `fsr` denoiser slot is a real backend, not the old OIDN-degrading stub.
+
+- **Vendored**: `AMD/FidelityFX-Denoiser` (MIT) shader headers under
+  `src/3rdParty/coin/src/rendering/third_party/fidelityfx/` (see `UPSTREAM.md`).
+  The SDK's "AMD FSR Ray Regeneration" denoiser is **not** usable here: it is
+  DX12 + SM 6.6 + Windows 11 + Radeon RX 9000+ only, with no Vulkan backend.
+  DNSR (reflection ray-regeneration) is the MIT source that ports to Vulkan.
+- **Port**: `data/shaders/vulkan/rt/FsrPrefilter.glsl` (+ `FsrCommon.glsl`)
+  reimplements the DNSR reflection **prefilter** stage in GLSL compute (the
+  15-tap edge-stopping filter over a 16x16 shared tile). It runs on the GPU
+  over the path tracer's device-local G-buffers (accum, sums-of-squares,
+  normal, position) at native resolution — no host staging. The reference
+  filter's per-8x8 average-radiance mip is approximated by the center sample;
+  the temporal reproject/resolve stages are future work.
+- **Build**: `COIN_BUILD_FSR_DENOISER` (default **OFF**). OFF keeps the old
+  "not built in → OIDN" degradation; ON compiles the pass in.
+- **Wiring**: `SoRTXRenderBackendFsr.cpp` (`createFsrPipeline` /
+  `dispatchFsrDenoise` / `destroyFsrResources`), dispatched from
+  `SoRTXRenderBackendDenoise.cpp` like the RTX path. `denoiseScale` is forced
+  to 1 for FSR (native-resolution filter).
+- **Verified**: fcprobe `vk_fsr_probe.py` with `FC_VULKAN_PT_DENOISER=fsr` →
+  `[DENOISE] FSR (DNSR prefilter) pipeline ready` →
+  `[DENOISE] kind=3 FSR prefilter took 0.4 ms (2758x1681)` → `ready=1` →
+  `[VERDICT] PASS`, no fallback. In `vk_suite.json` as `fsr-denoise`.
 
 ### Priority 2 — Register App ID (external, blocks activation)
 

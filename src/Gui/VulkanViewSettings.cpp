@@ -24,6 +24,10 @@ VulkanViewSettings::load(const ParameterGrp::handle & hGrp)
 
     this->wireframe = hGrp->GetBool("VulkanWireframe", false);
     this->showPoints = hGrp->GetBool("VulkanShowPoints", false);
+    this->hdrEnabled = hGrp->GetBool("VulkanHDR", false);
+    this->hdrExposure = std::clamp(
+        static_cast<float>(hGrp->GetFloat("VulkanHDRExposure", 0.02f)),
+        0.0001f, 10.0f);
     this->interactionLod = hGrp->GetBool("VulkanInteractionLod", true);
     // Colors are stored as Unsigned (0xRRGGBBAA) to survive INT_MAX; the
     // alpha is pinned to 1 (the edge overlay is opaque).

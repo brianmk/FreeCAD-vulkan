@@ -28,6 +28,7 @@
 #include <QVBoxLayout>
 
 #include <QApplication>
+#include <QColorSpace>
 #include <QDir>
 #include <QEvent>
 #include <QFile>
@@ -35,8 +36,10 @@
 #include <QMutex>
 #include <QMouseEvent>
 #include <QPointer>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QStringList>
+#include <QSurfaceFormat>
 #include <QTimer>
 #include <QWheelEvent>
 #ifdef HAVE_QT6_GUI_PRIVATE
@@ -148,6 +151,110 @@ static QByteArray vkVersionStr(uint32_t v)
     return QByteArray::number(VK_API_VERSION_MAJOR(v)) + '.' +
            QByteArray::number(VK_API_VERSION_MINOR(v)) + '.' +
            QByteArray::number(VK_API_VERSION_PATCH(v));
+}
+
+//! Log the swapchain surface formats relevant to HDR output.
+//!
+//! The HDR output path renders into a 10-bit HDR10
+//! (VK_FORMAT_A2B10G10R10_UNORM_PACK32) or FP16 scRGB
+//! (VK_FORMAT_R16G16B16A16_SFLOAT) swapchain image.  Whether the driver/surface
+//! exposes those is independent of the compositor's color-management protocol,
+//! so it is enumerated here (read-only; QVulkanWindow still chooses the actual
+//! swapchain format from the preferred-format list).  Call it once the surface
+//! exists (initSwapChainResources).
+static void logHdrSurfaceFormats(QVulkanInstance * instance, QVulkanWindow * window)
+{
+    if (!instance || !window) {
+        return;
+    }
+    auto getFormats = reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceFormatsKHR>(
+        instance->getInstanceProcAddr("vkGetPhysicalDeviceSurfaceFormatsKHR"));
+    if (!getFormats) {
+        return;
+    }
+    const VkSurfaceKHR surface = QVulkanInstance::surfaceForWindow(window);
+    if (surface == VK_NULL_HANDLE) {
+        return;
+    }
+    VkPhysicalDevice physDev = window->physicalDevice();
+    uint32_t count = 0;
+    if (getFormats(physDev, surface, &count, nullptr) != VK_SUCCESS || count == 0) {
+        return;
+    }
+    QList<VkSurfaceFormatKHR> formats(static_cast<int>(count));
+    if (getFormats(physDev, surface, &count, formats.data()) != VK_SUCCESS) {
+        return;
+    }
+    const bool hdr10 = std::any_of(
+        formats.cbegin(), formats.cend(), [](const VkSurfaceFormatKHR & f) {
+            return f.format == VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+        });
+    const bool scrgb = std::any_of(
+        formats.cbegin(), formats.cend(), [](const VkSurfaceFormatKHR & f) {
+            return f.format == VK_FORMAT_R16G16B16A16_SFLOAT;
+        });
+    vkLog("HDR surface capabilities: %u format(s), HDR10(10-bit)=%d, scRGB(FP16)=%d",
+          count, hdr10 ? 1 : 0, scrgb ? 1 : 0);
+    for (const VkSurfaceFormatKHR & f : formats) {
+        vkLog("  surface format: %d colorSpace: %d",
+              static_cast<int>(f.format), static_cast<int>(f.colorSpace));
+    }
+    // The breadcrumb channel is the one captured to the trace file (Console().log
+    // is report-view only), so mirror the summary there for headless runs.
+    VK_BREADCRUMB("[VK-HDR] surface formats=%u hdr10_10bit=%d scrgb_fp16=%d\n",
+                  count, hdr10 ? 1 : 0, scrgb ? 1 : 0);
+    for (const VkSurfaceFormatKHR & f : formats) {
+        VK_BREADCRUMB("[VK-HDR]   format=%d colorSpace=%d\n",
+                      static_cast<int>(f.format), static_cast<int>(f.colorSpace));
+    }
+}
+
+//! Known-unsafe NVIDIA driver series for HDR10 output.
+//!
+//! An application that calls vkSetHdrMetadataEXT (VK_EXT_hdr_metadata) with
+//! invalid mastering metadata (min_luminance >= max_luminance, e.g. all-zero)
+//! has that metadata forwarded unfiltered by NVIDIA's Wayland WSI; KWin then
+//! raises wp_color_manager_v1 invalid_luminance and tears the client down.
+//! Mesa's WSI sanitizes the same values (is_hdr_metadata_legal), so only
+//! NVIDIA is affected.  Reported against 610.43.02 and still reproduced on
+//! 610.57.04 (Fedora/Plasma 6.7.4, Sep 2026); the fix belongs in the WSI layer
+//! (NVIDIA) or the caller, and no driver release has fixed it yet.
+//!
+//! Qt's Wayland path drives HDR through wp_color_manager_v1 / QColorSpace and
+//! does NOT call vkSetHdrMetadataEXT, so FreeCAD is not expected to trigger the
+//! bug (and HDR output runs clean on the 615.71.09 driver here).  HDR output is
+//! still experimental, though, and a compositor-side client kill is not an
+//! acceptable default, so the known-bad 610 series is gated.  Set
+//! FREECAD_VULKAN_HDR_ALLOW_UNSAFE_DRIVER=1 to override, or
+//! FREECAD_VULKAN_HDR_FORCE_BLOCK_DRIVER=<major> to exercise the gate.
+static bool hdrDriverBlocked()
+{
+    if (qEnvironmentVariableIsSet("FREECAD_VULKAN_HDR_ALLOW_UNSAFE_DRIVER")) {
+        return false;
+    }
+
+    // Test hook: force a driver major version without touching the real driver.
+    bool forcedOk = false;
+    const int forced = qEnvironmentVariableIntValue(
+        "FREECAD_VULKAN_HDR_FORCE_BLOCK_DRIVER", &forcedOk);
+    if (forcedOk) {
+        return forced == 610;
+    }
+
+    // NVIDIA only; the file is absent (or unreadable) for every other driver.
+    QFile f(QStringLiteral("/proc/driver/nvidia/version"));
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return false;
+    }
+    // "NVRM version: NVIDIA UNIX x86_64 Kernel Module  615.71.09  ..."
+    const QString line = QString::fromLocal8Bit(f.readLine());
+    static const QRegularExpression re(QStringLiteral("(\\d+)\\.\\d+\\.\\d+"));
+    const QRegularExpressionMatch m = re.match(line);
+    if (!m.hasMatch()) {
+        return false;
+    }
+    const int major = m.captured(1).toInt();
+    return major == 610;
 }
 
 
@@ -537,6 +644,8 @@ public:
 
     void initSwapChainResources() override
     {
+        VK_BREADCRUMB("[VK-HDR] initSwapChainResources colorFormat=%d\n",
+                      static_cast<int>(m_window->colorFormat()));
         m_manager.setRenderTarget(&m_target);
         // QVulkanWindow may keep up to its swapchain image count frames in
         // flight; give the backend one extra ring slot of margin.
@@ -551,6 +660,7 @@ public:
               static_cast<int>(m_window->depthStencilFormat()));
         vkLog("  sample count: %d", static_cast<int>(samples));
         vkLog("  swapchain images: %d", m_window->swapChainImageCount());
+        logHdrSurfaceFormats(m_instance, m_window);
 
         m_dumper.initSwapChainResources();
     }
@@ -927,6 +1037,19 @@ private:
     void recordScenePass(VkCommandBuffer cb, const QSize & size,
                          const SbColor4f & background, bool multisample)
     {
+        // HDR raster path: the manager owns the whole pass lifecycle (offscreen
+        // linear RGBA16F pass, barrier, output/PQ pass into Qt's framebuffer),
+        // so do NOT begin Qt's default render pass here.
+        if (m_manager.isHdrRasterActive()) {
+            const SbBool hdrOk = m_manager.renderExternalHdr(
+                false, false, cb, m_window->defaultRenderPass(),
+                m_window->currentFramebuffer());
+            if (!hdrOk) {
+                vkErr("startNextFrame: renderExternalHdr FAILED");
+            }
+            return;
+        }
+
         VkRenderPassBeginInfo rpBegin {};
         rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         rpBegin.renderPass = m_window->defaultRenderPass();
@@ -1237,6 +1360,12 @@ public:
     SoNode * decorationScene = nullptr;
     SoCamera * camera = nullptr;
     bool rayTracing = false;
+    //! HDR10 output requested (see setHdrOutputEnabled).  The actual swapchain
+    //! format is reported by isHdrOutputActive() once the window is shown.
+    bool hdrRequested = false;
+    //! HDR was refused because the GPU driver is on the known-unsafe list
+    //! (see hdrDriverBlocked); the SDR swapchain is used instead.
+    bool hdrDriverBlocked = false;
     // Auto-nulled when the raw-event widget is destroyed, so the event
     // filter below can never dereference a dangling pointer.
     QPointer<QWidget> rawEventTarget;
@@ -2246,6 +2375,56 @@ void QuarterVulkanWidget::setPreferredColorFormat(int vkFormat)
     vkLog("setPreferredColorFormat: requesting VkFormat %d", vkFormat);
     d->window->setPreferredColorFormats(
         QList<VkFormat>() << static_cast<VkFormat>(vkFormat));
+}
+
+void QuarterVulkanWidget::setHdrOutputEnabled(bool enabled)
+{
+    if (enabled && hdrDriverBlocked()) {
+        vkErr("HDR output requested but disabled: the NVIDIA 610.x driver series "
+              "is known to forward invalid HDR10 luminance metadata to the "
+              "compositor. Set FREECAD_VULKAN_HDR_ALLOW_UNSAFE_DRIVER=1 to "
+              "override.");
+        d->hdrDriverBlocked = true;
+        enabled = false;
+    }
+    d->hdrRequested = enabled;
+    if (!enabled) {
+        vkLog("setHdrOutputEnabled: off (SDR swapchain)");
+        return;
+    }
+    // Ask for a 10-bit HDR10 swapchain image, keeping the 8-bit format as a
+    // fallback so a surface without a 10-bit format still comes up (in SDR).
+    // QVulkanWindow picks the first requested format present in the surface's
+    // format list; on Wayland it then uses VK_COLOR_SPACE_PASS_THROUGH_EXT, and
+    // the HDR mapping is carried by Qt's wp_image_description instead.
+    d->window->setPreferredColorFormats(QList<VkFormat>()
+        << VK_FORMAT_A2B10G10R10_UNORM_PACK32
+        << VK_FORMAT_B8G8R8A8_UNORM);
+
+    // Tag the window's surface format with the HDR10 color space (BT.2020
+    // primaries + SMPTE ST 2084 PQ).  Qt's Wayland platform reads this in
+    // QWaylandWindow::initializeColorSpace() and attaches the matching
+    // wp_image_description; on other platforms it is ignored.  Must be set
+    // before the window is first shown.
+    QSurfaceFormat fmt = d->window->format();
+    fmt.setColorSpace(QColorSpace(QColorSpace::Bt2100Pq));
+    d->window->setFormat(fmt);
+    VK_BREADCRUMB("[VK-HDR] setHdrOutputEnabled: requested HDR10 swapchain + Bt2100Pq\n");
+}
+
+bool QuarterVulkanWidget::isHdrOutputRequested() const
+{
+    return d->hdrRequested;
+}
+
+bool QuarterVulkanWidget::isHdrOutputActive() const
+{
+    if (!d->window || d->hdrDriverBlocked) {
+        return false;
+    }
+    const VkFormat fmt = d->window->colorFormat();
+    return fmt == VK_FORMAT_A2B10G10R10_UNORM_PACK32
+        || fmt == VK_FORMAT_R16G16B16A16_SFLOAT;
 }
 
 void QuarterVulkanWidget::redraw()
