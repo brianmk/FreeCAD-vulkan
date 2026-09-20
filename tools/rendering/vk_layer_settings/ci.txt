@@ -1,0 +1,12 @@
+# CI profile: core + synchronization + best-practices, with the validation
+# cache enabled so repeated runs stay fast.
+#
+# Selected with FC_VULKAN_VALIDATION_PROFILE=ci.  This is the profile the CI
+# VUID ratchet should use: it is the broadest set that still completes a run
+# in reasonable time (GPU-assisted validation is deliberately excluded).
+
+khronos_validation.validate_core = true
+khronos_validation.validate_sync = true
+khronos_validation.validate_best_practices = true
+khronos_validation.enable_validation_cache = true
+khronos_validation.report_flags = error,warn,perf

@@ -1176,15 +1176,29 @@ public:
     // VK_KHR_synchronization2 (Vulkan 1.3 core) is a hard dependency of
     // VK_EXT_opacity_micromap; enabled alongside it when present.
     bool synchronization2Available = false;
+    // Whether the device advertises VK_KHR_synchronization2 as an extension
+    // (rather than the core Vulkan 1.3 feature).  Only then may the name be
+    // added to the device extension list.
+    bool synchronization2ExtensionAvailable = false;
     // Descriptor-indexing update-after-bind: lets the RT backend legally
     // rewrite a descriptor set an in-flight command buffer still references.
     bool descriptorIndexingAvailable = false;
+    // VK_EXT_pipeline_creation_feedback: lets the backend log pipeline-cache
+    // hits and creation cost (FC_VULKAN_PIPELINE_FEEDBACK).
+    bool rtPipelineCreationFeedbackAvailable = false;
+    // VK_EXT_debug_printf (+ VK_KHR_shader_non_semantic_info): lets shaders
+    // compiled with COIN_ENABLE_DEBUG_PRINTF emit diagnostics
+    // (FC_VULKAN_DEBUG_PRINTF).
+    bool rtDebugPrintfAvailable = false;
     // Feature structs behind the optional extensions above.  They live on the
     // window object (not the modifier lambda) because QVulkanWindowPrivate::
     // init() reads the pNext chain after the callback returns.
     VkPhysicalDeviceRayTracingPositionFetchFeaturesKHR rtPositionFetch {};
     VkPhysicalDeviceOpacityMicromapFeaturesEXT rtOpacityMicromap {};
     VkPhysicalDeviceDescriptorIndexingFeatures descriptorIndexing {};
+    // VK_KHR_synchronization2 / Vulkan 1.3 core: the renderer's barriers and
+    // submits use the *2 entry points when this feature is enabled.
+    VkPhysicalDeviceSynchronization2Features rtSynchronization2 {};
 
 private:
     QuarterVulkanRenderer * m_renderer;
@@ -1327,11 +1341,15 @@ void QuarterVulkanWidget::ensureSharedInstance()
         // FD export is usable.  Enabling them is free on 1.2+ and harmless if
         // the loader/driver lacks them (Qt tolerates unsupported instance
         // extensions in its setExtensions list).
+        // VK_EXT_debug_utils is enabled unconditionally: it is the instance
+        // half of the Coin renderer's optional object names / command-buffer
+        // labels (FC_VULKAN_DEBUG_UTILS), and an unused extension is free.
         g_sharedVulkanInstance.instance->setExtensions({
             QByteArrayLiteral("VK_KHR_external_memory_capabilities"),
             QByteArrayLiteral("VK_KHR_external_memory"),
             QByteArrayLiteral("VK_KHR_external_semaphore_capabilities"),
             QByteArrayLiteral("VK_KHR_external_semaphore"),
+            QByteArrayLiteral("VK_EXT_debug_utils"),
         });
         if (!g_sharedVulkanInstance.instance->create()) {
             vkWarn("QuarterVulkanWidget: could not create instance with "
@@ -1486,11 +1504,16 @@ void QuarterVulkanWidget::selectPhysicalDevice()
         caps.externalMemoryFd = hasExt("VK_KHR_external_memory_fd");
         caps.positionFetch = hasExt("VK_KHR_ray_tracing_position_fetch");
         caps.opacityMicromap = hasExt("VK_EXT_opacity_micromap");
+        caps.pipelineCreationFeedback =
+            hasExt("VK_EXT_pipeline_creation_feedback");
+        caps.debugPrintf = hasExt("VK_EXT_debug_printf") &&
+            hasExt("VK_KHR_shader_non_semantic_info");
         caps.nvCluster = hasExt("VK_NV_cluster_acceleration_structure");
         caps.nvPartitioned = hasExt("VK_NV_partitioned_acceleration_structure");
         caps.nvLinearSweptSpheres = hasExt("VK_NV_ray_tracing_linear_swept_spheres");
         caps.synchronization2 = caps.synchronization2
             || hasExt("VK_KHR_synchronization2");
+        caps.synchronization2Extension = hasExt("VK_KHR_synchronization2");
         caps.rayTracing = hasExt("VK_KHR_acceleration_structure")
             && hasExt("VK_KHR_ray_tracing_pipeline")
             && hasExt("VK_KHR_ray_query");
@@ -1548,10 +1571,15 @@ void QuarterVulkanWidget::selectPhysicalDevice()
     d->vulkanWindow->rtTimelineSemaphoreAvailable = best.timelineSemaphore;
     d->vulkanWindow->rtPositionFetchAvailable = best.positionFetch;
     d->vulkanWindow->rtOpacityMicromapAvailable = best.opacityMicromap;
+    d->vulkanWindow->rtPipelineCreationFeedbackAvailable =
+        best.pipelineCreationFeedback;
+    d->vulkanWindow->rtDebugPrintfAvailable = best.debugPrintf;
     d->vulkanWindow->rtNvClusterAvailable = best.nvCluster;
     d->vulkanWindow->rtNvPartitionedAvailable = best.nvPartitioned;
     d->vulkanWindow->rtNvLinearSweptSpheresAvailable = best.nvLinearSweptSpheres;
     d->vulkanWindow->synchronization2Available = best.synchronization2;
+    d->vulkanWindow->synchronization2ExtensionAvailable =
+        best.synchronization2Extension;
     d->vulkanWindow->descriptorIndexingAvailable =
         best.descriptorIndexingUpdateAfterBind;
     if (d->rayTracing && !best.externalMemoryFd) {
@@ -1647,8 +1675,25 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
     // vkCreateDevice fails validation (VUID-ppEnabledExtensionNames-01387).
     if (d->vulkanWindow->rtOpacityMicromapAvailable
         && d->vulkanWindow->synchronization2Available) {
-        deviceExt << QByteArrayLiteral("VK_EXT_opacity_micromap")
-                  << QByteArrayLiteral("VK_KHR_synchronization2");
+        deviceExt << QByteArrayLiteral("VK_EXT_opacity_micromap");
+    }
+    // VK_KHR_synchronization2: add the extension name only when the device
+    // advertises it as an extension.  On a Vulkan 1.3+ device the feature is
+    // core and the name may not be listed, in which case adding it would fail
+    // device creation.
+    if (d->vulkanWindow->synchronization2ExtensionAvailable) {
+        deviceExt << QByteArrayLiteral("VK_KHR_synchronization2");
+    }
+    if (d->vulkanWindow->rtPipelineCreationFeedbackAvailable) {
+        deviceExt << QByteArrayLiteral("VK_EXT_pipeline_creation_feedback");
+    }
+    // Shader-side diagnostics (debugPrintfEXT) are opt-in: the extension is
+    // only requested when FC_VULKAN_DEBUG_PRINTF is set, since it changes the
+    // SPIR-V the shaders must have been compiled with.
+    if (d->vulkanWindow->rtDebugPrintfAvailable &&
+        Base::envFlagEnabled("FC_VULKAN_DEBUG_PRINTF")) {
+        deviceExt << QByteArrayLiteral("VK_EXT_debug_printf")
+                  << QByteArrayLiteral("VK_KHR_shader_non_semantic_info");
     }
     if (d->vulkanWindow->rtNvClusterAvailable) {
         deviceExt << QByteArrayLiteral("VK_NV_cluster_acceleration_structure");
@@ -1847,6 +1892,19 @@ void QuarterVulkanWidget::applyBaseDeviceFeatures(
         d->vulkanWindow->fullDrawIndexUint32 ? VK_TRUE : VK_FALSE;
     features.features.dualSrcBlend =
         d->vulkanWindow->dualSrcBlend ? VK_TRUE : VK_FALSE;
+    // synchronization2: the renderer's barriers and submits take the *2 entry
+    // points whenever this feature is enabled (Vulkan 1.3 core or the
+    // extension).  Chained here so both the raster and RT feature-modifier
+    // paths request it.  The struct lives on the window object because
+    // QVulkanWindowPrivate::init() reads the pNext chain after the modifier
+    // callback returns.
+    if (d->vulkanWindow->synchronization2Available) {
+        d->vulkanWindow->rtSynchronization2.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
+        d->vulkanWindow->rtSynchronization2.synchronization2 = VK_TRUE;
+        d->vulkanWindow->rtSynchronization2.pNext = features.pNext;
+        features.pNext = &d->vulkanWindow->rtSynchronization2;
+    }
 }
 
 void QuarterVulkanWidget::logSupportedSampleCounts()

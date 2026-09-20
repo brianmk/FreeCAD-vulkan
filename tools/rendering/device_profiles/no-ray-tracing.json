@@ -1,0 +1,6 @@
+{
+  "description": "Removes the ray-tracing device extensions (VK_KHR_ray_query / ray_tracing_pipeline / acceleration_structure) while keeping the device's real limits. The RTX backend must report itself unavailable and the viewport must fall back to raster without errors.",
+  "env": {
+    "VK_KHRONOS_PROFILES_EXCLUDE_DEVICE_EXTENSIONS": "VK_KHR_ray_query,VK_KHR_ray_tracing_pipeline,VK_KHR_acceleration_structure,VK_KHR_ray_tracing_position_fetch"
+  }
+}

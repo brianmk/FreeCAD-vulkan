@@ -1,0 +1,6 @@
+{
+  "description": "Forces portability-subset emulation (VK_KHR_portability_subset) while keeping the device's real limits. Exercises the renderer's portability-subset handling.",
+  "env": {
+    "VK_KHRONOS_PROFILES_EMULATE_PORTABILITY": "true"
+  }
+}

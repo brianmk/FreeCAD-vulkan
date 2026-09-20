@@ -1,0 +1,8 @@
+{
+  "description": "Vulkan Portability roadmap 2022 (VP_KHR_roadmap_2022): the KHR portability initiative's target device, the widest common denominator across desktop and mobile-class drivers. Includes portability-subset emulation.",
+  "profile_file": "VP_KHR_roadmap.json",
+  "profile_name": "VP_KHR_roadmap_2022",
+  "env": {
+    "VK_KHRONOS_PROFILES_EMULATE_PORTABILITY": "true"
+  }
+}
