@@ -75,3 +75,6 @@ tsupdate_stdout.log
 # pixi environments
 *.egg-info
 .pixi
+
+# Local coding-agent instructions (not part of the project)
+AGENTS.md
