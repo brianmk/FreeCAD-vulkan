@@ -447,18 +447,20 @@ void VulkanViewportAdapter::pushSettings()
     vs.hdrOutput = settings.hdrEnabled && _vulkanViewer->isHdrOutputActive();
     // Map scene-white to the user's reference white (see VulkanViewSettings).
     vs.hdrExposure = settings.hdrExposure;
+    // Highlight rolloff: 0 = clip, 1 = Reinhard, 2 = ACES, 3 = Hable.
+    vs.hdrToneMap = settings.hdrToneMap;
 
     if (Base::envFlagEnabled("FC_VULKAN_BACKEND_DEBUG")) {
         Base::Console().message(
             "[VK-SET] pushSettings raster=%d wireframe=%d points=%d "
             "edgeColor=(%.2f,%.2f,%.2f,%.2f) pt=%d bounces=%d settle=%d "
-            "hdr=%d hdrExposure=%.4f "
+            "hdr=%d hdrExposure=%.4f hdrToneMap=%d "
             "(prefWireframe=%d prefPoints=%d)\n",
             raster ? 1 : 0, effWireframe ? 1 : 0, effPoints ? 1 : 0,
             settings.edgeColor[0], settings.edgeColor[1],
             settings.edgeColor[2], settings.edgeColor[3], !raster ? 1 : 0,
             settings.pathTracingBounces, settings.pathTracingSettleFrames,
-            vs.hdrOutput ? 1 : 0, vs.hdrExposure,
+            vs.hdrOutput ? 1 : 0, vs.hdrExposure, vs.hdrToneMap,
             settings.wireframe ? 1 : 0, settings.showPoints ? 1 : 0);
     }
     _vulkanViewer->setViewSettings(vs);

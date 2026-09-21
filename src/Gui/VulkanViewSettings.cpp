@@ -28,6 +28,8 @@ VulkanViewSettings::load(const ParameterGrp::handle & hGrp)
     this->hdrExposure = std::clamp(
         static_cast<float>(hGrp->GetFloat("VulkanHDRExposure", 0.02f)),
         0.0001f, 10.0f);
+    this->hdrToneMap = std::clamp(
+        static_cast<int>(hGrp->GetInt("VulkanHDRToneMap", 1)), 0, 3);
     this->interactionLod = hGrp->GetBool("VulkanInteractionLod", true);
     // Colors are stored as Unsigned (0xRRGGBBAA) to survive INT_MAX; the
     // alpha is pinned to 1 (the edge overlay is opaque).

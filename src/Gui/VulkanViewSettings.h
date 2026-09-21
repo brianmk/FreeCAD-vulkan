@@ -123,10 +123,15 @@ struct VulkanViewSettings
     //! the HDR output pass.  Scene-white (radiance 1.0) lands at
     //! hdrExposure * 10000 cd/m^2, so 0.02 maps diffuse white to the ~200
     //! cd/m^2 SDR reference white while highlights (radiance > 1) can still
-    //! exceed it up to the 10000 cd/m^2 PQ peak.  A scene tone map is
-    //! deliberately not applied: it would compress exactly the highlights HDR
-    //! exists to preserve.
+    //! exceed it up to the 10000 cd/m^2 PQ peak.
     float hdrExposure = 0.02f;
+    //! Tone-mapping operator applied between the exposure and the PQ encode:
+    //! 0 = clip (no tone map: highlights hard-clamp at the PQ peak),
+    //! 1 = Reinhard (default), 2 = ACES, 3 = Hable.  The non-clip operators roll
+    //! highlights off smoothly instead of clipping; they are the published
+    //! matrix-free forms and the exposure is the linear pre-scale.  Ignored
+    //! when HDR is off.
+    int hdrToneMap = 1;
     //! Interaction LOD: while the camera is navigating, reduce per-frame work
     //! so an orbit/pan of a heavy scene stays responsive, then restore full
     //! quality once the camera settles.  Applies to every Vulkan mode: a
