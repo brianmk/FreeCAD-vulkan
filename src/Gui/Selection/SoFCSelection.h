@@ -146,13 +146,17 @@ private:
 #endif
     bool getOverrideColor(SelContextPtr ctx, bool& preselected, SbColor& color) const;
     SbBool isHighlighted(SoAction* action);
-    SbBool preRender(SoGLRenderAction* act, GLint& oldDepthFunc);
     const SoPickedPoint* getPickedPoint(SoHandleEventAction*) const;
 
     static SoFullPath* currenthighlight;
 
     SbBool highlighted;
     SoColorPacker colorpacker;
+    //! Stable storage for the current override colour.  SoLazyElement keeps the
+    //! pointer handed to setDiffuse()/setEmissive() for the duration of the
+    //! traversal, so the colour must outlive setOverride()/setOverrideIR();
+    //! a stack local there would dangle and the shape would read garbage.
+    SbColor overrideColor;
 
     SbBool bShift;
     SbBool bCtrl;
