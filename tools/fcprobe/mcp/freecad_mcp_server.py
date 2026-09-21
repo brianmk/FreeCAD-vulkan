@@ -45,7 +45,11 @@ SOCKET_PATH = os.environ.get("FC_MCP_SOCKET", "/tmp/opencode/freecad_mcp.sock")
 # host env plus these defaults (callers can override via --env).
 SPAWN_ENV = {
     "QT_STYLE_OVERRIDE": "fusion",
-    "QT_QPA_PLATFORM": "xcb",
+    # Platform plugin is overridable so the same server can drive the native
+    # Wayland viewport (FC_MCP_QPA_PLATFORM=wayland).  xcb stays the default
+    # because some dev flows (e.g. RenderDoc capture) only work through
+    # XWayland.
+    "QT_QPA_PLATFORM": os.environ.get("FC_MCP_QPA_PLATFORM", "xcb"),
     "LD_LIBRARY_PATH": "/tmp/opencode/boost91",
     "FC_SKIP_UNSAVED_PROMPT": "1",
 }

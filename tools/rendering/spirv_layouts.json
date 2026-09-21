@@ -1,5 +1,5 @@
 {
-  "_comment": "Expected std140 block layouts mirrored by the C++ structs in src/3rdParty/coin/src/rendering/SoVulkanRenderBackend/SoVulkanRenderBackendP.h. Consumed by spirv_layout_check.py; keep in sync with the struct static_asserts.",
+  "_comment": "Expected std140 block layouts mirrored by the C++ structs with matching static_asserts: SoVulkanRenderBackend/SoVulkanRenderBackendP.h (PushConstants=VulkanPushConstants, BackgroundPush=VulkanBackgroundPush, LightingBlock=VulkanLightingUbo, DrawBlock=VulkanDrawUbo), SoRTXRenderBackend/SoRTXRenderBackendP.h (RTMaterial, RaygenPush, Push=DenoiseDownsamplePush), SoVulkanRenderBackend/SoVulkanRenderBackendGeometryLod.cpp (SubPixelCullPush=SubPixelPush) and SoRTXRenderBackend/SoRTXRenderBackendPick.cpp (PickPush). Consumed by spirv_layout_check.py; keep in sync with the struct static_asserts.",
   "blocks": {
     "PushConstants": {
       "size": 112,
@@ -86,6 +86,15 @@
         "pcFull": 0,
         "pcReg": 16,
         "pcNum": 32
+      }
+    },
+    "PickPush": {
+      "size": 48,
+      "members": {
+        "origin": 0,
+        "direction": 16,
+        "tMax": 32,
+        "pad": 36
       }
     }
   }

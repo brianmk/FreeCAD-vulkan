@@ -618,7 +618,7 @@ public:
         if (ns.logging) {
             Base::Console().log(" -> PanState\n");
         }
-        this->ratio = ns.viewer->getSoRenderManager()->getViewportRegion().getViewportAspectRatio();
+        this->ratio = ns.viewer->getViewportRegion().getViewportAspectRatio();
         ns.setupPanningPlane(ns.viewer->getSoRenderManager()->getCamera());  // set up panningplane
     }
     virtual ~PanState() = default;
@@ -671,7 +671,7 @@ public:
         if (ns.logging) {
             Base::Console().log(" -> StickyPanState\n");
         }
-        this->ratio = ns.viewer->getSoRenderManager()->getViewportRegion().getViewportAspectRatio();
+        this->ratio = ns.viewer->getViewportRegion().getViewportAspectRatio();
         ns.setupPanningPlane(ns.viewer->getSoRenderManager()->getCamera());  // set up panningplane
     }
     virtual ~StickyPanState()
@@ -779,7 +779,7 @@ public:
             Base::Console().log(" -> GestureState\n");
         }
         ns.setupPanningPlane(ns.viewer->getSoRenderManager()->getCamera());  // set up panningplane
-        this->ratio = ns.viewer->getSoRenderManager()->getViewportRegion().getViewportAspectRatio();
+        this->ratio = ns.viewer->getViewportRegion().getViewportAspectRatio();
         enableTilt = !(App::GetApplication()
                            .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
                            ->GetBool("DisableTouchTilt", true));

@@ -2440,6 +2440,14 @@ MDIView* Document::createView(const Base::Type& typeId, CreateViewMode mode)
         if (!cameraSettings.empty()) {
             view3D->setCamera(cameraSettings.c_str());
         }
+        else {
+            // No stored camera (a brand-new document, or a restored one whose
+            // saved view had no camera): apply the configured new-document
+            // orientation/zoom, matching File > New.  Without this a view
+            // created through Python's App.newDocument, paste or the file
+            // handler opened at the identity rotation and default zoom.
+            view3D->getViewer()->applyDefaultOrientation();
+        }
 
         // When cloning the view, don't add the view to the main window. The whole purpose of the
         // workaround using cloned views is that the view can be shown in undocked/fullscreen mode

@@ -852,63 +852,6 @@ void SoFCSelection::GLRenderInPath(SoGLRenderAction* action)
     }
 }
 
-SbBool SoFCSelection::preRender(SoGLRenderAction* action, GLint& oldDepthFunc)
-//
-////////////////////////////////////////////////////////////////////////
-{
-    // If not performing locate highlighting, just return.
-    if (preselectionMode.getValue() == OFF) {
-        return false;
-    }
-
-    SoState* state = action->getState();
-
-    // ??? prevent caching at this level - for some reason the
-    // ??? SoWindowElement::copyMatchInfo() method get called, which should
-    // ??? never be called. We are not caching this node correctly yet....
-    // SoCacheElement::invalidate(state);
-
-    SbBool drawHighlighted
-        = (preselectionMode.getValue() == ON || isHighlighted(action)
-           || selected.getValue() == SELECTED);
-
-    if (drawHighlighted) {
-        // prevent diffuse & emissive color from leaking out...
-        state->push();
-        SbColor col;
-        if (selected.getValue() == SELECTED) {
-            col = colorSelection.getValue();
-        }
-        else {
-            col = colorHighlight.getValue();
-        }
-
-        // Emissive Color
-        SoLazyElement::setEmissive(state, &col);
-        SoOverrideElement::setEmissiveColorOverride(state, this, true);
-
-        // Diffuse Color
-        if (style.getValue() == EMISSIVE_DIFFUSE) {
-            SoLazyElement::setDiffuse(state, this, 1, &col, &colorpacker);
-            SoOverrideElement::setDiffuseColorOverride(state, this, true);
-        }
-    }
-
-    // Draw on top of other things at same z-buffer depth if:
-    // [a] we're highlighted
-    // [b] this is the highlighting pass. This occurs when changing from
-    //     non-hilit to lit OR VICE VERSA.
-    // Otherwise, leave it alone...
-    if (drawHighlighted || highlighted) {
-        glGetIntegerv(GL_DEPTH_FUNC, &oldDepthFunc);
-        if (oldDepthFunc != GL_LEQUAL) {
-            glDepthFunc(GL_LEQUAL);
-        }
-    }
-
-    return drawHighlighted;
-}
-
 /*!
   Empty method in Coin. Can be used by subclasses to be told
   when status change.
@@ -971,7 +914,7 @@ bool applyOverrideState(Action* action,
 bool SoFCSelection::setOverride(SoGLRenderAction* action, SelContextPtr ctx)
 {
     bool preselected = false;
-    SbColor color;
+    SbColor& color = this->overrideColor;
     if (!getOverrideColor(ctx, preselected, color)) {
         return false;
     }
@@ -1005,7 +948,7 @@ bool SoFCSelection::setOverride(SoGLRenderAction* action, SelContextPtr ctx)
 bool SoFCSelection::setOverrideIR(SoIRRenderAction* action, SelContextPtr ctx)
 {
     bool preselected = false;
-    SbColor color;
+    SbColor& color = this->overrideColor;
     if (!getOverrideColor(ctx, preselected, color)) {
         return false;
     }

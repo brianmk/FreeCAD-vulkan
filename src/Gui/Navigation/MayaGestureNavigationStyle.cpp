@@ -170,7 +170,7 @@ SbBool MayaGestureNavigationStyle::processSoEvent(const SoEvent* const ev)
     // pos: local coordinates of event, in pixels
     // posn: normalized local coordinates of event ((0,0) = lower left corner, (1,1) = upper right
     // corner)
-    float ratio = viewer->getSoRenderManager()->getViewportRegion().getViewportAspectRatio();
+    float ratio = viewer->getViewportRegion().getViewportAspectRatio();
 
     if (evIsButton || evIsLoc2) {
         this->lastmouseposition = posn;

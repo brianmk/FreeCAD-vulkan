@@ -168,7 +168,11 @@ EditorView::EditorView(TextEdit* editor, QWidget* parent)
 /** Destroys the object and frees any allocated resources */
 EditorView::~EditorView()
 {
-    Gui::getMainWindow()->hideHints();
+    // This dock is a child of the main window, so it can be destroyed while the
+    // main window is being torn down (app shutdown), when the instance is null.
+    if (auto* mw = Gui::getMainWindow()) {
+        mw->hideHints();
+    }
 
     d->activityTimer->stop();
     // to avoid the assert introduced a debug version of Qt >6.3. See QTBUG-105473

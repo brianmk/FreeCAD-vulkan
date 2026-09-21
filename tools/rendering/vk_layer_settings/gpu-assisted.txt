@@ -1,6 +1,6 @@
 # GPU-assisted validation: device-side bounds/descriptor/API misuse checks.
 #
-# Selected with FC_VULKAN_VALIDATION_PROFILE=gpu-assisted.  Slower than core
+# Selected with --validation-profile gpu-assisted.  Slower than core
 # validation; intended for targeted debugging, not for every run.
 
 khronos_validation.validate_core = true

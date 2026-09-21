@@ -295,9 +295,22 @@ class SketcherGuiTestCases(unittest.TestCase):
 
         midpoint_coin = tuple(int(value) for value in self.view.getPointOnViewport(midpoint))
 
+        # Probe a band sized in sketch units, not pixels.  The dimension
+        # annotation (text and arrow heads) is drawn at a screen-space size and
+        # deliberately outranks sketch geometry, so a hard-coded pixel band
+        # reaches into it on a small viewport (or a large system font) and the
+        # curve legitimately loses there.  Scaling the band to the projected
+        # geometry keeps the probe on the curve independently of the viewport.
+        start_coin = tuple(int(value) for value in self.view.getPointOnViewport(start_point))
+        end_coin = tuple(int(value) for value in self.view.getPointOnViewport(end_point))
+        line_units = start_point.distanceToPoint(end_point)
+        pixels_per_unit = abs(end_coin[0] - start_coin[0]) / max(line_units, 1e-6)
+        span = max(3, int(round(pixels_per_unit * 1.0)))  # +/- 1 sketch unit
+        step = max(1, span // 4)
+
         edge_offsets = []
-        for dy in range(-10, 11, 2):
-            for dx in range(-16, 17, 2):
+        for dy in range(-span, span + 1, step):
+            for dx in range(-span, span + 1, step):
                 probe_coin = (midpoint_coin[0] + dx, midpoint_coin[1] + dy)
                 probe_info = SketcherGui.getActiveSketchPreselection(probe_coin)
                 probe_kind = self.classify_preselection(probe_info, "Constraint0")
@@ -315,7 +328,9 @@ class SketcherGuiTestCases(unittest.TestCase):
             )
         )
         self.sketch.setLabelDistance(constraint_id, 0.0)
-        self.sketch.setLabelPosition(constraint_id, 12.0)
+        # Keep the text label well clear of the probed band: only the dimension
+        # line (presentation, which must lose to the curve) should overlap it.
+        self.sketch.setLabelPosition(constraint_id, 30.0)
         self.expected_constraint_name = f"Constraint{constraint_id + 1}"
         self.doc.recompute()
         self.pump_gui_events()

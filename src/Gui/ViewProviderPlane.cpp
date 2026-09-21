@@ -78,6 +78,7 @@ void ViewProviderPlane::attach(App::DocumentObject* obj)
     // ShapeAppearance.setTransparency(0.8);
     auto material = new SoMaterial();
     material->transparency.setValue(0.85f);
+    pFaceMaterial = material;
 
     if (!role.empty()) {
         ShapeAppearance.setDiffuseColor(getColor(role));
@@ -96,6 +97,16 @@ void ViewProviderPlane::attach(App::DocumentObject* obj)
     sep->addChild(ps);
 
     auto lineSeparator = new SoSeparator();
+    // Draw the outline black so the plane edge reads clearly regardless of the
+    // plane's role colour (the datum is rendered with BASE_COLOR lighting, so
+    // the diffuse colour is used verbatim). Opaque, unlike the translucent
+    // face material.
+    auto lineMaterial = new SoMaterial();
+    lineMaterial->ambientColor.setValue(0.0f, 0.0f, 0.0f);
+    lineMaterial->diffuseColor.setValue(0.0f, 0.0f, 0.0f);
+    lineMaterial->transparency.setValue(0.0f);
+    lineSeparator->addChild(lineMaterial);
+
     auto pLines = new SoIndexedLineSet();
     static const int32_t lines[6] = {0, 1, 2, 3, 0, -1};
     pLines->coordIndex.setNum(6);
@@ -159,6 +170,15 @@ void ViewProviderPlane::setLabelVisibility(bool val)
     labelSwitch->whichChild = val ? SO_SWITCH_ALL : SO_SWITCH_NONE;
 }
 
+void ViewProviderPlane::onTemporaryScaleChanged()
+{
+    // resetTemporarySize() is also called from ViewProviderDatum::attach()
+    // before this class has built its geometry (pCoords is still null).
+    if (pCoords) {
+        updatePlaneSize();
+    }
+}
+
 void ViewProviderPlane::onSelectionChanged(const SelectionChanges& msg)
 {
     bool isSelectedOrHoveredBefore = isSelected || isHovered;
@@ -193,7 +213,7 @@ void ViewProviderPlane::onSelectionChanged(const SelectionChanges& msg)
 
 void ViewProviderPlane::updatePlaneSize()
 {
-    if (!pcObject->isAttachedToDocument()) {
+    if (!pcObject || !pcObject->isAttachedToDocument()) {
         return;
     }
 
@@ -204,9 +224,14 @@ void ViewProviderPlane::updatePlaneSize()
 
     SbVec3f verts[4];
 
-    bool isSelectedOrHovered = isSelected || isHovered;
+    const bool isSelectedOrHovered = isSelected || isHovered;
+    // The temporary (attachment-pick) enlargement scales about the plane
+    // origin, so a corner patch would be pushed far off the origin and end up
+    // off-screen. Draw the full, origin-centred square instead: it stays
+    // centred on the origin and its screen size follows the viewport.
+    const bool fullSquare = isSelectedOrHovered || isTemporarilyScaled();
 
-    if (!getRole().empty() && !isSelectedOrHovered) {
+    if (!getRole().empty() && !fullSquare) {
         verts[0] = SbVec3f(size, size, 0);
         verts[1] = SbVec3f(size, offset, 0);
         verts[2] = SbVec3f(offset, offset, 0);
@@ -219,7 +244,17 @@ void ViewProviderPlane::updatePlaneSize()
         verts[3] = SbVec3f(-size, size, 0);
     }
 
-    pTextTranslation->translation.setValue(verts[0] / 2 - SbVec3f(2, 6, 0));  // NOLINT
+    // Lift the name just off the plane so it does not z-fight with the face.
+    SbVec3f textPos = verts[0] / 2 - SbVec3f(2, 6, 0);  // NOLINT
+    textPos[2] += size * 0.01f;
+    pTextTranslation->translation.setValue(textPos);
+
+    // A hovered/selected plane is drawn more opaque so the selection colour is
+    // clearly visible through the otherwise 85%-transparent fill.
+    if (pFaceMaterial) {
+        pFaceMaterial->transparency.setValue(isSelectedOrHovered ? 0.3f : 0.85f);
+    }
+
     pCoords->point.setNum(4);
     pCoords->point.setValues(0, 4, verts);
 }

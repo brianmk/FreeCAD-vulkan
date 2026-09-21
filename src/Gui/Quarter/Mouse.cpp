@@ -52,7 +52,6 @@
 #include <Inventor/errors/SoDebugError.h>
 #include <Inventor/events/SoEvents.h>
 
-#include "QuarterWidget.h"
 #include <Base/VulkanBreadcrumbs.h>
 #include "devices/Mouse.h"
 
@@ -88,8 +87,8 @@ public:
   // and the cached DPR (upstream behavior) -- applying the live ratio to a
   // logical region is what shifted hover/select picking by 1/dpr.
   SbVec2s logicalWindowSize() const {
-    return publ->quarter->vulkanDevicePixels()
-      ? effectiveWindowSize(publ->quarter)
+    return publ->host->vulkanDevicePixels()
+      ? publ->host->inputWindowSize()
       : this->windowsize;
   }
 
@@ -129,8 +128,8 @@ QPointF getLocalPosition(const QWheelEvent* event)
 
 }
 
-Mouse::Mouse(QuarterWidget* quarter) :
-  InputDevice(quarter)
+Mouse::Mouse(InputDeviceHost* host) :
+  InputDevice(host)
 {
   PRIVATE(this) = new MouseP(this);
 }
@@ -173,7 +172,7 @@ MouseP::resizeEvent(QResizeEvent * event)
                              event->size().height());
   VK_BREADCRUMB(
           "[VK-TRACE] MouseP::resizeEvent widget=%dx%d event=%dx%d -> windowsize=%d,%d\n",
-          publ->quarter->width(), publ->quarter->height(),
+          publ->host->inputSize().width(), publ->host->inputSize().height(),
           event->size().width(), event->size().height(),
           this->windowsize[0], this->windowsize[1]);
 }
@@ -187,7 +186,7 @@ MouseP::mouseMoveEvent(QMouseEvent * event)
   SbVec2s pos = InputDevice::toDevicePixelPosition(
       getLocalPosition(event),
       logicalWindowSize(),
-      publ->quarter->devicePixelRatio());
+      publ->host->devicePixelRatio());
   this->location2->setPosition(pos);
   this->mousebutton->setPosition(pos);
   return this->location2;
@@ -200,7 +199,7 @@ MouseP::mouseWheelEvent(QWheelEvent * event)
   SbVec2s pos = InputDevice::toDevicePixelPosition(
       getLocalPosition(event),
       logicalWindowSize(),
-      publ->quarter->devicePixelRatio());
+      publ->host->devicePixelRatio());
   this->location2->setPosition(pos); //I don't know why location2 is assigned here, I assumed it important  --DeepSOIC
   this->wheel->setPosition(pos);
 
@@ -222,7 +221,7 @@ MouseP::mouseButtonEvent(QMouseEvent * event)
   SbVec2s pos = InputDevice::toDevicePixelPosition(
       getLocalPosition(event),
       logicalWindowSize(),
-      publ->quarter->devicePixelRatio());
+      publ->host->devicePixelRatio());
   this->location2->setPosition(pos);
   this->mousebutton->setPosition(pos);
 

@@ -199,6 +199,105 @@ def log(params: Dict[str, Any]) -> Dict[str, Any]:
     return {"level": level, "message": msg.rstrip("\n")}
 
 
+# ---------------------------------------------------------------------------
+# ReportView dock (GUI only)
+# ---------------------------------------------------------------------------
+# The dock is registered as "Std_ReportView" (MainWindow::setupReportView) but
+# some builds expose it under the title ("Report view"/"ReportView"), so try the
+# known names first, then fall back to any dock whose name/title mentions
+# "report".  The dock's widget is either the ReportView container (a QWidget
+# holding a QTabWidget with the ReportOutput QTextEdit and the PythonConsole
+# QPlainTextEdit) or, in simpler builds, the ReportOutput QTextEdit directly.
+# Because QPlainTextEdit does not derive from QTextEdit, findChild(QTextEdit)
+# unambiguously returns the ReportOutput when the container layout is used.
+_REPORT_DOCK_NAMES = ("Std_ReportView", "Report view", "ReportView", "ReportOutput")
+
+
+def _find_report_dock(mw):
+    from PySide import QtWidgets
+    for name in _REPORT_DOCK_NAMES:
+        dock = mw.findChild(QtWidgets.QDockWidget, name)
+        if dock is not None:
+            return dock
+    for dock in mw.findChildren(QtWidgets.QDockWidget):
+        label = f"{dock.objectName()} {dock.windowTitle()}".lower()
+        if "report" in label:
+            return dock
+    return None
+
+
+def _report_output_widget():
+    """Return (dock, text_edit) for the ReportView's Output tab.  GUI only."""
+    from PySide import QtWidgets
+    import FreeCADGui
+    mw = FreeCADGui.getMainWindow()
+    if mw is None:
+        raise RuntimeError("no main window")
+    dock = _find_report_dock(mw)
+    if dock is None:
+        raise RuntimeError("ReportView dock not found")
+    view = dock.widget()
+    if isinstance(view, QtWidgets.QTextEdit):
+        edit = view
+    else:
+        edit = view.findChild(QtWidgets.QTextEdit) if view is not None else None
+    if edit is None:
+        raise RuntimeError("ReportOutput text widget not found in ReportView")
+    return dock, edit
+
+
+def get_report_view(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Read the text shown in the ReportView's Output tab (GUI only).
+
+    `limit` = max lines (0/absent = all), `tail=True` (default) returns the most
+    recent lines.  This is the *widget* contents (what the user sees), which is
+    distinct from `get_log`'s fd-level capture of the process stream.
+    """
+    if not _is_gui():
+        return {"gui_available": False, "text": "", "lines": 0, "total_lines": 0,
+                "visible": False, "error": "ReportView requires the FreeCAD GUI"}
+    dock, edit = _report_output_widget()
+    all_lines = edit.toPlainText().splitlines()
+    limit = int(params.get("limit", 0) or 0)
+    tail = bool(params.get("tail", True))
+    if limit > 0:
+        lines = all_lines[-limit:] if tail else all_lines[:limit]
+    else:
+        lines = all_lines
+    return {"text": "\n".join(lines), "lines": len(lines),
+            "total_lines": len(all_lines), "visible": dock.isVisible(),
+            "gui_available": True}
+
+
+def clear_report_view(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Clear the ReportView's Output tab (GUI only)."""
+    if not _is_gui():
+        return {"cleared": False, "gui_available": False,
+                "error": "ReportView requires the FreeCAD GUI"}
+    _, edit = _report_output_widget()
+    edit.clear()
+    return {"cleared": True, "gui_available": True}
+
+
+def show_report_view(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Show/hide the ReportView dock.  `visible` bool (default True) also raises
+    the dock and brings its Output tab to the front.  GUI only."""
+    if not _is_gui():
+        return {"visible": False, "gui_available": False,
+                "error": "ReportView requires the FreeCAD GUI"}
+    from PySide import QtWidgets
+    dock, edit = _report_output_widget()
+    visible = bool(params.get("visible", True))
+    dock.setVisible(visible)
+    if visible:
+        dock.raise_()
+        view = dock.widget()
+        tabs = view.findChild(QtWidgets.QTabWidget) if view is not None else None
+        if tabs is not None:
+            tabs.setCurrentWidget(edit)
+    return {"visible": dock.isVisible(), "gui_available": True}
+
+
 def _app_modules():
     """Late import of the FreeCAD App-side modules (work in GUI and FreeCADCmd)."""
     import FreeCAD as App
@@ -979,13 +1078,57 @@ def clear_selection(params: Dict[str, Any]) -> Dict[str, Any]:
         return {"cleared": True, "gui_available": False}
 
 
+_USER_INPUT_COMMANDS = frozenset({
+    "Std_Open", "Std_Save", "Std_SaveAs", "Std_Import", "Std_Export",
+    "Std_DlgPreferences", "Std_DlgMacroExecute", "Std_Print", "Std_OpenRecent",
+})
+
+
+def _cmd_dialog_timeout_ms() -> int:
+    try:
+        return int(os.environ.get("FC_CMD_DIALOG_TIMEOUT_MS", "1500"))
+    except (TypeError, ValueError):
+        return 1500
+
+
+def _dialog_watchdog():
+    """Arm a QTimer to auto-dismiss any modal dialog a command opens, so a
+    user-input command (e.g. Std_Open) cannot block the agent.  Returns the
+    QTimer so the caller can stop() it if no dialog appeared."""
+    import PySide.QtCore as QtCore
+    import PySide.QtWidgets as QtWidgets
+
+    def cancel():
+        w = QtWidgets.QApplication.activeModalWidget()
+        if w is not None:
+            try:
+                w.reject()
+            except Exception:
+                try:
+                    w.close()
+                except Exception:
+                    pass
+
+    timer = QtCore.QTimer()
+    timer.setSingleShot(True)
+    timer.setInterval(_cmd_dialog_timeout_ms())
+    timer.timeout.connect(cancel)
+    timer.start()
+    return timer
+
+
 def run_command(params: Dict[str, Any]) -> Dict[str, Any]:
     try:
         import FreeCADGui
     except Exception:
         raise RuntimeError("run_command requires the FreeCAD GUI")
     cmd = params.get("command") or params.get("name")
-    FreeCADGui.runCommand(cmd)
+    watch = _dialog_watchdog() if cmd in _USER_INPUT_COMMANDS else None
+    try:
+        FreeCADGui.runCommand(cmd)
+    finally:
+        if watch is not None:
+            watch.stop()
     return {"command": cmd}
 
 
@@ -1949,6 +2092,10 @@ HANDLERS: Dict[str, Callable[[Dict[str, Any]], Any]] = {
     "get_log": get_log,
     "clear_log": clear_log,
     "log": log,
+    # report view (GUI widget contents)
+    "get_report_view": get_report_view,
+    "clear_report_view": clear_report_view,
+    "show_report_view": show_report_view,
     # placement
     "get_placement": get_placement,
     "set_placement": set_placement,
@@ -2101,18 +2248,20 @@ def _drain_headless() -> None:
 _keep_alive: List[Any] = []
 
 
-def _drain_gui() -> None:
+def _drain_gui() -> Any:
     """Qt pump for the GUI mode: process queued requests on the Qt main thread.
 
     We take over the running Qt loop (FreeCAD's own main loop keeps spinning),
     so we only install a QTimer that drains the RPC queue every tick and keep a
-    strong reference to it so it is not garbage-collected.
+    strong reference to it so it is not garbage-collected.  Returns the timer so
+    ``stop_guest`` can stop it.
     """
     from PySide import QtCore
     timer = QtCore.QTimer()
     timer.timeout.connect(lambda: _process_one())
     timer.start(10)
     _keep_alive.append(timer)
+    return timer
 
 
 def _is_gui() -> bool:
@@ -2123,28 +2272,117 @@ def _is_gui() -> bool:
         return False
 
 
-def run_guest() -> None:
-    """Open the socket, serve until killed.  Called at module import (FreeCAD
-    executes this script as top-level code)."""
-    install_output_capture()
+def _install_sigint_handler() -> None:
+    """Make Ctrl+C terminate the FreeCAD process.
+
+    The embedded interpreter installs Python's ``default_int_handler``, which
+    only raises ``KeyboardInterrupt`` at the next Python bytecode boundary.
+    FreeCAD's main loop is C++ Qt, and PySide prints and then swallows an
+    exception raised inside a slot, so a terminal Ctrl+C is silently ignored
+    and the process keeps running (the drain-timer traceback is exactly that
+    swallowed KeyboardInterrupt).  Restore the OS default behaviour --
+    terminate -- so the harness can always be stopped from the keyboard.
+
+    Must run on the main thread; if that fails (or signals are unavailable)
+    the interpreter default is left in place.
+    """
+    import signal
+
+    def _on_sigint(signum, _frame):  # noqa: ARG001
+        os._exit(128 + signum)
+
     try:
-        os.unlink(SOCKET_PATH)
+        signal.signal(signal.SIGINT, _on_sigint)
+    except (ValueError, OSError):
+        pass
+
+
+# Live server state.  ``start_guest``/``stop_guest`` let an in-FreeCAD host
+# (the Assistant's MCP toggle, or a probe) bring the socket listener up and
+# down at runtime instead of the one-shot ``run_guest`` at import.
+_server_sock: Optional[socket.socket] = None
+_server_thread: Optional[threading.Thread] = None
+_server_timer: Any = None
+_server_path: Optional[str] = None
+
+
+def guest_running() -> bool:
+    """True while the socket listener is up."""
+    return _server_sock is not None
+
+
+def start_guest(socket_path: Optional[str] = None) -> Dict[str, Any]:
+    """Open the socket and serve in the background (idempotent).
+
+    GUI: installs the Qt drain timer and returns immediately.  Headless: the
+    caller must pump (``_drain_headless``) -- ``run_guest`` does that.
+    """
+    global _server_sock, _server_thread, _server_timer, _server_path
+    if _server_sock is not None:
+        return {"ok": True, "running": True, "socket": _server_path}
+    path = socket_path or SOCKET_PATH
+    install_output_capture()
+    _install_sigint_handler()
+    try:
+        os.unlink(path)
     except OSError:
         pass
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.bind(SOCKET_PATH)
+    sock.bind(path)
     sock.listen(8)
+    _server_sock = sock
+    _server_path = path
     # Listener thread does the socket I/O; the main thread executes each job so
     # scene/UI mutations always happen on FreeCAD's main thread (never a race).
-    threading.Thread(target=_listener, args=(sock,), daemon=True).start()
+    _server_thread = threading.Thread(target=_listener, args=(sock,), daemon=True)
+    _server_thread.start()
     if _is_gui():
-        _drain_gui()
-    else:
+        _server_timer = _drain_gui()
+    return {"ok": True, "running": True, "socket": path}
+
+
+def stop_guest() -> Dict[str, Any]:
+    """Close the socket and stop draining (idempotent)."""
+    global _server_sock, _server_thread, _server_timer, _server_path
+    if _server_sock is None:
+        return {"ok": True, "running": False}
+    try:
+        _server_sock.close()
+    except OSError:
+        pass
+    _server_sock = None
+    _server_thread = None
+    if _server_timer is not None:
+        try:
+            _server_timer.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            _keep_alive.remove(_server_timer)
+        except ValueError:
+            pass
+        _server_timer = None
+    if _server_path:
+        try:
+            os.unlink(_server_path)
+        except OSError:
+            pass
+    _server_path = None
+    return {"ok": True, "running": False}
+
+
+def run_guest() -> None:
+    """Open the socket, serve until killed.  Called at module import (FreeCAD
+    executes this script as top-level code)."""
+    start_guest()
+    if not _is_gui():
         # headless: block here so FreeCADCmd stays alive
         try:
             _drain_headless()
         except KeyboardInterrupt:
-            pass
+            # No SIGINT handler (e.g. signal.signal unavailable): die instead
+            # of looping forever on a Ctrl+C that can never be serviced.
+            os._exit(130)
 
 
 # --- addon guard: the vendored guest must NOT auto-run the socket server ---

@@ -188,16 +188,6 @@ View3DInventor::View3DInventor(
         // setRenderMode applies the visible viewport backend too, so even a
         // no-op-feeling restore correctly picks the Coin/GL vs Vulkan surface.
         setRenderMode(initialMode);
-        // Reopen consistency for the environment/cubemap preset: restore the
-        // persisted choice (-1 = viewport background gradient) and push it to
-        // the adapter so the sky matches what the user last selected.
-        const int persistedEnvMap = App::GetApplication()
-            .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
-            ->GetInt("VulkanEnvironmentMap", -1);
-        _envMap = persistedEnvMap;
-        if (_envMap >= 0 && _vulkanAdapter) {
-            _vulkanAdapter->setEnvMap(_envMap);
-        }
         // A selection/preselection change mutates the shared scene graph but
         // never reaches the display-only Vulkan widget on its own (it owns no
         // Coin sensors).  Ask the adapter to redraw so the highlight shows up
@@ -228,6 +218,9 @@ View3DInventor::View3DInventor(
                         }
                     }
                     if (_vulkanAdapter) {
+                        // The camera is now user-controlled; never let the
+                        // one-time initial re-fit snap it back.
+                        _vulkanAdapter->noteUserCameraMoved();
                         _vulkanAdapter->requestVulkanFrame();
                     }
                 });
@@ -254,6 +247,26 @@ View3DInventor::View3DInventor(
                         _vulkanAdapter->redraw();
                     }
                 });
+        // A VulkanRenderMode change made in the preferences dialog reaches the
+        // backend through applyVulkanSettings()/pushSettings(), but never calls
+        // setRenderMode(), so this view's _renderMode and the status-bar
+        // selector would keep showing the old mode and the path-tracing start
+        // latch would not be re-armed.  Re-apply the persisted mode so the
+        // label, latch and backend stay in step.  The equality guard also stops
+        // the re-entrant emit from setRenderMode's own applyVulkanSettings().
+        connect(_viewer, &View3DInventorViewer::vulkanSettingsChanged, this, [this] {
+            const int persisted = App::GetApplication()
+                                      .GetParameterGroupByPath(
+                                          "User parameter:BaseApp/Preferences/View"
+                                      )
+                                      ->GetInt("VulkanRenderMode", -1);
+            if (persisted < 0 || persisted > static_cast<int>(ViewRenderMode::Environment)) {
+                return;
+            }
+            if (static_cast<ViewRenderMode>(persisted) != _renderMode) {
+                setRenderMode(static_cast<ViewRenderMode>(persisted));
+            }
+        });
         // Feature detection: if a ray-traced mode was chosen but the ray-tracing
         // backend turns out to be unavailable on this hardware (the device may
         // advertise the extensions yet fail to build the backend, e.g. on a
@@ -278,6 +291,17 @@ View3DInventor::View3DInventor(
                     setRenderMode(ViewRenderMode::RasterVulkan);
                 },
                 Qt::QueuedConnection);
+    }
+    // Reopen consistency for the environment/cubemap preset: restore the
+    // persisted choice (-1 = viewport background gradient) and push it to the
+    // adapter so the sky matches what the user last selected.  Seeded outside
+    // the UseVulkanRenderer branch so the status-bar environment selector also
+    // reflects the saved preset for a Coin/GL view (no adapter to push to).
+    _envMap = App::GetApplication()
+                  .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
+                  ->GetInt("VulkanEnvironmentMap", -1);
+    if (_envMap >= 0 && _vulkanAdapter) {
+        _vulkanAdapter->setEnvMap(_envMap);
     }
 #endif
 
@@ -455,6 +479,13 @@ void View3DInventor::requestVulkanRender()
 Gui::ViewRenderMode View3DInventor::getRenderMode() const
 {
     return _renderMode;
+}
+
+void View3DInventor::resyncVulkanViewport()
+{
+    if (_vulkanAdapter) {
+        _vulkanAdapter->resyncViewport();
+    }
 }
 
 void View3DInventor::setRenderMode(ViewRenderMode mode)

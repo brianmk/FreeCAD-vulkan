@@ -41,7 +41,7 @@ namespace SIM { namespace Coin3D { namespace Quarter {
 
 class QUARTER_DLL_API SpaceNavigatorDevice : public InputDevice {
  public:
-  explicit SpaceNavigatorDevice(QuarterWidget* quarter);
+  explicit SpaceNavigatorDevice(InputDeviceHost* host);
   ~SpaceNavigatorDevice() override;
   const SoEvent * translateEvent(QEvent * event) override;
 

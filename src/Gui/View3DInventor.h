@@ -176,6 +176,13 @@ public Q_SLOTS:
     void setRenderMode(ViewRenderMode mode);
 #endif
 
+    /// Re-impose the visible surface size on the Vulkan viewport's pick /
+    /// navigation region and re-push the scene.  A view created for a
+    /// brand-new document can otherwise keep a stale region (so hover
+    /// preselection misses) until the render mode is re-applied -- the effect
+    /// a manual renderer switch has.  No-op without a Vulkan viewport.
+    void resyncVulkanViewport();
+
 #ifdef FREECAD_USE_VULKAN
     /// "Cubemap" environment preset (-1 = viewport background gradient).
     /// Mirrored by the status-bar environment selector; each view keeps its

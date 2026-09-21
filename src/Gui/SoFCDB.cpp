@@ -83,6 +83,7 @@
 #include "Inventor/SoNaviCube.h"
 #include "Inventor/SoNaviCubeVulkan.h"
 #include "Inventor/SoAxisCrossOverlay.h"
+#include "Inventor/SoRasterOverlay.h"
 #include "Inventor/SoGroundPlane.h"
 #include "Inventor/SoMouseWheelEvent.h"
 #include "Inventor/SoFCTransform.h"
@@ -158,6 +159,7 @@ void Gui::SoFCDB::init()
     SoNaviCubeVulkan::initClass();
 #endif
     SoAxisCrossOverlay::initClass();
+    SoRasterOverlay::initClass();
     SoGroundPlane::initClass();
     SoFCTransform::initClass();
     SoAutoZoomTranslation::initClass();

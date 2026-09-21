@@ -1,36 +1,41 @@
 #!/usr/bin/env python3
 """Host-side assertions for vk_adaptive_probe.py (Phase 3: adaptive sampling).
 
+Since the full-resolve change (coin ee7c033f7) the renderer forces a
+full-resolve run after a fresh start / scene change / camera move: the
+per-pixel adaptive freeze is gated off (u_adaptive.w = 0) while
+ptForceFullResolve is set, which lasts until the hard sample cap is reached.
+So a forced run never early-outs and never stops below the cap.
+
 Branches on the run's env:
-  - adaptive ON  (default): the active fraction must decline below 1.0 and
-    the run must auto-stop below FC_VULKAN_PT_MAXSAMPLES; before the
-    variance test starts (frameIndex < minSamples) every frame is fully
-    active.
-  - FC_VULKAN_PT_ADAPTIVE=0: the fraction must stay 1.0 on every
-    accumulating frame and the run must never stop below the cap.
+  - adaptive ON  (default): every accumulating frame is a forced full-resolve
+    frame (fill=1), the active fraction stays 1.0, and the run reaches the cap.
+  - FC_VULKAN_PT_ADAPTIVE=0: control; same shape (fraction 1.0, reaches cap).
 """
 
 import re
 
 STATE_LINE = re.compile(
     r"\[RTDBG\] ptState frame=(\d+) viewChanged=(\d) sceneChanged=(\d) "
-    r"accum=(\d) frameIndex=(\d+) idle=(\d+) reproject=(\d)")
+    r"bgChanged=(\d) latch=(\d) accum=(\d) frameIndex=(\d+) idle=(\d+) "
+    r"reproject=(\d)")
 ADAPT_LINE = re.compile(
     r"\[RTDBG\] adaptive frame=(\d+) active=(\d+)/(\d+) fraction=([0-9.]+) "
-    r"frameIndex=(\d+) accum=(\d)")
+    r"frameIndex=(\d+) accum=(\d).*?maxSamp=(\d+) minSamp=(\d+) fill=(\d)")
 
 
 def _states(lines):
-    # groups: 1=frame, 2=viewChanged, 3=sceneChanged, 4=accum, 5=frameIndex,
-    # 6=idle, 7=reproject.
-    return [(m, int(m.group(4)), int(m.group(5)), int(m.group(6)))
+    # groups: 1=frame, 2=viewChanged, 3=sceneChanged, 4=bgChanged, 5=latch,
+    # 6=accum, 7=frameIndex, 8=idle, 9=reproject.
+    return [(m, int(m.group(6)), int(m.group(7)), int(m.group(8)))
             for line in lines for m in [STATE_LINE.search(line)] if m]
 
 
 def _adaptives(lines):
-    # groups: 1=frame, 2=active, 3=total, 4=fraction, 5=frameIndex, 6=accum.
+    # groups: 1=frame, 2=active, 3=total, 4=fraction, 5=frameIndex, 6=accum,
+    # 7=maxSamp, 8=minSamp, 9=fill (ptForceFullResolve).
     return [(m, int(m.group(2)), int(m.group(3)), float(m.group(4)),
-             int(m.group(5)), int(m.group(6)))
+             int(m.group(5)), int(m.group(6)), int(m.group(7)), int(m.group(9)))
             for line in lines for m in [ADAPT_LINE.search(line)] if m]
 
 
@@ -41,7 +46,6 @@ def check(lines, report):
     env = report.session.get("env_overrides", {})
     adaptive_off = env.get("FC_VULKAN_PT_ADAPTIVE") == "0"
     maxsamples = int(env.get("FC_VULKAN_PT_MAXSAMPLES", "256"))
-    minsamples = int(env.get("FC_VULKAN_PT_MIN_SAMPLES", "4"))
 
     states = _states(lines)
     adaptives = _adaptives(lines)
@@ -49,43 +53,44 @@ def check(lines, report):
         err("no [RTDBG] adaptive lines found (renderer never ran?)")
         return
 
-    accumulating = [a for a in adaptives if a[5] == 1]
+    # Trust the cap the renderer actually used: the View preference
+    # (VulkanPathTracingMaxSamples) can override the FC_VULKAN_PT_MAXSAMPLES
+    # env the manifest sets, so the env value alone is not authoritative.
+    maxsamples = max((a[6] for a in adaptives), default=maxsamples)
+
+    # Active accumulating frames, excluding the cap-transition frame (where
+    # frameIndex == maxSamp, ptForceFullResolve has just been cleared and the
+    # active counter reads 0).
+    accumulating = [a for a in adaptives if a[5] == 1 and a[4] < a[6]]
     if not accumulating:
         err("no accumulating frames observed")
         return
 
-    if adaptive_off:
-        # Control: every accumulating frame must trace every pixel.
-        bad = [a for a in accumulating if a[3] != 1.0]
-        if bad:
-            err(f"adaptive OFF: {len(bad)} accumulating frames with "
-                "fraction != 1.0 (early-out fired while disabled)")
-        # And the run must not stop below the cap via adaptive convergence.
-        for m, accum, frame_index, idle in states:
-            if accum == 0 and idle == 2 and 2 <= frame_index < maxsamples:
-                err("adaptive OFF: run auto-stopped below the cap "
-                    f"(frameIndex={frame_index})")
-                break
-        return
+    label = "adaptive OFF" if adaptive_off else "adaptive ON"
 
-    # ON: before the variance test starts every frame is fully active.
-    early = [a for a in accumulating if a[4] < minsamples and a[3] != 1.0]
-    if early:
-        err(f"adaptive ON: {len(early)} pre-minSamples frames with "
-            "fraction != 1.0 (early-out fired too early)")
-    # The fraction must decline: some accumulating frame below 1.0.
-    declined = [a for a in accumulating if a[3] < 1.0]
-    if not declined:
-        err("adaptive ON: active fraction never declined below 1.0 "
-            "(variance early-out did not engage)")
-    # Auto-stop below the cap: an idle transition at a small frameIndex
-    # that is not a camera/scene drop (viewChanged/sceneChanged == 0 and
-    # the frame index survived the stop).
-    stops = [(m, frame_index) for m, accum, frame_index, idle in states
-             if accum == 0 and idle == 2 and
-             frame_index >= minsamples and frame_index < maxsamples]
-    if not stops:
-        err("adaptive ON: no auto-stop below the cap "
-            f"(max={maxsamples}, minSamples={minsamples})")
+    # Every accumulating frame must trace every pixel: with adaptive off that
+    # is the point of the control; with adaptive on the forced full-resolve
+    # run gates the freeze off (u_adaptive.w = 0) until the cap.
+    active = [a for a in accumulating if a[3] != 1.0]
+    if active:
+        err(f"{label}: {len(active)} accumulating frames with fraction != 1.0 "
+            "(adaptive freeze fired during the forced full-resolve run)")
+
+    if not adaptive_off:
+        # With adaptive on, the suppression is specifically the forced
+        # full-resolve flag; assert it is actually set on the run.
+        not_full = [a for a in accumulating if a[7] != 1]
+        if not_full:
+            err(f"adaptive ON: {len(not_full)} accumulating frames were not a "
+                "forced full-resolve run (fill != 1)")
+
+    # The forced run must reach the hard cap, not stop below it.  With a
+    # denoiser the run keeps accumulating past the cap until the async denoise
+    # publishes, so the idle transition's frameIndex is not the cap: the cap is
+    # reached as soon as an accumulating frame hits it.
+    reached_cap = max((a[4] for a in adaptives), default=0) >= maxsamples
+    if not reached_cap:
+        err(f"{label}: run did not reach the cap (max={maxsamples}); "
+            "it stopped early")
     if len(states) < 2:
-        err("adaptive ON: not enough state transitions observed")
+        err(f"{label}: not enough state transitions observed")

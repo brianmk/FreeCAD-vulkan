@@ -9,16 +9,25 @@ total size (recovered from the member type sizes).
 The expected layouts in spirv_layouts.json mirror the C++ structs that carry
 the matching `static_assert`s:
 
-  src/3rdParty/coin/src/rendering/SoVulkanRenderBackend/SoVulkanRenderBackendP.h
+  SoVulkanRenderBackend/SoVulkanRenderBackendP.h
       VulkanPushConstants, VulkanBackgroundPush, VulkanLightingUbo, VulkanDrawUbo
+  SoRTXRenderBackend/SoRTXRenderBackendP.h
+      RTMaterial, RaygenPush, DenoiseDownsamplePush
+  SoVulkanRenderBackend/SoVulkanRenderBackendGeometryLod.cpp
+      SubPixelPush
+  SoRTXRenderBackend/SoRTXRenderBackendPick.cpp
+      PickPush
 
 Usage:
   spirv_layout_check.py <module.spv> [--layouts spirv_layouts.json]
                         [--spirv-dis /usr/bin/spirv-dis]
 
 Exit status: 0 = all blocks in the module match, 1 = mismatch, 2 = tool/usage
-error.  A module with no recognised block is a pass (shaders without uniform
-blocks are unaffected).
+error.  A module with no modelled block is a pass (shaders without uniform
+blocks, or whose blocks the mirrors do not model, are unaffected).  A modelled
+block that was renamed in the shader is a mismatch: its members are matched
+against the mirrors by name + offset even though its block name no longer
+matches, so a rename no longer slips through unverified.
 """
 
 from __future__ import annotations
@@ -84,8 +93,18 @@ def _parse_disassembly(text: str):
     return names, member_names, member_offsets, types, structs, constants
 
 
-def _type_size(type_id: int, types, structs, constants, depth: int = 0) -> int:
-    """Size in bytes of a (scalar/vector/matrix/array/struct) type id."""
+def _type_size(type_id: int, types, structs, constants,
+               member_offsets_by_struct, depth: int = 0) -> int:
+    """Size in bytes of a (scalar/vector/matrix/array/struct) type id.
+
+    A struct used as a block member carries its members' offsets as
+    OpMemberDecorate; its size is recovered from them (the compiler's own
+    std140/430 layout, the same rule the top-level block end uses).  A struct
+    with no decorated offsets falls back to the sum of its member sizes -- a
+    lower bound, since std140 padding is not modelled here, but one at least as
+    large as any single member (the old max() grossly under-sized a nested
+    struct, which made the block-end check unreliable).
+    """
     if depth > 16:
         return 0
     if type_id in types:
@@ -96,23 +115,55 @@ def _type_size(type_id: int, types, structs, constants, depth: int = 0) -> int:
             return 4 * int(parts[1])
         if op == "OpTypeMatrix":
             return _type_size(int(parts[0].lstrip("%")), types, structs,
-                              constants, depth + 1) * int(parts[1])
+                              constants, member_offsets_by_struct,
+                              depth + 1) * int(parts[1])
         if op == "OpTypeArray":
             # Array length is a constant id, not a literal.
             length = constants.get(int(parts[1].lstrip("%")))
             if length is None:
                 return 0
             return _type_size(int(parts[0].lstrip("%")), types, structs,
-                              constants, depth + 1) * length
+                              constants, member_offsets_by_struct,
+                              depth + 1) * length
         if op == "OpTypePointer":
             return 8
     if type_id in structs:
+        members = structs[type_id]
+        decorated = member_offsets_by_struct.get(type_id, [])
+        if decorated:
+            # Recover the size from the compiler's own member offsets.
+            end = 0
+            for index, offset in decorated:
+                if index < len(members):
+                    end = max(end, offset + _type_size(members[index], types,
+                                                       structs, constants,
+                                                       member_offsets_by_struct,
+                                                       depth + 1))
+            if end:
+                return end
         total = 0
-        for member in structs[type_id]:
-            total = max(total, _type_size(member, types, structs, constants,
-                                          depth + 1))
+        for member in members:
+            total += _type_size(member, types, structs, constants,
+                                member_offsets_by_struct, depth + 1)
         return total
     return 0
+
+
+def _is_member_prefix(present: dict, expected: dict,
+                      min_members: int = 2) -> bool:
+    """True if ``present`` (name -> offset) is an ordered prefix of ``expected``.
+
+    Used to recognise a modelled block that was renamed in the shader: it keeps
+    its member names and offsets but loses its block name, and a stage may also
+    omit trailing members.  Requiring at least ``min_members`` avoids flagging
+    an unrelated one-member block that happens to share a leading member name
+    with a mirror.
+    """
+    if len(present) < min_members or len(present) > len(expected):
+        return False
+    pres = sorted(present.items(), key=lambda kv: kv[1])
+    exp = sorted(expected.items(), key=lambda kv: kv[1])
+    return all(pres[i] == exp[i] for i in range(len(pres)))
 
 
 def check(module: str, layouts: dict, spirv_dis: str) -> int:
@@ -137,16 +188,42 @@ def check(module: str, layouts: dict, spirv_dis: str) -> int:
     for (struct_id, index), offset in member_offsets.items():
         by_struct.setdefault(struct_id, []).append((index, offset))
 
+    def block_end(struct_id: int, decorated) -> int:
+        members = structs.get(struct_id, [])
+        end = 0
+        for index, offset in sorted(decorated):
+            if index < len(members):
+                end = max(end, offset + _type_size(members[index], types,
+                                                   structs, constants,
+                                                   by_struct))
+        return end
+
     for struct_id, decorated in by_struct.items():
         block_name = names.get(struct_id)
+        present = {member_names.get((struct_id, index), f"#{index}"): offset
+                   for index, offset in sorted(decorated)}
+
         if block_name not in expected_blocks:
+            # Not recognised by name.  A modelled block renamed in the shader
+            # keeps its members (name + offset) but changes its block name; a
+            # name-only match skipped it, so a renamed block passed silently.
+            # Match by member signature instead: an exact match, or a prefix
+            # (a stage may omit trailing members), of some modelled block.
+            if block_name:
+                for other in expected_blocks:
+                    other_members = expected_blocks[other].get("members", {})
+                    if _is_member_prefix(present, other_members):
+                        failures.append(
+                            f"block '{block_name}' matches modelled block "
+                            f"'{other}' by member name+offset but has a "
+                            f"different name; its C++ mirror is not verified")
+                        break
             continue
+
         spec = expected_blocks[block_name]
         want_members: dict = spec.get("members", {})
         want_size: int = int(spec.get("size", 0))
         checked += 1
-        end = 0
-        members = structs.get(struct_id, [])
         for index, offset in sorted(decorated):
             name = member_names.get((struct_id, index), f"#{index}")
             if name in want_members:
@@ -158,25 +235,35 @@ def check(module: str, layouts: dict, spirv_dis: str) -> int:
                 failures.append(
                     f"{block_name}.{name}: member not present in the C++ "
                     f"mirror (offset {offset})")
-            if index < len(members):
-                end = max(end, offset + _type_size(members[index], types,
-                                                   structs, constants))
-        if want_size and end > want_size:
-            failures.append(
-                f"{block_name}: shader block ends at {end} > C++ sizeof "
-                f"{want_size}")
-
-    if checked == 0:
-        # A shader with no uniform block (or only blocks we do not model) is
-        # not a failure; report it so the caller can see coverage.
-        sys.stderr.write(f"[reflect] {os.path.basename(module)}: no modelled "
-                         "blocks\n")
-        return 0
+        end = block_end(struct_id, decorated)
+        # A shader block is a prefix of its C++ mirror: a stage may omit
+        # trailing members it does not read, so only a full block (every C++
+        # member present) must span the whole mirror.  end > size is always a
+        # mismatch (the C++ writes past the end of the block); end < size is a
+        # mismatch only for a full block, where a trailing member is mis-sized.
+        if want_size:
+            if end > want_size:
+                failures.append(
+                    f"{block_name}: shader block ends at {end} > C++ sizeof "
+                    f"{want_size}")
+            elif all(want in present for want in want_members) \
+                    and end < want_size:
+                failures.append(
+                    f"{block_name}: full block ends at {end} < C++ sizeof "
+                    f"{want_size}; a trailing member is mis-sized")
 
     if failures:
         for f in failures:
             sys.stderr.write(f"[reflect] FAIL {os.path.basename(module)}: {f}\n")
         return 1
+
+    if checked == 0:
+        # No modelled block in this module.  A renamed modelled block is
+        # already a failure above; reaching here means the module only has
+        # blocks the mirrors do not model (or none), which is not a failure.
+        sys.stderr.write(f"[reflect] {os.path.basename(module)}: no modelled "
+                         "blocks (nothing to verify against the C++ mirrors)\n")
+        return 0
 
     sys.stderr.write(f"[reflect] OK {os.path.basename(module)}: "
                      f"{checked} block(s) match the C++ mirrors\n")

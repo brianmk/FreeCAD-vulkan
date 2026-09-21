@@ -512,6 +512,9 @@ def run_matrix(script: str, profiles: Iterable[str] = ("vulkan", "gl"),
     """
     binary = binary or _DEFAULT_FREECAD
     reports: dict[str, RunReport] = {}
+    # Materialize once: the keys loop and the run loop below both consume
+    # device_profiles, and a generator would be exhausted by the first.
+    device_profiles = list(device_profiles)
     if device_profiles:
         keys = [f"device:{d}" for d in device_profiles]
         for key, dev in zip(keys, device_profiles):
@@ -738,6 +741,23 @@ _PROFILES = {
         "LD_LIBRARY_PATH": "/tmp/opencode/boost91",
         "FC_SKIP_UNSAVED_PROMPT": "1",
     },
+    # Native Wayland variants: same as the xcb profiles above but without
+    # forcing the platform plugin, so Qt picks Wayland (the session's native
+    # platform) and the Vulkan viewport runs through VK_KHR_wayland_surface
+    # instead of XWayland.  Requires a live Wayland session.
+    "wayland": {
+        "QT_STYLE_OVERRIDE": "fusion",
+        "QT_QPA_PLATFORM": "wayland",
+        "LD_LIBRARY_PATH": "/tmp/opencode/boost91",
+        "FC_SKIP_UNSAVED_PROMPT": "1",
+        "FC_VULKAN_BREADCRUMBS": "1",
+    },
+    "gl-wayland": {
+        "QT_STYLE_OVERRIDE": "fusion",
+        "QT_QPA_PLATFORM": "wayland",
+        "LD_LIBRARY_PATH": "/tmp/opencode/boost91",
+        "FC_SKIP_UNSAVED_PROMPT": "1",
+    },
 }
 
 _DEFAULT_FREECAD = "/home/phantom/dev/FreeCAD/build/debug/bin/FreeCAD"
@@ -946,6 +966,7 @@ def run_case(
     trace_tool: Optional[str] = None,
     device_profile: Optional[str] = None,
     rt_validation: bool = False,
+    no_focus: bool = False,
 ) -> RunReport:
     """Launch FreeCAD with `script`, collect artifacts, and return the report.
 
@@ -983,7 +1004,9 @@ def run_case(
     # External profiler/capture wrappers launch FreeCAD as a child.  They run
     # on the XCB platform (RenderDoc 1.45 supports xlib/XCB, not Wayland) and
     # write their own artifact into the run bundle.
-    launch_argv = [binary, script]
+    # --no-focus makes FreeCAD set Qt::WA_ShowWithoutActivating so a headless
+    # probe never steals focus from the developer's desktop.
+    launch_argv = [binary] + (["--no-focus"] if no_focus else []) + [script]
     if trace_tool == "nsys":
         nsys = shutil.which("nsys")
         if nsys is None:
@@ -1006,7 +1029,10 @@ def run_case(
         else:
             launch_argv = [
                 rdc, "capture",
-                "-d", "/home/phantom/dev/FreeCAD",
+                # Run the target from the harness's own working directory
+                # (nsys inherits it implicitly); a hardcoded path would only
+                # work on one developer's checkout.
+                "-d", os.getcwd(),
                 "-c", os.path.join(artifact_dir, "renderdoc"),
                 "-w",
             ] + launch_argv
@@ -1056,6 +1082,20 @@ def run_case(
                              msg="VK_LAYER_NV_ray_tracing_validation not "
                                  "installed (driver without the layer)")
     report.register(trace_path)
+
+    # Clear stale frame dumps from a previous run.  The Vulkan frame dumper
+    # (FC_VULKAN_DUMP_FRAME, a Debug-only hook) writes a FIXED path
+    # /tmp/vk_frame_<n>.png, and collect_frame_dumps() below copies every
+    # matching file into this run's bundle.  Without this clear a run that
+    # dumps fewer frames (or dumps none, e.g. a build without the debug hooks)
+    # silently inherits the previous run's frames, so the bundled images -- and
+    # any pixel assertion over them -- describe the wrong scene.
+    import glob as _glob
+    for _stale in _glob.glob("/tmp/vk_frame_*.png"):
+        try:
+            os.remove(_stale)
+        except OSError:
+            pass
 
     stdout_path = os.path.join(artifact_dir, "stdout.log")
     report.register(stdout_path)
@@ -1538,6 +1578,7 @@ def _cli(argv: List[str]) -> int:
             trace_tool=trace_tool,
             device_profile=getattr(args, "device_profile", None),
             rt_validation=getattr(args, "rt_validation", False),
+            no_focus=getattr(args, "no_focus", False),
         )
         # -- self-passing regression: assert the Vulkan display prefs were
         #    both read (applyVulkanSettings breadcrumb) and rendered (frames).
@@ -1769,6 +1810,7 @@ def _cli_suite(args: Any) -> int:
                 device_profile=case.get("device_profile"),
                 gfxreconstruct=bool(case.get("gfxreconstruct")),
                 gfxreconstruct_frames=case.get("gfxreconstruct_frames"),
+                no_focus=getattr(args, "no_focus", False),
             )
         except Exception as exc:  # a crashed runner must not abort the suite
             print(f"[SUITE] RUNNER ERROR {exc}")
@@ -2261,13 +2303,14 @@ def _build_parser() -> Any:
         help="1-based gfxreconstruct frame range to capture, e.g. 1-30 "
              "(default: every frame)",
     )
-    run.add_argument(
+    trace_tool_group = run.add_mutually_exclusive_group()
+    trace_tool_group.add_argument(
         "--nsys",
         action="store_true",
         help="profile the run with Nsight Systems (writes nsys.nsys-rep into "
              "the artifact dir)",
     )
-    run.add_argument(
+    trace_tool_group.add_argument(
         "--renderdoc",
         action="store_true",
         help="capture the run with RenderDoc (writes renderdoc_frame*.rdc into "
@@ -2328,6 +2371,12 @@ def _build_parser() -> Any:
         action="store_true",
         help="(deprecated; the pre-flight now always runs) run pre-flight "
              "checks and abort before launching FreeCAD if any ERROR is found",
+    )
+    run.add_argument(
+        "--no-focus",
+        action="store_true",
+        help="pass --no-focus to FreeCAD so the probe run never steals focus "
+             "(Qt::WA_ShowWithoutActivating)",
     )
     _add_preflight_args(run)
     lint = sub.add_parser(
@@ -2438,6 +2487,11 @@ def _build_parser() -> Any:
     suite.add_argument("--out", default="/tmp/opencode/runs", help="artifact parent dir")
     suite.add_argument("--timeout", type=int, default=300,
                        help="default seconds per case (cases may override)")
+    suite.add_argument(
+        "--no-focus",
+        action="store_true",
+        help="pass --no-focus to FreeCAD so no suite case steals focus",
+    )
     _add_preflight_args(suite)
     return p
 
@@ -3258,10 +3312,14 @@ class Session:
             get_api.restype = ctypes.c_int
             get_api.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)]
             api_ptr = ctypes.c_void_p()
-            # eRENDERDOC_API_Version_1_7_0 == 10700.  Request the 1.7.0 layout
-            # so the entry-point offsets match /usr/include/renderdoc_app.h,
-            # where TriggerCapture is index 15.
-            if get_api(10700, ctypes.byref(api_ptr)) != 1 or not api_ptr.value:
+            # eRENDERDOC_API_Version_1_0_0 == 10000.  Request the oldest
+            # layout: RENDERDOC_GetAPI returns 0 for a version the installed
+            # RenderDoc predates, so asking for the 1.7.0 layout (10700) would
+            # silently skip the capture on an older RenderDoc.  The members
+            # added in later versions are appended after the ones used here
+            # (TriggerCapture has no "new in" note in renderdoc_app.h), so its
+            # index is the same in every layout.
+            if get_api(10000, ctypes.byref(api_ptr)) != 1 or not api_ptr.value:
                 return False
             entries = ctypes.cast(
                 api_ptr, ctypes.POINTER(ctypes.c_void_p))

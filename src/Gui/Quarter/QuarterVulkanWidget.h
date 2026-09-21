@@ -6,6 +6,7 @@
 
 #include <QSize>
 #include <QWidget>
+#include <functional>
 #include <string>
 
 #include <Inventor/SbColor4f.h>
@@ -14,6 +15,8 @@
 #include <Inventor/rendering/SoVulkanViewMode.h>
 #include <Inventor/rendering/SoVulkanViewSettings.h>
 #include <vector>
+
+#include <Quarter/InputDeviceHost.h>
 
 #ifdef FREECAD_USE_VULKAN
 #include <vulkan/vulkan.h>
@@ -25,6 +28,7 @@ class QImage;
 
 class SoCamera;
 class SoNode;
+class SoEvent;
 
 namespace SIM {
 namespace Coin3D {
@@ -44,7 +48,7 @@ class QuarterVulkanWidgetPrivate;
   GL remains the default; this widget is only compiled and used when
   FREECAD_USE_VULKAN is enabled.
 */
-class QuarterVulkanWidget : public QWidget
+class QuarterVulkanWidget : public QWidget, public InputDeviceHost
 {
     Q_OBJECT
 
@@ -117,20 +121,33 @@ public:
     void setEdgeColor(const SbColor4f & color);
 
     /*!
-      \brief Forward viewport input events to another widget.
+      \brief Forward non-translated input events to another widget.
 
-      The Vulkan widget is display-only: it has no navigation, picking or
-      scene-graph event handling of its own.  Setting a forward target makes
-      it relay mouse, wheel, keyboard, tablet and touch events to that widget
-      (normally the hidden OpenGL viewer) so navigation and picking keep
-      working while the Vulkan surface is on top.
+      Tablet, touch and context-menu events are not translated by the Coin
+      input devices, so they are still relayed to \a target (the hidden OpenGL
+      viewer that owns FreeCAD's gesture/tablet devices).  Mouse, wheel and
+      keyboard events are translated by this widget's own InputDeviceHost and
+      delivered through setEventSink().
     */
-    //! Forward input events to \a target (typically the hidden GL viewer that
-    //! owns navigation/picking).  \a targetDevicePixelRatio is the device
-    //! pixel ratio the target uses to convert event positions; pass -1 to
-    //! fall back to the target's current devicePixelRatioF().  Providing it
-    //! explicitly avoids sniffing the target's type at event time.
-    void setEventForwardTarget(QWidget * target, qreal targetDevicePixelRatio = -1.0);
+    void setRawEventTarget(QWidget * target);
+
+    /*!
+      \brief Set the sink that receives translated Coin events.
+
+      The widget is now an InputDeviceHost: it translates mouse/wheel/keyboard
+      events into SoEvents and hands them to this sink, which the viewport
+      adapter wires to the InteractionController.  A null sink drops them.
+    */
+    void setEventSink(std::function<bool(const SoEvent *)> sink);
+
+    //! @name InputDeviceHost
+    //@{
+    qreal devicePixelRatio() const override;
+    bool vulkanDevicePixels() const override;
+    QSize inputSize() const override;
+    SbVec2s inputWindowSize() const override;
+    bool processSoEvent(const SoEvent * event) override;
+    //@}
 
     /*!
       \brief No-op kept for API parity with QuarterWidget.
@@ -161,6 +178,26 @@ public:
       VK_FORMAT_B8G8R8A8_UNORM explicitly.
     */
     void setPreferredColorFormat(int vkFormat);
+
+    /*!
+      \brief Request HDR10 (BT.2020 + ST 2084 / PQ) output for the viewport.
+
+      Must be called before the window is first shown.  When enabled, the
+      swapchain is asked for a 10-bit VK_FORMAT_A2B10G10R10_UNORM_PACK32 image
+      (falling back to 8-bit when unavailable) and the window's surface format
+      is tagged with QColorSpace::Bt2100Pq, which Qt's Wayland platform turns
+      into a wp_image_description on the surface (the compositor's
+      color-management protocol).  The renderer is responsible for actually
+      encoding its output as PQ; see SoVulkanViewSettings::hdrOutput.  This is a
+      request: isHdrOutputActive() reports whether the swapchain actually came
+      up with an HDR format.
+    */
+    void setHdrOutputEnabled(bool enabled);
+
+    //! Whether setHdrOutputEnabled(true) was requested.
+    bool isHdrOutputRequested() const;
+    //! Whether the live swapchain uses an HDR (10-bit) color format.
+    bool isHdrOutputActive() const;
 
     //! Schedule a redraw on the Vulkan window (safe from any thread).
     void redraw();

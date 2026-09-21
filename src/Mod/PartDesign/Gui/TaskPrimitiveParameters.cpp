@@ -460,7 +460,11 @@ TaskBoxPrimitives::TaskBoxPrimitives(ViewProviderPrimitive* vp, QWidget* parent)
  */
 TaskBoxPrimitives::~TaskBoxPrimitives()
 {
-    Gui::getMainWindow()->hideHints();
+    // May run while the main window is being torn down (app shutdown), when
+    // MainWindow::instance is already null.
+    if (auto* mw = Gui::getMainWindow()) {
+        mw->hideHints();
+    }
 
     // hide the parts coordinate system axis for selection
     try {

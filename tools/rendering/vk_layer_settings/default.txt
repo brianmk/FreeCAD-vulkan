@@ -1,7 +1,7 @@
 # Default Khronos validation profile: core checks only.
 #
-# Selected with FC_VULKAN_VALIDATION_PROFILE=default (fcprobe:
-# --validation-profile default), which points VK_LAYER_SETTINGS_PATH here.
+# Selected with --validation-profile default, which points
+# VK_LAYER_SETTINGS_PATH here.
 # QuarterVulkanWidget only loads VK_LAYER_KHRONOS_validation when
 # FC_VULKAN_VALIDATION is set; this file then tunes what the layer reports.
 #

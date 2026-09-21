@@ -4,6 +4,7 @@
 
 #include "QuarterVulkanWidget.h"
 #include "devices/InputDevice.h"
+#include "eventhandlers/EventFilter.h"
 #include "QuarterWidget.h"
 #include "VulkanFrameDumper.h"
 #include <Base/VulkanBreadcrumbs.h>
@@ -27,6 +28,7 @@
 #include <QVBoxLayout>
 
 #include <QApplication>
+#include <QColorSpace>
 #include <QDir>
 #include <QEvent>
 #include <QFile>
@@ -34,8 +36,10 @@
 #include <QMutex>
 #include <QMouseEvent>
 #include <QPointer>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QStringList>
+#include <QSurfaceFormat>
 #include <QTimer>
 #include <QWheelEvent>
 #ifdef HAVE_QT6_GUI_PRIVATE
@@ -147,6 +151,110 @@ static QByteArray vkVersionStr(uint32_t v)
     return QByteArray::number(VK_API_VERSION_MAJOR(v)) + '.' +
            QByteArray::number(VK_API_VERSION_MINOR(v)) + '.' +
            QByteArray::number(VK_API_VERSION_PATCH(v));
+}
+
+//! Log the swapchain surface formats relevant to HDR output.
+//!
+//! The HDR output path renders into a 10-bit HDR10
+//! (VK_FORMAT_A2B10G10R10_UNORM_PACK32) or FP16 scRGB
+//! (VK_FORMAT_R16G16B16A16_SFLOAT) swapchain image.  Whether the driver/surface
+//! exposes those is independent of the compositor's color-management protocol,
+//! so it is enumerated here (read-only; QVulkanWindow still chooses the actual
+//! swapchain format from the preferred-format list).  Call it once the surface
+//! exists (initSwapChainResources).
+static void logHdrSurfaceFormats(QVulkanInstance * instance, QVulkanWindow * window)
+{
+    if (!instance || !window) {
+        return;
+    }
+    auto getFormats = reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceFormatsKHR>(
+        instance->getInstanceProcAddr("vkGetPhysicalDeviceSurfaceFormatsKHR"));
+    if (!getFormats) {
+        return;
+    }
+    const VkSurfaceKHR surface = QVulkanInstance::surfaceForWindow(window);
+    if (surface == VK_NULL_HANDLE) {
+        return;
+    }
+    VkPhysicalDevice physDev = window->physicalDevice();
+    uint32_t count = 0;
+    if (getFormats(physDev, surface, &count, nullptr) != VK_SUCCESS || count == 0) {
+        return;
+    }
+    QList<VkSurfaceFormatKHR> formats(static_cast<int>(count));
+    if (getFormats(physDev, surface, &count, formats.data()) != VK_SUCCESS) {
+        return;
+    }
+    const bool hdr10 = std::any_of(
+        formats.cbegin(), formats.cend(), [](const VkSurfaceFormatKHR & f) {
+            return f.format == VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+        });
+    const bool scrgb = std::any_of(
+        formats.cbegin(), formats.cend(), [](const VkSurfaceFormatKHR & f) {
+            return f.format == VK_FORMAT_R16G16B16A16_SFLOAT;
+        });
+    vkLog("HDR surface capabilities: %u format(s), HDR10(10-bit)=%d, scRGB(FP16)=%d",
+          count, hdr10 ? 1 : 0, scrgb ? 1 : 0);
+    for (const VkSurfaceFormatKHR & f : formats) {
+        vkLog("  surface format: %d colorSpace: %d",
+              static_cast<int>(f.format), static_cast<int>(f.colorSpace));
+    }
+    // The breadcrumb channel is the one captured to the trace file (Console().log
+    // is report-view only), so mirror the summary there for headless runs.
+    VK_BREADCRUMB("[VK-HDR] surface formats=%u hdr10_10bit=%d scrgb_fp16=%d\n",
+                  count, hdr10 ? 1 : 0, scrgb ? 1 : 0);
+    for (const VkSurfaceFormatKHR & f : formats) {
+        VK_BREADCRUMB("[VK-HDR]   format=%d colorSpace=%d\n",
+                      static_cast<int>(f.format), static_cast<int>(f.colorSpace));
+    }
+}
+
+//! Known-unsafe NVIDIA driver series for HDR10 output.
+//!
+//! An application that calls vkSetHdrMetadataEXT (VK_EXT_hdr_metadata) with
+//! invalid mastering metadata (min_luminance >= max_luminance, e.g. all-zero)
+//! has that metadata forwarded unfiltered by NVIDIA's Wayland WSI; KWin then
+//! raises wp_color_manager_v1 invalid_luminance and tears the client down.
+//! Mesa's WSI sanitizes the same values (is_hdr_metadata_legal), so only
+//! NVIDIA is affected.  Reported against 610.43.02 and still reproduced on
+//! 610.57.04 (Fedora/Plasma 6.7.4, Sep 2026); the fix belongs in the WSI layer
+//! (NVIDIA) or the caller, and no driver release has fixed it yet.
+//!
+//! Qt's Wayland path drives HDR through wp_color_manager_v1 / QColorSpace and
+//! does NOT call vkSetHdrMetadataEXT, so FreeCAD is not expected to trigger the
+//! bug (and HDR output runs clean on the 615.71.09 driver here).  HDR output is
+//! still experimental, though, and a compositor-side client kill is not an
+//! acceptable default, so the known-bad 610 series is gated.  Set
+//! FREECAD_VULKAN_HDR_ALLOW_UNSAFE_DRIVER=1 to override, or
+//! FREECAD_VULKAN_HDR_FORCE_BLOCK_DRIVER=<major> to exercise the gate.
+static bool hdrDriverBlocked()
+{
+    if (qEnvironmentVariableIsSet("FREECAD_VULKAN_HDR_ALLOW_UNSAFE_DRIVER")) {
+        return false;
+    }
+
+    // Test hook: force a driver major version without touching the real driver.
+    bool forcedOk = false;
+    const int forced = qEnvironmentVariableIntValue(
+        "FREECAD_VULKAN_HDR_FORCE_BLOCK_DRIVER", &forcedOk);
+    if (forcedOk) {
+        return forced == 610;
+    }
+
+    // NVIDIA only; the file is absent (or unreadable) for every other driver.
+    QFile f(QStringLiteral("/proc/driver/nvidia/version"));
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return false;
+    }
+    // "NVRM version: NVIDIA UNIX x86_64 Kernel Module  615.71.09  ..."
+    const QString line = QString::fromLocal8Bit(f.readLine());
+    static const QRegularExpression re(QStringLiteral("(\\d+)\\.\\d+\\.\\d+"));
+    const QRegularExpressionMatch m = re.match(line);
+    if (!m.hasMatch()) {
+        return false;
+    }
+    const int major = m.captured(1).toInt();
+    return major == 610;
 }
 
 
@@ -536,6 +644,8 @@ public:
 
     void initSwapChainResources() override
     {
+        VK_BREADCRUMB("[VK-HDR] initSwapChainResources colorFormat=%d\n",
+                      static_cast<int>(m_window->colorFormat()));
         m_manager.setRenderTarget(&m_target);
         // QVulkanWindow may keep up to its swapchain image count frames in
         // flight; give the backend one extra ring slot of margin.
@@ -550,6 +660,7 @@ public:
               static_cast<int>(m_window->depthStencilFormat()));
         vkLog("  sample count: %d", static_cast<int>(samples));
         vkLog("  swapchain images: %d", m_window->swapChainImageCount());
+        logHdrSurfaceFormats(m_instance, m_window);
 
         m_dumper.initSwapChainResources();
     }
@@ -926,6 +1037,19 @@ private:
     void recordScenePass(VkCommandBuffer cb, const QSize & size,
                          const SbColor4f & background, bool multisample)
     {
+        // HDR raster path: the manager owns the whole pass lifecycle (offscreen
+        // linear RGBA16F pass, barrier, output/PQ pass into Qt's framebuffer),
+        // so do NOT begin Qt's default render pass here.
+        if (m_manager.isHdrRasterActive()) {
+            const SbBool hdrOk = m_manager.renderExternalHdr(
+                false, false, cb, m_window->defaultRenderPass(),
+                m_window->currentFramebuffer());
+            if (!hdrOk) {
+                vkErr("startNextFrame: renderExternalHdr FAILED");
+            }
+            return;
+        }
+
         VkRenderPassBeginInfo rpBegin {};
         rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         rpBegin.renderPass = m_window->defaultRenderPass();
@@ -1236,9 +1360,19 @@ public:
     SoNode * decorationScene = nullptr;
     SoCamera * camera = nullptr;
     bool rayTracing = false;
-    // Auto-nulled when the forwarded widget is destroyed, so the event
+    //! HDR10 output requested (see setHdrOutputEnabled).  The actual swapchain
+    //! format is reported by isHdrOutputActive() once the window is shown.
+    bool hdrRequested = false;
+    //! HDR was refused because the GPU driver is on the known-unsafe list
+    //! (see hdrDriverBlocked); the SDR swapchain is used instead.
+    bool hdrDriverBlocked = false;
+    // Auto-nulled when the raw-event widget is destroyed, so the event
     // filter below can never dereference a dangling pointer.
-    QPointer<QWidget> forwardTarget;
+    QPointer<QWidget> rawEventTarget;
+    //! Translates mouse/wheel/keyboard events into Coin events (the widget is
+    //! an InputDeviceHost) and delivers them through eventSink.
+    EventFilter* eventFilter = nullptr;
+    std::function<bool(const SoEvent*)> eventSink;
 
     // Debug-only synthetic mouse injector state (see pollInjectFile()).
 #ifdef FREECAD_VULKAN_DEBUG_HOOKS
@@ -1282,9 +1416,15 @@ QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent, bool rayTracing)
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(d->container);
 
-    // Forward input events arriving on the Vulkan surface to the hidden
-    // OpenGL viewer (configured via setEventForwardTarget()) so navigation,
-    // picking and other viewport interaction keep working.
+    // The widget is an InputDeviceHost: translate mouse/wheel/keyboard events
+    // itself (via a Coin EventFilter) and deliver them to the event sink the
+    // viewport adapter wires to the InteractionController.  Events this filter
+    // does not handle (tablet/touch/context-menu) fall through to the widget's
+    // own event filter below, which relays them to the raw-event target.
+    d->eventFilter = new EventFilter(this);
+    d->container->installEventFilter(d->eventFilter);
+    d->window->installEventFilter(d->eventFilter);
+
     d->container->installEventFilter(this);
     d->window->installEventFilter(this);
 
@@ -1582,6 +1722,20 @@ void QuarterVulkanWidget::selectPhysicalDevice()
         best.synchronization2Extension;
     d->vulkanWindow->descriptorIndexingAvailable =
         best.descriptorIndexingUpdateAfterBind;
+    // Report the optional-capability probe once per device selection.  These
+    // caps gate which extensions/features are requested below, so a run that
+    // reports them absent is the signal that the selected device is a fallback
+    // (e.g. RADV) or that the extension names changed.  Gated on
+    // FC_VULKAN_RT_DEBUG like the backend's [RTDBG] lines; the Phase-0 probe
+    // (vk_rt_phase0_probe) parses it.
+    if (Base::envFlagEnabled("FC_VULKAN_RT_DEBUG")) {
+        std::fprintf(stderr,
+                     "[RTDBG] caps positionFetch=%d opacityMicromap=%d "
+                     "nvCluster=%d nvPartitioned=%d nvLinearSweptSpheres=%d\n",
+                     best.positionFetch ? 1 : 0, best.opacityMicromap ? 1 : 0,
+                     best.nvCluster ? 1 : 0, best.nvPartitioned ? 1 : 0,
+                     best.nvLinearSweptSpheres ? 1 : 0);
+    }
     if (d->rayTracing && !best.externalMemoryFd) {
         vkWarn("QuarterVulkanWidget: the selected device lacks "
                "VK_KHR_external_memory_fd; the CUDA/OptiX denoiser cannot "
@@ -1923,15 +2077,18 @@ void QuarterVulkanWidget::logSupportedSampleCounts()
 QuarterVulkanWidget::~QuarterVulkanWidget()
 {
     vkLog("QuarterVulkanWidget: destroying");
-    // Stop forwarding events before anything is freed: deferred events
-    // delivered to the container/window after `d` is gone would otherwise
-    // hit the event filter with a dangling private pointer.
+    // Stop translating/forwarding events before anything is freed: deferred
+    // events delivered to the container/window after `d` is gone would
+    // otherwise hit the event filter with a dangling private pointer.
     if (d->container) {
         d->container->removeEventFilter(this);
     }
     if (d->window) {
         d->window->removeEventFilter(this);
     }
+    delete d->eventFilter;
+    d->eventFilter = nullptr;
+    d->eventSink = nullptr;
     // The container owns the QVulkanWindow child; destroying it destroys
     // the window and the renderer it owns while the QVulkanInstance is
     // still alive (the renderer shutdown needs the device/queue).
@@ -2032,16 +2189,43 @@ void QuarterVulkanWidget::setEdgeColor(const SbColor4f & color)
     redraw();
 }
 
-void QuarterVulkanWidget::setEventForwardTarget(QWidget * target,
-                                                qreal targetDevicePixelRatio)
+void QuarterVulkanWidget::setRawEventTarget(QWidget * target)
 {
-    // The per-event scale is derived from both widgets' *live* device pixel
-    // ratios by InputDevice::crossWidgetPositionScale(); the ratio argument
-    // is kept only for API compatibility.  targetDevicePixelRatio is unused:
-    // reading a stale snapshot here is exactly what caused the forwarded pick
-    // point to be rescaled by 1/dpr on fractional-scaling displays.
-    Q_UNUSED(targetDevicePixelRatio);
-    d->forwardTarget = target;
+    d->rawEventTarget = target;
+}
+
+void QuarterVulkanWidget::setEventSink(std::function<bool(const SoEvent *)> sink)
+{
+    d->eventSink = std::move(sink);
+}
+
+qreal QuarterVulkanWidget::devicePixelRatio() const
+{
+    return QWidget::devicePixelRatio();
+}
+
+bool QuarterVulkanWidget::vulkanDevicePixels() const
+{
+    // The Vulkan surface region is reported to the InteractionController in
+    // device pixels (see VulkanViewportAdapter::applySurfaceViewportToGL).
+    return true;
+}
+
+QSize QuarterVulkanWidget::inputSize() const
+{
+    return d->container ? d->container->size() : this->size();
+}
+
+SbVec2s QuarterVulkanWidget::inputWindowSize() const
+{
+    const QSize logical = inputSize();
+    return SbVec2s(static_cast<short>(logical.width()),
+                   static_cast<short>(logical.height()));
+}
+
+bool QuarterVulkanWidget::processSoEvent(const SoEvent * event)
+{
+    return d->eventSink ? d->eventSink(event) : false;
 }
 
 #ifdef FREECAD_VULKAN_DEBUG_HOOKS
@@ -2108,7 +2292,13 @@ void QuarterVulkanWidget::pollInjectFile()
 bool QuarterVulkanWidget::eventFilter(QObject * watched, QEvent * event)
 {
     Q_UNUSED(watched);
-    if (!d->forwardTarget) {
+
+    // Mouse, wheel and keyboard are translated by d->eventFilter (this widget
+    // is an InputDeviceHost) and delivered to the InteractionController.  The
+    // remaining events -- tablet, touch and context menu -- are not handled by
+    // the Coin input devices, so relay them to the raw-event target (the
+    // hidden GL viewer that owns FreeCAD's gesture/tablet devices).
+    if (!d->rawEventTarget) {
         return QWidget::eventFilter(watched, event);
     }
 
@@ -2116,11 +2306,9 @@ bool QuarterVulkanWidget::eventFilter(QObject * watched, QEvent * event)
         || event->type() == QEvent::MouseButtonPress
         || event->type() == QEvent::MouseButtonRelease) {
         const auto* me = static_cast<const QMouseEvent*>(event);
-        const QWidget* gl = d->forwardTarget;
         const QWidget* container = d->container;
         VK_BREADCRUMB_SAMPLED(32, "[VK-TRACE] eventFilter watched=%s type=%d pos=(%.1f,%.1f) "
-                      "global=(%.1f,%.1f) | container rect=(%d,%d %dx%d) dpr=%.2f "
-                      "| glWidget rect=(%d,%d %dx%d) dpr=%.2f\n",
+                      "global=(%.1f,%.1f) | container rect=(%d,%d %dx%d) dpr=%.2f\n",
                       watched == d->container ? "container"
                       : (watched == static_cast<QObject*>(d->window) ? "window"
                                                                      : "other"),
@@ -2128,63 +2316,10 @@ bool QuarterVulkanWidget::eventFilter(QObject * watched, QEvent * event)
                       me->position().x(), me->position().y(),
                       me->globalPosition().x(), me->globalPosition().y(),
                       container->x(), container->y(), container->width(),
-                      container->height(), container->devicePixelRatioF(),
-                      gl->x(), gl->y(), gl->width(), gl->height(),
-                      gl->devicePixelRatioF());
+                      container->height(), container->devicePixelRatioF());
     }
-
-    // Forward input events from the visible Vulkan container to the hidden
-    // OpenGL viewer (set via setEventForwardTarget()).  The two widgets share
-    // the same window/screen and therefore the same (possibly fractional)
-    // system device pixel ratio, so the container-to-viewer position scale is
-    // exactly 1.0 on any OS (Windows 100-200%, macOS Retina 2.0, Linux 1.25,
-    // ...): the position passes through unscaled and the GL side applies its
-    // own live ratio in InputDevice::toDevicePixelPosition().  The scale is
-    // taken from the *live* devicePixelRatioF() of both widgets (single source
-    // of truth), never a cached/pre-rounded ratio, so fractional scales cannot
-    // rescaled the forwarded point by 1/dpr and drift hovering/picking off
-    // center towards the origin.
-    const qreal dprScale = InputDevice::crossWidgetPositionScale(
-        d->container, d->forwardTarget.data());
 
     switch (event->type()) {
-    case QEvent::MouseButtonPress:
-    case QEvent::MouseButtonRelease:
-    case QEvent::MouseButtonDblClick:
-    case QEvent::MouseMove: {
-        const auto * me = static_cast<const QMouseEvent *>(event);
-        if (qFuzzyCompare(dprScale, 1.0)) {
-            if (QCoreApplication::sendEvent(d->forwardTarget, event)) {
-                return true;
-            }
-            break;
-        }
-        QMouseEvent scaled(me->type(), me->position() * dprScale,
-                           me->globalPosition(), me->button(), me->buttons(),
-                           me->modifiers(), me->pointingDevice());
-        if (QCoreApplication::sendEvent(d->forwardTarget, &scaled)) {
-            return true;
-        }
-        break;
-    }
-    case QEvent::Wheel: {
-        const auto * we = static_cast<const QWheelEvent *>(event);
-        if (qFuzzyCompare(dprScale, 1.0)) {
-            if (QCoreApplication::sendEvent(d->forwardTarget, event)) {
-                return true;
-            }
-            break;
-        }
-        QWheelEvent scaled(we->position() * dprScale, we->globalPosition(),
-                           we->pixelDelta(), we->angleDelta(), we->buttons(),
-                           we->modifiers(), we->phase(), we->inverted());
-        if (QCoreApplication::sendEvent(d->forwardTarget, &scaled)) {
-            return true;
-        }
-        break;
-    }
-    case QEvent::KeyPress:
-    case QEvent::KeyRelease:
     case QEvent::TabletPress:
     case QEvent::TabletRelease:
     case QEvent::TabletMove:
@@ -2192,7 +2327,7 @@ bool QuarterVulkanWidget::eventFilter(QObject * watched, QEvent * event)
     case QEvent::TouchUpdate:
     case QEvent::TouchEnd:
     case QEvent::ContextMenu:
-        if (QCoreApplication::sendEvent(d->forwardTarget, event)) {
+        if (QCoreApplication::sendEvent(d->rawEventTarget, event)) {
             return true;
         }
         break;
@@ -2240,6 +2375,56 @@ void QuarterVulkanWidget::setPreferredColorFormat(int vkFormat)
     vkLog("setPreferredColorFormat: requesting VkFormat %d", vkFormat);
     d->window->setPreferredColorFormats(
         QList<VkFormat>() << static_cast<VkFormat>(vkFormat));
+}
+
+void QuarterVulkanWidget::setHdrOutputEnabled(bool enabled)
+{
+    if (enabled && hdrDriverBlocked()) {
+        vkErr("HDR output requested but disabled: the NVIDIA 610.x driver series "
+              "is known to forward invalid HDR10 luminance metadata to the "
+              "compositor. Set FREECAD_VULKAN_HDR_ALLOW_UNSAFE_DRIVER=1 to "
+              "override.");
+        d->hdrDriverBlocked = true;
+        enabled = false;
+    }
+    d->hdrRequested = enabled;
+    if (!enabled) {
+        vkLog("setHdrOutputEnabled: off (SDR swapchain)");
+        return;
+    }
+    // Ask for a 10-bit HDR10 swapchain image, keeping the 8-bit format as a
+    // fallback so a surface without a 10-bit format still comes up (in SDR).
+    // QVulkanWindow picks the first requested format present in the surface's
+    // format list; on Wayland it then uses VK_COLOR_SPACE_PASS_THROUGH_EXT, and
+    // the HDR mapping is carried by Qt's wp_image_description instead.
+    d->window->setPreferredColorFormats(QList<VkFormat>()
+        << VK_FORMAT_A2B10G10R10_UNORM_PACK32
+        << VK_FORMAT_B8G8R8A8_UNORM);
+
+    // Tag the window's surface format with the HDR10 color space (BT.2020
+    // primaries + SMPTE ST 2084 PQ).  Qt's Wayland platform reads this in
+    // QWaylandWindow::initializeColorSpace() and attaches the matching
+    // wp_image_description; on other platforms it is ignored.  Must be set
+    // before the window is first shown.
+    QSurfaceFormat fmt = d->window->format();
+    fmt.setColorSpace(QColorSpace(QColorSpace::Bt2100Pq));
+    d->window->setFormat(fmt);
+    VK_BREADCRUMB("[VK-HDR] setHdrOutputEnabled: requested HDR10 swapchain + Bt2100Pq\n");
+}
+
+bool QuarterVulkanWidget::isHdrOutputRequested() const
+{
+    return d->hdrRequested;
+}
+
+bool QuarterVulkanWidget::isHdrOutputActive() const
+{
+    if (!d->window || d->hdrDriverBlocked) {
+        return false;
+    }
+    const VkFormat fmt = d->window->colorFormat();
+    return fmt == VK_FORMAT_A2B10G10R10_UNORM_PACK32
+        || fmt == VK_FORMAT_R16G16B16A16_SFLOAT;
 }
 
 void QuarterVulkanWidget::redraw()
@@ -2494,6 +2679,33 @@ SIM::Coin3D::Quarter::QuarterVulkanWidget::QuarterVulkanWidget
 }
 
 SIM::Coin3D::Quarter::QuarterVulkanWidget::~QuarterVulkanWidget() = default;
+
+// InputDeviceHost overrides (virtual, so the vtable needs definitions even in
+// the Vulkan-off build; never called there).
+qreal SIM::Coin3D::Quarter::QuarterVulkanWidget::devicePixelRatio() const
+{
+    return 1.0;
+}
+
+bool SIM::Coin3D::Quarter::QuarterVulkanWidget::vulkanDevicePixels() const
+{
+    return false;
+}
+
+QSize SIM::Coin3D::Quarter::QuarterVulkanWidget::inputSize() const
+{
+    return QSize();
+}
+
+SbVec2s SIM::Coin3D::Quarter::QuarterVulkanWidget::inputWindowSize() const
+{
+    return SbVec2s(0, 0);
+}
+
+bool SIM::Coin3D::Quarter::QuarterVulkanWidget::processSoEvent(const SoEvent *)
+{
+    return false;
+}
 
 bool SIM::Coin3D::Quarter::QuarterVulkanWidget::eventFilter
     (QObject * watched, QEvent * event)

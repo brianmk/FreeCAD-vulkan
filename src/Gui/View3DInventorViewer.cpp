@@ -137,7 +137,9 @@
 #include "Inventor/SoFCBackgroundGradient.h"
 #include "Inventor/SoFCBoundingBox.h"
 #include "Inventor/SoGroundPlane.h"
+#include "InteractionController.h"
 #include "MainWindow.h"
+#include "MouseSelection.h"
 #include "Multisample.h"
 #include "NaviCube.h"
 #include "Navigation/NavigationStyle.h"
@@ -1026,7 +1028,6 @@ View3DInventorViewer::View3DInventorViewer(QWidget* parent, const QOpenGLWidget*
     , SelectionObserver(false, ResolveMode::NoResolve)
     , editViewProvider(nullptr)
     , objectGroup(nullptr)
-    , navigation(nullptr)
     , renderType(Native)
     , framebuffer(nullptr)
     , axisCross(nullptr)
@@ -1050,7 +1051,6 @@ View3DInventorViewer::View3DInventorViewer(
     , SelectionObserver(false, ResolveMode::NoResolve)
     , editViewProvider(nullptr)
     , objectGroup(nullptr)
-    , navigation(nullptr)
     , renderType(Native)
     , framebuffer(nullptr)
     , axisCross(nullptr)
@@ -1438,7 +1438,7 @@ View3DInventorViewer::~View3DInventorViewer()
         this->pcClipPlane->unref();
     }
 
-    delete this->navigation;
+    interactionController.reset();
 
     // Note: When closing the application the main window doesn't exist any more.
     if (getMainWindow()) {
@@ -1515,8 +1515,7 @@ Document* View3DInventorViewer::getDocument()
 
 void View3DInventorViewer::initialize()
 {
-    navigation = new CADNavigationStyle();
-    navigation->setViewer(this);
+    interactionController = std::make_unique<InteractionController>(this);
 
     this->axiscrossEnabled = true;
     this->axiscrossSize = 10;  // NOLINT
@@ -1882,7 +1881,7 @@ void View3DInventorViewer::setEditingViewProvider(Gui::ViewProvider* vp, int Mod
     this->editViewProvider->setEditViewer(this, ModNum);
 
 #if (COIN_MAJOR_VERSION * 100 + COIN_MINOR_VERSION * 10 + COIN_MICRO_VERSION < 403)
-    this->navigation->findBoundingSphere();
+    this->interactionController->navigationStyle()->findBoundingSphere();
 #endif
 
     addEventCallback(SoEvent::getClassTypeId(), Gui::ViewProvider::eventCallback, this->editViewProvider);
@@ -2437,7 +2436,7 @@ void View3DInventorViewer::showRotationCenter(bool show)
 
     if (show && showEnabled) {
         SbBool found {};
-        SbVec3f center = navigation->getRotationCenter(found);
+        SbVec3f center = interactionController->navigationStyle()->getRotationCenter(found);
 
         if (!found) {
             return;
@@ -2512,35 +2511,140 @@ void View3DInventorViewer::changeRotationCenterPosition(const SbVec3f& newCenter
 
 void View3DInventorViewer::setNavigationType(Base::Type type)
 {
-    if (this->navigation && this->navigation->getTypeId() == type) {
-        return;  // nothing to do
-    }
-
-    Base::Type navtype
-        = Base::Type::getTypeIfDerivedFrom(type.getName(), NavigationStyle::getClassTypeId());
-    auto ns = static_cast<NavigationStyle*>(navtype.createInstance());
-    // createInstance could return a null pointer
-    if (!ns) {
-#if FC_DEBUG
-        SoDebugError::postWarning(
-            "View3DInventorViewer::setNavigationType",
-            "Navigation object must be of type NavigationStyle."
-        );
-#endif  // FC_DEBUG
-        return;
-    }
-
-    if (this->navigation) {
-        ns->operator=(*this->navigation);
-        delete this->navigation;
-    }
-    this->navigation = ns;
-    this->navigation->setViewer(this);
+    interactionController->setNavigationType(type);
 }
 
 NavigationStyle* View3DInventorViewer::navigationStyle() const
 {
-    return this->navigation;
+    return interactionController->navigationStyle();
+}
+
+InteractionController* View3DInventorViewer::getInteractionController() const
+{
+    return interactionController.get();
+}
+
+void View3DInventorViewer::setCursorTarget(QWidget* target)
+{
+    cursorTarget = target;
+}
+
+// InteractionHost forwarding.  The viewer is the GL-path implementation of the
+// surface-independent host that NavigationStyle drives; the Vulkan interaction
+// controller will provide its own implementation later.
+SoCamera* View3DInventorViewer::getCamera() const
+{
+    return inherited::getCamera();
+}
+
+SoNode* View3DInventorViewer::getSceneGraph() const
+{
+    return inherited::getSceneGraph();
+}
+
+const SbViewportRegion& View3DInventorViewer::getViewportRegion() const
+{
+    return inherited::getViewportRegion();
+}
+
+SoRenderManager* View3DInventorViewer::getSoRenderManager() const
+{
+    return inherited::getSoRenderManager();
+}
+
+SoEventManager* View3DInventorViewer::getSoEventManager() const
+{
+    return inherited::getSoEventManager();
+}
+
+float View3DInventorViewer::getPickRadius() const
+{
+    return inherited::getPickRadius();
+}
+
+QWidget* View3DInventorViewer::getGLWidget() const
+{
+    return inherited::getGLWidget();
+}
+
+QWidget* View3DInventorViewer::getGLWidget()
+{
+    return inherited::getGLWidget();
+}
+
+bool View3DInventorViewer::isViewing() const
+{
+    return inherited::isViewing();
+}
+
+bool View3DInventorViewer::isSeekMode() const
+{
+    return inherited::isSeekMode();
+}
+
+bool View3DInventorViewer::seekToPoint(const SbVec2s& screenpos)
+{
+    return inherited::seekToPoint(screenpos);
+}
+
+void View3DInventorViewer::seekToPoint(const SbVec3f& scenepos)
+{
+    inherited::seekToPoint(scenepos);
+}
+
+void View3DInventorViewer::interactiveCountInc()
+{
+    inherited::interactiveCountInc();
+}
+
+void View3DInventorViewer::interactiveCountDec()
+{
+    inherited::interactiveCountDec();
+}
+
+int View3DInventorViewer::getInteractiveCount() const
+{
+    return inherited::getInteractiveCount();
+}
+
+void View3DInventorViewer::scheduleRedraw()
+{
+    if (auto* rm = getSoRenderManager()) {
+        rm->scheduleRedraw();
+    }
+}
+
+void View3DInventorViewer::bindMouseSelection(AbstractMouseSelection* selection)
+{
+    if (selection) {
+        selection->grabMouseModel(this);
+    }
+}
+
+bool View3DInventorViewer::surfaceNaviCubeEnabled() const
+{
+    return naviCubeEnabled && naviCube;
+}
+
+bool View3DInventorViewer::surfaceProcessNaviCubeEvent(const SoEvent* ev)
+{
+    return naviCube && naviCube->processSoEvent(ev);
+}
+
+bool View3DInventorViewer::surfaceIsRedirectedToSceneGraph() const
+{
+    return isRedirectedToSceneGraph();
+}
+
+void View3DInventorViewer::surfaceNotifyCameraMoved()
+{
+    gNavCamMoveT0 = std::chrono::steady_clock::now();
+    Q_EMIT cameraMoved();
+}
+
+void View3DInventorViewer::surfaceSetEventManager(SoEventManager* manager)
+{
+    inherited::setSoEventManager(manager);
 }
 
 SoDirectionalLight* View3DInventorViewer::getBacklight() const
@@ -2599,7 +2703,7 @@ void View3DInventorViewer::setSceneGraph(SoNode* root)
     }
 
 #if (COIN_MAJOR_VERSION * 100 + COIN_MINOR_VERSION * 10 + COIN_MICRO_VERSION < 403)
-    navigation->findBoundingSphere();
+    interactionController->navigationStyle()->findBoundingSphere();
 #endif
 }
 
@@ -2846,29 +2950,29 @@ void View3DInventorViewer::saveGraphic(
 
 void View3DInventorViewer::startSelection(View3DInventorViewer::SelectionMode mode)
 {
-    navigation->startSelection(NavigationStyle::SelectionMode(mode));
+    interactionController->navigationStyle()->startSelection(NavigationStyle::SelectionMode(mode));
 }
 
 void View3DInventorViewer::abortSelection()
 {
     setCursorEnabled(true);
-    navigation->abortSelection();
+    interactionController->navigationStyle()->abortSelection();
 }
 
 void View3DInventorViewer::stopSelection()
 {
     setCursorEnabled(true);
-    navigation->stopSelection();
+    interactionController->navigationStyle()->stopSelection();
 }
 
 bool View3DInventorViewer::isSelecting() const
 {
-    return navigation->isSelecting();
+    return interactionController->navigationStyle()->isSelecting();
 }
 
 const std::vector<SbVec2s>& View3DInventorViewer::getPolygon(SelectionRole* role) const
 {
-    return navigation->getPolygon(role);
+    return interactionController->navigationStyle()->getPolygon(role);
 }
 
 void View3DInventorViewer::setSelectionEnabled(bool enable)
@@ -2964,7 +3068,7 @@ std::vector<SbVec2f> View3DInventorViewer::getGLPolygon(const std::vector<SbVec2
 
 std::vector<SbVec2f> View3DInventorViewer::getGLPolygon(SelectionRole* role) const
 {
-    const std::vector<SbVec2s>& pnts = navigation->getPolygon(role);
+    const std::vector<SbVec2s>& pnts = interactionController->navigationStyle()->getPolygon(role);
     return getGLPolygon(pnts);
 }
 
@@ -3661,7 +3765,7 @@ void View3DInventorViewer::setSeekMode(bool on)
     }
 
     inherited::setSeekMode(on);
-    navigation->setViewingMode(
+    interactionController->navigationStyle()->setViewingMode(
         on ? NavigationStyle::SEEK_WAIT_MODE
            : (this->isViewing() ? NavigationStyle::IDLE : NavigationStyle::INTERACT)
     );
@@ -3749,52 +3853,10 @@ bool View3DInventorViewer::processSoEvent(const SoEvent* ev)
 {
     ZoneScoped;
 
-    // Snapshot the camera pose before the event so a navigation/event that
-    // rotates, pans or zooms (which mutates the shared camera node in place)
-    // can be detected afterwards.  The display-only Vulkan widget owns no Coin
-    // sensors and, once the path tracer has converged, runs no continuous
-    // refine loop, so without this a camera move would never re-render:
-    // emit cameraMoved() below so the adapter can request one frame, which the
-    // backend's camera-version check then sees as a reset-on-move.
-    SoCamera* cam = getCamera();
-    const SbVec3f camPosBefore = cam ? cam->position.getValue() : SbVec3f();
-    const SbRotation camOriBefore = cam ? cam->orientation.getValue() : SbRotation();
-
-    bool result = false;
-    if (naviCubeEnabled && naviCube->processSoEvent(ev)) {
-        return true;
+    if (!interactionController) {
+        return inherited::processSoEvent(ev);
     }
-    if (isRedirectedToSceneGraph()) {
-        result = inherited::processSoEvent(ev);
-
-        if (!result) {
-            result = navigation->processEvent(ev);
-        }
-    }
-    else if (ev->getTypeId().isDerivedFrom(SoKeyboardEvent::getClassTypeId())) {
-        // filter out 'Q' and 'ESC' keys
-        const auto ke = static_cast<const SoKeyboardEvent*>(ev);  // NOLINT
-
-        switch (ke->getKey()) {
-            case SoKeyboardEvent::ESCAPE:
-            case SoKeyboardEvent::Q:  // ignore 'Q' keys (to prevent app from being closed)
-                return inherited::processSoEvent(ev);
-            default:
-                result = navigation->processEvent(ev);
-                break;
-        }
-    }
-    else {
-        result = navigation->processEvent(ev);
-    }
-
-    if (cam && cam == getCamera()
-        && (cam->position.getValue() != camPosBefore
-            || cam->orientation.getValue() != camOriBefore)) {
-        gNavCamMoveT0 = std::chrono::steady_clock::now();
-        Q_EMIT cameraMoved();
-    }
-    return result;
+    return interactionController->processSoEvent(ev);
 }
 
 bool View3DInventorViewer::processSoEventBase(const SoEvent* const ev)
@@ -3817,10 +3879,10 @@ SbVec3f View3DInventorViewer::getViewDirection() const
 
 void View3DInventorViewer::setViewDirection(SbVec3f dir)
 {
-    if (!navigation) {
+    if (!interactionController->navigationStyle()) {
         return;
     }
-    navigation->setCameraOrientationValue(
+    interactionController->navigationStyle()->setCameraOrientationValue(
         getCamera(),
         SbRotation(SbVec3f(0, 0, -1), dir),
         NavigationStyle::OrientationChangeSource::Programmatic
@@ -4364,14 +4426,14 @@ std::shared_ptr<NavigationAnimation> View3DInventorViewer::setCameraOrientation(
     if (!camera) {
         return {};
     }
-    if (!navigation->canChangeCameraOrientation(
+    if (!interactionController->navigationStyle()->canChangeCameraOrientation(
             camera->orientation.getValue(),
             orientation,
             NavigationStyle::OrientationChangeSource::Programmatic
         )) {
         return {};
     }
-    return navigation->setCameraOrientation(orientation, moveToCenter);
+    return interactionController->navigationStyle()->setCameraOrientation(orientation, moveToCenter);
 }
 
 void View3DInventorViewer::setCameraType(SoType type)
@@ -4423,8 +4485,8 @@ bool View3DInventorViewer::applyCameraState(const SoCamera& sourceCamera)
         throw Base::RuntimeError("No camera set so far…");
     }
 
-    if (navigation
-        && !navigation->canChangeCameraOrientation(
+    if (interactionController->navigationStyle()
+        && !interactionController->navigationStyle()->canChangeCameraOrientation(
             targetCamera->orientation.getValue(),
             sourceCamera.orientation.getValue(),
             NavigationStyle::OrientationChangeSource::Programmatic
@@ -4484,7 +4546,7 @@ void View3DInventorViewer::moveCameraTo(const SbRotation& orientation, const SbV
     if (!camera) {
         return;
     }
-    if (!navigation->canChangeCameraOrientation(
+    if (!interactionController->navigationStyle()->canChangeCameraOrientation(
             camera->orientation.getValue(),
             orientation,
             NavigationStyle::OrientationChangeSource::Programmatic
@@ -4502,7 +4564,7 @@ void View3DInventorViewer::moveCameraTo(const SbRotation& orientation, const SbV
         );
     }
 
-    navigation->setCameraOrientationValue(
+    interactionController->navigationStyle()->setCameraOrientationValue(
         camera,
         orientation,
         NavigationStyle::OrientationChangeSource::Programmatic
@@ -4677,11 +4739,11 @@ void View3DInventorViewer::animatedViewAll(const SbBox3f& box, int steps, int ms
 
 void View3DInventorViewer::boxZoom(const SbBox2s& box)
 {
-    navigation->boxZoom(box);
+    interactionController->navigationStyle()->boxZoom(box);
 }
 void View3DInventorViewer::scale(float factor)
 {
-    navigation->scale(factor);
+    interactionController->navigationStyle()->scale(factor);
 }
 
 SbBox3f View3DInventorViewer::getBoundingBox() const
@@ -4721,6 +4783,51 @@ void View3DInventorViewer::viewHome()
     viewAll();
 }
 
+void View3DInventorViewer::applyDefaultOrientation()
+{
+    SoCamera* camera = getCamera();
+    if (!camera) {
+        return;
+    }
+
+    const SbRotation orientation = Camera::defaultOrientation("Trimetric");
+    if (auto* navigation = interactionController ? interactionController->navigationStyle()
+                                                 : nullptr) {
+        navigation->setCameraOrientationValue(
+            camera,
+            orientation,
+            NavigationStyle::OrientationChangeSource::Programmatic
+        );
+    }
+    else {
+        camera->orientation.setValue(orientation);
+    }
+
+    // New-document zoom, mirroring View3DInventorPy::setDefaultCameraHeight():
+    // the orthographic height (or the perspective focal distance) is the
+    // configured scale and the camera sits that far along the view axis.
+    ParameterGrp::handle hGrp = App::GetApplication().GetParameterGroupByPath(
+        "User parameter:BaseApp/Preferences/View"
+    );
+    const float scale = hGrp->GetFloat("NewDocumentCameraScale", 100.0f);
+    if (scale <= 1e-7f) {
+        return;
+    }
+    float f = 0.0f;
+    if (camera->isOfType(SoOrthographicCamera::getClassTypeId())) {
+        static_cast<SoOrthographicCamera*>(camera)->height = scale;
+        f = scale;
+    }
+    else if (camera->isOfType(SoPerspectiveCamera::getClassTypeId())) {
+        const float ang = static_cast<SoPerspectiveCamera*>(camera)->heightAngle.getValue();
+        f = 0.5f * scale / std::sin(ang * 0.5f);
+    }
+    SbVec3f lookDir;
+    orientation.multVec(SbVec3f(0, 0, -1), lookDir);
+    camera->focalDistance = f;
+    camera->position = lookDir * -f;
+}
+
 void View3DInventorViewer::viewAll()
 {
     SbBox3f box;
@@ -4735,10 +4842,9 @@ void View3DInventorViewer::viewAll()
         static_cast<SoPerspectiveCamera*>(cam)->heightAngle = (float)(M_PI / 4.0);
     }
 
-    if (isAnimationEnabled()) {
-        animatedViewAll(box, 10, 20);
-    }
-
+    // viewBoundBox() already runs the fit animation when animation is enabled
+    // (animatedViewAll) before snapping to the exact box, so animating here too
+    // made the fit run twice on every viewAll().
     viewBoundBox(box);
 }
 
@@ -5120,7 +5226,7 @@ void View3DInventorViewer::viewBoundBox(const SbBox3f& box)
  */
 void View3DInventorViewer::setAnimationEnabled(bool enable)
 {
-    navigation->setAnimationEnabled(enable);
+    interactionController->navigationStyle()->setAnimationEnabled(enable);
 }
 
 /**
@@ -5131,7 +5237,7 @@ void View3DInventorViewer::setAnimationEnabled(bool enable)
  */
 void View3DInventorViewer::setSpinningAnimationEnabled(bool enable)
 {
-    navigation->setSpinningAnimationEnabled(enable);
+    interactionController->navigationStyle()->setSpinningAnimationEnabled(enable);
 }
 
 /**
@@ -5139,7 +5245,7 @@ void View3DInventorViewer::setSpinningAnimationEnabled(bool enable)
  */
 bool View3DInventorViewer::isAnimationEnabled() const
 {
-    return navigation->isAnimationEnabled();
+    return interactionController->navigationStyle()->isAnimationEnabled();
 }
 
 /**
@@ -5147,7 +5253,7 @@ bool View3DInventorViewer::isAnimationEnabled() const
  */
 bool View3DInventorViewer::isSpinningAnimationEnabled() const
 {
-    return navigation->isSpinningAnimationEnabled();
+    return interactionController->navigationStyle()->isSpinningAnimationEnabled();
 }
 
 /**
@@ -5155,7 +5261,7 @@ bool View3DInventorViewer::isSpinningAnimationEnabled() const
  */
 bool View3DInventorViewer::isAnimating() const
 {
-    return navigation->isAnimating();
+    return interactionController->navigationStyle()->isAnimating();
 }
 
 /**
@@ -5163,7 +5269,7 @@ bool View3DInventorViewer::isAnimating() const
  */
 bool View3DInventorViewer::isSpinning() const
 {
-    return navigation->isSpinning();
+    return interactionController->navigationStyle()->isSpinning();
 }
 
 /**
@@ -5204,7 +5310,7 @@ std::shared_ptr<NavigationAnimation> View3DInventorViewer::startAnimation(
     );
 
     auto animation = std::make_shared<FixedTimeAnimation>(
-        navigation,
+        interactionController->navigationStyle(),
         orientation,
         rotationCenter,
         translation,
@@ -5212,7 +5318,7 @@ std::shared_ptr<NavigationAnimation> View3DInventorViewer::startAnimation(
         easingCurve
     );
 
-    navigation->startAnimating(animation, wait);
+    interactionController->navigationStyle()->startAnimating(animation, wait);
 
     return animation;
 }
@@ -5225,23 +5331,27 @@ std::shared_ptr<NavigationAnimation> View3DInventorViewer::startAnimation(
  */
 void View3DInventorViewer::startSpinningAnimation(const SbVec3f& axis, float velocity)
 {
-    auto animation = std::make_shared<SpinningAnimation>(navigation, axis, velocity);
-    navigation->startAnimating(animation);
+    auto animation = std::make_shared<SpinningAnimation>(
+        interactionController->navigationStyle(),
+        axis,
+        velocity
+    );
+    interactionController->navigationStyle()->startAnimating(animation);
 }
 
 void View3DInventorViewer::stopAnimating()
 {
-    navigation->stopAnimating();
+    interactionController->navigationStyle()->stopAnimating();
 }
 
 void View3DInventorViewer::setPopupMenuEnabled(bool on)
 {
-    navigation->setPopupMenuEnabled(on);
+    interactionController->navigationStyle()->setPopupMenuEnabled(on);
 }
 
 bool View3DInventorViewer::isPopupMenuEnabled() const
 {
-    return navigation->isPopupMenuEnabled();
+    return interactionController->navigationStyle()->isPopupMenuEnabled();
 }
 
 /*!
@@ -5309,13 +5419,13 @@ int View3DInventorViewer::getFeedbackSize() const
 */
 void View3DInventorViewer::setCursorEnabled(bool /*enable*/)
 {
-    this->setCursorRepresentation(navigation->getViewingMode());
+    this->setCursorRepresentation(interactionController->navigationStyle()->getViewingMode());
 }
 
 void View3DInventorViewer::afterRealizeHook()
 {
     inherited::afterRealizeHook();
-    this->setCursorRepresentation(navigation->getViewingMode());
+    this->setCursorRepresentation(interactionController->navigationStyle()->getViewingMode());
 }
 
 // Documented in superclass. This method overridden from parent class
@@ -5326,7 +5436,7 @@ void View3DInventorViewer::setViewing(bool enable)
         return;
     }
 
-    navigation->setViewingMode(enable ? NavigationStyle::IDLE : NavigationStyle::INTERACT);
+    interactionController->navigationStyle()->setViewingMode(enable ? NavigationStyle::IDLE : NavigationStyle::INTERACT);
     inherited::setViewing(enable);
 }
 
@@ -5612,7 +5722,8 @@ void View3DInventorViewer::setCursorRepresentation(int modearg)
     // won't be changed as long as the user doesn't leave and enter
     // the canvas. To fix this we explicitly set Qt::WA_UnderMouse
     // if the mouse is inside the canvas.
-    QWidget* glWindow = this->getGLWidget();
+    QWidget* cursorWindow = this->cursorTarget ? this->cursorTarget : this->getWidget();
+    QWidget* glWindow = this->cursorTarget ? this->cursorTarget : this->getGLWidget();
 
     // When a widget is added to the QGraphicsScene and the user
     // hovered over it the 'WA_SetCursor' attribute is set to the
@@ -5630,34 +5741,34 @@ void View3DInventorViewer::setCursorRepresentation(int modearg)
         case NavigationStyle::IDLE:
         case NavigationStyle::INTERACT:
             if (isEditing()) {
-                this->getWidget()->setCursor(this->editCursor);
+                cursorWindow->setCursor(this->editCursor);
             }
             else {
-                this->getWidget()->setCursor(QCursor(Qt::ArrowCursor));
+                cursorWindow->setCursor(QCursor(Qt::ArrowCursor));
             }
             break;
 
         case NavigationStyle::DRAGGING:
         case NavigationStyle::SPINNING:
-            this->getWidget()->setCursor(spinCursor);
+            cursorWindow->setCursor(spinCursor);
             break;
 
         case NavigationStyle::ZOOMING:
-            this->getWidget()->setCursor(zoomCursor);
+            cursorWindow->setCursor(zoomCursor);
             break;
 
         case NavigationStyle::SEEK_MODE:
         case NavigationStyle::SEEK_WAIT_MODE:
         case NavigationStyle::BOXZOOM:
-            this->getWidget()->setCursor(Qt::CrossCursor);
+            cursorWindow->setCursor(Qt::CrossCursor);
             break;
 
         case NavigationStyle::PANNING:
-            this->getWidget()->setCursor(panCursor);
+            cursorWindow->setCursor(panCursor);
             break;
 
         case NavigationStyle::SELECTION:
-            this->getWidget()->setCursor(Qt::PointingHandCursor);
+            cursorWindow->setCursor(Qt::PointingHandCursor);
             break;
 
         default:
@@ -5669,19 +5780,22 @@ void View3DInventorViewer::setCursorRepresentation(int modearg)
 void View3DInventorViewer::setEditing(bool edit)
 {
     this->editing = edit;
-    this->getWidget()->setCursor(QCursor(Qt::ArrowCursor));
+    QWidget* cursorWindow = this->cursorTarget ? this->cursorTarget : this->getWidget();
+    cursorWindow->setCursor(QCursor(Qt::ArrowCursor));
     this->editCursor = QCursor();
 }
 
 void View3DInventorViewer::setComponentCursor(const QCursor& cursor)
 {
-    this->getWidget()->setCursor(cursor);
+    QWidget* cursorWindow = this->cursorTarget ? this->cursorTarget : this->getWidget();
+    cursorWindow->setCursor(cursor);
 }
 
 void View3DInventorViewer::setEditingCursor(const QCursor& cursor)
 {
-    this->getWidget()->setCursor(cursor);
-    this->editCursor = this->getWidget()->cursor();
+    QWidget* cursorWindow = this->cursorTarget ? this->cursorTarget : this->getWidget();
+    cursorWindow->setCursor(cursor);
+    this->editCursor = cursorWindow->cursor();
 }
 
 void View3DInventorViewer::selectCB(void* viewer, SoPath* path)

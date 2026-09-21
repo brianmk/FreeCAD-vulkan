@@ -447,6 +447,8 @@ struct MainWindowP
     Assistant* assistant;
     int currentStatusType = 100;
     int actionUpdateDelay = 0;
+    // --no-focus: show windows without activating them (see the constructor).
+    bool suppressFocusStealing = false;
     QMap<QString, QPointer<UrlHandler>> urlHandler;
     std::string hiddenDockWindows;
     fastsignals::advanced_scoped_connection connParam;
@@ -486,6 +488,21 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
 
     // global access
     instance = this;
+
+    // --no-focus: never steal focus from the application the user is in.
+    // WA_ShowWithoutActivating makes show() (here and on the splash screen)
+    // not request activation; StartupProcess also skips its activateWindow().
+    // On X11 that is enough.  On Wayland focus is the compositor's to grant:
+    // a newly mapped toplevel is focused by KWin unless its focus-stealing
+    // prevention is set to High/Extreme, in which case a window that does not
+    // request activation (as here) is left unfocused.  Qt::WindowDoesNotAcceptFocus
+    // is deliberately not used: KWin ignores it on Wayland, and on platforms
+    // that honour it, it would also block user-initiated click-to-focus.
+    d->suppressFocusStealing =
+        App::Application::Config()["SuppressFocusStealing"] == "1";
+    if (d->suppressFocusStealing) {
+        setAttribute(Qt::WA_ShowWithoutActivating, true);
+    }
 
     d->connParam = App::GetApplication().GetUserParameter().signalParamChanged.connect(
         [this](ParameterGrp* Param, ParameterGrp::ParamType, const char* Name, const char*) {
@@ -853,6 +870,11 @@ MainWindow::~MainWindow()
     }
     delete d->status;
     delete d;
+    // Child widgets are destroyed by ~QWidget *after* this body, and some of
+    // them (e.g. a TaskDlgAttacher) call back into MainWindow.  Null d so any
+    // such call that slips through a stale pointer is a guarded no-op rather
+    // than a use-after-free.
+    d = nullptr;
     instance = nullptr;
 }
 
@@ -2606,6 +2628,13 @@ void MainWindow::saveWindowSettings(bool canDelay)
 
 void MainWindow::startSplasher()
 {
+    // --no-focus: the splash is another toplevel that can pull focus (and its
+    // QSplashScreen::finish() raises/activates the main window), so skip it
+    // entirely when the user asked not to steal focus.
+    if (d->suppressFocusStealing) {
+        d->splashscreen = nullptr;
+        return;
+    }
     // startup splasher
     // when running in verbose mode no splasher
     if (!(App::Application::Config()["Verbose"] == "Strict")
@@ -2621,6 +2650,9 @@ void MainWindow::startSplasher()
 
             if (!hGrp->GetBool("ShowSplasherMessages", false)) {
                 d->splashscreen->setShowMessages(false);
+            }
+            if (d->suppressFocusStealing) {
+                d->splashscreen->setAttribute(Qt::WA_ShowWithoutActivating, true);
             }
 
             d->splashscreen->show();
@@ -3268,12 +3300,16 @@ void MainWindow::showStatus(int type, const QString& message)
 
 void MainWindow::showHints(const std::list<InputHint>& hints)
 {
-    d->hintLabel->showHints(hints);
+    if (d && d->hintLabel) {
+        d->hintLabel->showHints(hints);
+    }
 }
 
 void MainWindow::hideHints()
 {
-    d->hintLabel->clearHints();
+    if (d && d->hintLabel) {
+        d->hintLabel->clearHints();
+    }
 }
 
 // set text to the pane

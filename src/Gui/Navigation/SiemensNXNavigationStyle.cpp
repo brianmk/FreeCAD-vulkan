@@ -283,7 +283,7 @@ struct NS::PanState: public sc::state<NS::PanState, NS::NaviMachine>
         const NS::Event* ev = static_cast<const NS::Event*>(this->triggering_event());
         ns.setViewingMode(NavigationStyle::PANNING);
         this->base_pos = ev->inventor_event->getPosition();
-        this->ratio = ns.viewer->getSoRenderManager()->getViewportRegion().getViewportAspectRatio();
+        this->ratio = ns.viewer->getViewportRegion().getViewportAspectRatio();
         ns.centerTime = ev->inventor_event->getTime();
         ns.setupPanningPlane(ns.getCamera());
     }

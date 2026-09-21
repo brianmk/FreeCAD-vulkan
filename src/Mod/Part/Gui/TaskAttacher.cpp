@@ -306,10 +306,16 @@ TaskAttacher::TaskAttacher(
 
 TaskAttacher::~TaskAttacher()
 {
-    try {
-        visibilityAutomation(false);
-    }
-    catch (...) {
+    // Skip the visibility-restore automation during application shutdown: it
+    // runs a Python command through Gui::Command::runCommand, which prints the
+    // caller to the Python console -- already destroyed while the main window
+    // (and this task dialog, its child) is being torn down.
+    if (Gui::getMainWindow()) {
+        try {
+            visibilityAutomation(false);
+        }
+        catch (...) {
+        }
     }
 
     connectDelObject.disconnect();
@@ -342,6 +348,12 @@ void TaskAttacher::objectDeleted(const Gui::ViewProviderDocumentObject& view)
 
 void TaskAttacher::documentDeleted(const Gui::Document&)
 {
+    // Unlike object deletion, closing a document does not emit signalDeletedObject
+    // for its view providers (Gui::Document::~Document deletes them directly), so
+    // objectDeleted() never runs. Restore the overridden view-provider properties
+    // here, while the document and its view providers are still alive, otherwise
+    // ~PropertyOverrideContext() would write through dangling references later.
+    overrides.clear();
     ViewProvider = nullptr;
     this->setDisabled(true);
 }
@@ -1504,7 +1516,13 @@ TaskDlgAttacher::TaskDlgAttacher(
 
 TaskDlgAttacher::~TaskDlgAttacher()
 {
-    Gui::getMainWindow()->hideHints();
+    // The task view is a child of the main window, so this dialog can be
+    // destroyed *while* the main window is being torn down (application
+    // shutdown).  MainWindow::instance is already null then, and calling
+    // hideHints() through it crashed on a null this.
+    if (auto* mw = Gui::getMainWindow()) {
+        mw->hideHints();
+    }
     if (dblClickViewer) {
         // Re-enable selection in case it was disabled for a double-click that never completed
         dblClickViewer->setSelectionEnabled(true);

@@ -30,6 +30,7 @@
 #include <vector>
 #include <QApplication>
 #include <QMessageBox>
+#include <QTimer>
 
 
 #include "SketchWorkflow.h"
@@ -60,6 +61,9 @@
 #include <Gui/MainWindow.h>
 #include <Gui/ViewParams.h>
 #include <Gui/ViewProviderPlane.h>
+#include <Gui/Camera.h>
+#include <Gui/View3DInventor.h>
+#include <Gui/View3DInventorViewer.h>
 #include <Gui/Selection/SelectionFilter.h>
 
 using namespace PartDesignGui;
@@ -641,6 +645,35 @@ private:
             Gui::Application::Instance->getViewProvider(sketch)
         );
         vps->showAttachmentEditor(onAccept, onReject);
+
+        // The attachment editor temporarily enlarges the origin planes so they
+        // can be picked. Orient to the preferred axonometric view and centre
+        // the camera on the origin so all three planes are fully visible;
+        // unlike viewAll() this does not zoom (the enlarged planes are
+        // viewport-relative, so fitting their bounds would be unstable).
+        auto showOriginPlanes = []() {
+            auto* view = dynamic_cast<Gui::View3DInventor*>(
+                Gui::Application::Instance->activeView()
+            );
+            if (!view) {
+                return;
+            }
+            auto* viewer = view->getViewer();
+            if (!viewer) {
+                return;
+            }
+            const bool animated = viewer->isAnimationEnabled();
+            viewer->setAnimationEnabled(false);
+            viewer->setCameraOrientation(Gui::Camera::rotation(Gui::Camera::Isometric), true);
+            viewer->setAnimationEnabled(animated);
+            // Re-impose the visible surface size on the Vulkan viewport's pick
+            // region and re-push the scene.  A view created for a brand-new
+            // document can otherwise keep a stale region, so hover preselection
+            // on the origin planes misses until the render mode is re-applied
+            // (the effect a manual renderer switch has).  No-op without Vulkan.
+            view->resyncVulkanViewport();
+        };
+        QTimer::singleShot(0, showOriginPlanes);
     }
 
     static void resetOriginVisibility(PartDesign::Body* partDesignBody)

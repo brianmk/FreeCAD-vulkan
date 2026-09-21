@@ -159,6 +159,17 @@
       "timeout": 180
     },
     {
+      "name": "interaction",
+      "script": "vk_interaction_probe.py",
+      "env": {
+        "FC_INTERACTION_RENDER": "vulkan"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 240
+    },
+    {
       "name": "prefs",
       "script": "vk_prefs_probe.py",
       "env": {
@@ -330,6 +341,23 @@
         "FC_VULKAN_RT_DEBUG": "1",
         "FC_VULKAN_PT_DENOISE_TIMING": "1",
         "FC_VULKAN_PT_MAXSAMPLES": "32"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 300
+    },
+    {
+      "name": "fsr-denoise",
+      "script": "vk_fsr_probe.py",
+      "env": {
+        "FC_VULKAN_PT_DENOISER": "fsr",
+        "FC_VULKAN_PT_DENOISER_DEBUG": "1",
+        "FC_VULKAN_PT_DENOISE_TIMING": "1",
+        "FC_VULKAN_PT_MAXSAMPLES": "32",
+        "FC_VULKAN_DUMP_FRAME": "1",
+        "FC_VULKAN_DUMP_START": "0",
+        "FC_VULKAN_DUMP_END": "400"
       },
       "allow_vuid": [
         "VUID-vkQueueSubmit-pSignalSemaphores-00067"
