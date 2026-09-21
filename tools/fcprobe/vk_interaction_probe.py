@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Interaction-authority baseline probe (INTERACTION_AUTHORITY.md Phase 0).
+"""Interaction-authority baseline probe.
 
 Records the camera pose and selection after a fixed scripted input sequence
 (click-select, orbit drag, pan drag) so later migration phases can diff against

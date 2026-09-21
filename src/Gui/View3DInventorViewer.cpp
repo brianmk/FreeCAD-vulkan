@@ -2532,7 +2532,6 @@ void View3DInventorViewer::setCursorTarget(QWidget* target)
 // InteractionHost forwarding.  The viewer is the GL-path implementation of the
 // surface-independent host that NavigationStyle drives; the Vulkan interaction
 // controller will provide its own implementation later.
-// See docs/vulkan/INTERACTION_AUTHORITY.md (Phase 1).
 SoCamera* View3DInventorViewer::getCamera() const
 {
     return inherited::getCamera();

@@ -39,7 +39,7 @@ class NavigationAnimation;
  *  `InteractionHost` is the seam that replaces that coupling.  The GL viewer
  *  implements it today; an interaction controller owned by the Vulkan surface
  *  can implement it later, so the same navigation styles drive whichever
- *  surface is current.  See `docs/vulkan/INTERACTION_AUTHORITY.md`.
+ *  surface is current.
  */
 class GuiExport InteractionHost
 {

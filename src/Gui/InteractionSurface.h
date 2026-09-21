@@ -21,8 +21,6 @@ namespace Gui
  *  styles reach through; this adds the surface-owned overlay/redirect hooks the
  *  controller's `processSoEvent` dispatch needs, so the same controller can run
  *  on either surface.
- *
- *  See `docs/vulkan/INTERACTION_AUTHORITY.md` (Phase 2).
  */
 class GuiExport InteractionSurface: public InteractionHost
 {

@@ -36,8 +36,6 @@ class NavigationAnimation;
  *  Today the GL `View3DInventorViewer` is the only surface; the Vulkan widget
  *  can implement `InteractionSurface` and instantiate the same controller, so
  *  navigation and picking stop depending on the hidden GL viewer.
- *
- *  See `docs/vulkan/INTERACTION_AUTHORITY.md` (Phase 2).
  */
 class GuiExport InteractionController: public InteractionHost
 {
@@ -81,8 +79,7 @@ public:
      *  viewport) reports its size here.  Picking/navigation then use this
      *  single region instead of the hidden GL viewer's hand-synced copy; the
      *  controller also pushes it into the event manager so
-     *  `SoHandleEventAction` picks in the same space.  See
-     *  `docs/vulkan/INTERACTION_AUTHORITY.md` (Phase 3).
+     *  `SoHandleEventAction` picks in the same space.
      */
     void setViewportRegion(const SbViewportRegion& region, float devicePixelRatio);
     //! The canonical device pixel ratio (1.0 until a surface reports one).

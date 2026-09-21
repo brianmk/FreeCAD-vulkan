@@ -26,8 +26,6 @@ namespace Quarter
  *  implement it too, so the same `Mouse` / `Keyboard` / `EventFilter` stack can
  *  translate events against whichever surface is current — instead of every
  *  event being forwarded to the hidden GL viewer.
- *
- *  See `docs/vulkan/INTERACTION_AUTHORITY.md` (Phase 2c).
  */
 class QUARTER_DLL_API InputDeviceHost
 {

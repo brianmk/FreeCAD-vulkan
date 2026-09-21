@@ -670,7 +670,7 @@ public:
     //! state.  The explicit overrides are required because `View3DInventorViewer`
     //! inherits the same-named accessors from the Quarter base classes as well as
     //! the `InteractionHost` interface; without an override the lookup would be
-    //! ambiguous.  See `docs/vulkan/INTERACTION_AUTHORITY.md` (Phase 1).
+    //! ambiguous.
     //@{
     SoCamera* getCamera() const override;
     SoNode* getSceneGraph() const override;
@@ -699,7 +699,7 @@ public:
     void bindMouseSelection(AbstractMouseSelection* selection) override;
     //@}
 
-    //! @name InteractionSurface hooks (see docs/vulkan/INTERACTION_AUTHORITY.md)
+    //! @name InteractionSurface hooks
     //@{
     bool surfaceNaviCubeEnabled() const override;
     bool surfaceProcessNaviCubeEvent(const SoEvent* ev) override;
