@@ -700,7 +700,6 @@ void View3DSettings::ensurePrefTable()
     // ---- No-op backend-choice / throttle keys (kept so the dispatch table is
     // ---- exhaustive; the old if/else ignored them) ----------------------
     add(m_prefTable, "UseVulkanRenderer", false, [](const ParameterGrp &) {});
-    add(m_prefTable, "UseVulkanRayTracing", false, [](const ParameterGrp &) {});
     add(m_prefTable, "PreselectionMessageRate", false, [](const ParameterGrp &) {});
 
     // ---- Background colors (the old OnChange `else` catch-all) ----------

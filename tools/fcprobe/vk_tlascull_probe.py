@@ -62,7 +62,6 @@ def step():
     if k == 1:
         for name in list(FreeCAD.listDocuments()):
             FreeCAD.closeDocument(name)
-        s.set_pref(VIEW, "UseVulkanRayTracing", False)
         s.set_pref(VIEW, "VulkanPathTracing", True)
         # The RT backend is gated on the VIEW MODE (VulkanRenderMode), not the
         # path-tracing bool: mode 4 = RayTracing and is what drops rasterOnly()

@@ -47,7 +47,7 @@ MAIN_STRCMP = {
     "ResetCursorPosition", "RotationMode", "SelectionColor", "Sensitivity",
     "ShowAxisCross", "ShowFPS", "ShowGroundPlane", "ShowNaviCube",
     "TransparentObjectRenderType", "UseNavigationAnimations", "UseSpinningAnimations",
-    "UseVBO", "UseVulkanRayTracing", "UseVulkanRenderer", "ZoomAtCursor", "ZoomStep",
+    "UseVBO", "UseVulkanRenderer", "ZoomAtCursor", "ZoomStep",
 }
 
 EXPECTED = MAIN_STRCMP | BG  # 60 explicit keys

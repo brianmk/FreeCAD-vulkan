@@ -2054,9 +2054,11 @@ def set_render_mode(params: Dict[str, Any]) -> Dict[str, Any]:
     mode = (params.get("mode") or "opengl").lower()
     pgrp = App.ParamGet("User parameter:BaseApp/Preferences/View")
     vulkan = mode in ("vulkan", "vk", "ray", "raytracing")
+    # Ray tracing is a device capability, not a view option: the widget always
+    # requests the RT feature set when the GPU advertises it, so only the
+    # renderer backend choice is persisted here.
     rt = mode in ("raytracing", "vulkan+rt")
     pgrp.SetBool("UseVulkanRenderer", vulkan)
-    pgrp.SetBool("UseVulkanRayTracing", rt)
     recreated = None
     try:
         import FreeCADGui as Gui
