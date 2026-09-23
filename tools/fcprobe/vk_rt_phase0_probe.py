@@ -67,7 +67,6 @@ def step():
             FreeCAD.closeDocument(name)
         # Raster first, so the RTX backend is brought up lazily and the caps
         # line happens at the toggle (not at view creation).
-        s.set_pref(VIEW, "UseVulkanRayTracing", False)
         s.set_pref(VIEW, "VulkanPathTracing", False)
         s.set_pref(VIEW, "VulkanRenderMode", 1)  # 1=RasterVulkan: raster gate
         s.set_pref(VIEW, "VulkanPathTracingBounces", 3)

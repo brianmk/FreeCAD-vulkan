@@ -47,7 +47,6 @@ using namespace Gui;
 
 VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
                                              View3DInventorViewer* viewer,
-                                             bool useRayTracing,
                                              QObject* parent)
     : QObject(parent)
     , _viewer(viewer)
@@ -74,7 +73,7 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
     if (!_viewer) {
         return;
     }
-    _vulkanViewer = new SIM::Coin3D::Quarter::QuarterVulkanWidget(stack, useRayTracing);
+    _vulkanViewer = new SIM::Coin3D::Quarter::QuarterVulkanWidget(stack);
     _vulkanViewer->setSampleCount(View3DInventorViewer::getNumSamples());
     // QVulkanWindow::grab() only converts 8-bit swapchain formats;
     // request B8G8R8A8_UNORM so screenshot tests read exact pixels.
@@ -160,7 +159,6 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
 #else
     Q_UNUSED(stack);
     Q_UNUSED(viewer);
-    Q_UNUSED(useRayTracing);
 #endif
 }
 
@@ -466,9 +464,9 @@ void VulkanViewportAdapter::pushSettings()
     _vulkanViewer->setViewSettings(vs);
     // Enable/disable the ray tracer (stateful backend lifecycle).
     _vulkanViewer->setPathTracingEnabled(!raster);
-    // The RTX backend is always brought up when the device supports it
-    // (independent of UseVulkanRayTracing), so path tracing can be toggled
-    // live with the preference: no document reopen needed.  The only case
+    // The RTX backend is always brought up when the device supports it, so
+    // path tracing can be toggled live with the preference: no document reopen
+    // needed.  The only case
     // where a path-tracing request cannot be honored is hardware without
     // VK_KHR_acceleration_structure / ray_tracing_pipeline / ray_query; warn
     // once per transition (the preferences signal that drives pushSettings()

@@ -162,8 +162,8 @@ struct VulkanViewSettings
     void load(const ParameterGrp::handle & hGrp);
 
     // True when \a reason names a Vulkan viewport display preference (any
-    // "Vulkan*" key).  The backend-choice prefs ("UseVulkanRenderer",
-    // "UseVulkanRayTracing") are deliberately excluded by the prefix, so
+    // "Vulkan*" key).  The backend-choice pref ("UseVulkanRenderer") is
+    // deliberately excluded by the prefix, so
     // View3DSettings::OnChange can route any "Vulkan*" change straight to
     // applyVulkanSettings() without enumerating every key -- a new display pref
     // is picked up automatically.

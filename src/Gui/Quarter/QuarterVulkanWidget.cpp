@@ -1359,7 +1359,6 @@ public:
     SoNode * overlayScene = nullptr;
     SoNode * decorationScene = nullptr;
     SoCamera * camera = nullptr;
-    bool rayTracing = false;
     //! HDR10 output requested (see setHdrOutputEnabled).  The actual swapchain
     //! format is reported by isHdrOutputActive() once the window is shown.
     bool hdrRequested = false;
@@ -1381,13 +1380,11 @@ public:
 #endif
 };
 
-QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent, bool rayTracing)
+QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent)
     : QWidget(parent)
     , d(new QuarterVulkanWidgetPrivate)
 {
-    vkLog("QuarterVulkanWidget: constructing%s",
-          rayTracing ? " (ray tracing requested)" : "");
-    d->rayTracing = rayTracing;
+    vkLog("QuarterVulkanWidget: constructing");
 
     this->ensureSharedInstance();
 
@@ -1407,7 +1404,7 @@ QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent, bool rayTracing)
     d->renderer = d->vulkanWindow->renderer();
 
     this->selectPhysicalDevice();
-    this->configureDeviceFeatures(rayTracing);
+    this->configureDeviceFeatures();
     this->logSupportedSampleCounts();
 
     d->container = QWidget::createWindowContainer(d->window, this);
@@ -1736,7 +1733,7 @@ void QuarterVulkanWidget::selectPhysicalDevice()
                      best.nvCluster ? 1 : 0, best.nvPartitioned ? 1 : 0,
                      best.nvLinearSweptSpheres ? 1 : 0);
     }
-    if (d->rayTracing && !best.externalMemoryFd) {
+    if (!best.externalMemoryFd) {
         vkWarn("QuarterVulkanWidget: the selected device lacks "
                "VK_KHR_external_memory_fd; the CUDA/OptiX denoiser cannot "
                "import Vulkan memory and will fall back to the other denoisers.");
@@ -1753,10 +1750,6 @@ void QuarterVulkanWidget::selectPhysicalDevice()
     vkLog("QuarterVulkanWidget: selected physical device %d "
           "(fillModeNonSolid=%d rayTracing=%d)",
           bestIndex, best.fillModeNonSolid ? 1 : 0, best.rayTracing ? 1 : 0);
-    if (d->rayTracing && !best.rayTracing) {
-        vkWarn("QuarterVulkanWidget: the selected device does not support "
-               "ray tracing; falling back to the raster backend.");
-    }
 }
 
 // Request the device extensions and feature structs for ray tracing (when
@@ -1764,12 +1757,11 @@ void QuarterVulkanWidget::selectPhysicalDevice()
 // wireframe/points overlays, before the window is first shown:
 // QVulkanWindow creates the device on first expose.
 //
-// The ray-tracing feature set is requested whenever the device advertises
-// it, NOT only when the view was created with UseVulkanRayTracing.  That
-// keeps the RTX backend always available so path tracing can be toggled live
-// (raster <-> RT) with a preference change, instead of forcing a document
-// reopen.  The construction `rayTracing` flag only influences the log below.
-void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
+// The ray-tracing feature set is requested whenever the device advertises it.
+// That keeps the RTX backend always available so path tracing can be toggled
+// live (raster <-> RT) with a preference change, instead of forcing a document
+// reopen.
+void QuarterVulkanWidget::configureDeviceFeatures()
 {
     // Tell the renderer whether the selected device advertises the
     // ray-tracing extension set, so isRayTracingAvailable() reflects hardware
@@ -1785,11 +1777,9 @@ void QuarterVulkanWidget::configureDeviceFeatures(bool rayTracing)
     // advertises the ray-tracing extension set; requesting extensions a
     // device does not support would fail device creation.
     if (!d->vulkanWindow->rtRayTracingAvailable) {
-        if (rayTracing) {
-            vkWarn("QuarterVulkanWidget: ray tracing requested but the selected "
-                   "device does not advertise VK_KHR_ray_tracing_pipeline / "
-                   "VK_KHR_acceleration_structure; falling back to raster");
-        }
+        vkLog("QuarterVulkanWidget: the selected device does not advertise "
+              "VK_KHR_ray_tracing_pipeline / VK_KHR_acceleration_structure; "
+              "path tracing is unavailable and the raster backend is used");
         // Still request fillModeNonSolid for the wireframe/points overlay
         // pipelines.
         d->window->setEnabledFeaturesModifier(
@@ -2673,7 +2663,7 @@ QWidget * QuarterVulkanWidget::getNativeWidget()
 // These are never called: the adapter that instantiates the widget is itself
 // guarded by FREECAD_USE_VULKAN.
 SIM::Coin3D::Quarter::QuarterVulkanWidget::QuarterVulkanWidget
-    (QWidget * parent, bool /*rayTracing*/)
+    (QWidget * parent)
     : QWidget(parent)
 {
 }

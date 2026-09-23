@@ -56,7 +56,6 @@ class VulkanViewportAdapter : public QObject, public InteractionSurface
 public:
     VulkanViewportAdapter(QStackedWidget* stack,
                           View3DInventorViewer* viewer,
-                          bool useRayTracing,
                           QObject* parent);
 
     /// Stop the Vulkan widget and detach it from the viewer before the viewer

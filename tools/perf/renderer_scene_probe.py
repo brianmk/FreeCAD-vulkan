@@ -154,7 +154,6 @@ def step():
             FreeCAD.closeDocument(name)
         s.set_pref(VIEW, "VulkanRenderMode", MODE)
         s.set_pref(VIEW, "VulkanPathTracing", MODE == 4)
-        s.set_pref(VIEW, "UseVulkanRayTracing", MODE in (3, 4, 5))
         s.set_pref(VIEW, "VulkanPathTracingBounces", BOUNCES)
         s.set_pref(VIEW, "VulkanPathTracingSettle", 8)
         FreeCADGui.activateWorkbench("PartWorkbench")

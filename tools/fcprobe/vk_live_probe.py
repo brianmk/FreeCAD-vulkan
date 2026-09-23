@@ -48,7 +48,6 @@ def step():
     if k == 1:
         for name in list(FreeCAD.listDocuments()):
             FreeCAD.closeDocument(name)
-        s.set_pref(VIEW, "UseVulkanRayTracing", False)
         s.set_pref(VIEW, "VulkanPathTracing", True)
         s.set_pref(VIEW, "VulkanRenderMode", 4)
         s.set_pref(VIEW, "VulkanPathTracingBounces", 2)

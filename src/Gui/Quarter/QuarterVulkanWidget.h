@@ -53,8 +53,7 @@ class QuarterVulkanWidget : public QWidget, public InputDeviceHost
     Q_OBJECT
 
 public:
-    explicit QuarterVulkanWidget(QWidget * parent = nullptr,
-                                 bool rayTracing = false);
+    explicit QuarterVulkanWidget(QWidget * parent = nullptr);
     ~QuarterVulkanWidget() override;
 
 Q_SIGNALS:
@@ -222,9 +221,9 @@ public:
 
       Ray tracing requires a Vulkan 1.2+ device with
       VK_KHR_acceleration_structure and VK_KHR_ray_tracing_pipeline enabled.
-      The widget requests them at construction when \a rayTracing was true;
-      when the device does not support them the raster backend is used and
-      this returns FALSE.
+      The widget requests them whenever the selected device advertises them,
+      so the RTX backend is always available; when the device does not support
+      them the raster backend is used and this returns FALSE.
     */
     bool isRayTracingActive() const;
 
@@ -444,7 +443,7 @@ private:
     void releaseSharedInstance();
 #ifdef FREECAD_USE_VULKAN
     void selectPhysicalDevice();
-    void configureDeviceFeatures(bool rayTracing);
+    void configureDeviceFeatures();
     //! Fill the always-on device features (wireframe/points overlays + full
     //! draw-index + dual-source blend) shared by the raster and RT feature
     //! modifier paths, so the two setEnabledFeaturesModifier() callbacks do not

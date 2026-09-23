@@ -159,17 +159,12 @@ View3DInventor::View3DInventor(
     if (_viewer && App::GetApplication()
                            .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
                            ->GetBool("UseVulkanRenderer", false)) {
-        const bool useRayTracing =
-            Base::envFlagTruthy("FC_VULKAN_RAYTRACING") ||
-            App::GetApplication()
-                    .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
-                    ->GetBool("UseVulkanRayTracing", false);
-        VK_BREADCRUMB("[VK-TRACE] View3DInventor: UseVulkanRayTracing=%d\n",
-                      useRayTracing ? 1 : 0);
         // The adapter owns the Vulkan widget and all GL<->Vulkan sync
         // wiring (scene/camera state, input forwarding, cursor mirroring,
-        // viewport sizing).
-        _vulkanAdapter = new VulkanViewportAdapter(stack, _viewer, useRayTracing, this);
+        // viewport sizing).  Ray tracing is a device capability, not a view
+        // option: the widget always requests the ray-tracing feature set when
+        // the GPU advertises it, so path tracing can be toggled live.
+        _vulkanAdapter = new VulkanViewportAdapter(stack, _viewer, this);
         // Reopen consistency: restore the persisted render mode so the status-
         // bar selector (and the backend) reflect whatever the user last chose.
         // VulkanRenderMode (int) is the single source of the render mode; there
