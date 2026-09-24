@@ -159,6 +159,14 @@
       "timeout": 180
     },
     {
+      "name": "sketch-view-anim",
+      "script": "vk_sketch_view_anim_probe.py",
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 180
+    },
+    {
       "name": "interaction",
       "script": "vk_interaction_probe.py",
       "env": {

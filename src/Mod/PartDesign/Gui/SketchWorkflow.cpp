@@ -66,6 +66,8 @@
 #include <Gui/View3DInventorViewer.h>
 #include <Gui/Selection/SelectionFilter.h>
 
+#include <Inventor/actions/SoGetBoundingBoxAction.h>
+
 using namespace PartDesignGui;
 
 namespace
@@ -647,11 +649,17 @@ private:
         vps->showAttachmentEditor(onAccept, onReject);
 
         // The attachment editor temporarily enlarges the origin planes so they
-        // can be picked. Orient to the preferred axonometric view and centre
-        // the camera on the origin so all three planes are fully visible;
-        // unlike viewAll() this does not zoom (the enlarged planes are
-        // viewport-relative, so fitting their bounds would be unstable).
-        auto showOriginPlanes = []() {
+        // can be picked.  When nothing was selected to attach to, rotate
+        // gently (eased, over the configured NewSketchViewAnimationDuration,
+        // 0.6 s by default) to the axonometric view and centre the camera on
+        // the origin so all three planes are fully visible; unlike viewAll()
+        // this does not zoom (the enlarged planes are viewport-relative, so
+        // fitting their bounds would be unstable).  With a preselection the
+        // attachment dialog is pre-populated and the view is left where the
+        // user put it.  `support` is the selection captured above, with the
+        // active body removed.
+        const bool hasSelection = support.getSize() > 0;
+        auto showOriginPlanes = [hasSelection]() {
             auto* view = dynamic_cast<Gui::View3DInventor*>(
                 Gui::Application::Instance->activeView()
             );
@@ -662,10 +670,35 @@ private:
             if (!viewer) {
                 return;
             }
-            const bool animated = viewer->isAnimationEnabled();
-            viewer->setAnimationEnabled(false);
-            viewer->setCameraOrientation(Gui::Camera::rotation(Gui::Camera::Isometric), true);
-            viewer->setAnimationEnabled(animated);
+            if (!hasSelection) {
+                // Mirror NavigationStyle::setCameraOrientation(..., true): the
+                // rotation centre is the focal point and the scene-bounds
+                // centre is translated onto it, so the final pose is the same
+                // as the previous snap-to-axonometric view.
+                const SbVec3f focalPoint = viewer->getFocalPoint();
+                SbVec3f translation(0.0F, 0.0F, 0.0F);
+                SoGetBoundingBoxAction bboxAction(viewer->getViewportRegion());
+                bboxAction.apply(viewer->getSceneGraph());
+                const SbBox3f box = bboxAction.getBoundingBox();
+                if (!box.isEmpty()) {
+                    translation = box.getCenter() - focalPoint;
+                }
+                const SbRotation orientation = Gui::Camera::rotation(Gui::Camera::Isometric);
+                const double durationSeconds = App::GetApplication()
+                    .GetParameterGroupByPath("User parameter:BaseApp/Preferences/Mod/PartDesign")
+                    ->GetFloat("NewSketchViewAnimationDuration", 0.6);
+                const auto durationMs = static_cast<int>(durationSeconds * 1000.0 + 0.5);
+                if (durationMs > 0) {
+                    viewer->startAnimation(orientation, focalPoint, translation, durationMs, false);
+                }
+                else {
+                    // A zero duration disables the animation: snap to the view.
+                    const bool animated = viewer->isAnimationEnabled();
+                    viewer->setAnimationEnabled(false);
+                    viewer->setCameraOrientation(orientation, true);
+                    viewer->setAnimationEnabled(animated);
+                }
+            }
             // Re-impose the visible surface size on the Vulkan viewport's pick
             // region and re-push the scene.  A view created for a brand-new
             // document can otherwise keep a stale region, so hover preselection

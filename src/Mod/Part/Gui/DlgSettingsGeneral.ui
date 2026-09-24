@@ -271,6 +271,48 @@
         </property>
        </widget>
       </item>
+      <item>
+       <layout class="QHBoxLayout" name="horizontalLayoutNewSketchViewAnimation">
+        <item>
+         <widget class="QLabel" name="labelNewSketchViewAnimation">
+          <property name="text">
+           <string>New sketch view rotation duration</string>
+          </property>
+          <property name="toolTip">
+           <string>How long the eased rotation to the axonometric view takes when the sketch attachment dialog reveals the origin planes. Set to 0 to snap instantly.</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="Gui::PrefDoubleSpinBox" name="spinNewSketchViewAnimationDuration">
+          <property name="suffix">
+           <string notr="true"> s</string>
+          </property>
+          <property name="decimals">
+           <number>2</number>
+          </property>
+          <property name="minimum">
+           <double>0.000000000000000</double>
+          </property>
+          <property name="maximum">
+           <double>10.000000000000000</double>
+          </property>
+          <property name="singleStep">
+           <double>0.100000000000000</double>
+          </property>
+          <property name="value">
+           <double>0.600000000000000</double>
+          </property>
+          <property name="prefEntry" stdset="0">
+           <cstring>NewSketchViewAnimationDuration</cstring>
+          </property>
+          <property name="prefPath" stdset="0">
+           <cstring>Mod/PartDesign</cstring>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
      </layout>
     </widget>
    </item>
@@ -589,6 +631,11 @@
   <customwidget>
    <class>Gui::PrefSpinBox</class>
    <extends>QSpinBox</extends>
+   <header>Gui/PrefWidgets.h</header>
+  </customwidget>
+  <customwidget>
+   <class>Gui::PrefDoubleSpinBox</class>
+   <extends>QDoubleSpinBox</extends>
    <header>Gui/PrefWidgets.h</header>
   </customwidget>
  </customwidgets>
