@@ -26,6 +26,8 @@
 
 #include <algorithm>
 #include <iostream>
+#include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -188,6 +190,26 @@ bool isAllowedModule(const std::string& moduleName)
     std::string loaderModuleName = Py::String(loaderType.getAttr("__module__")).as_std_string();
     Py::Object loaderMod = sysModules.getItem(loaderModuleName);
     return isUnderFreeCAD(Py::String(loaderMod.getAttr("__file__")).as_std_string());
+}
+
+/**
+ * @brief Decide whether an unavailable-module message should be emitted.
+ *
+ * Restoring a document that references a workbench which is not installed
+ * calls Restore() once per affected property.  A large model (e.g. the bundled
+ * BIM example opened without the BIM workbench) would otherwise emit hundreds
+ * of identical lines.  Report each distinct module name only once per process
+ * so the information is kept without flooding the console.
+ *
+ * @param[in] moduleName The fully qualified Python module name.
+ * @return @c true the first time a module is seen, @c false afterwards.
+ */
+bool reportUnavailableModuleOnce(const std::string& moduleName)
+{
+    static std::mutex mutex;
+    static std::set<std::string> reported;
+    std::lock_guard<std::mutex> lock(mutex);
+    return reported.insert(moduleName).second;
 }
 
 }  // anonymous namespace
@@ -491,11 +513,13 @@ void PropertyPythonObject::Restore(Base::XMLReader& reader)
                     // a recoverable, expected case (e.g. opening a doc that
                     // references a workbench that is not installed).  Log once
                     // and continue with the property empty.
-                    Base::Console().message(
-                        "PropertyPythonObject::Restore: module '%s' is not "
-                        "available or not permitted; the object property is "
-                        "left empty.\n",
-                        moduleName.c_str());
+                    if (reportUnavailableModuleOnce(moduleName)) {
+                        Base::Console().message(
+                            "PropertyPythonObject::Restore: module '%s' is not "
+                            "available or not permitted; the object property is "
+                            "left empty.\n",
+                            moduleName.c_str());
+                    }
                     this->object = Py::None();
                     load_failed = true;
                 }
