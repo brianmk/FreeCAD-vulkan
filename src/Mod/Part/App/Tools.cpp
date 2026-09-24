@@ -574,17 +574,15 @@ void Part::Tools::getPointNormals(
 
     if (aPolyTri->HasNormals()) {
         for (Standard_Integer aNodeIter = 1; aNodeIter <= numNodes; ++aNodeIter) {
-            gp_Vec3f aStored;
-            aPolyTri->Normal(aNodeIter, aStored);
-            if (aStored.SquareModulus() > 0.0f) {
-                theNormals(aNodeIter) = gp_Dir(aStored.x(), aStored.y(), aStored.z());
+            try {
+                theNormals(aNodeIter) = aPolyTri->Normal(aNodeIter);
             }
-            else {
+            catch (const Standard_Failure&) {
                 // gp_Dir rejects a zero vector, and a degenerate triangulation
                 // can carry one.  Substitute +Z rather than throwing, which
                 // would abort the caller's whole display geometry.
                 Base::Console().warning(
-                    "Part: triangulation has a zero normal at node %d; using +Z\n",
+                    "Part: triangulation has a zero normal at node {}; using +Z\n",
                     static_cast<int>(aNodeIter)
                 );
                 theNormals(aNodeIter) = gp::DZ();
