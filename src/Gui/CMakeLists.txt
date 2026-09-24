@@ -933,7 +933,17 @@ if(UNIX AND NOT APPLE)
                     C_VISIBILITY_PRESET hidden
                     CXX_VISIBILITY_PRESET hidden
                     VISIBILITY_INLINES_HIDDEN ON
-                    POSITION_INDEPENDENT_CODE ON)
+                    POSITION_INDEPENDENT_CODE ON
+                    # The sources are scanner-generated C/C++ with no Qt
+                    # meta-objects or .ui files.  More importantly, with the
+                    # global CMAKE_AUTOUIC/AUTOMOC on, this target's autogen
+                    # would emit FreeCADGui's whole ui_*.h set into
+                    # ${CMAKE_BINARY_DIR}/Ext/freecad/gui/ as well, which
+                    # collides with FreeCADGui_autogen (ninja "multiple rules
+                    # generate .../ui_RemoteDebugger.h").  It needs no autogen.
+                    AUTOMOC OFF
+                    AUTOUIC OFF
+                    AUTORCC OFF)
                 qt_generate_wayland_protocol_client_sources(
                     FreeCADGuiWaylandColor FILES "${_fcColorManagementXml}")
                 target_link_libraries(FreeCADGuiWaylandColor PRIVATE Qt6::WaylandClient)
