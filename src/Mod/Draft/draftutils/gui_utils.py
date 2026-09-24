@@ -453,7 +453,7 @@ def get_diffuse_color(objs):
                 cols = _get_color(base) * count
                 if obj.ColoredElements is None:
                     return cols
-                face_num = len(base.Shape.Faces)
+                face_num = _shape_face_count(base)
                 for elm, override in zip(obj.ColoredElements[1], obj.ViewObject.OverrideColorList):
                     if (
                         "Face" in elm

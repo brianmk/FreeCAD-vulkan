@@ -1192,16 +1192,17 @@ class ViewProviderBuildingPart:
             return next(callback.v)
 
         if hasattr(obj.ViewObject, "SaveInventor") and obj.ViewObject.SaveInventor:
-            if obj.Shape and obj.Shape.Faces and hasattr(obj, "SavedInventor"):
+            n_faces = gui_utils._shape_face_count(obj) if obj.Shape else 0
+            if n_faces and hasattr(obj, "SavedInventor"):
                 colors = obj.ViewObject.DiffuseColor
-                if len(colors) != len(obj.Shape.Faces):
+                if len(colors) != n_faces:
                     print("Debug: Colors mismatch in", obj.Label)
                     colors = None
                 iv = self.Object.Shape.writeInventor()
                 import re
 
                 if colors:
-                    if len(re.findall(r"IndexedFaceSet", iv)) == len(obj.Shape.Faces):
+                    if len(re.findall(r"IndexedFaceSet", iv)) == n_faces:
                         # convert colors to iv representations
                         colors = [
                             "Material { diffuseColor "

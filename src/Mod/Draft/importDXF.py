@@ -113,6 +113,7 @@ if gui:
     except ImportError:
         ViewProviderDraft = None
         ViewProviderWire = None
+        ViewProviderLinearDimension = None
     from draftutils.translate import translate
     from PySide import QtWidgets
 else:
@@ -4905,7 +4906,8 @@ class DxfDraftPostProcessor:
                     dimension.LinearDimension(dim)
 
                     if FreeCAD.GuiUp:
-                        ViewProviderLinearDimension(dim.ViewObject)
+                        if ViewProviderLinearDimension:
+                            ViewProviderLinearDimension(dim.ViewObject)
 
                     # 2. Get the transformation from the placeholder's Placement property.
                     plc = placeholder.Placement
