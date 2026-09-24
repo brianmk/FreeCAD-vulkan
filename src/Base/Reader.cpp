@@ -457,6 +457,12 @@ void Base::XMLReader::readFiles(zipios::ZipInputStream& zipstream) const
     }
     std::vector<FileEntry>::const_iterator it = FileList.begin();
     Base::SequencerLauncher seq("Importing project files...", FileList.size());
+    // The GUI progress bar processes events on every 1% update. For a document
+    // with hundreds of embedded files that costs more than the actual reading,
+    // so lock the sequencer for the loop: seq.next() then only advances the
+    // internal counter instead of driving the progress bar.
+    bool wasLocked = Base::Sequencer().isLocked();
+    Base::Sequencer().setLocked(true);
     while (entry->isValid() && it != FileList.end()) {
         std::vector<FileEntry>::const_iterator jt = it;
         // Check if the current entry is registered, otherwise check the next registered files as
@@ -503,6 +509,7 @@ void Base::XMLReader::readFiles(zipios::ZipInputStream& zipstream) const
             break;
         }
     }
+    Base::Sequencer().setLocked(wasLocked);
 }
 
 const char* Base::XMLReader::addFile(const char* Name, Base::Persistence* Object)
