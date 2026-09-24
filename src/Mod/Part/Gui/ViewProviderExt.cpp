@@ -1490,6 +1490,7 @@ static PartGui::CoinGeometryData computeCoinGeometry(
         static_cast<size_t>(edgeMap.Extent()) + 1);
     std::vector<char> edgePending(static_cast<size_t>(edgeMap.Extent()) + 1, 1);
     std::vector<int32_t> edgeVector;
+    std::set<int> edgeFailed;
 
     // In the RT view, drop parametric seam edges: an edge is a seam when the
     // two faces adjacent to it meet with better-than-C0 continuity (a smooth
@@ -1919,6 +1920,7 @@ static PartGui::CoinGeometryData computeCoinGeometry(
                 Handle(Poly_PolygonOnTriangulation)
                     aPoly = BRep_Tool::PolygonOnTriangulation(curEdge, mesh, aLoc);
                 if (aPoly.IsNull()) {
+                    edgeFailed.insert(edgeIndex);
                     continue;  // polygon does not exist
                 }
 
@@ -1989,12 +1991,14 @@ static PartGui::CoinGeometryData computeCoinGeometry(
         }
     }
 
+    std::map<int, int> coordsMap;
     data.nodeStartIndex = freeNodeOffset;
     for (int i = 0; i < vertexMap.Extent(); i++) {
         const TopoDS_Vertex& aVertex = TopoDS::Vertex(vertexMap(i + 1));
         gp_Pnt pnt = BRep_Tool::Pnt(aVertex);
 
         verts[freeNodeOffset + i] = Base::convertTo<SbVec3f>(pnt);
+        coordsMap[i + 1] = freeNodeOffset + i;
     }
 
     // normalize all normals
@@ -2094,6 +2098,34 @@ static PartGui::CoinGeometryData computeCoinGeometry(
             }
             s = e;
         }
+    }
+
+    // If no adjacent face has a polygon for an edge, use its endpoint coordinates so that
+    // the edge still has a line entry. Fall back to a zero-length line to preserve the edge
+    // numbering when no usable polygon is available.
+    for (int edgeIndex : edgeFailed) {
+        if (!lineSetByEdge[edgeIndex].empty()) {
+            continue;
+        }
+
+        int indexedPnt1 = freeNodeOffset;
+        int indexedPnt2 = freeNodeOffset;
+        TopoDS_Edge edge = TopoDS::Edge(edgeMap.FindKey(edgeIndex));
+        TopLoc_Location aLoc;
+        Handle(Poly_Polygon3D) aPoly = Part::Tools::polygonOfEdge(edge, aLoc);
+        if (!aPoly.IsNull() && aPoly->NbNodes() == 2) {
+            const int v1 = vertexMap.FindIndex(TopExp::FirstVertex(edge));
+            const int v2 = vertexMap.FindIndex(TopExp::LastVertex(edge));
+            const auto it = coordsMap.find(v1);
+            const auto jt = coordsMap.find(v2);
+            if (it != coordsMap.end() && jt != coordsMap.end()) {
+                indexedPnt1 = it->second;
+                indexedPnt2 = jt->second;
+            }
+        }
+
+        lineSetByEdge[edgeIndex].push_back(indexedPnt1);
+        lineSetByEdge[edgeIndex].push_back(indexedPnt2);
     }
 
     // lineSetByEdge only holds entries for edges that actually produced a

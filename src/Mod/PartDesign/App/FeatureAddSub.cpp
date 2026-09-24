@@ -137,7 +137,8 @@ void FeatureAddSub::updatePreviewShape()
     const auto notifyWarning = [](const QString& message) {
         Base::Console().translatedUserWarning(
             "Preview",
-            tr("Failure while computing removed volume preview: %1").arg(message).toUtf8()
+            "{}",
+            tr("Failure while computing removed volume preview: %1").arg(message).toStdString()
         );
     };
 
@@ -148,7 +149,6 @@ void FeatureAddSub::updatePreviewShape()
 
         if (!tool.isEmpty()) {
             try {
-                // Compute removed volume preview (for display)
                 TopoShape common;
                 common.makeElementBoolean(
                     Part::OpCodes::Common,
@@ -157,7 +157,6 @@ void FeatureAddSub::updatePreviewShape()
                     Precision::Confusion()
                 );
 
-                // does CUT change volume?
                 GProp_GProps propsBefore, propsAfter;
                 BRepGProp::VolumeProperties(base.getShape(), propsBefore);
 
@@ -169,7 +168,10 @@ void FeatureAddSub::updatePreviewShape()
                     Precision::Confusion()
                 );
 
-                BRepGProp::VolumeProperties(cut.getShape(), propsAfter);
+                // Check whether the selected operation removes material from the base.
+                const bool keepCommon = getBooleanOperation() == BooleanOperation::Common;
+                const TopoShape& result = keepCommon ? common : cut;
+                BRepGProp::VolumeProperties(result.getShape(), propsAfter);
 
                 const double removed = propsBefore.Mass() - propsAfter.Mass();
 

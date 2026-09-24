@@ -298,8 +298,8 @@ std::string PropertyPythonObject::toString() const
     }
     catch (Py::Exception&) {
         Py::String typestr(this->object.type().str());
-        Base::Console().error("PropertyPythonObject::toString(): failed for %s\n",
-                              typestr.as_string().c_str());
+        Base::Console().error("PropertyPythonObject::toString(): failed for {}\n",
+                              typestr.as_string());
         Base::PyException e;  // extract the Python error text
         e.reportException();
     }
@@ -444,7 +444,7 @@ void PropertyPythonObject::restoreObject(Base::XMLReader& reader)
         e.clear();
     }
     catch (const Base::Exception& e) {
-        Base::Console().error("%s\n", e.what());
+        Base::Console().error("{}\n", e.what());
     }
     catch (...) {
         Base::Console().error("Critical error in PropertyPythonObject::restoreObject\n");
@@ -515,13 +515,33 @@ void PropertyPythonObject::Restore(Base::XMLReader& reader)
                     // and continue with the property empty.
                     if (reportUnavailableModuleOnce(moduleName)) {
                         Base::Console().message(
-                            "PropertyPythonObject::Restore: module '%s' is not "
+                            "PropertyPythonObject::Restore: module '{}' is not "
                             "available or not permitted; the object property is "
                             "left empty.\n",
-                            moduleName.c_str());
+                            moduleName);
                     }
                     this->object = Py::None();
                     load_failed = true;
+                }
+                else {
+                    Py::Module mod(PyImport_ImportModule(moduleName.c_str()), true);
+                    if (mod.isNull()) {
+                        throw Py::Exception();
+                    }
+                    std::string className = reader.getAttribute<const char*>("class");
+                    PyObject* cls = mod.getAttr(className).ptr();
+                    if (!cls) {
+                        std::stringstream s;
+                        s << "Module " << moduleName << " has no class " << className;
+                        throw Py::AttributeError(s.str());
+                    }
+                    if (PyType_Check(cls)) {
+                        this->object = PyType_GenericAlloc((PyTypeObject*)cls, 0);
+                    }
+                    else {
+                        throw Py::TypeError("neither class nor type object");
+                    }
+                    load_json = true;
                 }
                 else {
                     Py::Module mod(PyImport_ImportModule(moduleName.c_str()), true);
@@ -561,8 +581,8 @@ void PropertyPythonObject::Restore(Base::XMLReader& reader)
         }
         else if (!load_failed) {
             Base::Console().warning(
-                "PropertyPythonObject::Restore: unsupported serialisation: %s\n",
-                buffer.c_str());
+                "PropertyPythonObject::Restore: unsupported serialisation: {}\n",
+                buffer);
         }
         restoreObject(reader);
         hasSetValue();

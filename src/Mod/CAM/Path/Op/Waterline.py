@@ -671,6 +671,36 @@ class ObjectWaterline(PathSurfaceWaterline.ObjectSurfaceWaterline):
                 )
             )
 
+    def opUpdateDepths(self, obj):
+        if hasattr(obj, "Base") and obj.Base:
+            # Read base geometry through baseShapes() rather than from obj.Base
+            # directly, so that an operation with a rotated workplane computes
+            # its depth in the frame its path is generated in. With no rotation
+            # active baseShapes() yields obj.Base unchanged.
+            baseShapes = list(self.baseShapes(obj))
+            base, sublist = baseShapes[0]
+            fbb = base.Shape.getElement(sublist[0]).BoundBox
+            zmin = fbb.ZMax
+            for base, sublist in baseShapes:
+                for sub in sublist:
+                    try:
+                        fbb = base.Shape.getElement(sub).BoundBox
+                        zmin = min(zmin, fbb.ZMin)
+                    except Part.OCCError as e:
+                        Path.Log.error(e)
+            obj.OpFinalDepth = zmin
+        elif self.job:
+            if hasattr(obj, "BoundBox"):
+                if obj.BoundBox == "BaseBoundBox":
+                    models = self.job.Model.Group
+                    zmin = models[0].Shape.BoundBox.ZMin
+                    for M in models:
+                        zmin = min(zmin, M.Shape.BoundBox.ZMin)
+                    obj.OpFinalDepth = zmin
+                if obj.BoundBox == "Stock":
+                    models = self.job.Stock
+                    obj.OpFinalDepth = self.job.Stock.Shape.BoundBox.ZMin
+
     def opExecute(self, obj):
         """opExecute(obj) ... process surface operation"""
         Path.Log.track()

@@ -409,10 +409,10 @@ PyObject* BSplineCurvePy::approximate(PyObject* args, PyObject* kwds)
             kwds,
             "i|isd",
             kwds_reapprox,
-            &tol3d,
             &degMax,
             &segMax,
-            &continuity
+            &continuity,
+            &tol3d
         )) {
 
         GeomAbs_Shape c;

@@ -16,7 +16,10 @@ add_executable(Base_tests_run
         InputSource.cpp
         Handle.cpp
         Matrix.cpp
+        NumericFormatting.cpp
+        NumericInput.cpp
         Observer.cpp
+        OkLch.cpp
         Parameter.cpp
         ParameterObserver.cpp
         Placement.cpp
@@ -44,6 +47,7 @@ add_executable(Base_tests_run
         Vector3D.cpp
         ViewProj.cpp
         Writer.cpp
+        XMLParser.cpp
         XMLTools.cpp
 )
 

@@ -152,7 +152,7 @@ public:
         if (_ObserverSet.size() == count) {
             Base::Console().developerWarning(
                 std::string("Subject::Attach"),
-                "Observer %p already attached\n",
+                "Observer {} already attached\n",
                 static_cast<void*>(ToObserv)
             );
         }
@@ -176,7 +176,7 @@ public:
         if (_ObserverSet.size() == count) {
             Base::Console().developerWarning(
                 std::string("Subject::Detach"),
-                "Observer %p already detached\n",
+                "Observer {} already detached\n",
                 static_cast<void*>(ToObserv)
             );
         }
@@ -209,14 +209,14 @@ public:
             catch (Base::Exception& e) {
                 Base::Console().error(
                     "Unhandled Base::Exception caught when notifying observer.\n"
-                    "The error message is: %s\n",
+                    "The error message is: {}\n",
                     e.what()
                 );
             }
             catch (std::exception& e) {
                 Base::Console().error(
                     "Unhandled std::exception caught when notifying observer\n"
-                    "The error message is: %s\n",
+                    "The error message is: {}\n",
                     e.what()
                 );
             }

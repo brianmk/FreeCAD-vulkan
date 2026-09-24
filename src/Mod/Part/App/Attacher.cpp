@@ -1925,7 +1925,7 @@ Base::Placement AttachEngine3D::_calculateAttachedPlacement(
                     dd = gp_Vec(0., 0., 0.);
                     Base::Console().warning(
                         "AttachEngine3D::calculateAttachedPlacement: can't "
-                        "calculate second derivative of curve. OCC error: %s\n",
+                        "calculate second derivative of curve. OCC error: {}\n",
                         e.GetMessageString()
                     );
                 }
@@ -2928,7 +2928,7 @@ Base::Placement AttachEngineLine::_calculateAttachedPlacement(
                 if (distancer.NbSolution() > 1) {
                     Base::Console().warning(
                         "AttachEngineLine::calculateAttachedPlacement: "
-                        "proximity calculation gave %i solutions, ambiguous.\n",
+                        "proximity calculation gave {} solutions, ambiguous.\n",
                         int(distancer.NbSolution())
                     );
                 }
@@ -3245,7 +3245,7 @@ gp_Pnt AttachEnginePoint::getProximityPoint(
 
             if (points.size() > 1) {
                 Base::Console().warning(
-                    "AttachEnginePoint::calculateAttachedPlacement: proximity calculation gave %d "
+                    "AttachEnginePoint::calculateAttachedPlacement: proximity calculation gave {} "
                     "solutions, ambiguous.\n",
                     int(points.size())
                 );
@@ -3270,7 +3270,7 @@ gp_Pnt AttachEnginePoint::getProximityPoint(
     }
     if (distancer.NbSolution() > 1) {
         Base::Console().warning(
-            "AttachEnginePoint::calculateAttachedPlacement: proximity calculation gave %i "
+            "AttachEnginePoint::calculateAttachedPlacement: proximity calculation gave {} "
             "solutions, ambiguous.\n",
             int(distancer.NbSolution())
         );

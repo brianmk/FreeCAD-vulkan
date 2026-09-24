@@ -46,6 +46,9 @@
 
 #include <Mod/Part/App/PartFeature.h>
 
+#include <BRep_Tool.hxx>
+#include <TopExp_Explorer.hxx>
+
 #include "TaskLoft.h"
 #include "ShapeSelection.h"
 #include "ui_TaskLoft.h"
