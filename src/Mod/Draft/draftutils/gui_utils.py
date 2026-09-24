@@ -395,24 +395,28 @@ def remove_hidden(objectslist):
 removeHidden = remove_hidden
 
 
-# Cache of face counts keyed by the identity of the Part.Shape wrapper.
-# `obj.Shape` returns a stable wrapper while the shape is unchanged, and a new
-# wrapper once it is replaced, so the identity is a correct invalidation key.
-# `len(shape.Faces)` materialises every face and dominates get_diffuse_color()
-# when building parts share subtrees; keeping the shape alive pins its id so it
-# cannot be recycled, and the cache is cleared if it ever grows too large.
+# Cache of face counts keyed by the owning document object.
+#
+# `len(shape.Faces)` materialises every face and is surprisingly expensive
+# (tens of ms for a few hundred faces), and it dominates get_diffuse_color()
+# because the same objects are re-scanned for every building part that shares
+# their subtree. The count cannot be cached on the shape: `obj.Shape` returns a
+# fresh Python wrapper on every access, so its id is never reused. Instead the
+# cache is keyed by the document object (whose Python wrapper is stable) and
+# validated with `Part.TopoShape.isSame()`, so the count is recomputed only
+# when the shape actually changes.
 _face_count_cache = {}
 
 
-def _shape_face_count(shape):
-    key = id(shape)
-    entry = _face_count_cache.get(key)
-    if entry is not None and entry[0] is shape:
-        return entry[1]
+def _shape_face_count(obj):
+    cached = _face_count_cache.get(obj)
+    shape = obj.Shape
+    if cached is not None and cached[0].isSame(shape):
+        return cached[1]
     count = len(shape.Faces)
     if len(_face_count_cache) > 20000:
         _face_count_cache.clear()
-    _face_count_cache[key] = (shape, count)
+    _face_count_cache[obj] = (shape, count)
     return count
 
 
@@ -482,7 +486,7 @@ def get_diffuse_color(objs):
             else:
                 return []
         elif hasattr(obj.ViewObject, "DiffuseColor"):
-            n_faces = _shape_face_count(obj.Shape)
+            n_faces = _shape_face_count(obj)
             if len(obj.ViewObject.DiffuseColor) == n_faces:
                 return obj.ViewObject.DiffuseColor
             else:
@@ -505,7 +509,7 @@ def get_diffuse_color(objs):
             and hasattr(obj.ViewObject, "DiffuseColor")
             and (
                 len(obj.ViewObject.DiffuseColor) == 1
-                or len(obj.ViewObject.DiffuseColor) == _shape_face_count(obj.Shape)
+                or len(obj.ViewObject.DiffuseColor) == _shape_face_count(obj)
             )
         ):
             return obj.ViewObject.DiffuseColor
