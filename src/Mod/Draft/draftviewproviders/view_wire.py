@@ -160,8 +160,10 @@ class ViewProviderWire(ViewProviderDraft):
             and hasattr(self, "pt2")
         ):
             rn = vobj.RootNode
-            rn.removeChild(self.pt1)
-            rn.removeChild(self.pt2)
+            if rn.findChild(self.pt1) >= 0:
+                rn.removeChild(self.pt1)
+            if rn.findChild(self.pt2) >= 0:
+                rn.removeChild(self.pt2)
             if vobj.Visibility:
                 self.pt1.removeChild(self.startSymbol)
                 self.startSymbol = gui_utils.dim_symbol(

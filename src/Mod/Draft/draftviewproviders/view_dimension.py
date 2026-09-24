@@ -677,8 +677,10 @@ class ViewProviderLinearDimension(ViewProviderDimensionBase):
 
         Remove the existing nodes.
         """
-        self.node_wld.removeChild(self.marks)
-        self.node_scr.removeChild(self.marks)
+        if self.node_wld.findChild(self.marks) >= 0:
+            self.node_wld.removeChild(self.marks)
+        if self.node_scr.findChild(self.marks) >= 0:
+            self.node_scr.removeChild(self.marks)
 
     def draw_dim_arrows(self, vobj):
         """Draw dimension arrows."""
@@ -725,8 +727,10 @@ class ViewProviderLinearDimension(ViewProviderDimensionBase):
 
     def remove_dim_overshoot(self):
         """Remove the dimension overshoot lines."""
-        self.node_wld.removeChild(self.marksDimOvershoot)
-        self.node_scr.removeChild(self.marksDimOvershoot)
+        if self.node_wld.findChild(self.marksDimOvershoot) >= 0:
+            self.node_wld.removeChild(self.marksDimOvershoot)
+        if self.node_scr.findChild(self.marksDimOvershoot) >= 0:
+            self.node_scr.removeChild(self.marksDimOvershoot)
 
     def draw_dim_overshoot(self, vobj):
         """Draw dimension overshoot lines."""
@@ -755,8 +759,10 @@ class ViewProviderLinearDimension(ViewProviderDimensionBase):
 
     def remove_ext_overshoot(self):
         """Remove dimension extension overshoot lines."""
-        self.node_wld.removeChild(self.marksExtOvershoot)
-        self.node_scr.removeChild(self.marksExtOvershoot)
+        if self.node_wld.findChild(self.marksExtOvershoot) >= 0:
+            self.node_wld.removeChild(self.marksExtOvershoot)
+        if self.node_scr.findChild(self.marksExtOvershoot) >= 0:
+            self.node_scr.removeChild(self.marksExtOvershoot)
 
     def draw_ext_overshoot(self, vobj):
         """Draw dimension extension overshoot lines."""
@@ -1243,8 +1249,10 @@ class ViewProviderAngularDimension(ViewProviderDimensionBase):
 
         Remove the existing nodes.
         """
-        self.node_wld.removeChild(self.marks)
-        self.node_scr.removeChild(self.marks)
+        if self.node_wld.findChild(self.marks) >= 0:
+            self.node_wld.removeChild(self.marks)
+        if self.node_scr.findChild(self.marks) >= 0:
+            self.node_scr.removeChild(self.marks)
 
     def draw_dim_arrows(self, vobj):
         """Draw dimension arrows."""
@@ -1289,8 +1297,10 @@ class ViewProviderAngularDimension(ViewProviderDimensionBase):
 
     def remove_dim_overshoot(self):
         """Remove the dimension overshoot lines."""
-        self.node_wld.removeChild(self.marksDimOvershoot)
-        self.node_scr.removeChild(self.marksDimOvershoot)
+        if self.node_wld.findChild(self.marksDimOvershoot) >= 0:
+            self.node_wld.removeChild(self.marksDimOvershoot)
+        if self.node_scr.findChild(self.marksDimOvershoot) >= 0:
+            self.node_scr.removeChild(self.marksDimOvershoot)
 
     def draw_dim_overshoot(self, vobj):
         """Draw dimension overshoot lines."""
@@ -1317,8 +1327,10 @@ class ViewProviderAngularDimension(ViewProviderDimensionBase):
 
     def remove_ext_overshoot(self):
         """Remove dimension extension overshoot lines."""
-        self.node_wld.removeChild(self.marksExtOvershoot)
-        self.node_scr.removeChild(self.marksExtOvershoot)
+        if self.node_wld.findChild(self.marksExtOvershoot) >= 0:
+            self.node_wld.removeChild(self.marksExtOvershoot)
+        if self.node_scr.findChild(self.marksExtOvershoot) >= 0:
+            self.node_scr.removeChild(self.marksExtOvershoot)
 
     def draw_ext_overshoot(self, vobj):
         """Draw dimension extension overshoot lines."""
