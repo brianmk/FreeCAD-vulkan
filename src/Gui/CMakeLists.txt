@@ -929,7 +929,16 @@ if(UNIX AND NOT APPLE)
             endif()
             if(_fcColorManagementXml)
                 add_library(FreeCADGuiWaylandColor STATIC)
+                # This helper holds only the generated Wayland protocol
+                # bindings: no Q_OBJECT, .ui or .qrc.  The directory has
+                # AUTOMOC/AUTOUIC enabled globally, and if they apply to this
+                # target too AUTOUIC scans the whole src/Gui .ui set for it and
+                # writes the same ui_*.h as FreeCADGui, which Ninja rejects as
+                # "multiple rules generate ... ui_<X>.h".  Turn all three off.
                 set_target_properties(FreeCADGuiWaylandColor PROPERTIES
+                    AUTOMOC OFF
+                    AUTOUIC OFF
+                    AUTORCC OFF
                     C_VISIBILITY_PRESET hidden
                     CXX_VISIBILITY_PRESET hidden
                     VISIBILITY_INLINES_HIDDEN ON
