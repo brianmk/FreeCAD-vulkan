@@ -1681,16 +1681,16 @@ void MainWindow::addWindow(MDIView* view)
 
     connect(view, &MDIView::message, this, &MainWindow::showMessage);
     connect(this, &MainWindow::windowStateChanged, view, &MDIView::windowStateChanged);
+#ifdef FREECAD_USE_VULKAN
     // The render mode can auto-fall-back to raster when the hardware lacks ray
     // tracing; keep the status-bar selector (and edge-overlay button) in step.
     if (const auto* v3 = qobject_cast<View3DInventor*>(view)) {
-#ifdef FREECAD_USE_VULKAN
         connect(v3, &View3DInventor::renderModeChanged,
                 this, &MainWindow::syncViewModeCombo);
         connect(v3, &View3DInventor::renderModeChanged,
                 this, &MainWindow::syncWireframeButton);
-#endif
     }
+#endif
 
     // listen to the incoming events of the view
     view->installEventFilter(this);
@@ -1722,14 +1722,14 @@ void MainWindow::removeWindow(Gui::MDIView* view, bool close)
     // free all connections
     disconnect(view, &MDIView::message, this, &MainWindow::showMessage);
     disconnect(this, &MainWindow::windowStateChanged, view, &MDIView::windowStateChanged);
-    if (const auto* v3 = qobject_cast<View3DInventor*>(view)) {
 #ifdef FREECAD_USE_VULKAN
+    if (const auto* v3 = qobject_cast<View3DInventor*>(view)) {
         disconnect(v3, &View3DInventor::renderModeChanged,
                    this, &MainWindow::syncViewModeCombo);
         disconnect(v3, &View3DInventor::renderModeChanged,
                    this, &MainWindow::syncWireframeButton);
-#endif
     }
+#endif
 
     view->removeEventFilter(this);
 
