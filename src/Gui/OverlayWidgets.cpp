@@ -476,6 +476,21 @@ OverlayTabWidget::OverlayTabWidget(QWidget* parent, Qt::DockWidgetArea pos)
     connect(_animator, &QAbstractAnimation::stateChanged, this, &OverlayTabWidget::onAnimationStateChanged);
 }
 
+OverlayTabWidget::~OverlayTabWidget()
+{
+    // _animator is a child QObject, so ~QWidget deletes it after this
+    // destructor has run, i.e. before ~QObject tears down this widget's
+    // connections.  Deleting a running animation stops it, which emits
+    // stateChanged into onAnimationStateChanged() on an object whose
+    // OverlayTabWidget part is already gone: Qt asserts on the dynamic type in
+    // debug builds and calls into a dead object in release.  Sever the
+    // connection while the slot target is still valid.
+    if (_animator) {
+        disconnect(_animator, nullptr, this, nullptr);
+        _animator->stop();
+    }
+}
+
 void OverlayTabWidget::refreshIcons()
 {
     auto curStyleSheet = App::GetApplication()
