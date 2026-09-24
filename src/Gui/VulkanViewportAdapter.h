@@ -103,11 +103,12 @@ public:
 
     /// Re-impose the visible surface size on the hidden GL viewer's pick /
     /// navigation region and re-push scene, camera and background.  A view
-    /// created for a brand-new document can hold a stale viewport region or
-    /// scene binding until the render mode is re-applied -- the same effect a
-    /// manual renderer switch has -- which leaves hover preselection dead
-    /// until then.  Idempotent; safe to call whenever the layout may have
-    /// changed.
+    /// created for a brand-new document can hold a stale viewport region, a
+    /// stale camera clipping range (the pick ray's near/far, which only a GL
+    /// render would otherwise fit) or a stale scene binding until the render
+    /// mode is re-applied -- the same effect a manual renderer switch has --
+    /// which leaves hover preselection dead until then.  Idempotent; safe to
+    /// call whenever the layout or scene may have changed.
     void resyncViewport();
 
 Q_SIGNALS:
