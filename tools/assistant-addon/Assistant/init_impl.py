@@ -6,7 +6,6 @@ available.  ``InitGui.py`` simply imports this and registers.
 """
 
 import os
-import sys
 
 import FreeCADGui
 

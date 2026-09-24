@@ -39,10 +39,6 @@ import re
 import requests
 
 
-class MissingPatchData(Exception):
-    """Raised when the patch data is missing"""
-
-
 def fetch_patch(args):
     """Grabs the patch data from the GitHub API."""
     git_session = requests.Session()

@@ -184,6 +184,25 @@
       "timeout": 180
     },
     {
+      "name": "pref-cover",
+      "script": "vk_prefcover_probe.py",
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 180
+    },
+    {
+      "name": "hdr-tonemap",
+      "script": "vk_hdr_tonemap_probe.py",
+      "env": {
+        "FC_VULKAN_BACKEND_DEBUG": "1"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 180
+    },
+    {
       "name": "blas-multi",
       "script": "vk_blas_multi_probe.py",
       "env": {

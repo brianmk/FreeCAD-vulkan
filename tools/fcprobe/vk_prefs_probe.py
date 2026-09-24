@@ -18,7 +18,6 @@ Exit: [VERDICT] prefs PASS only if every phase completes without error.
 
 import os
 import sys
-import time
 
 import FreeCAD
 import FreeCADGui
@@ -73,8 +72,8 @@ def step():
     k = steps[0]
     if k == 2:
         # reset the overlays to a clean baseline BEFORE the box renders.
-        # Force raster mode (1): the edge/point overlay is only drawn by the
-        # raster backend, not the RTX path tracer.
+        # Force raster mode (1): the point overlay is only drawn by the raster
+        # backend (the edge overlay is drawn in every mode).
         s.set_pref(VIEW, "VulkanRenderMode", 1)
         apply_phase(0)
         build_scene()

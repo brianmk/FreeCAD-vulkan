@@ -103,10 +103,6 @@ def schemas():
     return [t for t in _SCHEMAS if t["name"] in _GUEST.HANDLERS]
 
 
-def names():
-    return [t["name"] for t in schemas()]
-
-
 def call(name, params=None):
     """Dispatch a tool call in-process.  `params` is a dict of keyword args."""
     _load_guest()
@@ -116,10 +112,3 @@ def call(name, params=None):
         err = (res or {}).get("error") if isinstance(res, dict) else None
         raise ToolError(err, name)
     return res.get("data")
-
-
-def availability():
-    """name -> True when a matching guest handler exists (schemas can outpace
-    the registry)."""
-    g = _load_guest()
-    return {t["name"]: (t["name"] in g.HANDLERS) for t in _SCHEMAS}

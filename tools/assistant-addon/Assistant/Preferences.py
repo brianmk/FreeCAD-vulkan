@@ -63,8 +63,6 @@ _DEFAULTS = {
     "ToolAllowList": json.dumps([]),   # ["run_python", ...] or [] = all allowed
     "ToolBlockList": json.dumps([]),   # deny-listed tools
     "IncludeContext": True,
-    "IncludeSelection": True,
-    "IncludeLogs": True,
     "VisionEnabled": True,
     "Debug": False,
     "McpEnabled": True,
@@ -200,14 +198,6 @@ def tool_blocklist():
 
 def include_context():
     return bool(get("IncludeContext", True))
-
-
-def include_selection():
-    return bool(get("IncludeSelection", True))
-
-
-def include_logs():
-    return bool(get("IncludeLogs", True))
 
 
 def vision_enabled():

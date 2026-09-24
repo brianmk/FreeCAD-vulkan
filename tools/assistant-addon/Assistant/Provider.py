@@ -11,7 +11,7 @@ Works with DeepSeek, OpenAI, Ollama (`/v1/chat/completions`), LM Studio, vLLM ..
 
 import json
 import os
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import requests
 

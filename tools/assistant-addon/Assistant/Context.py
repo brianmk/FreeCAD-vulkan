@@ -6,8 +6,6 @@ scene: active doc, object inventory, selection, workbench, parameters and the
 recent log tail.
 """
 
-import json
-
 MAX_OBJECTS = 250
 
 # FreeCAD unit schemas (index -> primary length unit), mirroring the C++ schemas.

@@ -4,11 +4,10 @@ live and whether GL contexts are being made current (i.e. an invisible GL
 render happening in the background)."""
 import os
 import sys
-import time
 
 import FreeCAD
 import FreeCADGui
-from PySide import QtCore, QtGui
+from PySide import QtCore
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from freecad_probe import Session  # noqa: E402

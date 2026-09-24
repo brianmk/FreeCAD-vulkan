@@ -7,7 +7,7 @@ data-driven rewrite there is one table; this tool checks that the table covers
 exactly the original behavior set, so no pref is dropped, mis-routed or
 mis-grouped on the rewrite.
 
-Self-contained: the expected key set (the 55 keys the old `strcmp` dispatch
+Self-contained: the expected key set (the 54 keys the old `strcmp` dispatch
 handled + the 5 background keys the old `else` catch-all handled) is embedded
 here, so validation works on a fresh checkout without a generated baseline.
 
@@ -32,7 +32,7 @@ BG = {
     "BackgroundColor", "BackgroundColor2", "BackgroundColor3", "BackgroundColor4",
     "UseBackgroundColorMid",
 }
-# The keys the original OnChange strcmp dispatch handled (55).
+# The keys the original OnChange strcmp dispatch handled (54).
 MAIN_STRCMP = {
     "AmbientLightColor", "AmbientLightIntensity", "AxisLetterColor", "AxisXColor",
     "AxisYColor", "AxisZColor", "BacklightColor", "BacklightDirection",
@@ -50,7 +50,7 @@ MAIN_STRCMP = {
     "UseVBO", "UseVulkanRenderer", "ZoomAtCursor", "ZoomStep",
 }
 
-EXPECTED = MAIN_STRCMP | BG  # 60 explicit keys
+EXPECTED = MAIN_STRCMP | BG  # 59 explicit keys
 
 
 def _block(src, sig):

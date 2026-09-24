@@ -109,7 +109,7 @@ on macOS, `~/.config/Claude/claude_desktop_config.json` on Linux):
 The MCP server auto-starts the guest via `--spawn` if you prefer not to launch
 it by hand.
 
-## Tools (42)
+## Tools (76)
 
 Modelling: `new_document`, `open_document`, `active_document`,
 `set_active_document`, `list_objects`, `delete_object`, `recompute`,
