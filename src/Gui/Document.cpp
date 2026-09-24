@@ -3097,7 +3097,7 @@ void Document::handleChildren3D(ViewProvider* viewProvider, bool deleting)
         std::vector<App::DocumentObject*> children = viewProvider->claimChildren3D();
         SoGroup* childGroup = viewProvider->getChildRoot();
         SoGroup* frontGroup = viewProvider->getFrontRoot();
-        SoGroup* backGroup = viewProvider->getFrontRoot();
+        SoGroup* backGroup = viewProvider->getBackRoot();
 
         // size not the same -> build up the list new
         if (deleting || childGroup->getNumChildren() != static_cast<int>(children.size())) {
