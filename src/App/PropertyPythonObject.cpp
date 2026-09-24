@@ -543,26 +543,6 @@ void PropertyPythonObject::Restore(Base::XMLReader& reader)
                     }
                     load_json = true;
                 }
-                else {
-                    Py::Module mod(PyImport_ImportModule(moduleName.c_str()), true);
-                    if (mod.isNull()) {
-                        throw Py::Exception();
-                    }
-                    std::string className = reader.getAttribute<const char*>("class");
-                    PyObject* cls = mod.getAttr(className).ptr();
-                    if (!cls) {
-                        std::stringstream s;
-                        s << "Module " << moduleName << " has no class " << className;
-                        throw Py::AttributeError(s.str());
-                    }
-                    if (PyType_Check(cls)) {
-                        this->object = PyType_GenericAlloc((PyTypeObject*)cls, 0);
-                    }
-                    else {
-                        throw Py::TypeError("neither class nor type object");
-                    }
-                    load_json = true;
-                }
             }
             else if (reader.hasAttribute("json")) {
                 load_json = true;

@@ -136,191 +136,6 @@ App::PropertyQuantityConstraint::Constraints ViewProviderPartExt::angDeflectionR
 const char* ViewProviderPartExt::LightingEnums[] = {"One side", "Two side", nullptr};
 const char* ViewProviderPartExt::DrawStyleEnums[] = {"Solid", "Dashed", "Dotted", "Dashdot", nullptr};
 
-ViewProviderPartExt::ViewProviderPartExt()
-{
-    texture.initExtension(this);
-
-    VisualTouched = true;
-    forceUpdateCount = 0;
-    NormalsFromUV = true;
-
-    // get default line color
-    unsigned long lcol = Gui::ViewParams::instance()->getDefaultShapeLineColor();  // dark grey
-                                                                                   // (25,25,25)
-    float lr, lg, lb;
-    lr = ((lcol >> 24) & 0xff) / 255.0;
-    lg = ((lcol >> 16) & 0xff) / 255.0;
-    lb = ((lcol >> 8) & 0xff) / 255.0;
-    // get default vertex color
-    unsigned long vcol = Gui::ViewParams::instance()->getDefaultShapeVertexColor();
-    float vr, vg, vb;
-    vr = ((vcol >> 24) & 0xff) / 255.0;
-    vg = ((vcol >> 16) & 0xff) / 255.0;
-    vb = ((vcol >> 8) & 0xff) / 255.0;
-    int lwidth = Gui::ViewParams::instance()->getDefaultShapeLineWidth();
-    int psize = Gui::ViewParams::instance()->getDefaultShapePointSize();
-
-
-    ParameterGrp::handle hPart = App::GetApplication().GetParameterGroupByPath(
-        "User parameter:BaseApp/Preferences/Mod/Part"
-    );
-    NormalsFromUV = hPart->GetBool("NormalsFromUVNodes", NormalsFromUV);
-
-    long twoside = hPart->GetBool("TwoSideRendering", true) ? 1 : 0;
-
-    // Let the user define a custom lower limit but a value less than
-    // OCCT's epsilon is not allowed
-    double lowerLimit = hPart->GetFloat("MinimumDeviation", tessRange.LowerBound);
-    lowerLimit = std::max(lowerLimit, Precision::Confusion());
-    tessRange.LowerBound = lowerLimit;
-
-    static const char* osgroup = "Object Style";
-
-    App::Material lmat;
-    lmat.ambientColor.set(0.2f, 0.2f, 0.2f);
-    lmat.diffuseColor.set(lr, lg, lb);
-    lmat.specularColor.set(0.0f, 0.0f, 0.0f);
-    lmat.emissiveColor.set(0.0f, 0.0f, 0.0f);
-    lmat.shininess = 1.0f;
-    lmat.transparency = 0.0f;
-
-    App::Material vmat;
-    vmat.ambientColor.set(0.2f, 0.2f, 0.2f);
-    vmat.diffuseColor.set(vr, vg, vb);
-    vmat.specularColor.set(0.0f, 0.0f, 0.0f);
-    vmat.emissiveColor.set(0.0f, 0.0f, 0.0f);
-    vmat.shininess = 1.0f;
-    vmat.transparency = 0.0f;
-
-    ADD_PROPERTY_TYPE(LineMaterial, (lmat), osgroup, App::Prop_None, "Object line material.");
-    ADD_PROPERTY_TYPE(PointMaterial, (vmat), osgroup, App::Prop_None, "Object point material.");
-    ADD_PROPERTY_TYPE(LineColor, (lmat.diffuseColor), osgroup, App::Prop_None, "Set object line color.");
-    ADD_PROPERTY_TYPE(PointColor, (vmat.diffuseColor), osgroup, App::Prop_None, "Set object point color");
-    ADD_PROPERTY_TYPE(
-        PointColorArray,
-        (PointColor.getValue()),
-        osgroup,
-        App::Prop_None,
-        "Object point color array."
-    );
-    ADD_PROPERTY_TYPE(
-        LineColorArray,
-        (LineColor.getValue()),
-        osgroup,
-        App::Prop_None,
-        "Object line color array."
-    );
-    ADD_PROPERTY_TYPE(LineWidth, (lwidth), osgroup, App::Prop_None, "Set object line width.");
-    LineWidth.setConstraints(&sizeRange);
-    PointSize.setConstraints(&sizeRange);
-    ADD_PROPERTY_TYPE(PointSize, (psize), osgroup, App::Prop_None, "Set object point size.");
-    ADD_PROPERTY_TYPE(
-        Deviation,
-        (0.5f),
-        osgroup,
-        App::Prop_None,
-        "Sets the accuracy of the polygonal representation of the model\n"
-        "in the 3D view (tessellation). Lower values indicate better quality.\n"
-        "The value is in percent of object's size."
-    );
-    Deviation.setConstraints(&tessRange);
-    ADD_PROPERTY_TYPE(
-        AngularDeflection,
-        (28.5),
-        osgroup,
-        App::Prop_None,
-        "Specify how finely to generate the mesh for rendering on screen or when exporting.\n"
-        "The default value is 28.5 degrees, or 0.5 radians. The smaller the value\n"
-        "the smoother the appearance in the 3D view, and the finer the mesh that will be exported."
-    );
-    AngularDeflection.setConstraints(&angDeflectionRange);
-    ADD_PROPERTY_TYPE(Lighting, (twoside), osgroup, App::Prop_None, "Set object lighting.");
-    Lighting.setEnums(LightingEnums);
-    ADD_PROPERTY_TYPE(
-        DrawStyle,
-        ((long int)0),
-        osgroup,
-        App::Prop_None,
-        "Defines the style of the edges in the 3D view."
-    );
-    DrawStyle.setEnums(DrawStyleEnums);
-    coords = new SoCoordinate3();
-    coords->ref();
-    faceset = new SoBrepFaceSet();
-    faceset->setViewProvider(this);
-    faceset->ref();
-    norm = new SoNormal;
-    norm->ref();
-    normb = new SoNormalBinding;
-    normb->value = SoNormalBinding::PER_VERTEX_INDEXED;
-    normb->ref();
-    lineset = new SoBrepEdgeSet();
-    lineset->setViewProvider(this);
-    lineset->ref();
-    nodeset = new SoBrepPointSet();
-    nodeset->setViewProvider(this);
-    nodeset->ref();
-
-    pcFaceBind = new SoMaterialBinding();
-    pcFaceBind->ref();
-    pcFaceBind->setName("FaceBind");
-
-    pcLineBind = new SoMaterialBinding();
-    pcLineBind->ref();
-    pcLineBind->setName("LineBind");
-    pcLineMaterial = new SoMaterial;
-    pcLineMaterial->ref();
-    pcLineMaterial->setName("LineMaterial");
-    LineMaterial.touch();
-
-    pcPointBind = new SoMaterialBinding();
-    pcPointBind->ref();
-    pcPointBind->setName("PointBind");
-    pcPointMaterial = new SoMaterial;
-    pcPointMaterial->ref();
-    pcPointMaterial->setName("PointMaterial");
-    PointMaterial.touch();
-
-    pcLineStyle = new SoDrawStyle();
-    pcLineStyle->ref();
-    pcLineStyle->style = SoDrawStyle::LINES;
-    pcLineStyle->lineWidth = LineWidth.getValue();
-    pcLineStyle->setName("LineStyle");
-
-    pcPointStyle = new SoDrawStyle();
-    pcPointStyle->ref();
-    pcPointStyle->style = SoDrawStyle::POINTS;
-    pcPointStyle->pointSize = PointSize.getValue();
-    pcPointStyle->setName("PointStyle");
-
-    pShapeHints = new SoShapeHints;
-    pShapeHints->shapeType = SoShapeHints::UNKNOWN_SHAPE_TYPE;
-    pShapeHints->ref();
-    Lighting.touch();
-    DrawStyle.touch();
-
-    sPixmap = "Part_3D_object";
-    loadParameter();
-}
-
-ViewProviderPartExt::~ViewProviderPartExt()
-{
-    pcFaceBind->unref();
-    pcLineBind->unref();
-    pcPointBind->unref();
-    pcLineMaterial->unref();
-    pcPointMaterial->unref();
-    pcLineStyle->unref();
-    pcPointStyle->unref();
-    pShapeHints->unref();
-    coords->unref();
-    faceset->unref();
-    norm->unref();
-    normb->unref();
-    lineset->unref();
-    nodeset->unref();
-}
-
 PyObject* ViewProviderPartExt::getPyObject()
 {
     if (!pyViewObject) {
@@ -2415,6 +2230,193 @@ private:
     unsigned int generation = 0;
     QFutureWatcher<std::shared_ptr<PartGui::CoinGeometryData>> watcher;
 };
+
+ViewProviderPartExt::~ViewProviderPartExt()
+{
+    pcFaceBind->unref();
+    pcLineBind->unref();
+    pcPointBind->unref();
+    pcLineMaterial->unref();
+    pcPointMaterial->unref();
+    pcLineStyle->unref();
+    pcPointStyle->unref();
+    pShapeHints->unref();
+    coords->unref();
+    faceset->unref();
+    norm->unref();
+    normb->unref();
+    lineset->unref();
+    nodeset->unref();
+}
+
+
+ViewProviderPartExt::ViewProviderPartExt()
+{
+    texture.initExtension(this);
+
+    VisualTouched = true;
+    forceUpdateCount = 0;
+    NormalsFromUV = true;
+
+    // get default line color
+    unsigned long lcol = Gui::ViewParams::instance()->getDefaultShapeLineColor();  // dark grey
+                                                                                   // (25,25,25)
+    float lr, lg, lb;
+    lr = ((lcol >> 24) & 0xff) / 255.0;
+    lg = ((lcol >> 16) & 0xff) / 255.0;
+    lb = ((lcol >> 8) & 0xff) / 255.0;
+    // get default vertex color
+    unsigned long vcol = Gui::ViewParams::instance()->getDefaultShapeVertexColor();
+    float vr, vg, vb;
+    vr = ((vcol >> 24) & 0xff) / 255.0;
+    vg = ((vcol >> 16) & 0xff) / 255.0;
+    vb = ((vcol >> 8) & 0xff) / 255.0;
+    int lwidth = Gui::ViewParams::instance()->getDefaultShapeLineWidth();
+    int psize = Gui::ViewParams::instance()->getDefaultShapePointSize();
+
+
+    ParameterGrp::handle hPart = App::GetApplication().GetParameterGroupByPath(
+        "User parameter:BaseApp/Preferences/Mod/Part"
+    );
+    NormalsFromUV = hPart->GetBool("NormalsFromUVNodes", NormalsFromUV);
+
+    long twoside = hPart->GetBool("TwoSideRendering", true) ? 1 : 0;
+
+    // Let the user define a custom lower limit but a value less than
+    // OCCT's epsilon is not allowed
+    double lowerLimit = hPart->GetFloat("MinimumDeviation", tessRange.LowerBound);
+    lowerLimit = std::max(lowerLimit, Precision::Confusion());
+    tessRange.LowerBound = lowerLimit;
+
+    static const char* osgroup = "Object Style";
+
+    App::Material lmat;
+    lmat.ambientColor.set(0.2f, 0.2f, 0.2f);
+    lmat.diffuseColor.set(lr, lg, lb);
+    lmat.specularColor.set(0.0f, 0.0f, 0.0f);
+    lmat.emissiveColor.set(0.0f, 0.0f, 0.0f);
+    lmat.shininess = 1.0f;
+    lmat.transparency = 0.0f;
+
+    App::Material vmat;
+    vmat.ambientColor.set(0.2f, 0.2f, 0.2f);
+    vmat.diffuseColor.set(vr, vg, vb);
+    vmat.specularColor.set(0.0f, 0.0f, 0.0f);
+    vmat.emissiveColor.set(0.0f, 0.0f, 0.0f);
+    vmat.shininess = 1.0f;
+    vmat.transparency = 0.0f;
+
+    ADD_PROPERTY_TYPE(LineMaterial, (lmat), osgroup, App::Prop_None, "Object line material.");
+    ADD_PROPERTY_TYPE(PointMaterial, (vmat), osgroup, App::Prop_None, "Object point material.");
+    ADD_PROPERTY_TYPE(LineColor, (lmat.diffuseColor), osgroup, App::Prop_None, "Set object line color.");
+    ADD_PROPERTY_TYPE(PointColor, (vmat.diffuseColor), osgroup, App::Prop_None, "Set object point color");
+    ADD_PROPERTY_TYPE(
+        PointColorArray,
+        (PointColor.getValue()),
+        osgroup,
+        App::Prop_None,
+        "Object point color array."
+    );
+    ADD_PROPERTY_TYPE(
+        LineColorArray,
+        (LineColor.getValue()),
+        osgroup,
+        App::Prop_None,
+        "Object line color array."
+    );
+    ADD_PROPERTY_TYPE(LineWidth, (lwidth), osgroup, App::Prop_None, "Set object line width.");
+    LineWidth.setConstraints(&sizeRange);
+    PointSize.setConstraints(&sizeRange);
+    ADD_PROPERTY_TYPE(PointSize, (psize), osgroup, App::Prop_None, "Set object point size.");
+    ADD_PROPERTY_TYPE(
+        Deviation,
+        (0.5f),
+        osgroup,
+        App::Prop_None,
+        "Sets the accuracy of the polygonal representation of the model\n"
+        "in the 3D view (tessellation). Lower values indicate better quality.\n"
+        "The value is in percent of object's size."
+    );
+    Deviation.setConstraints(&tessRange);
+    ADD_PROPERTY_TYPE(
+        AngularDeflection,
+        (28.5),
+        osgroup,
+        App::Prop_None,
+        "Specify how finely to generate the mesh for rendering on screen or when exporting.\n"
+        "The default value is 28.5 degrees, or 0.5 radians. The smaller the value\n"
+        "the smoother the appearance in the 3D view, and the finer the mesh that will be exported."
+    );
+    AngularDeflection.setConstraints(&angDeflectionRange);
+    ADD_PROPERTY_TYPE(Lighting, (twoside), osgroup, App::Prop_None, "Set object lighting.");
+    Lighting.setEnums(LightingEnums);
+    ADD_PROPERTY_TYPE(
+        DrawStyle,
+        ((long int)0),
+        osgroup,
+        App::Prop_None,
+        "Defines the style of the edges in the 3D view."
+    );
+    DrawStyle.setEnums(DrawStyleEnums);
+    coords = new SoCoordinate3();
+    coords->ref();
+    faceset = new SoBrepFaceSet();
+    faceset->setViewProvider(this);
+    faceset->ref();
+    norm = new SoNormal;
+    norm->ref();
+    normb = new SoNormalBinding;
+    normb->value = SoNormalBinding::PER_VERTEX_INDEXED;
+    normb->ref();
+    lineset = new SoBrepEdgeSet();
+    lineset->setViewProvider(this);
+    lineset->ref();
+    nodeset = new SoBrepPointSet();
+    nodeset->setViewProvider(this);
+    nodeset->ref();
+
+    pcFaceBind = new SoMaterialBinding();
+    pcFaceBind->ref();
+    pcFaceBind->setName("FaceBind");
+
+    pcLineBind = new SoMaterialBinding();
+    pcLineBind->ref();
+    pcLineBind->setName("LineBind");
+    pcLineMaterial = new SoMaterial;
+    pcLineMaterial->ref();
+    pcLineMaterial->setName("LineMaterial");
+    LineMaterial.touch();
+
+    pcPointBind = new SoMaterialBinding();
+    pcPointBind->ref();
+    pcPointBind->setName("PointBind");
+    pcPointMaterial = new SoMaterial;
+    pcPointMaterial->ref();
+    pcPointMaterial->setName("PointMaterial");
+    PointMaterial.touch();
+
+    pcLineStyle = new SoDrawStyle();
+    pcLineStyle->ref();
+    pcLineStyle->style = SoDrawStyle::LINES;
+    pcLineStyle->lineWidth = LineWidth.getValue();
+    pcLineStyle->setName("LineStyle");
+
+    pcPointStyle = new SoDrawStyle();
+    pcPointStyle->ref();
+    pcPointStyle->style = SoDrawStyle::POINTS;
+    pcPointStyle->pointSize = PointSize.getValue();
+    pcPointStyle->setName("PointStyle");
+
+    pShapeHints = new SoShapeHints;
+    pShapeHints->shapeType = SoShapeHints::UNKNOWN_SHAPE_TYPE;
+    pShapeHints->ref();
+    Lighting.touch();
+    DrawStyle.touch();
+
+    sPixmap = "Part_3D_object";
+    loadParameter();
+}
+
 
 // Whether display geometry may be built off the GUI thread.  Enabled by
 // default, disabled with the AsyncGeometry user preference or by setting

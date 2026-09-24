@@ -207,7 +207,7 @@ MouseP::mouseWheelEvent(QWheelEvent * event)
   const SbVec2f widgetDelta(static_cast<float>(pixels.x()), static_cast<float>(pixels.y()));
   this->wheel->setPixelDelta(
     SoMouseWheelEvent::toGlPixelDelta(widgetDelta,
-                                      static_cast<float>(publ->quarter->devicePixelRatio())),
+                                      static_cast<float>(publ->host->devicePixelRatio())),
     SoMouseWheelEvent::isPreciseScroll(!pixels.isNull(), event->phase() != Qt::NoScrollPhase));
   this->wheel->setScrollBegin(event->phase() == Qt::ScrollBegin);
 

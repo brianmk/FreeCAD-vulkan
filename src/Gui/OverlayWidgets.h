@@ -90,8 +90,6 @@ public:
     OverlayTabWidget(QWidget* parent, Qt::DockWidgetArea pos);
     ~OverlayTabWidget() override;
 
-    ~OverlayTabWidget() override;
-
     /// Enable/disable overlay mode for this tab widget
     void setOverlayMode(bool enable);
 

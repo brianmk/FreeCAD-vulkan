@@ -779,9 +779,6 @@ public:
         }
         ns.setupPanningPlane(ns.viewer->getSoRenderManager()->getCamera());  // set up panningplane
         this->ratio = ns.viewer->getViewportRegion().getViewportAspectRatio();
-        enableTilt = !(App::GetApplication()
-                           .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
-                           ->GetBool("DisableTouchTilt", true));
     }
     virtual ~GestureState()
     {
