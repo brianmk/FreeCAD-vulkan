@@ -74,10 +74,6 @@ protected:
     ~SoNaviCubeVulkan() override;
 
 private:
-    //! Applies a multiplicative scale to the overlay viewport size (Vulkan-only).
-    //! The base Coin geometry is never scaled; 1.0 = neutral.
-    void setVulkanScale(float scale);
-
     //! Lazily build the navcube scene graph (once).
     void ensureScene() const;
     //! Refresh camera, transform, materials and highlight from the inherited
@@ -95,8 +91,6 @@ private:
 
     //! Build the face-label quads (textured) into a labelsSep under the group.
     void buildLabels(SoSeparator* cubeGroup) const;
-    //! Clear the label node references (children removal).
-    void resetLabels() const;
     //! Build the screen-space navigation buttons (arrows / home / backside /
     //! view menu) into a buttonsSep under sceneRoot.  They sit in front of the
     //! cube and are UI controls: depth test is off and they do not cull.
@@ -130,7 +124,6 @@ private:
     mutable std::array<ButtonNodes, static_cast<std::size_t>(
         SoNaviCube::PickId::ViewMenu) + 1> buttonNodes;
 
-    float vulkanScale {1.0F};
     mutable bool sceneBuilt {false};
 };
 

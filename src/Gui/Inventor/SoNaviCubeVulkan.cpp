@@ -121,11 +121,6 @@ SoNaviCubeVulkan::~SoNaviCubeVulkan()
     }
 }
 
-void SoNaviCubeVulkan::setVulkanScale(float scale)
-{
-    vulkanScale = std::clamp(scale, 0.1F, 10.0F);
-}
-
 int SoNaviCubeVulkan::faceIndex(int pickId)
 {
     switch (static_cast<PickId>(pickId)) {
@@ -638,14 +633,6 @@ void SoNaviCubeVulkan::updateButtons(float op, int hilitePick) const
     }
 }
 
-void SoNaviCubeVulkan::resetLabels() const
-{
-    for (auto& nodes : faceLabels) {
-        nodes = {};
-    }
-    labelsSep = nullptr;
-}
-
 void SoNaviCubeVulkan::updateScene() const
 {
     if (!sceneRoot) {
@@ -750,11 +737,10 @@ void SoNaviCubeVulkan::updateScene() const
 void SoNaviCubeVulkan::recordOverlay(SoIRRenderAction* action)
 {
     const SbVec4f& rect = viewportRect.getValue();
-    const float scale = vulkanScale;
     const int viewportX = static_cast<int>(std::lround(rect[0]));
     const int viewportY = static_cast<int>(std::lround(rect[1]));
-    const int viewportWidth = static_cast<int>(std::lround(rect[2] * scale));
-    const int viewportHeight = static_cast<int>(std::lround(rect[3] * scale));
+    const int viewportWidth = static_cast<int>(std::lround(rect[2]));
+    const int viewportHeight = static_cast<int>(std::lround(rect[3]));
     if (viewportWidth <= 0 || viewportHeight <= 0) {
         return;
     }

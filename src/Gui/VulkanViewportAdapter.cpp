@@ -7,6 +7,7 @@
 #include "Quarter/QuarterVulkanWidget.h"
 #include "Quarter/QuarterWidget.h"
 #include "Application.h"
+#include "DisplayLuminance.h"
 #include "InteractionController.h"
 #include "View3DInventor.h"
 #include "View3DInventorViewer.h"
@@ -34,16 +35,46 @@
 #include <Inventor/sensors/SoSensor.h>
 
 #include <QEvent>
+#include <QGuiApplication>
+#include <QScreen>
 #include <QSizePolicy>
 #include <QStackedWidget>
 #include <QTimer>
 #include <QWidget>
+
+#include <cmath>
 
 #ifdef FREECAD_USE_VULKAN
 #include <vulkan/vulkan.h>
 #endif
 
 using namespace Gui;
+
+#ifdef FREECAD_USE_VULKAN
+namespace {
+
+//! The VulkanHDRExposure preference default (see VulkanViewSettings).  It is
+//! the "auto" sentinel: at this value the display's detected reference white is
+//! preferred, any other value is an explicit user choice.
+constexpr float kDefaultHdrExposure = 0.02f;
+
+//! Resolve the HDR exposure pushed to the renderer.  The manual preference wins
+//! unless it is still at its default, in which case the compositor-reported
+//! reference white (cd/m², mapped to the 10000 cd/m² PQ scale) is used when
+//! available.  Without a detected value the built-in convention is kept.
+float resolveHdrExposure(float prefExposure)
+{
+    if (std::abs(prefExposure - kDefaultHdrExposure) < 1e-6f) {
+        const DisplayLuminance& luminance = DisplayLuminance::instance();
+        if (luminance.hasValue() && luminance.referenceWhiteNits() > 0.0f) {
+            return luminance.referenceWhiteNits() / 10000.0f;
+        }
+    }
+    return prefExposure;
+}
+
+} // namespace
+#endif // FREECAD_USE_VULKAN
 
 VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
                                              View3DInventorViewer* viewer,
@@ -86,6 +117,15 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
     _viewer->applyVulkanSettings();
     if (_viewer->getVulkanViewSettings().hdrEnabled) {
         _vulkanViewer->setHdrOutputEnabled(true);
+        // Auto-detect the display's reference white for the HDR exposure.  The
+        // probe is asynchronous, so changed() re-pushes the settings once the
+        // compositor answers (and after an output reconfiguration).
+        DisplayLuminance& luminance = DisplayLuminance::instance();
+        QScreen* screen = _vulkanViewer->screen();
+        luminance.query(screen ? screen : QGuiApplication::primaryScreen());
+        connect(&luminance, &DisplayLuminance::changed, this, [this] {
+            pushSettings();
+        });
     }
     stack->addWidget(_vulkanViewer);
     VK_BREADCRUMB("[VK-TRACE] View3DInventor: QuarterVulkanWidget created\n");
@@ -393,14 +433,13 @@ void VulkanViewportAdapter::pushSettings()
     // to the renderer and emit the [VK-SET] diagnostic when the effective
     // values actually differ; otherwise this is no-op and keeps the log quiet.
     //
-    // The edge/point (wireframe) overlay is the one raster-only feature: it is
-    // drawn by the raster backend's overlay fill-mode re-draw (see
-    // SoVulkanRenderBackendFrame), which only the raster path applies -- the
-    // RTX backend never consumes it.  So it must be ALLOWED in the raster modes
-    // and disabled in the ray-traced modes.  Gating it by `raster` the other
-    // way round (like path tracing / the denoiser) made the VulkanWireframe /
-    // VulkanShowPoints preferences unreachable.
-    const bool effWireframe = raster ? settings.wireframe : false;
+    // The model feature-edge overlay is a display option in every Vulkan mode:
+    // the raster main pass skips the line commands and the ray-tracing
+    // composite skips its line residue when it is off (see
+    // SoVulkanRenderBackend::setEdgeOverlayVisible), so it is NOT gated by the
+    // raster/ray-traced split.  The point-marker overlay remains raster-only
+    // (the RTX path rasterizes no point residue).
+    const bool effEdgeOverlay = settings.edgeOverlay;
     const bool effPoints = raster ? settings.showPoints : false;
 
     // Background is a single view of truth derived here from the hidden GL
@@ -453,31 +492,35 @@ void VulkanViewportAdapter::pushSettings()
     vs.backgroundGradient = bgGradient;
     vs.backgroundTop = SbColor4f(bgTop[0], bgTop[1], bgTop[2], 1.0f);
     vs.backgroundBottom = SbColor4f(bgBottom[0], bgBottom[1], bgBottom[2], 1.0f);
-    vs.wireframeOverlay = effWireframe;
+    // The raster triangle-as-lines debug overlay is no longer driven by the
+    // status-bar button (that toggles the real model edges via edgeOverlay);
+    // it is forced only through the renderer's FC_VULKAN_WIREFRAME env hook.
     vs.pointsOverlay = effPoints;
+    vs.edgeOverlay = effEdgeOverlay;
     vs.edgeColor = settings.edgeColor;
     // HDR output: encode only when the preference asked for it AND the live
     // swapchain actually came up with an HDR format (the window chooses the
     // format before the settings can be pushed).  Otherwise the output stays
     // SDR, matching the 8-bit surface.
     vs.hdrOutput = settings.hdrEnabled && _vulkanViewer->isHdrOutputActive();
-    // Map scene-white to the user's reference white (see VulkanViewSettings).
-    vs.hdrExposure = settings.hdrExposure;
+    // Map scene-white to the user's reference white (see VulkanViewSettings),
+    // preferring the display's detected reference white at the default.
+    vs.hdrExposure = resolveHdrExposure(settings.hdrExposure);
     // Highlight rolloff: 0 = clip, 1 = Reinhard, 2 = ACES, 3 = Hable.
     vs.hdrToneMap = settings.hdrToneMap;
 
     if (Base::envFlagEnabled("FC_VULKAN_BACKEND_DEBUG")) {
         Base::Console().message(
-            "[VK-SET] pushSettings raster=%d wireframe=%d points=%d "
+            "[VK-SET] pushSettings raster=%d edgeOverlay=%d points=%d "
             "edgeColor=(%.2f,%.2f,%.2f,%.2f) pt=%d bounces=%d settle=%d "
             "hdr=%d hdrExposure=%.4f hdrToneMap=%d "
-            "(prefWireframe=%d prefPoints=%d)\n",
-            raster ? 1 : 0, effWireframe ? 1 : 0, effPoints ? 1 : 0,
+            "(prefEdgeOverlay=%d prefPoints=%d)\n",
+            raster ? 1 : 0, effEdgeOverlay ? 1 : 0, effPoints ? 1 : 0,
             settings.edgeColor[0], settings.edgeColor[1],
             settings.edgeColor[2], settings.edgeColor[3], !raster ? 1 : 0,
             settings.pathTracingBounces, settings.pathTracingSettleFrames,
             vs.hdrOutput ? 1 : 0, vs.hdrExposure, vs.hdrToneMap,
-            settings.wireframe ? 1 : 0, settings.showPoints ? 1 : 0);
+            settings.edgeOverlay ? 1 : 0, settings.showPoints ? 1 : 0);
     }
     _vulkanViewer->setViewSettings(vs);
     // Enable/disable the ray tracer (stateful backend lifecycle).
@@ -770,16 +813,6 @@ void VulkanViewportAdapter::setViewMode(SoVulkanViewMode mode)
 #endif
 }
 
-SoVulkanViewMode VulkanViewportAdapter::getViewMode() const
-{
-#ifdef FREECAD_USE_VULKAN
-    return _vulkanViewer ? _vulkanViewer->getViewMode()
-                         : SoVulkanViewMode::RtxModeOff;
-#else
-    return SoVulkanViewMode::RtxModeOff;
-#endif
-}
-
 void VulkanViewportAdapter::setEnvMap(int index)
 {
 #ifdef FREECAD_USE_VULKAN
@@ -788,15 +821,6 @@ void VulkanViewportAdapter::setEnvMap(int index)
     }
 #else
     Q_UNUSED(index);
-#endif
-}
-
-int VulkanViewportAdapter::getEnvMap() const
-{
-#ifdef FREECAD_USE_VULKAN
-    return _vulkanViewer ? _vulkanViewer->getEnvMap() : -1;
-#else
-    return -1;
 #endif
 }
 

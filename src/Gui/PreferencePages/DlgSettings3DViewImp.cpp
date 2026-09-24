@@ -106,6 +106,9 @@ void DlgSettings3DViewImp::saveSettings()
     ui->SpinBox_VulkanSettle->onSave();
     ui->SpinBox_VulkanMaxSamples->onSave();
     ui->ComboBox_VulkanDenoiser->onSave();
+    ui->DoubleSpinBox_VulkanDenoiserScale->onSave();
+    ui->DoubleSpinBox_VulkanGlassIor->onSave();
+    ui->DoubleSpinBox_VulkanGlassAbsorb->onSave();
     ui->VulkanEdgeColor->onSave();
 }
 
@@ -150,6 +153,9 @@ void DlgSettings3DViewImp::loadSettings()
     ui->SpinBox_VulkanSettle->onRestore();
     ui->SpinBox_VulkanMaxSamples->onRestore();
     ui->ComboBox_VulkanDenoiser->onRestore();
+    ui->DoubleSpinBox_VulkanDenoiserScale->onRestore();
+    ui->DoubleSpinBox_VulkanGlassIor->onRestore();
+    ui->DoubleSpinBox_VulkanGlassAbsorb->onRestore();
     ui->VulkanEdgeColor->onRestore();
 
     loadAntiAliasing();

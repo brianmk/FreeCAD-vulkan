@@ -659,8 +659,8 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
     // view's mode (each view keeps its own).  Re-populated and re-synchronised
     // whenever the active view changes.  The two raster modes map to
     // ViewRenderMode::RasterCoin / Interactive and always keep the Vulkan
-    // viewport in pure raster (no path tracing / ray tracing / denoiser / edge
-    // & point overlays).
+    // viewport in pure raster (no path tracing / ray tracing / denoiser / point
+    // overlay; the model edge overlay is honoured in every mode).
     d->viewModeCombo = new QComboBox(statusBar());
     d->viewModeCombo->setObjectName(QStringLiteral("ViewRenderingMode"));
     //: Status-bar view render-mode entry: the default raster rendering
@@ -732,15 +732,15 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
     connect(d->envMapCombo, qOverload<int>(&QComboBox::currentIndexChanged),
             this, &MainWindow::onEnvMapComboChanged);
 
-    // Toggle for the wireframe (edge) overlay drawn on top of objects in the
-    // Vulkan raster viewport.  Lives next to the environment selector; its
-    // checked state mirrors the active view.
+    // Toggle for the model feature-edge (BRep line) overlay in the Vulkan
+    // viewport.  Lives next to the environment selector; its checked state
+    // mirrors the active view and it is honoured in every render mode.
     d->wireframeButton = new QToolButton(statusBar());
     d->wireframeButton->setObjectName(QStringLiteral("WireframeButton"));
     d->wireframeButton->setCheckable(true);
     d->wireframeButton->setAutoRaise(true);
     d->wireframeButton->setIcon(BitmapFactory().iconFromTheme("DrawStyleFlatLines"));
-    d->wireframeButton->setToolTip(tr("Toggle the wireframe overlay"));
+    d->wireframeButton->setToolTip(tr("Toggle the model edge overlay"));
     addStatusBarItem(
         d->wireframeButton,
         {.id = "wireframeButton",

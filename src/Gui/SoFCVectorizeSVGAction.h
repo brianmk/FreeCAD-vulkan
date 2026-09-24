@@ -52,8 +52,6 @@ private:
 class SoFCVectorizeSVGActionP;
 class GuiExport SoFCVectorizeSVGAction: public SoVectorizeAction
 {
-    using inherited = SoReplacedElement;
-
     SO_ACTION_HEADER(SoFCVectorizeSVGAction);
 
 public:

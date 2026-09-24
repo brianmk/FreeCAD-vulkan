@@ -96,7 +96,6 @@ protected:
     void slotUndoDocument(const App::Document&);
     void slotRedoDocument(const App::Document&);
     void slotShowHidden(const App::Document&);
-    void slotFinishImportObjects(const std::vector<App::DocumentObject*>&);
     void slotFinishRestoreObject(const App::DocumentObject& obj);
     void slotRecomputed(const App::Document&);
     void slotSkipRecompute(const App::Document& doc, const std::vector<App::DocumentObject*>& objs);

@@ -109,13 +109,12 @@ public:
                                const SbColor4f & bottomColor);
 
     /*!
-      \brief Configure Vulkan-only display overlays (shaded-with-edges /
-      show-vertices) and their edge color.
+      \brief Configure Vulkan-only display overlays (show-vertices) and their
+      edge color.
 
       These do not affect the hidden OpenGL viewer and are only honored by
       the Vulkan backend.
     */
-    void setWireframeOverlay(bool enabled);
     void setPointsOverlay(bool enabled);
     void setEdgeColor(const SbColor4f & color);
 

@@ -329,11 +329,6 @@ public:
         m_viewSettings.backgroundTop = top;
         m_viewSettings.backgroundBottom = bottom;
     }
-    void setWireframeOverlay(bool enabled)
-    {
-        QMutexLocker locker(&m_stateMutex);
-        m_viewSettings.wireframeOverlay = enabled;
-    }
     void setPointsOverlay(bool enabled)
     {
         QMutexLocker locker(&m_stateMutex);
@@ -2161,12 +2156,6 @@ void QuarterVulkanWidget::setBackgroundGradient(bool enabled,
     redraw();
 }
 
-void QuarterVulkanWidget::setWireframeOverlay(bool enabled)
-{
-    d->renderer->setWireframeOverlay(enabled);
-    redraw();
-}
-
 void QuarterVulkanWidget::setPointsOverlay(bool enabled)
 {
     d->renderer->setPointsOverlay(enabled);
@@ -2654,57 +2643,3 @@ QWidget * QuarterVulkanWidget::getNativeWidget()
 }
 
 #endif // FREECAD_USE_VULKAN
-
-#if !defined(FREECAD_USE_VULKAN)
-// This TU is compiled on all builds (Qt.moc still reflects Q_OBJECT in the
-// header), but the whole implementation is above.  When the Vulkan backend is
-// off, provide out-of-line definitions for the non-inline members that moc
-// references so the generated metaobject/vtable still satisfies the linker.
-// These are never called: the adapter that instantiates the widget is itself
-// guarded by FREECAD_USE_VULKAN.
-SIM::Coin3D::Quarter::QuarterVulkanWidget::QuarterVulkanWidget
-    (QWidget * parent)
-    : QWidget(parent)
-{
-}
-
-SIM::Coin3D::Quarter::QuarterVulkanWidget::~QuarterVulkanWidget() = default;
-
-// InputDeviceHost overrides (virtual, so the vtable needs definitions even in
-// the Vulkan-off build; never called there).
-qreal SIM::Coin3D::Quarter::QuarterVulkanWidget::devicePixelRatio() const
-{
-    return 1.0;
-}
-
-bool SIM::Coin3D::Quarter::QuarterVulkanWidget::vulkanDevicePixels() const
-{
-    return false;
-}
-
-QSize SIM::Coin3D::Quarter::QuarterVulkanWidget::inputSize() const
-{
-    return QSize();
-}
-
-SbVec2s SIM::Coin3D::Quarter::QuarterVulkanWidget::inputWindowSize() const
-{
-    return SbVec2s(0, 0);
-}
-
-bool SIM::Coin3D::Quarter::QuarterVulkanWidget::processSoEvent(const SoEvent *)
-{
-    return false;
-}
-
-bool SIM::Coin3D::Quarter::QuarterVulkanWidget::eventFilter
-    (QObject * watched, QEvent * event)
-{
-    return QWidget::eventFilter(watched, event);
-}
-
-QWidget * SIM::Coin3D::Quarter::QuarterVulkanWidget::getNativeWidget()
-{
-    return nullptr;
-}
-#endif

@@ -135,7 +135,6 @@ struct DocumentP
     Connection connectFinishRestoreObject;
     Connection connectExportObjects;
     Connection connectImportObjects;
-    Connection connectFinishImportObjects;
     Connection connectUndoDocument;
     Connection connectRedoDocument;
     Connection connectRecomputed;
@@ -531,9 +530,6 @@ Document::Document(App::Document* pcDocument, Application* app)
     d->connectImportObjects = pcDocument->signalImportViewObjects.connect(
         std::bind(&Gui::Document::importObjects, this, sp::_1, sp::_2, sp::_3)
     );
-    d->connectFinishImportObjects = pcDocument->signalFinishImportObjects.connect(
-        std::bind(&Gui::Document::slotFinishImportObjects, this, sp::_1)
-    );
 
     d->connectUndoDocument = pcDocument->signalUndo.connect(
         std::bind(&Gui::Document::slotUndoDocument, this, sp::_1)
@@ -590,7 +586,6 @@ Document::~Document()
     d->connectFinishRestoreObject.disconnect();
     d->connectExportObjects.disconnect();
     d->connectImportObjects.disconnect();
-    d->connectFinishImportObjects.disconnect();
     d->connectUndoDocument.disconnect();
     d->connectRedoDocument.disconnect();
     d->connectRecomputed.disconnect();
@@ -1045,15 +1040,7 @@ void Document::slotNewObject(const App::DocumentObject& Obj)
             // and let the property callbacks populate the representation.
             // attach() has already built the node structure.  Outside a restore
             // (an object created interactively) updateView() is still required.
-            // FC_GUI_RESTORE_FULL_VIEWUPDATE restores the unconditional call for
-            // A/B validation of the skip.
-            static const bool forceFullUpdate = [] {
-                const char * v = std::getenv("FC_GUI_RESTORE_FULL_VIEWUPDATE");
-                return v != nullptr && std::strcmp(v, "0") != 0
-                    && std::strcmp(v, "false") != 0;
-            }();
-            if (forceFullUpdate
-                || !Obj.getDocument()->testStatus(App::Document::Restoring)) {
+            if (!Obj.getDocument()->testStatus(App::Document::Restoring)) {
                 pcProvider->updateView();
             }
             pcProvider->setActiveMode();
@@ -2330,20 +2317,6 @@ void Document::importObjects(
     if (localreader->hasFilenames()) {
         reader.initLocalReader(localreader);
     }
-}
-
-void Document::slotFinishImportObjects(const std::vector<App::DocumentObject*>& objs)
-{
-    (void)objs;
-    // finishRestoring() is now triggered by signalFinishRestoreObject
-    //
-    // for(auto obj : objs) {
-    //     auto vp = getViewProvider(obj);
-    //     if(!vp) continue;
-    //     vp->setStatus(Gui::isRestoring,false);
-    //     auto vpd = freecad_cast<ViewProviderDocumentObject*>(vp);
-    //     if(vpd) vpd->finishRestoring();
-    // }
 }
 
 void Document::addRootObjectsToGroup(
