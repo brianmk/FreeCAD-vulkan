@@ -1142,10 +1142,11 @@ def set_colors(obj, colors):
             # 1.0 materials
             if not isinstance(colors[0], (tuple, list)):
                 colors = [colors]
-            # set the first color to opaque otherwise it spoils object transparency
-            if len(colors) > 1:
-                # TEMP HACK: if multiple colors, set everything to opaque because it looks wrong
-                colors = [color[:3] + (1.0,) for color in colors]
+            # Preserve each face's alpha: a per-face transparent material (for
+            # example the glass panel of an IfcWindow) must stay transparent.
+            # The previous blanket "set everything opaque when there is more
+            # than one colour" workaround turned every multi-material object --
+            # windows included -- fully opaque.
             sapp = []
             for color in colors:
                 sapp_mat = FreeCAD.Material()
