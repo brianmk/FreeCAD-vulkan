@@ -78,7 +78,7 @@ VulkanViewSettings::load(const ParameterGrp::handle & hGrp)
         static_cast<float>(hGrp->GetFloat("VulkanPathTracingGlassIor", 1.5f)),
         1.0f, 3.0f);
     this->pathTracingGlassAbsorption = std::clamp(
-        static_cast<float>(hGrp->GetFloat("VulkanPathTracingGlassAbsorption", 0.2f)),
+        static_cast<float>(hGrp->GetFloat("VulkanPathTracingGlassAbsorption", 0.1f)),
         0.0f, 10.0f);
 }
 

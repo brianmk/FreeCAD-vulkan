@@ -919,7 +919,7 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
          <item>
           <widget class="Gui::PrefDoubleSpinBox" name="DoubleSpinBox_VulkanGlassAbsorb">
            <property name="toolTip">
-            <string>Beer-Lambert absorption strength for the Path Tracing Max glass (0-10, default 0.2; 0 = perfectly clear).</string>
+            <string>Beer-Lambert absorption strength for the Path Tracing Max glass (0-10, default 0.1; 0 = perfectly clear).</string>
            </property>
            <property name="decimals">
             <number>3</number>
@@ -934,7 +934,7 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
             <double>0.050000000000000</double>
            </property>
            <property name="value">
-            <double>0.200000000000000</double>
+            <double>0.100000000000000</double>
            </property>
            <property name="prefEntry" stdset="0">
             <cstring>VulkanPathTracingGlassAbsorption</cstring>

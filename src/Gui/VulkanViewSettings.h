@@ -164,7 +164,7 @@ struct VulkanViewSettings
     // absorption is derived from the material colour scaled by
     // pathTracingGlassAbsorption (0 = perfectly clear).
     float pathTracingGlassIor = 1.5f;
-    float pathTracingGlassAbsorption = 0.2f;
+    float pathTracingGlassAbsorption = 0.1f;
 
     // Load the whole Vulkan display preference set from the View preferences
     // group.  Single home for the "which pref key + which type" mapping so the
