@@ -2374,7 +2374,16 @@ bool isSuppressedQtWarning(const QMessageLogContext& context, const QString& msg
     // simply ignores the transient-parent hint and continues, so this is
     // benign.  It is emitted right when a context menu pops up over the
     // viewport or a UI bar.
-    return msg.contains(QStringLiteral("must be a top level window."));
+    if (msg.contains(QStringLiteral("must be a top level window."))) {
+        return true;
+    }
+    // KDE's KCollapsibleGroupBox / KSplitterCollapserButton (used by the native
+    // KIO file dialog) restart a QTimeLine that is already running while
+    // animating the sidebar.  Qt reports this as a warning, but the animation
+    // just restarts, so it is benign.  It floods the console while a file
+    // dialog is open (dozens of lines per open), so filter it out.  This is a
+    // KIO-side issue that FreeCAD cannot fix.
+    return msg.startsWith(QStringLiteral("QTimeLine::start: already running"));
 }
 }  // namespace
 
