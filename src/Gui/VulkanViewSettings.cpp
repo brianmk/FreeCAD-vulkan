@@ -73,6 +73,13 @@ VulkanViewSettings::load(const ParameterGrp::handle & hGrp)
     this->pathTracingDenoiserScale = std::clamp(
         static_cast<float>(hGrp->GetFloat("VulkanPathTracingDenoiserScale", 1.0f)),
         1.0f, 8.0f);
+    // Physically-based glass for Path Tracing Max.
+    this->pathTracingGlassIor = std::clamp(
+        static_cast<float>(hGrp->GetFloat("VulkanPathTracingGlassIor", 1.5f)),
+        1.0f, 3.0f);
+    this->pathTracingGlassAbsorption = std::clamp(
+        static_cast<float>(hGrp->GetFloat("VulkanPathTracingGlassAbsorption", 0.2f)),
+        0.0f, 10.0f);
 }
 
 //! True when \a reason names a "Vulkan*" display preference.

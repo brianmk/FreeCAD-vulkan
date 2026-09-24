@@ -655,7 +655,7 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
 #ifdef FREECAD_USE_VULKAN
     // View render-mode selector ("Interactive (raster Coin)", "Interactive
     // (raster Vulkan)", "Wireframe", "Ambient Occlusion", "Ray Tracing",
-    // "Environment").  Lives in the main window status bar, LEFT of the
+    // "Environment", "Path Tracing Max").  Lives in the main window status bar, LEFT of the
     // ground-plane grid control (order 250 < 300), and drives the ACTIVE 3D
     // view's mode (each view keeps its own).  Re-populated and re-synchronised
     // whenever the active view changes.  The two raster modes map to
@@ -679,6 +679,9 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
     d->viewModeCombo->addItem(tr("Path Tracing"));
     //: Status-bar view render-mode entry: single-sample environment/IBL preview
     d->viewModeCombo->addItem(tr("Environment"));
+    //: Status-bar view render-mode entry: path tracing with physically-based
+    //: dielectric glass (Fresnel refraction, total internal reflection, absorption)
+    d->viewModeCombo->addItem(tr("Path Tracing Max"));
     addStatusBarItem(
         d->viewModeCombo,
         {.id = "viewModeCombo",

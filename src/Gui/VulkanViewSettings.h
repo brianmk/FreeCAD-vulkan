@@ -31,10 +31,12 @@ namespace Gui {
 /// 2 = Wireframe (raster); 3 = Ray Tracing (single-sample ray preview, no
 /// progressive accumulation -- the cheapest RT mode); 4 = Path Tracing
 /// (multi-bounce GI with progressive accumulation + denoising); 5 =
-/// Environment (single-sample IBL preview).  Mirrored by the status-bar
-/// selector in the main window; each view keeps its own mode.  The two
-/// "Interactive" raster modes never enable path tracing, ray tracing, the
-/// denoiser or the edge/point overlays.
+/// Environment (single-sample IBL preview); 6 = Path Tracing Max (the
+/// accumulating path tracer extended with physically-based dielectric glass:
+/// Fresnel + Snell refraction + total internal reflection + Beer-Lambert
+/// absorption).  Mirrored by the status-bar selector in the main window; each
+/// view keeps its own mode.  The two "Interactive" raster modes never enable
+/// path tracing, ray tracing, the denoiser or the edge/point overlays.
 enum class ViewRenderMode : int {
     RasterCoin = 0,     // Interactive (raster Coin): classic Coin/GL raster
     RasterVulkan = 1,   // Interactive (raster Vulkan): Vulkan raster viewport
@@ -42,6 +44,7 @@ enum class ViewRenderMode : int {
     RayTracing = 3,     // single-sample ray preview (AO-style), no accumulate
     PathTracing = 4,    // full path tracer: progressive accumulation + denoise
     Environment = 5,
+    PathTracingMax = 6, // path tracer + physically-based dielectric glass
 };
 
 //! Raster vs ray-traced render-mode categorization.
@@ -70,6 +73,8 @@ constexpr SoVulkanViewMode viewRenderModeToWidgetMode(ViewRenderMode mode) noexc
     switch (mode) {
         case ViewRenderMode::RayTracing:  return SoVulkanViewMode::RtxModeAmbientOcclusion;
         case ViewRenderMode::PathTracing: return SoVulkanViewMode::RtxModePathTrace;
+        case ViewRenderMode::PathTracingMax:
+            return SoVulkanViewMode::RtxModePathTraceMax;
         case ViewRenderMode::Environment: return SoVulkanViewMode::RtxModeEnvironment;
         default:                          return SoVulkanViewMode::RtxModeOff;
     }
@@ -90,7 +95,8 @@ constexpr SoVulkanViewMode viewRenderModeToWidgetMode(ViewRenderMode mode) noexc
 struct VulkanViewSettings
 {
     // Render mode: Gui::ViewRenderMode as int (0 RasterCoin, 1 RasterVulkan,
-    // 2 Wireframe, 3 RayTracing, 4 PathTracing, 5 Environment).
+    // 2 Wireframe, 3 RayTracing, 4 PathTracing, 5 Environment, 6
+    // PathTracingMax).
     // Defaults to the Vulkan raster viewport.
     int renderMode = 1;
     // Cubemap environment preset index (-1 = viewport gradient/background).
@@ -152,6 +158,13 @@ struct VulkanViewSettings
     // Denoiser upscale factor (>= 1).  A factor > 1 runs the host-side
     // denoiser at reduced resolution and the present pass upscales it back.
     float pathTracingDenoiserScale = 1.0f;
+    // Physically-based glass parameters, used only by Path Tracing Max.  Any
+    // material with transparency (alpha < 1) is treated as a smooth dielectric
+    // with this index of refraction (1.5 = window glass); Beer-Lambert
+    // absorption is derived from the material colour scaled by
+    // pathTracingGlassAbsorption (0 = perfectly clear).
+    float pathTracingGlassIor = 1.5f;
+    float pathTracingGlassAbsorption = 0.2f;
 
     // Load the whole Vulkan display preference set from the View preferences
     // group.  Single home for the "which pref key + which type" mapping so the
