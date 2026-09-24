@@ -893,6 +893,60 @@ set(qsint_MOC_HDRS
 qt_wrap_cpp(qsint_MOC_SRCS ${qsint_MOC_HDRS})
 SOURCE_GROUP("Widget\\QSintActionPanel\\Mocs" FILES ${qsint_MOC_SRCS})
 
+# Wayland color management (wp_color_manager_v1): query the compositor for the
+# output's HDR reference-white / peak luminance so the Vulkan HDR exposure can
+# target the real display instead of the built-in reference-white convention
+# (see DisplayLuminance.h).  The protocol bindings are generated from the
+# wayland-protocols XML into a small hidden-visibility static library so its
+# wl_* / QtWayland symbols cannot interpose QtWaylandClient's own copies.
+# Everything is optional: without the Qt Wayland modules, wayland-scanner or the
+# XML the define is absent and DisplayLuminance is a no-op.
+if(UNIX AND NOT APPLE)
+    find_package(Qt6 QUIET COMPONENTS WaylandClient WaylandScannerTools)
+    if(Qt6WaylandClient_FOUND AND Qt6WaylandScannerTools_FOUND)
+        find_package(WaylandScanner QUIET)
+        if(TARGET Wayland::Scanner AND TARGET Qt6::qtwaylandscanner)
+            set(_fcColorManagementXml "")
+            foreach(_candidate
+                    "${CMAKE_INSTALL_PREFIX}/share/wayland-protocols/staging/color-management/color-management-v1.xml"
+                    "/usr/share/wayland-protocols/staging/color-management/color-management-v1.xml"
+                    "/usr/local/share/wayland-protocols/staging/color-management/color-management-v1.xml")
+                if(EXISTS "${_candidate}")
+                    set(_fcColorManagementXml "${_candidate}")
+                    break()
+                endif()
+            endforeach()
+            if(NOT _fcColorManagementXml)
+                # Qt ships a (v1) copy of the protocol; the code binds v1 either
+                # way, so this is a valid fallback when wayland-protocols 1.3x
+                # (which carries the staging color-management XML) is absent.
+                get_filename_component(_fcQtPrefix "${Qt6_DIR}/../../.." ABSOLUTE)
+                set(_candidate
+                    "${_fcQtPrefix}/share/qt6/wayland/protocols/color-management/color-management-v1.xml")
+                if(EXISTS "${_candidate}")
+                    set(_fcColorManagementXml "${_candidate}")
+                endif()
+            endif()
+            if(_fcColorManagementXml)
+                add_library(FreeCADGuiWaylandColor STATIC)
+                set_target_properties(FreeCADGuiWaylandColor PROPERTIES
+                    C_VISIBILITY_PRESET hidden
+                    CXX_VISIBILITY_PRESET hidden
+                    VISIBILITY_INLINES_HIDDEN ON
+                    POSITION_INDEPENDENT_CODE ON)
+                qt_generate_wayland_protocol_client_sources(
+                    FreeCADGuiWaylandColor FILES "${_fcColorManagementXml}")
+                target_link_libraries(FreeCADGuiWaylandColor PRIVATE Qt6::WaylandClient)
+                list(APPEND FreeCADGui_LIBS FreeCADGuiWaylandColor)
+                # The generated qwayland-color-management-v1.h is written into
+                # this directory's binary dir and included by DisplayLuminance.cpp.
+                target_include_directories(FreeCADGui PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+                add_definitions(-DFREECAD_HAVE_WAYLAND_COLOR_MANAGEMENT)
+            endif()
+        endif()
+    endif()
+endif()
+
 # The 3d view
 SET(View3D_CPP_SRCS
     Camera.cpp
@@ -914,6 +968,7 @@ SET(View3D_CPP_SRCS
     NaviCube.cpp
     VulkanViewportAdapter.cpp
     VulkanViewSettings.cpp
+    DisplayLuminance.cpp
     GpuPickService.cpp
 )
 SET(View3D_SRCS
@@ -939,6 +994,7 @@ SET(View3D_SRCS
     NaviCube.h
     VulkanViewportAdapter.h
     VulkanViewSettings.h
+    DisplayLuminance.h
     GpuPickService.h
 )
 SOURCE_GROUP("View3D" FILES ${View3D_SRCS})
