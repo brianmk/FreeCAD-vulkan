@@ -177,7 +177,7 @@ View3DInventor::View3DInventor(
         const int persistedRenderMode = viewGrp->GetInt("VulkanRenderMode", -1);
         ViewRenderMode initialMode = ViewRenderMode::RasterVulkan;
         if (persistedRenderMode >= 0
-            && persistedRenderMode <= static_cast<int>(ViewRenderMode::Environment)) {
+            && persistedRenderMode <= static_cast<int>(ViewRenderMode::PathTracingMax)) {
             initialMode = static_cast<ViewRenderMode>(persistedRenderMode);
         }
         // setRenderMode applies the visible viewport backend too, so even a
@@ -255,7 +255,7 @@ View3DInventor::View3DInventor(
                                           "User parameter:BaseApp/Preferences/View"
                                       )
                                       ->GetInt("VulkanRenderMode", -1);
-            if (persisted < 0 || persisted > static_cast<int>(ViewRenderMode::Environment)) {
+            if (persisted < 0 || persisted > static_cast<int>(ViewRenderMode::PathTracingMax)) {
                 return;
             }
             if (static_cast<ViewRenderMode>(persisted) != _renderMode) {
@@ -274,6 +274,7 @@ View3DInventor::View3DInventor(
                 this, [this] {
                     if (_renderMode != ViewRenderMode::RayTracing
                         && _renderMode != ViewRenderMode::PathTracing
+                        && _renderMode != ViewRenderMode::PathTracingMax
                         && _renderMode != ViewRenderMode::Environment) {
                         return;
                     }
@@ -553,7 +554,9 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
         const bool rayTraced = isRayTracedMode(static_cast<int>(mode));
         _vulkanAdapter->setPathTracingEnabled(rayTraced);
         _vulkanAdapter->setViewMode(viewRenderModeToWidgetMode(mode));
-        _vulkanAdapter->setPathTracingStart(mode == ViewRenderMode::PathTracing);
+        _vulkanAdapter->setPathTracingStart(
+            mode == ViewRenderMode::PathTracing
+            || mode == ViewRenderMode::PathTracingMax);
     }
 #endif
     // Raster draw-style override for the Interactive vs Wireframe modes.
@@ -568,6 +571,7 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
                 break;
             case ViewRenderMode::RayTracing:
             case ViewRenderMode::PathTracing:
+            case ViewRenderMode::PathTracingMax:
             case ViewRenderMode::Environment:
                 // Reset any leftover raster draw-style override (e.g. the
                 // Wireframe set by a prior mode switch).  A ray-traced view must

@@ -443,6 +443,8 @@ void VulkanViewportAdapter::pushSettings()
     vs.pathTracingMaxSamples = settings.pathTracingMaxSamples;
     vs.pathTracingDenoiser = settings.pathTracingDenoiser;
     vs.pathTracingDenoiserScale = settings.pathTracingDenoiserScale;
+    vs.pathTracingGlassIor = settings.pathTracingGlassIor;
+    vs.pathTracingGlassAbsorption = settings.pathTracingGlassAbsorption;
     // Background and environment preset travel together: both drive the
     // frame's sky/miss radiance (see SoRenderParams::background* and
     // SoRTXRenderBackend::setEnvMap), so one push keeps raster and ray-traced

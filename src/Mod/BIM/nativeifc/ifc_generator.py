@@ -289,9 +289,15 @@ def generate_coin(ifcfile, elements, cached=False):
                 else:
                     # IfcOpenShell 0.7
                     color = (float(color[0]), float(color[1]), float(color[2]))
+                # IfcOpenShell reports transparency (0 = opaque, 1 = fully
+                # transparent), but the RGBA colour convention shared with
+                # generate_shape() and consumed by ifc_tools.set_colors() is
+                # alpha (1 = opaque).  Store 1 - transparency so a glass
+                # material (e.g. an IfcWindow with 85% transparency) does not
+                # get its alpha inverted into an opaque pane.
                 trans = item.geometry.materials[0].transparency
                 if trans >= 0:
-                    color += (float(trans),)
+                    color += (1.0 - float(trans),)
             else:
                 color = (0.85, 0.85, 0.85)
 

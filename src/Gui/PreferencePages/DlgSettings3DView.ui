@@ -881,6 +881,90 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
          </item>
         </layout>
        </item>
+       <item>
+        <layout class="QHBoxLayout" name="horizontalLayoutVulkanGlassIor">
+         <item>
+          <widget class="QLabel" name="labelVulkanGlassIor">
+           <property name="text">
+            <string>Glass IOR</string>
+           </property>
+           <property name="toolTip">
+            <string>Index of refraction for the physically-based dielectric glass of Path Tracing Max.  1.5 is window glass; higher values reflect more and bend light more strongly.  Only Path Tracing Max uses it.</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="Gui::PrefDoubleSpinBox" name="DoubleSpinBox_VulkanGlassIor">
+           <property name="toolTip">
+            <string>Index of refraction for the Path Tracing Max glass (1.0-3.0, default 1.5).</string>
+           </property>
+           <property name="decimals">
+            <number>2</number>
+           </property>
+           <property name="minimum">
+            <double>1.000000000000000</double>
+           </property>
+           <property name="maximum">
+            <double>3.000000000000000</double>
+           </property>
+           <property name="singleStep">
+            <double>0.010000000000000</double>
+           </property>
+           <property name="value">
+            <double>1.500000000000000</double>
+           </property>
+           <property name="prefEntry" stdset="0">
+            <cstring>VulkanPathTracingGlassIor</cstring>
+           </property>
+           <property name="prefPath" stdset="0">
+            <cstring>View</cstring>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="horizontalLayoutVulkanGlassAbsorption">
+         <item>
+          <widget class="QLabel" name="labelVulkanGlassAbsorption">
+           <property name="text">
+            <string>Glass absorption</string>
+           </property>
+           <property name="toolTip">
+            <string>Beer-Lambert absorption strength for the Path Tracing Max glass.  0 gives perfectly clear glass; higher values tint it more strongly by its material colour over the distance the light travels inside the glass.</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="Gui::PrefDoubleSpinBox" name="DoubleSpinBox_VulkanGlassAbsorb">
+           <property name="toolTip">
+            <string>Beer-Lambert absorption strength for the Path Tracing Max glass (0-10, default 0.1; 0 = perfectly clear).</string>
+           </property>
+           <property name="decimals">
+            <number>3</number>
+           </property>
+           <property name="minimum">
+            <double>0.000000000000000</double>
+           </property>
+           <property name="maximum">
+            <double>10.000000000000000</double>
+           </property>
+           <property name="singleStep">
+            <double>0.050000000000000</double>
+           </property>
+           <property name="value">
+            <double>0.100000000000000</double>
+           </property>
+           <property name="prefEntry" stdset="0">
+            <cstring>VulkanPathTracingGlassAbsorption</cstring>
+           </property>
+           <property name="prefPath" stdset="0">
+            <cstring>View</cstring>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
            <item>
             <layout class="QHBoxLayout" name="horizontalLayoutVulkanDenoiser">
           <item>
