@@ -48,7 +48,6 @@
 #include <QStyleFactory>
 
 #include <QLoggingCategory>
-#include <fmt/format.h>
 #include <chrono>
 #include <condition_variable>
 #include <format>
