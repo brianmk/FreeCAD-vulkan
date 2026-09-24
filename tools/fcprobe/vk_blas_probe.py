@@ -46,8 +46,7 @@ def step():
         # the dynamic toggle while at it).
         for name in list(FreeCAD.listDocuments()):
             FreeCAD.closeDocument(name)
-        s.set_pref(VIEW, "VulkanPathTracing", True)
-        s.set_pref(VIEW, "VulkanRenderMode", 4)  # 4=RayTracing: the real RT gate
+        s.set_pref(VIEW, "VulkanRenderMode", 4)  # 4=PathTracing: the real RT gate
         s.set_pref(VIEW, "VulkanPathTracingBounces", 2)
         s.set_pref(VIEW, "VulkanPathTracingSettle", 2)
         FreeCADGui.activateWorkbench("PartWorkbench")

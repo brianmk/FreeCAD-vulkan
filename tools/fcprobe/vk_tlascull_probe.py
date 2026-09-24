@@ -62,12 +62,10 @@ def step():
     if k == 1:
         for name in list(FreeCAD.listDocuments()):
             FreeCAD.closeDocument(name)
-        s.set_pref(VIEW, "VulkanPathTracing", True)
-        # The RT backend is gated on the VIEW MODE (VulkanRenderMode), not the
-        # path-tracing bool: mode 4 = RayTracing and is what drops rasterOnly()
-        # so the RTX backend actually brings up and buildTlas() runs.  The
-        # path-tracing pref alone leaves renderMode at 1 (raster) and never
-        # exercises the TLAS.
+        # The RT backend is gated on the VIEW MODE (VulkanRenderMode): mode
+        # 4 = PathTracing is what drops rasterOnly() so the RTX backend brings
+        # up and buildTlas() runs.  Any non-raster mode exercises the TLAS; the
+        # old path-tracing bool no longer exists.
         s.set_pref(VIEW, "VulkanRenderMode", 4)
         s.set_pref(VIEW, "VulkanPathTracingBounces", 2)
         s.set_pref(VIEW, "VulkanPathTracingSettle", 2)

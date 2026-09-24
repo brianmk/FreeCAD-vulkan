@@ -726,35 +726,35 @@ def new_artifact_dir(parent: str, name: str) -> str:
 # Host runner
 # ---------------------------------------------------------------------------
 # Default environment presets.  These match the working harness configuration
-# for the Vulkan debug build on this machine.
+# for the Vulkan debug build on this machine.  Native Wayland is the default:
+# the Vulkan viewport then runs through VK_KHR_wayland_surface instead of
+# XWayland, matching the target platform.  The `*-xcb` variants force the xcb
+# platform plugin for tooling that does not support Wayland (RenderDoc
+# capture/replay) or to reproduce an XWayland session.
 _PROFILES = {
     "vulkan": {
         "QT_STYLE_OVERRIDE": "fusion",
-        "QT_QPA_PLATFORM": "xcb",
+        "QT_QPA_PLATFORM": "wayland",
         "LD_LIBRARY_PATH": "/tmp/opencode/boost91",
         "FC_SKIP_UNSAVED_PROMPT": "1",
         "FC_VULKAN_BREADCRUMBS": "1",
     },
     "gl": {
         "QT_STYLE_OVERRIDE": "fusion",
-        "QT_QPA_PLATFORM": "xcb",
+        "QT_QPA_PLATFORM": "wayland",
         "LD_LIBRARY_PATH": "/tmp/opencode/boost91",
         "FC_SKIP_UNSAVED_PROMPT": "1",
     },
-    # Native Wayland variants: same as the xcb profiles above but without
-    # forcing the platform plugin, so Qt picks Wayland (the session's native
-    # platform) and the Vulkan viewport runs through VK_KHR_wayland_surface
-    # instead of XWayland.  Requires a live Wayland session.
-    "wayland": {
+    "vulkan-xcb": {
         "QT_STYLE_OVERRIDE": "fusion",
-        "QT_QPA_PLATFORM": "wayland",
+        "QT_QPA_PLATFORM": "xcb",
         "LD_LIBRARY_PATH": "/tmp/opencode/boost91",
         "FC_SKIP_UNSAVED_PROMPT": "1",
         "FC_VULKAN_BREADCRUMBS": "1",
     },
-    "gl-wayland": {
+    "gl-xcb": {
         "QT_STYLE_OVERRIDE": "fusion",
-        "QT_QPA_PLATFORM": "wayland",
+        "QT_QPA_PLATFORM": "xcb",
         "LD_LIBRARY_PATH": "/tmp/opencode/boost91",
         "FC_SKIP_UNSAVED_PROMPT": "1",
     },
@@ -1054,6 +1054,9 @@ def run_case(
         # so the probe calls RENDERDOC_GetAPI() from inside the process (the
         # layer is already loaded) and queues a capture itself.
         env["FC_PROBE_RENDERDOC"] = "1"
+        # RenderDoc 1.45 supports xlib/XCB, not Wayland, so force the xcb
+        # platform for the captured run regardless of the profile's default.
+        env["QT_QPA_PLATFORM"] = "xcb"
         # RenderDoc's GLX hooks cannot create a context against the NVIDIA
         # driver under XWayland, so Qt's QOpenGLWidget/QRhi-GL init fails
         # ("QOpenGLWidget: Failed to make context current").  Route Qt's GL

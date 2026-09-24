@@ -654,7 +654,7 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
 
 #ifdef FREECAD_USE_VULKAN
     // View render-mode selector ("Interactive (raster Coin)", "Interactive
-    // (raster Vulkan)", "Wireframe", "Ambient Occlusion", "Ray Tracing",
+    // (raster Vulkan)", "Wireframe", "Ray Tracing", "Path Tracing",
     // "Environment", "Path Tracing Max").  Lives in the main window status bar, LEFT of the
     // ground-plane grid control (order 250 < 300), and drives the ACTIVE 3D
     // view's mode (each view keeps its own).  Re-populated and re-synchronised
@@ -697,7 +697,10 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
 
     // "Cubemap" environment selector, shown next to the view render mode.
     // Same per-view state model as the mode selector.  Index 0 = viewport
-    // background gradient (-1); the rest mirror the backend preset table.
+    // background gradient (-1); the rest mirror the backend preset table
+    // (SoRTXRenderBackend's kRtxEnvPresets, exposed via
+    // QuarterVulkanWidget::getEnvMapCount/getEnvMapName) and must stay in the
+    // same order.  Kept as tr() literals here so the labels are translatable.
     d->envMapCombo = new QComboBox(statusBar());
     d->envMapCombo->setObjectName(QStringLiteral("ViewEnvironmentMode"));
     d->envMapCombo->addItem(tr("Viewport Background"));

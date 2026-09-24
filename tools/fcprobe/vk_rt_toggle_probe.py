@@ -59,7 +59,6 @@ def step():
         # (the reported "reopen" scenario).
         for name in list(FreeCAD.listDocuments()):
             FreeCAD.closeDocument(name)
-        s.set_pref(VIEW, "VulkanPathTracing", False)
         s.set_pref(VIEW, "VulkanRenderMode", 1)  # 1=RasterVulkan: raster gate
         s.set_pref(VIEW, "VulkanPathTracingBounces", 2)
         s.set_pref(VIEW, "VulkanPathTracingSettle", 2)
@@ -68,18 +67,15 @@ def step():
         log("phase=raster-open (VulkanRenderMode=1)")
     elif k == 3:
         log("phase=pt-on (toggle path tracing live)")
-        s.set_pref(VIEW, "VulkanPathTracing", True)
-        s.set_pref(VIEW, "VulkanRenderMode", 4)  # 4=RayTracing: the real RT gate
+        s.set_pref(VIEW, "VulkanRenderMode", 4)  # 4=PathTracing: the real RT gate
         s.frame_phase("pt-on")
     elif k == 5:
         log("phase=pt-off (back to raster)")
-        s.set_pref(VIEW, "VulkanPathTracing", False)
         s.set_pref(VIEW, "VulkanRenderMode", 1)  # back to raster
         s.frame_phase("pt-off")
     elif k == 7:
         log("phase=pt-on-again (re-enter path tracing)")
-        s.set_pref(VIEW, "VulkanPathTracing", True)
-        s.set_pref(VIEW, "VulkanRenderMode", 4)  # 4=RayTracing: the real RT gate
+        s.set_pref(VIEW, "VulkanRenderMode", 4)  # 4=PathTracing: the real RT gate
         s.frame_phase("pt-on-again")
     elif k == 9:
         log("snapshot + finish")

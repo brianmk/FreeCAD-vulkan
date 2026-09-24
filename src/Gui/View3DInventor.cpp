@@ -421,15 +421,20 @@ void View3DInventor::applySettings()
 
 void View3DInventor::setPathTracingEnabled(bool enabled)
 {
+#ifdef FREECAD_USE_VULKAN
+    // Legacy bool API over the single VulkanRenderMode pref (the modern entry
+    // point is setRenderMode()).  Enabling selects PathTracing; disabling only
+    // returns the PathTracing mode to the raster Vulkan viewport.  The
+    // RayTracing and Environment modes are distinct single-sample ray-traced
+    // previews this bool cannot represent, so a disable must not clobber them.
+    const int current = static_cast<int>(getRenderMode());
+    if (!enabled && isRayTracedMode(current) &&
+        current != static_cast<int>(ViewRenderMode::PathTracing)) {
+        return;
+    }
     if (_vulkanAdapter) {
         _vulkanAdapter->setPathTracingEnabled(enabled);
     }
-#ifdef FREECAD_USE_VULKAN
-    // Persist through the single VulkanRenderMode pref: enabling path tracing
-    // is the PathTracing mode, disabling it falls back to the Vulkan raster
-    // viewport, so a view reopen stays consistent with the mode selector.
-    // ViewRenderMode is declared only when the Vulkan renderer is built
-    // (VulkanViewSettings.h), so this must stay inside the guard.
     if (auto grp = App::GetApplication().GetParameterGroupByPath(
             "User parameter:BaseApp/Preferences/View")) {
         grp->SetInt(
@@ -438,6 +443,10 @@ void View3DInventor::setPathTracingEnabled(bool enabled)
                 enabled ? ViewRenderMode::PathTracing : ViewRenderMode::RasterVulkan
             )
         );
+    }
+#else
+    if (_vulkanAdapter) {
+        _vulkanAdapter->setPathTracingEnabled(enabled);
     }
 #endif
 }
@@ -640,9 +649,15 @@ void View3DInventor::setEnvMap(int index)
 
 bool View3DInventor::getWireframe() const
 {
-    // The wireframe (edge) overlay is a raster-backend feature; report the
-    // preference directly so the status-bar toggle mirrors what is drawn.
-    return _viewer && _viewer->getVulkanViewSettings().wireframe;
+    // The wireframe (edge) overlay is a raster-backend feature: pushSettings()
+    // forces it off in the ray-traced modes (the RTX backend ignores it), so
+    // report the *effective* state and the status-bar toggle mirrors what is
+    // actually drawn instead of just the stored preference.
+    if (!_viewer) {
+        return false;
+    }
+    const VulkanViewSettings& settings = _viewer->getVulkanViewSettings();
+    return settings.rasterOnly() && settings.wireframe;
 }
 
 void View3DInventor::setWireframe(bool enabled)

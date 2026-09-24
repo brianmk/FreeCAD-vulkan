@@ -102,7 +102,6 @@ def step():
         # forced-GL probe would otherwise leave every later run on OpenGL and
         # silently starve the [VKCONFIG]/[RTDBG] diagnostics this gate asserts.
         s.set_pref(VIEW, "UseVulkanRenderer", True)
-        s.set_pref(VIEW, "VulkanPathTracing", False)
         s.set_pref(VIEW, "VulkanRenderMode", 1)  # RasterVulkan
         build_scene()
         s.frame_phase("diag-open")

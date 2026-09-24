@@ -41,7 +41,7 @@ screenshots all work):
 
 ```bash
 env LD_LIBRARY_PATH=/tmp/opencode/boost91 QT_STYLE_OVERRIDE=fusion \
-    QT_QPA_PLATFORM=xcb build/debug/bin/FreeCAD tools/fcprobe/mcp/freecad_mcp_guest.py
+    QT_QPA_PLATFORM=wayland build/debug/bin/FreeCAD tools/fcprobe/mcp/freecad_mcp_guest.py
 ```
 
 **Headless** (no window; everything except cursor/view/screenshot/selection):
@@ -80,7 +80,7 @@ To have the server launch FreeCAD itself instead (and wait for the socket):
       "env": {
         "LD_LIBRARY_PATH": "/tmp/opencode/boost91",
         "QT_STYLE_OVERRIDE": "fusion",
-        "QT_QPA_PLATFORM": "xcb"
+        "QT_QPA_PLATFORM": "wayland"
       }
     }
   }
@@ -99,7 +99,7 @@ on macOS, `~/.config/Claude/claude_desktop_config.json` on Linux):
       "env": {
         "LD_LIBRARY_PATH": "/tmp/opencode/boost91",
         "QT_STYLE_OVERRIDE": "fusion",
-        "QT_QPA_PLATFORM": "xcb"
+        "QT_QPA_PLATFORM": "wayland"
       }
     }
   }
