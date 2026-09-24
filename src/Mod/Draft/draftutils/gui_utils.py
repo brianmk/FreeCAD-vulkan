@@ -395,6 +395,27 @@ def remove_hidden(objectslist):
 removeHidden = remove_hidden
 
 
+# Cache of face counts keyed by the identity of the Part.Shape wrapper.
+# `obj.Shape` returns a stable wrapper while the shape is unchanged, and a new
+# wrapper once it is replaced, so the identity is a correct invalidation key.
+# `len(shape.Faces)` materialises every face and dominates get_diffuse_color()
+# when building parts share subtrees; keeping the shape alive pins its id so it
+# cannot be recycled, and the cache is cleared if it ever grows too large.
+_face_count_cache = {}
+
+
+def _shape_face_count(shape):
+    key = id(shape)
+    entry = _face_count_cache.get(key)
+    if entry is not None and entry[0] is shape:
+        return entry[1]
+    count = len(shape.Faces)
+    if len(_face_count_cache) > 20000:
+        _face_count_cache.clear()
+    _face_count_cache[key] = (shape, count)
+    return count
+
+
 def get_diffuse_color(objs):
     """Get a (cumulative) diffuse color from one or more objects.
 
@@ -461,12 +482,13 @@ def get_diffuse_color(objs):
             else:
                 return []
         elif hasattr(obj.ViewObject, "DiffuseColor"):
-            if len(obj.ViewObject.DiffuseColor) == len(obj.Shape.Faces):
+            n_faces = _shape_face_count(obj.Shape)
+            if len(obj.ViewObject.DiffuseColor) == n_faces:
                 return obj.ViewObject.DiffuseColor
             else:
                 col = obj.ViewObject.ShapeColor
                 col = (col[0], col[1], col[2], 1.0 - obj.ViewObject.Transparency / 100.0)
-                return [col] * len(obj.Shape.Faces)
+                return [col] * n_faces
         elif obj.hasExtension("App::GeoFeatureGroupExtension"):
             cols = []
             for sub in obj.Group:
@@ -483,7 +505,7 @@ def get_diffuse_color(objs):
             and hasattr(obj.ViewObject, "DiffuseColor")
             and (
                 len(obj.ViewObject.DiffuseColor) == 1
-                or len(obj.ViewObject.DiffuseColor) == len(obj.Shape.Faces)
+                or len(obj.ViewObject.DiffuseColor) == _shape_face_count(obj.Shape)
             )
         ):
             return obj.ViewObject.DiffuseColor
