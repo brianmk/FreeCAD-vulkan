@@ -479,17 +479,22 @@ void View3DInventor::requestVulkanRender()
     }
 }
 
-#ifdef FREECAD_USE_VULKAN
-Gui::ViewRenderMode View3DInventor::getRenderMode() const
-{
-    return _renderMode;
-}
-
+// Declared (and moc-registered as a slot) unconditionally, so its definition
+// must also be unconditional: the adapter's resyncViewport() has a no-op body
+// without FREECAD_USE_VULKAN, exactly like requestVulkanRender() above.
+// Guarding only the definition broke the non-Vulkan link (LNK2019 from
+// qt_static_metacall in the headers-unaware builds).
 void View3DInventor::resyncVulkanViewport()
 {
     if (_vulkanAdapter) {
         _vulkanAdapter->resyncViewport();
     }
+}
+
+#ifdef FREECAD_USE_VULKAN
+Gui::ViewRenderMode View3DInventor::getRenderMode() const
+{
+    return _renderMode;
 }
 
 void View3DInventor::setRenderMode(ViewRenderMode mode)
