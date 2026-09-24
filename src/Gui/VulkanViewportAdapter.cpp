@@ -103,19 +103,10 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
     // left for real scene churn via onUpdate()/requestVulkanRender().
     connect(_viewer, &View3DInventorViewer::cameraChanged,
             this, [this] {
-                if (!_vulkanViewer || !_viewer) {
+                if (!_vulkanViewer) {
                     return;
                 }
-                SoRenderManager* rm = _viewer->getSoRenderManager();
-                if (!rm) {
-                    return;
-                }
-                _vulkanViewer->setCamera(rm->getCamera());
-                _viewer->updateAxisCrossNodes();
-                _vulkanViewer->setDecorationSceneGraph(_viewer->getAxisCrossOverlay());
-                // The camera node was just replaced; re-point the camera change
-                // sensor at the new node so pose changes keep waking the frame.
-                attachSensors();
+                this->resyncCameraAndDecorations();
                 _vulkanViewer->redraw();
             });
     // The viewer owns the Vulkan display options; re-apply them to the
@@ -174,21 +165,35 @@ void VulkanViewportAdapter::syncViewer()
     }
     _vulkanViewer->setSceneGraph(rm->getSceneGraph());
     _vulkanViewer->setOverlaySceneGraph(_viewer->getNaviCubeAnnotation());
-    // The hidden GL viewer's frame loop never runs, so the axis cross
-    // overlay nodes are refreshed here for the IR (Vulkan) render path.
-    _viewer->updateAxisCrossNodes();
-    _vulkanViewer->setDecorationSceneGraph(_viewer->getAxisCrossOverlay());
-    _vulkanViewer->setCamera(rm->getCamera());
+    // Re-point the camera + axis-cross decorations and re-attach the change
+    // sensors (shared with the camera-changed fast path).
+    this->resyncCameraAndDecorations();
     // The background (solid color + gradient + environment preset) is pushed
     // by pushSettings(), the single source of truth derived from the hidden
     // GL viewer.  syncViewer() only re-seeds scene/camera/overlays here and
     // lets pushSettings() refresh the background, so a background change is
     // pushed in exactly one place.
     pushSettings();
-    // Track the scene/camera we just pushed so subsequent changes on the
-    // (possibly new) nodes wake the Vulkan frame (idempotent).
-    attachSensors();
     _vulkanViewer->redraw();
+#endif
+}
+
+void VulkanViewportAdapter::resyncCameraAndDecorations()
+{
+#ifdef FREECAD_USE_VULKAN
+    if (!_vulkanViewer || !_viewer) {
+        return;
+    }
+    SoRenderManager* rm = _viewer->getSoRenderManager();
+    if (!rm) {
+        return;
+    }
+    _vulkanViewer->setCamera(rm->getCamera());
+    _viewer->updateAxisCrossNodes();
+    _vulkanViewer->setDecorationSceneGraph(_viewer->getAxisCrossOverlay());
+    // The camera node may have just been replaced; re-point the camera change
+    // sensor at the new node so pose changes keep waking the frame.
+    attachSensors();
 #endif
 }
 

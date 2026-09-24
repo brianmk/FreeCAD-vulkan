@@ -640,6 +640,25 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
        </widget>
       </item>
       <item>
+       <widget class="Gui::PrefCheckBox" name="CheckBox_VulkanInteractionLod">
+        <property name="text">
+         <string>Reduce detail while navigating</string>
+        </property>
+        <property name="toolTip">
+         <string>While the camera is moving (navigating, orbiting or zooming), render simplified geometry to keep the viewport interactive, then restore full detail once the motion stops.  Only affects the Vulkan viewport.</string>
+        </property>
+        <property name="checked">
+         <bool>true</bool>
+        </property>
+        <property name="prefEntry" stdset="0">
+         <cstring>VulkanInteractionLod</cstring>
+        </property>
+        <property name="prefPath" stdset="0">
+         <cstring>View</cstring>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="Gui::PrefCheckBox" name="CheckBox_VulkanHDR">
         <property name="text">
          <string>HDR output (HDR10 / PQ)</string>

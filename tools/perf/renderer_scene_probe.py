@@ -153,7 +153,6 @@ def step():
         for name in list(FreeCAD.listDocuments()):
             FreeCAD.closeDocument(name)
         s.set_pref(VIEW, "VulkanRenderMode", MODE)
-        s.set_pref(VIEW, "VulkanPathTracing", MODE == 4)
         s.set_pref(VIEW, "VulkanPathTracingBounces", BOUNCES)
         s.set_pref(VIEW, "VulkanPathTracingSettle", 8)
         FreeCADGui.activateWorkbench("PartWorkbench")

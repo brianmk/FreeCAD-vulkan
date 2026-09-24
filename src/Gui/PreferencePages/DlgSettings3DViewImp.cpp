@@ -79,6 +79,7 @@ void DlgSettings3DViewImp::saveSettings()
     ui->CheckBox_UseVulkanRenderer->onSave();
     ui->CheckBox_VulkanWireframe->onSave();
     ui->CheckBox_VulkanShowPoints->onSave();
+    ui->CheckBox_VulkanInteractionLod->onSave();
     ui->CheckBox_VulkanHDR->onSave();
     ui->DoubleSpinBox_VulkanHdrExposure->onSave();
     ui->ComboBox_VulkanHdrToneMap->onSave();
@@ -129,6 +130,7 @@ void DlgSettings3DViewImp::loadSettings()
     ui->CheckBox_UseVulkanRenderer->onRestore();
     ui->CheckBox_VulkanWireframe->onRestore();
     ui->CheckBox_VulkanShowPoints->onRestore();
+    ui->CheckBox_VulkanInteractionLod->onRestore();
     ui->CheckBox_VulkanHDR->onRestore();
     ui->DoubleSpinBox_VulkanHdrExposure->onRestore();
     ui->ComboBox_VulkanHdrToneMap->onRestore();

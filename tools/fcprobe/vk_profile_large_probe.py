@@ -41,8 +41,7 @@ def step():
     if k == 1:
         for name in list(FreeCAD.listDocuments()):
             FreeCAD.closeDocument(name)
-        s.set_pref(VIEW, "VulkanPathTracing", True)
-        s.set_pref(VIEW, "VulkanRenderMode", 4)  # 4=RayTracing: RT gate
+        s.set_pref(VIEW, "VulkanRenderMode", 4)  # 4=PathTracing: RT gate
         s.set_pref(VIEW, "VulkanPathTracingBounces", 2)
         s.set_pref(VIEW, "VulkanPathTracingSettle", 12)
         FreeCADGui.activateWorkbench("PartWorkbench")

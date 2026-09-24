@@ -59,7 +59,6 @@ def step():
     steps[0] += 1
     k = steps[0]
     if k == 1:
-        s.set_pref(VIEW, "VulkanPathTracing", True)
         s.set_pref(VIEW, "VulkanRenderMode", 4)
         s.set_pref(VIEW, "VulkanPathTracingBounces", 3)
         s.set_pref(VIEW, "VulkanPathTracingSettle", 4)

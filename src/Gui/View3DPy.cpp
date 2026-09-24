@@ -161,7 +161,8 @@ void View3DInventorPy::init_type()
         &View3DInventorPy::setRenderMode,
         "setRenderMode(mode): set the view's render mode: 0 = Interactive "
         "(raster Coin), 1 = Interactive (raster Vulkan), 2 = Wireframe, "
-        "3 = Ambient Occlusion, 4 = Ray Tracing, 5 = Environment.  "
+        "3 = Ray Tracing (single-sample ray-traced preview), 4 = Path Tracing "
+        "(progressive accumulation), 5 = Environment.  "
         "Ray-traced modes fall back to raster Vulkan on devices without "
         "hardware ray tracing.  No-op for Vulkan modes when the view has "
         "no Vulkan adapter (UseVulkanRenderer preference off)."

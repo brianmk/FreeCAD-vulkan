@@ -233,6 +233,12 @@ private:
     /// the tracked nodes changed.
     void attachSensors();
 
+    /// Re-point the Vulkan widget at the viewer's current camera and axis-cross
+    /// decoration nodes and (re)attach the change sensors.  Shared by the
+    /// camera-changed fast path and the full syncViewer() resync so the two
+    /// stay in step.
+    void resyncCameraAndDecorations();
+
     /// Gather the GL viewer's authoritative scene lighting (headlight,
     /// backlight, fill light) and push it to the Vulkan backends.  The IR
     /// draw-list lighting capture can drop to zero on the retained/replayed

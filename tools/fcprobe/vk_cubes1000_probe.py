@@ -137,7 +137,6 @@ def step():
             for name in list(FreeCAD.listDocuments()):
                 FreeCAD.closeDocument(name)
             s.set_pref(VIEW, "UseVulkanRenderer", USE_VULKAN)
-            s.set_pref(VIEW, "VulkanPathTracing", False)
             s.set_pref(VIEW, "VulkanRenderMode", 1)  # 1 = RasterVulkan
             FreeCADGui.activateWorkbench("PartWorkbench")
         elif k == 2:

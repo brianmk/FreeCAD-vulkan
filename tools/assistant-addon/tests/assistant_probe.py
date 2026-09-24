@@ -31,7 +31,7 @@ SERVER = ROOT + "/tools/fcprobe/mcp/freecad_mcp_server.py"
 PY = "/tmp/opencode/mcp-venv/bin/python"
 SOCK = "/tmp/opencode/freecad_mcp.sock"
 ENV = dict(os.environ, LD_LIBRARY_PATH="/tmp/opencode/boost91",
-           QT_STYLE_OVERRIDE="fusion", QT_QPA_PLATFORM="xcb", DISPLAY=":0")
+           QT_STYLE_OVERRIDE="fusion", QT_QPA_PLATFORM="wayland")
 
 failures = []
 
