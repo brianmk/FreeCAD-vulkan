@@ -57,6 +57,7 @@ import ArchCommands
 import ArchComponent
 import DraftVecUtils
 
+from draftutils import gui_utils
 from draftutils import params
 
 if FreeCAD.GuiUp:
@@ -776,8 +777,22 @@ class ViewProviderCurtainWall(ArchComponent.ViewProviderComponent):
             self.colorize(vobj.Object, force=True)
         ArchComponent.ViewProviderComponent.onChanged(self, vobj, prop)
 
+    def finishRestoring(self):
+        """Apply the curtain wall colors once, after a document restore."""
+        if not gui_utils.begin_restore_apply(self):
+            return
+        try:
+            self.updateData(self.Object, "Shape")
+        finally:
+            gui_utils.end_restore_apply(self)
+
     def colorize(self, obj, force=False):
         "setting different part colors"
+
+        # Defer the re-colorization while a document is being restored;
+        # finishRestoring() applies it once when done.
+        if gui_utils.defer_restore_update(self):
+            return
 
         if not obj.Shape or not obj.Shape.Solids:
             return

@@ -46,6 +46,7 @@ import DraftVecUtils
 
 from FreeCAD import Units
 from FreeCAD import Vector
+from draftutils import gui_utils
 from draftutils import params
 from draftutils.messages import _wrn
 
@@ -931,7 +932,32 @@ class _ViewProviderWindow(ArchComponent.ViewProviderComponent):
             self.colorize(vobj.Object)
         ArchComponent.ViewProviderComponent.onChanged(self, vobj, prop)
 
+    def finishRestoring(self):
+        """Apply the window colorization once, after a document restore."""
+        if not gui_utils.begin_restore_apply(self):
+            return
+        try:
+            self.updateData(self.Object, "Shape")
+        finally:
+            gui_utils.end_restore_apply(self)
+
     def colorize(self, obj):
+
+        # Defer the (expensive) re-colorization while a document is being
+        # restored; finishRestoring() applies it once when done.
+        if gui_utils.defer_restore_update(self):
+            return
+        # Assigning ShapeAppearance below fires onChanged("ShapeAppearance")
+        # which calls back into colorize(); skip that immediate re-entry.
+        if getattr(self, "_colorizing", False):
+            return
+        self._colorizing = True
+        try:
+            self._colorize_inner(obj)
+        finally:
+            self._colorizing = False
+
+    def _colorize_inner(self, obj):
 
         def _shapeAppearanceMaterialIsSame(sapp_mat1, sapp_mat2):
             for prop in (
@@ -969,7 +995,7 @@ class _ViewProviderWindow(ArchComponent.ViewProviderComponent):
             base_sapp_mat = obj.ViewObject.ShapeAppearance[0]
             arch_mat = getattr(obj, "Material", None)
 
-        solids = obj.Shape.copy().Solids
+        solids = obj.Shape.Solids
         sapp = []
         for i in range(len(solids)):
             color = None

@@ -43,6 +43,7 @@ import ArchIFC
 import Draft
 import DraftVecUtils
 
+from draftutils import gui_utils
 from draftutils import params
 from draftutils import utils
 
@@ -778,6 +779,10 @@ class ViewProviderBuildingPart:
         if prop in ["Placement", "LevelOffset"]:
             self.onChanged(obj.ViewObject, "OverrideUnit")
         elif prop == "Shape":
+            # Defer the (expensive) color scan while a document is being
+            # restored; finishRestoring() applies it once when done.
+            if gui_utils.defer_restore_update(self):
+                return
             colors = self.getColors(obj)
             if hasattr(obj.ViewObject, "DiffuseColor") and colors != obj.ViewObject.DiffuseColor:
                 obj.ViewObject.DiffuseColor = colors
@@ -786,6 +791,15 @@ class ViewProviderBuildingPart:
             self.onChanged(obj.ViewObject, "ChildrenOverride")
         elif prop == "Label":
             self.onChanged(obj.ViewObject, "ShowLabel")
+
+    def finishRestoring(self):
+        """Apply the building part colors once, after a document restore."""
+        if not gui_utils.begin_restore_apply(self):
+            return
+        try:
+            self.updateData(self.Object, "Shape")
+        finally:
+            gui_utils.end_restore_apply(self)
 
     def getColors(self, obj):
         "get the colors of objects inside this BuildingPart"

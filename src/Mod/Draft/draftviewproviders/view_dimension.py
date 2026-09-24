@@ -321,11 +321,42 @@ class ViewProviderLinearDimension(ViewProviderDimensionBase):
         self.onChanged(vobj, "ShowLine")
         self.onChanged(vobj, "LineWidth")
 
+    def finishRestoring(self):
+        """Re-apply the view once, after a document restore.
+
+        The per-property callbacks are skipped while restoring (see
+        `gui_utils.defer_restore_update`), so apply the restored properties in a
+        single pass here.
+        """
+        if not gui_utils.begin_restore_apply(self):
+            return
+        try:
+            vobj = self.Object.ViewObject
+            self.updateData(self.Object, "Start")
+            self.onChanged(vobj, "FontSize")
+            self.onChanged(vobj, "FontName")
+            self.onChanged(vobj, "TextColor")
+            self.onChanged(vobj, "ArrowTypeStart")
+            self.onChanged(vobj, "ArrowTypeEnd")
+            self.onChanged(vobj, "LineColor")
+            self.onChanged(vobj, "DimOvershoot")
+            self.onChanged(vobj, "ExtOvershoot")
+            self.onChanged(vobj, "ShowLine")
+            self.onChanged(vobj, "LineWidth")
+        finally:
+            gui_utils.end_restore_apply(self)
+
     def updateData(self, obj, prop):
         """Execute when a property from the Proxy class is changed.
 
         It only runs if `Start`, `End`, `Dimline`, or `Direction` changed.
         """
+        # While a document is being restored, defer the (re)build of the
+        # dimension to a single pass in finishRestoring() instead of doing it
+        # once per restored property.
+        if gui_utils.defer_restore_update(self):
+            return
+
         if prop not in ("Start", "End", "Dimline", "Direction", "Diameter"):
             return
 

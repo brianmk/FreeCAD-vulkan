@@ -42,6 +42,7 @@ import Part
 
 from FreeCAD import Units
 from FreeCAD import Vector
+from draftutils import gui_utils
 from draftutils import params
 
 if FreeCAD.GuiUp:
@@ -550,6 +551,21 @@ class _ViewProviderAxis:
         self.onChanged(vobj, "LineWidth")
         self.onChanged(vobj, "DrawStyle")
 
+    def finishRestoring(self):
+        """Rebuild the axis view once, after a document restore.
+
+        The per-property (re)builds are skipped while restoring (see
+        `gui_utils.defer_restore_update`); apply them here in a single pass.
+        """
+        if not gui_utils.begin_restore_apply(self):
+            return
+        try:
+            vobj = self.Object.ViewObject
+            self.updateData(self.Object, "Shape")
+            self.onChanged(vobj, "NumberingStyle")
+        finally:
+            gui_utils.end_restore_apply(self)
+
     def getDisplayModes(self, vobj):
 
         return ["Default"]
@@ -563,6 +579,11 @@ class _ViewProviderAxis:
         return mode
 
     def updateData(self, obj, prop):
+
+        # Defer the expensive rebuild while a document is being restored;
+        # finishRestoring() applies it once when the restore is done.
+        if gui_utils.defer_restore_update(self):
+            return
 
         if prop == "Shape":
             if obj.Shape:
@@ -625,6 +646,8 @@ class _ViewProviderAxis:
             if hasattr(vobj, "LineWidth"):
                 self.linestyle.lineWidth = vobj.LineWidth
         elif prop in ["BubbleSize", "BubblePosition", "FontName", "FontSize"]:
+            if gui_utils.defer_restore_update(self):
+                return
             if hasattr(self, "bubbleset"):
                 if self.bubbles:
                     self.bubbleset.removeChild(self.bubbles)
@@ -747,6 +770,8 @@ class _ViewProviderAxis:
                                 num -= 1
                     alt = not alt
         elif prop in ["ShowLabel", "LabelOffset"]:
+            if gui_utils.defer_restore_update(self):
+                return
             if hasattr(self, "labels") and self.labels:
                 self.labelset.removeChild(self.labels)
             self.labels = None
