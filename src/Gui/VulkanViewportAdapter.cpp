@@ -353,6 +353,17 @@ void VulkanViewportAdapter::resyncViewport()
     if (QWidget* container = _vulkanViewer->getNativeWidget()) {
         applySurfaceViewportToGL(container->size());
     }
+    // SoRayPickAction derives its ray depth range from the shared camera's
+    // near/far planes.  A GL render auto-fits those planes to the scene, but
+    // the display-only Vulkan path never renders through the GL viewer, so on
+    // a scene that appeared after the camera was last framed (e.g. the origin
+    // planes the sketch attachment editor enlarges over a brand-new empty
+    // document) the planes fall outside [near, far] and hover/click picks miss
+    // until a render-mode round-trip runs the GL auto-clip.  Refresh the planes
+    // here, from the same scene bounding box the GL render would use.
+    if (SoRenderManager* rm = _viewer->getSoRenderManager()) {
+        rm->updateClippingPlanes();
+    }
     syncViewer();
 #endif
 }
