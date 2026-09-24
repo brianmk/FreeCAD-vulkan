@@ -459,6 +459,19 @@
         "VUID-vkQueueSubmit-pSignalSemaphores-00067"
       ],
       "timeout": 240
+    },
+    {
+      "name": "hover-settle",
+      "script": "vk_hover_settle_probe.py",
+      "env": {
+        "FC_VULKAN_RT_DEBUG": "1",
+        "FC_VULKAN_RT_GEO": "1",
+        "FC_VULKAN_PT_MAXSAMPLES": "32"
+      },
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 300
     }
   ]
 }

@@ -109,11 +109,13 @@ on macOS, `~/.config/Claude/claude_desktop_config.json` on Linux):
 The MCP server auto-starts the guest via `--spawn` if you prefer not to launch
 it by hand.
 
-## Tools (41)
+## Tools (42)
 
 Modelling: `new_document`, `open_document`, `active_document`,
 `set_active_document`, `list_objects`, `delete_object`, `recompute`,
-`get_placement`, `set_placement`.
+`get_placement`, `set_placement`.  `restart_freecad` restarts the FreeCAD
+process, reopening the active document (saved to a temp file when unsaved) and
+suppressing the crash-recovery dialog, then waits for the replacement guest.
 
 Sketches ("any shape"): `new_sketch` (plane XY/XZ/YZ; body auto/None), then
 `sketch_rectangle`, `sketch_polygon`, `sketch_polyline`, `sketch_line`,

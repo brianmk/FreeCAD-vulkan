@@ -219,6 +219,27 @@ def open_document(path: str) -> str:
 
 
 @mcp.tool()
+def restart_freecad(path: str = "", clean_recovery: bool = True) -> str:
+    """Restart the FreeCAD GUI, reopening the active document (or `path`) and
+    suppressing the crash-recovery dialog.  Unsaved documents are parked in a
+    temp file and reopened, so the scene survives the restart.  Blocks until
+    the replacement FreeCAD guest is live again."""
+    try:
+        data = _call("restart_freecad", path=path, clean_recovery=clean_recovery)
+    except Exception as exc:  # noqa: BLE001
+        return _error(f"restart request failed: {exc}")
+    # The guest replies, then exits; the replacement binds the socket once its
+    # GUI is up.  Poll until it answers (or give up).
+    deadline = time.time() + 90.0
+    while time.time() < deadline:
+        time.sleep(1.0)
+        if _client.is_live():
+            return _fmt({"restarted": True, **data})
+    return _error("restart issued but the replacement FreeCAD guest did not "
+                  "come up within 90s")
+
+
+@mcp.tool()
 def active_document() -> str:
     """Return the name of the currently active document, or null."""
     return _fmt(_call("active_document"))

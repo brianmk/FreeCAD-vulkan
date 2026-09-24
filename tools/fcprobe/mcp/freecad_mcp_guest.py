@@ -966,6 +966,184 @@ def open_document(params: Dict[str, Any]) -> Dict[str, Any]:
     return {"name": d.Name, "path": path}
 
 
+def _freecad_binary() -> str:
+    """Path to the FreeCAD executable of this process."""
+    import sys as _sys
+
+    exe = os.path.realpath(_sys.executable or "")
+    if os.path.basename(exe) == "FreeCAD" and os.path.exists(exe):
+        return exe
+    cand = os.path.join(os.path.dirname(exe), "FreeCAD")
+    return cand if os.path.exists(cand) else exe
+
+
+def _clear_recovery_cache() -> int:
+    """Delete FreeCAD's crash-recovery documents so the next start raises no
+    'Document Recovery' dialog.  Mirrors the dialog's Cleanup button: removes
+    every ``FreeCAD_Doc_*`` directory and ``FreeCAD_*.lock`` file under the
+    user cache path.  Returns the number of entries removed."""
+    import shutil
+
+    try:
+        import FreeCAD
+
+        cache = FreeCAD.getUserCachePath()
+    except Exception:
+        return 0
+    if not cache or not os.path.isdir(cache):
+        return 0
+    removed = 0
+    for name in os.listdir(cache):
+        if not (name.startswith("FreeCAD_Doc_")
+                or (name.startswith("FreeCAD_") and name.endswith(".lock"))):
+            continue
+        path = os.path.join(cache, name)
+        try:
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                os.remove(path)
+            removed += 1
+        except OSError:
+            pass
+    return removed
+
+
+def restart_freecad(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Restart FreeCAD, reopening a document without the recovery dialog.
+
+    Saves the active document (to its file, or to a temp file when unsaved),
+    clears the crash-recovery cache, spawns a detached replacement FreeCAD
+    running this same guest, and exits.  The replacement reopens the document
+    from ``FC_MCP_OPEN_DOC`` once the GUI is up.  The host MCP server waits for
+    the replacement guest's socket before returning.
+
+    params:
+      path            document to reopen (default: the active document)
+      reopen          False to restart with no document (default True)
+      clean_recovery  False to keep the recovery cache (default True)
+    """
+    import subprocess
+    import tempfile
+
+    import FreeCAD
+
+    reopen = bool(params.get("reopen", True))
+    clean = bool(params.get("clean_recovery", True))
+    path = params.get("path") or ""
+
+    if reopen and not path:
+        doc = FreeCAD.ActiveDocument
+        if doc is not None:
+            if doc.FileName:
+                path = doc.FileName
+                doc.save()
+            else:
+                # Unsaved document: park it in a temp file so the replacement
+                # can reopen the same scene.
+                tmpdir = os.path.join(tempfile.gettempdir(), "freecad_mcp_restart")
+                os.makedirs(tmpdir, exist_ok=True)
+                label = "".join(
+                    c if (c.isalnum() or c in "-_.") else "_"
+                    for c in (doc.Label or doc.Name or "Document")
+                )
+                path = os.path.join(tmpdir, label + ".FCStd")
+                doc.saveAs(path)
+
+    removed = _clear_recovery_cache() if clean else 0
+
+    env = dict(os.environ)
+    env["FC_MCP_SOCKET"] = SOCKET_PATH
+    env.setdefault("QT_STYLE_OVERRIDE", "fusion")
+    if path:
+        env["FC_MCP_OPEN_DOC"] = path
+    else:
+        env.pop("FC_MCP_OPEN_DOC", None)
+
+    # Drop the socket name so the replacement binds it immediately.  The
+    # current listener keeps its (now unlinked) descriptor until this process
+    # exits a moment later.
+    try:
+        os.unlink(SOCKET_PATH)
+    except OSError:
+        pass
+
+    guest = os.path.abspath(__file__)
+    devnull = open(os.devnull, "wb")  # noqa: SIM115 - closed right below
+    try:
+        proc = subprocess.Popen(
+            [_freecad_binary(), guest],
+            env=env,
+            stdin=devnull,
+            stdout=devnull,
+            stderr=devnull,
+            start_new_session=True,
+            cwd=os.getcwd(),
+        )
+    finally:
+        devnull.close()
+
+    # Reply first, then hard-exit: os._exit skips Python/C++ teardown (no
+    # autosave rewrite of the recovery cache, no backend-shutdown crash).
+    threading.Timer(0.4, lambda: os._exit(0)).start()
+
+    return {
+        "restarting": True,
+        "pid": proc.pid,
+        "path": path or None,
+        "recovery_cleared": removed,
+        "socket": SOCKET_PATH,
+    }
+
+
+def _open_startup_document() -> None:
+    """Reopen FC_MCP_OPEN_DOC after a restart-triggered launch."""
+    path = os.environ.get("FC_MCP_OPEN_DOC")
+    if not path:
+        return
+    try:
+        import FreeCAD
+        import FreeCADGui
+    except Exception:
+        return
+    # If a recovery dialog still came up (cache not cleared, or the document
+    # predates the clear), dismiss it -- the requested document is reopened
+    # below, not the recovered one.
+    try:
+        from PySide import QtWidgets
+
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            for w in app.topLevelWidgets():
+                if (isinstance(w, QtWidgets.QDialog)
+                        and w.windowTitle() == "Document Recovery"):
+                    w.reject()
+    except Exception:
+        pass
+    try:
+        if not os.path.exists(path):
+            return
+        FreeCAD.openDocument(path)
+        if FreeCADGui.ActiveDocument is not None:
+            view = FreeCADGui.ActiveDocument.ActiveView
+            if view is not None:
+                view.fitAll()
+    except Exception:
+        pass
+
+
+def _schedule_startup_document() -> None:
+    if not os.environ.get("FC_MCP_OPEN_DOC"):
+        return
+    if _is_gui():
+        from PySide import QtCore
+
+        # Let the GUI (and any recovery dialog) come up first.
+        QtCore.QTimer.singleShot(1000, _open_startup_document)
+    else:
+        _open_startup_document()
+
+
 def active_document(params: Dict[str, Any]) -> Dict[str, Any]:
     App, _, _ = _app_modules()
     d = App.ActiveDocument
@@ -2083,6 +2261,7 @@ HANDLERS: Dict[str, Callable[[Dict[str, Any]], Any]] = {
     # documents / state
     "new_document": new_document,
     "open_document": open_document,
+    "restart_freecad": restart_freecad,
     "active_document": active_document,
     "set_active_document": set_active_document,
     "list_objects": list_objects,
@@ -2377,6 +2556,7 @@ def run_guest() -> None:
     """Open the socket, serve until killed.  Called at module import (FreeCAD
     executes this script as top-level code)."""
     start_guest()
+    _schedule_startup_document()
     if not _is_gui():
         # headless: block here so FreeCADCmd stays alive
         try:
