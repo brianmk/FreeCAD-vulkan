@@ -27,6 +27,7 @@
 # include <sstream>
 
 
+#include <App/Application.h>
 #include <Base/Console.h>
 #include <Base/Interpreter.h>
 #include <Base/Tools.h>
@@ -81,6 +82,16 @@ short DrawViewDraft::mustExecute() const
 App::DocumentObjectExecReturn *DrawViewDraft::execute()
 {
 //    Base::Console().message("DVDr::execute() \n");
+    // The (potentially huge) Draft SVG is already stored in the Symbol property,
+    // so regenerating it while the document is being restored is wasted work.
+    // mustExecute() already skips this per-object, but the object's own
+    // Restoring bit can already be cleared while a global restore is still in
+    // progress; check the application-wide flag to cover that window.  The
+    // object stays touched, so it is regenerated on the next real recompute.
+    if (App::GetApplication().isRestoring()) {
+        return App::DocumentObject::StdReturn;
+    }
+
     if (!keepUpdated()) {
         return App::DocumentObject::StdReturn;
     }
