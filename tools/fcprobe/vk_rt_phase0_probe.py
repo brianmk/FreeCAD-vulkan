@@ -67,7 +67,6 @@ def step():
             FreeCAD.closeDocument(name)
         # Raster first, so the RTX backend is brought up lazily and the caps
         # line happens at the toggle (not at view creation).
-        s.set_pref(VIEW, "VulkanPathTracing", False)
         s.set_pref(VIEW, "VulkanRenderMode", 1)  # 1=RasterVulkan: raster gate
         s.set_pref(VIEW, "VulkanPathTracingBounces", 3)
         s.set_pref(VIEW, "VulkanPathTracingSettle", 2)
@@ -77,8 +76,7 @@ def step():
         log("phase=raster-open")
     elif k == 4:
         log("phase=pt-on (lazy RTX bring-up + caps probe)")
-        s.set_pref(VIEW, "VulkanPathTracing", True)
-        s.set_pref(VIEW, "VulkanRenderMode", 4)  # 4=RayTracing: the real RT gate
+        s.set_pref(VIEW, "VulkanRenderMode", 4)  # 4=PathTracing: the real RT gate
         s.frame_phase("pt-on")
     elif k in (7, 10, 13):
         # A few settle frames to let the accumulation auto-restart and

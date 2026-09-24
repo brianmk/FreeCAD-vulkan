@@ -122,7 +122,6 @@ def step():
         FreeCADGui.updateGui()
         s.set_pref(VIEW, "UseVulkanRenderer", True)
         s.set_pref(VIEW, "VulkanRenderMode", 0)
-        s.set_pref(VIEW, "VulkanPathTracing", False)
         build()
         # Explicitly start in coin after the view exists.
         v = active_view()

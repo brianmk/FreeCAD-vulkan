@@ -76,6 +76,7 @@ class SketcherGuiTestCases(unittest.TestCase):
             "other_constraint": 0,
             "edge": 0,
             "vertex": 0,
+            "axis": 0,
             "other": 0,
             "none": 0,
         }
