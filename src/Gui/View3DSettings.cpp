@@ -146,6 +146,18 @@ void View3DSettings::migratePreferences()
         && viewPrefHasEntry(viewGrp, "VulkanShowEdges", ParameterGrp::ParamType::FCBool)) {
         viewGrp->SetBool("VulkanWireframe", viewGrp->GetBool("VulkanShowEdges", false));
     }
+    // The scRGB output replaced the old HDR10/PQ path.  There the exposure was a
+    // PQ peak fraction whose "auto" sentinel was 0.02 (0.0203 quantized), which
+    // is far below the new scRGB pref-page minimum (0.1) and would be clamped
+    // and saved as a nearly-black white gain on the next settings edit.  Persist
+    // the neutral white gain so the sentinel never reaches the editor.
+    {
+        const float exposure =
+            static_cast<float>(viewGrp->GetFloat("VulkanHDRExposure", 1.0f));
+        if (exposure > 0.0195f && exposure < 0.0205f) {
+            viewGrp->SetFloat("VulkanHDRExposure", 1.0f);
+        }
+    }
 #endif
     viewGrp->RemoveBool("VulkanPathTracing");
     viewGrp->RemoveBool("UseVulkanRayTracing");         // superseded: VulkanRenderMode
@@ -154,7 +166,12 @@ void View3DSettings::migratePreferences()
     viewGrp->RemoveInt("VulkanShowEdges");              // renamed: VulkanWireframe
     viewGrp->RemoveInt("VulkanWireframe");              // canonical: bool
     viewGrp->RemoveInt("VulkanShowPoints");             // canonical: bool
+    viewGrp->RemoveInt("VulkanHDR");                    // canonical: bool
     viewGrp->RemoveASCII("VulkanPathTracingDenoiser");  // canonical: int
+    // Keys whose feature was removed; no code reads them any more.
+    viewGrp->RemoveBool("VulkanPathTracingDenoise");    // always on with PT
+    viewGrp->RemoveBool("VulkanShowGrid");              // superseded: ShowGroundPlane
+    viewGrp->RemoveInt("PreselectionMessageRate");      // status-message throttle gone
     viewGrp->RemoveInt("BackgroundColor");              // canonical: unsigned
 
     // Superseded by the HeadlightDirection string; no code reads the rotation
@@ -710,7 +727,6 @@ void View3DSettings::ensurePrefTable()
     // ---- No-op backend-choice / throttle keys (kept so the dispatch table is
     // ---- exhaustive; the old if/else ignored them) ----------------------
     add(m_prefTable, "UseVulkanRenderer", false, [](const ParameterGrp &) {});
-    add(m_prefTable, "PreselectionMessageRate", false, [](const ParameterGrp &) {});
 
     // ---- Background colors (the old OnChange `else` catch-all) ----------
     add(m_prefTable, "BackgroundColor", false,

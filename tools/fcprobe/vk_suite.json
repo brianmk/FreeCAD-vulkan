@@ -159,6 +159,14 @@
       "timeout": 180
     },
     {
+      "name": "pick-far",
+      "script": "vk_pick_far_probe.py",
+      "allow_vuid": [
+        "VUID-vkQueueSubmit-pSignalSemaphores-00067"
+      ],
+      "timeout": 240
+    },
+    {
       "name": "interaction",
       "script": "vk_interaction_probe.py",
       "env": {

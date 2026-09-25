@@ -1058,43 +1058,7 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
            </widget>
           </item>
          <item>
-          <layout class="QHBoxLayout" name="horizontalLayoutPreselMsg">
-        <item>
-         <widget class="QLabel" name="labelPreselMsg">
-          <property name="text">
-           <string>Preselection message rate</string>
-          </property>
-          <property name="toolTip">
-           <string>How many times per second the status bar updates the coordinates of a preselected object while the cursor moves over the model.  Higher values feel more responsive but rebuild the position string more often.  Set to 0 to disable the live coordinate readout (valuable on very large models).</string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="Gui::PrefSpinBox" name="SpinBox_PreselMsg">
-          <property name="prefEntry" stdset="0">
-           <cstring>PreselectionMessageRate</cstring>
-          </property>
-          <property name="prefPath" stdset="0">
-           <cstring>View</cstring>
-          </property>
-          <property name="minimum">
-           <number>0</number>
-          </property>
-          <property name="maximum">
-           <number>120</number>
-          </property>
-          <property name="value">
-           <number>10</number>
-          </property>
-          <property name="suffix">
-           <string> Hz</string>
-          </property>
-         </widget>
-        </item>
-       </layout>
-      </item>
-      <item>
-        <layout class="QHBoxLayout" name="horizontalLayoutVulkanEdge">
+           <layout class="QHBoxLayout" name="horizontalLayoutVulkanEdge">
         <item>
          <widget class="QLabel" name="labelVulkanEdgeColor">
           <property name="text">

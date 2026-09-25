@@ -73,6 +73,17 @@ Q_SIGNALS:
     //! Delivered on the GUI thread.
     void surfaceSizeChanged(const QSize & size);
 
+    //! Emitted on the GUI thread after the Vulkan swapchain resources are
+    //! (re)initialized, i.e. once the actual swapchain color format is known.
+    //! The HDR output state depends on the real format (the FP16 scRGB
+    //! swapchain vs an 8-bit fallback), so the owner must re-evaluate and
+    //! re-push its render settings here.  Without this a view whose surface is
+    //! exposed only later -- opened in Coin/GL mode and then switched to
+    //! Vulkan -- keeps the pre-surface SDR encode while actually rendering
+    //! into the FP16 extended-linear surface, which shows as a washed-out
+    //! image.
+    void swapChainChanged();
+
     //! Emitted when a path-tracing request is dropped because the ray-tracing
     //! backend could not be brought up on this device (e.g. the device is not
     //! Vulkan 1.2+ or lacks the ray-tracing extension set).  Fired once per

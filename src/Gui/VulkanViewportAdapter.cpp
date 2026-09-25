@@ -157,6 +157,16 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
     connect(_vulkanViewer,
             &SIM::Coin3D::Quarter::QuarterVulkanWidget::surfaceSizeChanged,
             this, &VulkanViewportAdapter::onSurfaceSizeChanged);
+    // The HDR encode must match the swapchain the surface actually came up on.
+    // pushSettings() derives vs.hdrOutput from isHdrOutputActive(), which is
+    // only valid once the swapchain exists; re-push when it is (re)created.
+    // A view opened in Coin/GL mode and later switched to Vulkan otherwise
+    // keeps hdrOutput=false as computed before the surface existed, and renders
+    // SDR sRGB code values into the FP16 extended-linear (scRGB) swapchain --
+    // a washed-out image.
+    connect(_vulkanViewer,
+            &SIM::Coin3D::Quarter::QuarterVulkanWidget::swapChainChanged,
+            this, [this] { pushSettings(); });
     // Relay a ray-tracing-unavailable drop so the view can fall back to a
     // raster render mode (feature detection for non path-tracing hardware).
     connect(_vulkanViewer,
@@ -180,6 +190,11 @@ void VulkanViewportAdapter::syncViewer()
     }
     _vulkanViewer->setSceneGraph(rm->getSceneGraph());
     _vulkanViewer->setOverlaySceneGraph(_viewer->getNaviCubeAnnotation());
+    // The grid is camera-coupled and the Vulkan main draw list is retained
+    // verbatim on camera-only frames; move it into the per-frame decoration
+    // scene so it tracks the view volume live (it returns to the main scene
+    // when the Vulkan viewport is destroyed).
+    _viewer->setGroundPlaneDecorationScene(true);
     // Re-point the camera + axis-cross decorations and re-attach the change
     // sensors (shared with the camera-changed fast path).
     this->resyncCameraAndDecorations();
@@ -205,7 +220,10 @@ void VulkanViewportAdapter::resyncCameraAndDecorations()
     }
     _vulkanViewer->setCamera(rm->getCamera());
     _viewer->updateAxisCrossNodes();
-    _vulkanViewer->setDecorationSceneGraph(_viewer->getAxisCrossOverlay());
+    // Per-frame decoration scene: axis cross + the camera-coupled ground grid.
+    // The grid must live here (not the retained main scene) so it re-records
+    // every frame and tracks the view volume on zoom/rotate.
+    _vulkanViewer->setDecorationSceneGraph(_viewer->getDecorationRoot());
     // The camera node may have just been replaced; re-point the camera change
     // sensor at the new node so pose changes keep waking the frame.
     attachSensors();
@@ -868,6 +886,20 @@ void VulkanViewportAdapter::applySurfaceViewportToGL(const QSize& surfaceSize)
     // miss.  The Vulkan surface is the single source of truth, so re-impose
     // its size here.  Called on every surface size change and on any GL
     // widget resize (see eventFilter).
+    // This whole function exists to keep the *hidden* GL viewer calibrated to
+    // the visible Vulkan surface.  It must not run while the classic Coin/GL
+    // page is the visible one: the GL widget is then the on-screen surface and
+    // is sized by the QStackedWidget layout, whereas the Vulkan container is
+    // hidden and still has its stale pre-expose default (100x30).  Forcing the
+    // visible GL widget to that size shrank the viewport to a navcube-sized
+    // sliver and fought the layout in an endless resize loop.  A Coin view
+    // opened straight from the persisted render mode hit exactly that (the
+    // Vulkan page was never shown, so the container never got a real size);
+    // switching Vulkan -> Coin at runtime worked only because the container
+    // still held the full window size at that moment.
+    if (!_wantVulkanViewport) {
+        return;
+    }
     QWidget* container = _vulkanViewer->getNativeWidget();
     QWidget* glWidget = _viewer->getWidget();
     if (!container || !glWidget) {
@@ -991,6 +1023,9 @@ VulkanViewportAdapter::~VulkanViewportAdapter()
         if (controller && controller->surface() == this) {
             controller->setSurface(_glSurface);
         }
+        // Put the ground grid back in the main scene so the classic Coin/GL
+        // viewport re-draws it and its clip-range bounds include it again.
+        _viewer->setGroundPlaneDecorationScene(false);
     }
 #ifdef FREECAD_USE_VULKAN
     // Drop the GPU pick bridge before the widget goes away: its callback
