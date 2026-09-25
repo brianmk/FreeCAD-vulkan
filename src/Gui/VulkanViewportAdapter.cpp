@@ -89,6 +89,11 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
     // Seed the single-source settings first (applyVulkanSettings() is
     // idempotent and its change signal has no listeners yet).
     _viewer->applyVulkanSettings();
+    // Present mode (V-Sync) is a window/swapchain property too: QVulkanWindow
+    // uses it when it creates the swapchain on first expose, so the preference
+    // is read here rather than in pushSettings() (which must not recreate the
+    // swapchain -- that would loop back through swapChainChanged).
+    _vulkanViewer->setPresentMode(_viewer->getVulkanViewSettings().presentMode);
     if (_viewer->getVulkanViewSettings().hdrEnabled) {
         _vulkanViewer->setHdrOutputEnabled(true);
         // The output's HDR state gates the HDR encode (see pushSettings) and

@@ -153,6 +153,14 @@ struct VulkanViewSettings
     //! segment into quads on the CPU (the dominant navigation cost on large
     //! edge sets).  The classic Coin/GL viewport is unaffected.
     bool interactionLod = true;
+    //! Swapchain present mode (V-Sync): 0 = FIFO (V-Sync, always supported --
+    //! the historical default), 1 = Mailbox (V-Sync, no tearing, lower
+    //! latency; frames may be dropped under load), 2 = Immediate (no V-Sync,
+    //! may tear, uncapped frame rate).  A window/swapchain property, so it is
+    //! applied when a view is created and an already-open view keeps its mode
+    //! until reopened.  Falls back to FIFO when the surface does not advertise
+    //! the requested mode.  Ignored by the classic Coin/OpenGL viewport.
+    int presentMode = 0;
     SbColor4f edgeColor = SbColor4f(0.05f, 0.05f, 0.05f, 1.0f);
     // Path-tracing tuning (see the View preferences dialog).
     int pathTracingBounces = 4;

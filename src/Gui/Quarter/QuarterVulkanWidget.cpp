@@ -44,6 +44,9 @@
 #include <QWheelEvent>
 #ifdef HAVE_QT6_GUI_PRIVATE
 #include <QtGui/qpa/qwindowsysteminterface.h>
+// QVulkanWindowPrivate is the only way to reach the swapchain present mode:
+// QVulkanWindow hardcodes VK_PRESENT_MODE_FIFO_KHR and exposes no setter.
+#include <QtGui/private/qvulkanwindow_p.h>
 #endif
 
 #include "Selection.h"
@@ -154,6 +157,81 @@ static QByteArray vkVersionStr(uint32_t v)
            QByteArray::number(VK_API_VERSION_MINOR(v)) + '.' +
            QByteArray::number(VK_API_VERSION_PATCH(v));
 }
+
+#ifdef HAVE_QT6_GUI_PRIVATE
+//! Map the widget-level present-mode request to a VkPresentModeKHR.
+//! 0 = FIFO (V-Sync), 1 = Mailbox (V-Sync, low latency), 2 = Immediate
+//! (no V-Sync); any other value means FIFO.  FIFO is the only mode the Vulkan
+//! spec guarantees, so it is the fallback for an unsupported request.
+static VkPresentModeKHR requestedPresentModeKhr(int requested)
+{
+    switch (requested) {
+        case 1: return VK_PRESENT_MODE_MAILBOX_KHR;
+        case 2: return VK_PRESENT_MODE_IMMEDIATE_KHR;
+        default: return VK_PRESENT_MODE_FIFO_KHR;
+    }
+}
+
+static const char * presentModeName(VkPresentModeKHR mode)
+{
+    switch (mode) {
+        case VK_PRESENT_MODE_MAILBOX_KHR: return "mailbox";
+        case VK_PRESENT_MODE_IMMEDIATE_KHR: return "immediate";
+        default: return "fifo";
+    }
+}
+
+//! Resolve the swapchain present mode for \a requested against the surface's
+//! advertised modes, falling back to FIFO when the request is unsupported.
+//! Requires a live surface (QVulkanWindow created it in init(), before the
+//! renderer's preInitResources()), so Qt's FIFO default is the only safe
+//! fallback otherwise.
+static VkPresentModeKHR choosePresentMode(QVulkanWindow * window, int requested)
+{
+    const VkPresentModeKHR wanted = requestedPresentModeKhr(requested);
+    if (wanted == VK_PRESENT_MODE_FIFO_KHR) {
+        return wanted;
+    }
+
+    QVulkanInstance * instance = window->vulkanInstance();
+    VkPhysicalDevice physDev = window->physicalDevice();
+    VkSurfaceKHR surface =
+        instance ? QVulkanInstance::surfaceForWindow(window) : VK_NULL_HANDLE;
+    if (instance && surface != VK_NULL_HANDLE && physDev != VK_NULL_HANDLE) {
+        auto fn = reinterpret_cast<PFN_vkGetPhysicalDeviceSurfacePresentModesKHR>(
+            instance->getInstanceProcAddr(
+                "vkGetPhysicalDeviceSurfacePresentModesKHR"));
+        if (fn) {
+            uint32_t count = 0;
+            if (fn(physDev, surface, &count, nullptr) == VK_SUCCESS && count > 0) {
+                std::vector<VkPresentModeKHR> modes(count);
+                if (fn(physDev, surface, &count, modes.data()) == VK_SUCCESS
+                    && std::find(modes.begin(), modes.end(), wanted) != modes.end()) {
+                    return wanted;
+                }
+            }
+        }
+    }
+    return VK_PRESENT_MODE_FIFO_KHR;
+}
+
+//! Apply the user's present-mode request to QVulkanWindow's private swapchain
+//! configuration.  QVulkanWindow keeps a single presentMode member (FIFO) that
+//! recreateSwapChain() copies into VkSwapchainCreateInfoKHR; writing it here is
+//! the only hook.  Must run after the surface exists and before the first
+//! recreateSwapChain() (i.e. from the renderer's preInitResources()).
+static void applyPresentMode(QVulkanWindow * window, int requested)
+{
+    const VkPresentModeKHR mode = choosePresentMode(window, requested);
+    auto * priv = static_cast<QVulkanWindowPrivate *>(QWindowPrivate::get(window));
+    priv->presentMode = mode;
+    vkLog("present mode: requested %d, using %s", requested, presentModeName(mode));
+    if (mode != requestedPresentModeKhr(requested)) {
+        vkWarn("present mode %s not supported by the surface; using fifo (vsync)",
+               presentModeName(requestedPresentModeKhr(requested)));
+    }
+}
+#endif // HAVE_QT6_GUI_PRIVATE
 
 //! Log the swapchain surface formats relevant to HDR output.
 //!
@@ -530,7 +608,17 @@ public:
     // so Coin's sensor delay queue is never processed and freshly attached
     // sensors never activate.
 
-    void preInitResources() override {}
+    //! Record the widget-level present-mode request (0 FIFO, 1 Mailbox, 2
+    //! Immediate).  Applied in preInitResources(), once QVulkanWindow has
+    //! created the surface that decides which modes are actually supported.
+    void setRequestedPresentMode(int mode) { m_requestedPresentMode = mode; }
+
+    void preInitResources() override
+    {
+#ifdef HAVE_QT6_GUI_PRIVATE
+        applyPresentMode(m_window, m_requestedPresentMode);
+#endif
+    }
 
     void initResources() override
     {
@@ -1141,6 +1229,9 @@ private:
     SoCamera * m_camera = nullptr;
     QVulkanWindow * m_window = nullptr;
     QuarterVulkanWidget * m_owner = nullptr;
+    //! Swapchain present mode requested through the widget API (0 FIFO default,
+    //! 1 Mailbox, 2 Immediate); read once by preInitResources().
+    int m_requestedPresentMode = 0;
     QSize m_lastSurfaceSize;
     //! Display/tuning settings as one blob (see SoVulkanViewSettings).  The
     //! manager diffs and applies the whole blob, so the renderer keeps no
@@ -2385,6 +2476,17 @@ void QuarterVulkanWidget::setPreferredColorFormat(int vkFormat)
     vkLog("setPreferredColorFormat: requesting VkFormat %d", vkFormat);
     d->window->setPreferredColorFormats(
         QList<VkFormat>() << static_cast<VkFormat>(vkFormat));
+}
+
+void QuarterVulkanWidget::setPresentMode(int mode)
+{
+    vkLog("setPresentMode: requesting mode %d", mode);
+    // Stored on the renderer because QVulkanWindow only creates the surface
+    // (needed to know which present modes are supported) at first expose;
+    // preInitResources() applies it before the swapchain is created.
+    if (d->renderer) {
+        d->renderer->setRequestedPresentMode(mode);
+    }
 }
 
 void QuarterVulkanWidget::setHdrOutputEnabled(bool enabled)

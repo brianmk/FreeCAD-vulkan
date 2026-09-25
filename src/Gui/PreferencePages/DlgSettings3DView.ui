@@ -662,6 +662,48 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
        </widget>
       </item>
       <item>
+       <layout class="QHBoxLayout" name="horizontalLayoutVulkanPresentMode">
+        <item>
+         <widget class="QLabel" name="labelVulkanPresentMode">
+          <property name="text">
+           <string>Present mode (V-Sync)</string>
+          </property>
+          <property name="toolTip">
+           <string>How presented frames are synchronized with the display.  FIFO is V-Sync on (the default, always supported, capped at the display refresh).  Mailbox is V-Sync on without tearing and with lower latency, but drops frames the renderer cannot keep up with.  Immediate is V-Sync off: the frame rate is uncapped and the image may tear.  The surface must advertise the mode, otherwise FIFO is used.  Applies when a Vulkan view is opened; an already-open view keeps its mode until it is reopened.</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="Gui::PrefComboBox" name="ComboBox_VulkanPresentMode">
+          <property name="toolTip">
+           <string>How presented frames are synchronized with the display: FIFO (V-Sync, default), Mailbox (V-Sync, low latency) or Immediate (no V-Sync, uncapped, may tear).  Falls back to FIFO when the surface does not support the requested mode.  Applies to newly opened Vulkan views.  Ignored by the standard OpenGL renderer.</string>
+          </property>
+          <property name="prefEntry" stdset="0">
+           <cstring>VulkanPresentMode</cstring>
+          </property>
+          <property name="prefPath" stdset="0">
+           <cstring>View</cstring>
+          </property>
+          <item>
+           <property name="text">
+            <string>FIFO (V-Sync)</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>Mailbox (V-Sync, low latency)</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>Immediate (no V-Sync)</string>
+           </property>
+          </item>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item>
        <widget class="Gui::PrefCheckBox" name="CheckBox_VulkanHDR">
         <property name="text">
          <string>HDR output (scRGB)</string>
