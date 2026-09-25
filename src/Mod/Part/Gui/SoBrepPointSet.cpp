@@ -273,7 +273,9 @@ void SoBrepPointSet::IRRender(SoIRRenderAction* action)
                                      this->renderHighlightIR(a, c);
                                  },
                                  [this](SoIRRenderAction* a) {
-                                     this->SoPointSet::IRRender(a);
+                                     if (a->modelPointsVisible()) {
+                                         this->SoPointSet::IRRender(a);
+                                     }
                                  });
         return;
     }
@@ -284,7 +286,13 @@ void SoBrepPointSet::IRRender(SoIRRenderAction* action)
         ctx = globalCtx;
     }
 
-    inherited::IRRender(action);
+    // The shape's base vertex markers are only recorded when the viewer's
+    // "show vertices" preference is on (carried on the action).  The
+    // highlight/selection overlays below are emitted by a separate node and are
+    // unaffected, so sub-element feedback still works with the markers off.
+    if (action->modelPointsVisible()) {
+        inherited::IRRender(action);
+    }
 
     if (ctx && ctx->highlightIndex == std::numeric_limits<int>::max() && !ctx->isSelectAll()) {
         if (ctx->selectionIndex.empty()) {
