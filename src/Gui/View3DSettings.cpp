@@ -131,8 +131,9 @@ void View3DSettings::migratePreferences()
         && viewGrp->GetBool("VulkanPathTracing", false)) {
         viewGrp->SetInt("VulkanRenderMode", static_cast<int>(ViewRenderMode::PathTracing));
     }
-    // Fold the old edge-overlay pref name into the wireframe name (the overlay
-    // draws the raster wireframe/point passes) before dropping the old key.
+    // Fold the old edge-overlay pref name into the wireframe key (the key is
+    // retained for compatibility; it now controls the model feature-edge
+    // overlay in every Vulkan mode) before dropping the old key.
     if (!viewPrefHasEntry(viewGrp, "VulkanWireframe", ParameterGrp::ParamType::FCBool)
         && viewPrefHasEntry(viewGrp, "VulkanShowEdges", ParameterGrp::ParamType::FCBool)) {
         viewGrp->SetBool("VulkanWireframe", viewGrp->GetBool("VulkanShowEdges", false));

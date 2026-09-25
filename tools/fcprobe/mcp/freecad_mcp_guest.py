@@ -113,7 +113,6 @@ def install_output_capture() -> None:
     if _log_meta["captured"]:
         return
     try:
-        import fcntl
         orig_out = os.dup(1)
         orig_err = os.dup(2)
         r, w = os.pipe()

@@ -4719,7 +4719,6 @@ SolveStatus System::solve(SubSystem* subsysA, SubSystem* subsysB, bool isRedunda
     subsysA->calcJacobi(plistAB, JA);
     subsysA->calcResidual(resA);
 
-    // double convergence = isFine ? XconvergenceFine : XconvergenceRough;
     int maxIterNumber
         = (isRedundantsolving
                ? (sketchSizeMultiplierRedundant ? maxIterRedundant * xsize : maxIterRedundant)

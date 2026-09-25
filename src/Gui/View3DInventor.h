@@ -190,9 +190,9 @@ public Q_SLOTS:
     int getEnvMap() const;
     void setEnvMap(int index);
 
-    /// Whether the wireframe (edge) overlay is drawn on top of objects in the
-    /// Vulkan raster viewport.  Backed by the VulkanWireframe preference and
-    /// mirrored by the status-bar wireframe button.
+    /// Whether the model's feature-edge lines are drawn in the Vulkan
+    /// viewport (every render mode: raster and ray-traced).  Backed by the
+    /// VulkanWireframe preference and mirrored by the status-bar button.
     bool getWireframe() const;
     void setWireframe(bool enabled);
 #endif

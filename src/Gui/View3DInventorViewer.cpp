@@ -2088,15 +2088,16 @@ void View3DInventorViewer::applyVulkanSettings()
         return;
     }
 
-    VK_BREADCRUMB("[VK-TRACE] View3DInventorViewer::applyVulkanSettings wireframe=%d points=%d\n",
-                  hGrp->GetBool("VulkanWireframe", false) ? 1 : 0,
-                  hGrp->GetBool("VulkanShowPoints", false) ? 1 : 0);
-
     // Single source of truth: VulkanViewSettings::load() reads the whole
     // Vulkan display + path-tracing preference set (key + type mapped beside
     // the struct fields), so adding a setting updates one place instead of
     // letting this method and the pref-change observer drift apart.
     vulkanSettings_.load(hGrp);
+
+    VK_BREADCRUMB("[VK-TRACE] View3DInventorViewer::applyVulkanSettings "
+                  "edgeOverlay=%d points=%d\n",
+                  vulkanSettings_.edgeOverlay ? 1 : 0,
+                  vulkanSettings_.showPoints ? 1 : 0);
 
     Q_EMIT vulkanSettingsChanged();
 }

@@ -36,7 +36,8 @@ namespace Gui {
 /// Fresnel + Snell refraction + total internal reflection + Beer-Lambert
 /// absorption).  Mirrored by the status-bar selector in the main window; each
 /// view keeps its own mode.  The two "Interactive" raster modes never enable
-/// path tracing, ray tracing, the denoiser or the edge/point overlays.
+/// path tracing, ray tracing or the denoiser; the point overlay is likewise
+/// raster-only, while the model edge overlay is honoured in every mode.
 enum class ViewRenderMode : int {
     RasterCoin = 0,     // Interactive (raster Coin): classic Coin/GL raster
     RasterVulkan = 1,   // Interactive (raster Vulkan): Vulkan raster viewport
@@ -104,9 +105,10 @@ struct VulkanViewSettings
 
     // True when the mode is a pure-raster mode (RasterCoin/RasterVulkan/
     // Wireframe).  The raster gate derived here tells the backends to keep
-    // path tracing, ray tracing, the denoiser and the edge/point overlays
-    // off regardless of any persisted tuning.  Delegates to the single
-    // isRasterMode() categorization so the mode boundary has one definition.
+    // path tracing, ray tracing, the denoiser and the point overlay off
+    // regardless of any persisted tuning (the model edge overlay is not gated:
+    // it is honoured in every mode).  Delegates to the single isRasterMode()
+    // categorization so the mode boundary has one definition.
     bool rasterOnly() const
     {
 #ifdef FREECAD_USE_VULKAN
@@ -116,8 +118,11 @@ struct VulkanViewSettings
 #endif
     }
 
-    //! Wireframe (edge) overlay and point overlay for the raster backend.
-    bool wireframe = false;
+    //! Model feature-edge visibility (the black BRep edge lines) and the
+    //! point-marker overlay.  The edge overlay is honoured in every Vulkan
+    //! mode -- the raster main pass and the ray-tracing composite both gate
+    //! their line residue on it; the point overlay stays raster-only.
+    bool edgeOverlay = true;
     bool showPoints = false;
     //! HDR output (HDR10 / BT.2020 + ST 2084 PQ) for the Vulkan viewport.
     //! Only effective on a native Wayland session whose compositor exposes the

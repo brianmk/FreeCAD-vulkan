@@ -43,6 +43,7 @@ import ArchIFC
 import Draft
 import DraftVecUtils
 
+from draftutils import gui_utils
 from draftutils import params
 from draftutils import utils
 
@@ -778,6 +779,10 @@ class ViewProviderBuildingPart:
         if prop in ["Placement", "LevelOffset"]:
             self.onChanged(obj.ViewObject, "OverrideUnit")
         elif prop == "Shape":
+            # Defer the (expensive) color scan while a document is being
+            # restored; finishRestoring() applies it once when done.
+            if gui_utils.defer_restore_update(self):
+                return
             colors = self.getColors(obj)
             if hasattr(obj.ViewObject, "DiffuseColor") and colors != obj.ViewObject.DiffuseColor:
                 obj.ViewObject.DiffuseColor = colors
@@ -786,6 +791,15 @@ class ViewProviderBuildingPart:
             self.onChanged(obj.ViewObject, "ChildrenOverride")
         elif prop == "Label":
             self.onChanged(obj.ViewObject, "ShowLabel")
+
+    def finishRestoring(self):
+        """Apply the building part colors once, after a document restore."""
+        if not gui_utils.begin_restore_apply(self):
+            return
+        try:
+            self.updateData(self.Object, "Shape")
+        finally:
+            gui_utils.end_restore_apply(self)
 
     def getColors(self, obj):
         "get the colors of objects inside this BuildingPart"
@@ -1178,16 +1192,17 @@ class ViewProviderBuildingPart:
             return next(callback.v)
 
         if hasattr(obj.ViewObject, "SaveInventor") and obj.ViewObject.SaveInventor:
-            if obj.Shape and obj.Shape.Faces and hasattr(obj, "SavedInventor"):
+            n_faces = gui_utils._shape_face_count(obj) if obj.Shape else 0
+            if n_faces and hasattr(obj, "SavedInventor"):
                 colors = obj.ViewObject.DiffuseColor
-                if len(colors) != len(obj.Shape.Faces):
+                if len(colors) != n_faces:
                     print("Debug: Colors mismatch in", obj.Label)
                     colors = None
                 iv = self.Object.Shape.writeInventor()
                 import re
 
                 if colors:
-                    if len(re.findall(r"IndexedFaceSet", iv)) == len(obj.Shape.Faces):
+                    if len(re.findall(r"IndexedFaceSet", iv)) == n_faces:
                         # convert colors to iv representations
                         colors = [
                             "Material { diffuseColor "

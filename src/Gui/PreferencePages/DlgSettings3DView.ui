@@ -618,6 +618,9 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
         <property name="text">
          <string>Show wireframe (edge overlay)</string>
         </property>
+        <property name="checked">
+         <bool>true</bool>
+        </property>
         <property name="prefEntry" stdset="0">
          <cstring>VulkanWireframe</cstring>
         </property>
@@ -1007,13 +1010,55 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
            </item>
           </widget>
          </item>
-         </layout>
-        </item>
-           </layout>
-          </widget>
+          </layout>
          </item>
-        <item>
-         <layout class="QHBoxLayout" name="horizontalLayoutPreselMsg">
+         <item>
+          <layout class="QHBoxLayout" name="horizontalLayoutVulkanDenoiserScale">
+           <item>
+            <widget class="QLabel" name="labelVulkanDenoiserScale">
+             <property name="text">
+              <string>Denoiser scale</string>
+             </property>
+             <property name="toolTip">
+              <string>Host-side denoiser upscale factor (1.0-8.0, default 1.0).  A factor greater than 1 runs the denoiser at reduced internal resolution and upscales the result, trading detail for a faster path-tracing preview.</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="Gui::PrefDoubleSpinBox" name="DoubleSpinBox_VulkanDenoiserScale">
+             <property name="toolTip">
+              <string>Host-side denoiser upscale factor (1.0-8.0, default 1.0).  A factor greater than 1 runs the denoiser at reduced internal resolution and upscales the result, trading detail for a faster path-tracing preview.</string>
+             </property>
+             <property name="decimals">
+              <number>2</number>
+             </property>
+             <property name="minimum">
+              <double>1.000000000000000</double>
+             </property>
+             <property name="maximum">
+              <double>8.000000000000000</double>
+             </property>
+             <property name="singleStep">
+              <double>0.100000000000000</double>
+             </property>
+             <property name="value">
+              <double>1.000000000000000</double>
+             </property>
+             <property name="prefEntry" stdset="0">
+              <cstring>VulkanPathTracingDenoiserScale</cstring>
+             </property>
+             <property name="prefPath" stdset="0">
+              <cstring>View</cstring>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+            </layout>
+           </widget>
+          </item>
+         <item>
+          <layout class="QHBoxLayout" name="horizontalLayoutPreselMsg">
         <item>
          <widget class="QLabel" name="labelPreselMsg">
           <property name="text">

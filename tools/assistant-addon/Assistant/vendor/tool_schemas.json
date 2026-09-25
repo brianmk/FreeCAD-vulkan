@@ -47,7 +47,7 @@
   },
   {
     "name": "add_fastener",
-    "description": "Add Fasteners screws/bolts to the circular hole faces of `object_name`.\nRestrict to `centers=[[x,y],..]` (hole centre on the top face) and/or\n`diameter`; screw size derives from the matching hole. `screw_type` is the\nuppercase Fasteners code, e.g. 'ISO4014' (hex), 'ISO4762' (socket cap),\n'DIN933' (hex, full thread). `flip=True` sets Invert so the head sits on the\ntop face (head-up). Returns the created screws and the hole edges used.",
+    "description": "Add Fasteners screws/bolts to the circular hole faces of `object_name`.\n    Restrict to `centers=[[x,y],..]` (hole centre on the top face) and/or\n    `diameter`; screw size derives from the matching hole. `screw_type` is the\n    uppercase Fasteners code, e.g. 'ISO4014' (hex), 'ISO4762' (socket cap),\n    'DIN933' (hex, full thread). `flip=True` sets Invert so the head sits on the\n    top face (head-up). Returns the created screws and the hole edges used.",
     "inputSchema": {
       "properties": {
         "object_name": {
@@ -102,7 +102,7 @@
   },
   {
     "name": "add_hole",
-    "description": "Add a threaded hole (PartDesign::Hole) from a circle sketch. `threaded`\ntoggles the cosmetic thread; `model_thread` generates real thread geometry;\n`throughall` drills through; `hole_cut` is none/counterbore/countersink/\ncounterdrill; `drill_point` is flat/angled.",
+    "description": "Add a threaded hole (PartDesign::Hole) from a circle sketch. `threaded`\n    toggles the cosmetic thread; `model_thread` generates real thread geometry;\n    `throughall` drills through; `hole_cut` is none/counterbore/countersink/\n    counterdrill; `drill_point` is flat/angled.",
     "inputSchema": {
       "properties": {
         "sketch": {
@@ -159,7 +159,7 @@
   },
   {
     "name": "add_parameter",
-    "description": "Create/redefine a named parameter stored as a Spreadsheet alias. `value` is\na number or a '40 mm' string; pass `unit` to append a unit to a number.",
+    "description": "Create/redefine a named parameter stored as a Spreadsheet alias. `value` is\n    a number or a '40 mm' string; pass `unit` to append a unit to a number.",
     "inputSchema": {
       "properties": {
         "name": {
@@ -192,7 +192,7 @@
   },
   {
     "name": "boolean_op",
-    "description": "Boolean of two objects. `shape` and `tool` are object names; `mode` is\n'fuse' (union), 'cut' (shape - tool; order matters), or 'common' (intersection).\nResult is created as a Part::Boolean with `name`. Both inputs must be solids\nwith a Shape; verify with measure_clearance if you expect them to mate.",
+    "description": "Boolean of two objects. `shape` and `tool` are object names; `mode` is\n    'fuse' (union), 'cut' (shape - tool; order matters), or 'common' (intersection).\n    Result is created as a Part::Boolean with `name`. Both inputs must be solids\n    with a Shape; verify with measure_clearance if you expect them to mate.",
     "inputSchema": {
       "properties": {
         "shape": {
@@ -231,7 +231,7 @@
   },
   {
     "name": "capture_parameter",
-    "description": "Convert a measurement into a parameter: reads the current `object.property`\nvalue, stores it as the `parameter`, then binds the property to it so the\ndimension is now driven by (and editable via) the parameter.",
+    "description": "Convert a measurement into a parameter: reads the current `object.property`\n    value, stores it as the `parameter`, then binds the property to it so the\n    dimension is now driven by (and editable via) the parameter.",
     "inputSchema": {
       "properties": {
         "object": {
@@ -301,6 +301,15 @@
     }
   },
   {
+    "name": "clear_report_view",
+    "description": "Clear the FreeCAD ReportView's Output tab. Requires the GUI FreeCAD.",
+    "inputSchema": {
+      "properties": {},
+      "title": "clear_report_viewArguments",
+      "type": "object"
+    }
+  },
+  {
     "name": "clear_selection",
     "description": "Clear the current selection.",
     "inputSchema": {
@@ -311,7 +320,7 @@
   },
   {
     "name": "click",
-    "description": "Synthetic left-click at a logical viewport position (x, y px).\nReturns whether something was hit and the resulting selection.",
+    "description": "Synthetic left-click at a logical viewport position (x, y px).\n    Returns whether something was hit and the resulting selection.",
     "inputSchema": {
       "properties": {
         "x": {
@@ -333,7 +342,7 @@
   },
   {
     "name": "control_camera",
-    "description": "Drive the 3D viewport camera. `action` is one of: fit | isometric | top |\nfront | right | rear | bottom | left | dimetric | trimetric | axometric |\nzoom_in | zoom_out | rotate_left | rotate_right | set_direction.",
+    "description": "Drive the 3D viewport camera. `action` is one of: fit | isometric | top |\n    front | right | rear | bottom | left | dimetric | trimetric | axometric |\n    zoom_in | zoom_out | rotate_left | rotate_right | set_direction.",
     "inputSchema": {
       "properties": {
         "action": {
@@ -380,7 +389,7 @@
   },
   {
     "name": "export_objects",
-    "description": "Export objects to `path` (extension selects STEP/STL/IGES...). Use\n`objects=[names]` or export everything with a Shape.",
+    "description": "Export objects to `path` (extension selects STEP/STL/IGES...). Use\n    `objects=[names]` or export everything with a Shape.",
     "inputSchema": {
       "properties": {
         "path": {
@@ -412,7 +421,7 @@
   },
   {
     "name": "extrude",
-    "description": "Extrude a sketch/shape with the Part workbench (not body-bound).\nReturns the Part::Extrusion solid with its bounding box.",
+    "description": "Extrude a sketch/shape with the Part workbench (not body-bound).\n    Returns the Part::Extrusion solid with its bounding box.",
     "inputSchema": {
       "properties": {
         "sketch": {
@@ -503,7 +512,7 @@
   },
   {
     "name": "get_cursor",
-    "description": "Read the cursor position in the 3D viewport (global px, viewport\nlogical px, device px, viewport size, dpr) plus the hovered object.",
+    "description": "Read the cursor position in the 3D viewport (global px, viewport\n    logical px, device px, viewport size, dpr) plus the hovered object.",
     "inputSchema": {
       "properties": {},
       "title": "get_cursorArguments",
@@ -512,7 +521,7 @@
   },
   {
     "name": "get_log",
-    "description": "Return recent FreeCAD log output (stdout/stderr of the process, plus\nevery C++/Qt/Python console message). `limit` = up to N lines; `tail=True`\nreturns the most recent lines (default) or the oldest.",
+    "description": "Return recent FreeCAD log output (stdout/stderr of the process, plus\n    every C++/Qt/Python console message). `limit` = up to N lines; `tail=True`\n    returns the most recent lines (default) or the oldest.",
     "inputSchema": {
       "properties": {
         "limit": {
@@ -587,8 +596,28 @@
     }
   },
   {
+    "name": "get_report_view",
+    "description": "Read the FreeCAD ReportView's Output tab (what the GUI shows the user).\n    `limit` = max lines (0 = all); `tail=True` (default) returns the most recent\n    lines. Requires the GUI FreeCAD. This is the widget contents, distinct from\n    `get_log`'s fd-level capture of the process stream.",
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "default": 0,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "tail": {
+          "default": true,
+          "title": "Tail",
+          "type": "boolean"
+        }
+      },
+      "title": "get_report_viewArguments",
+      "type": "object"
+    }
+  },
+  {
     "name": "get_selection",
-    "description": "Read the current FreeCAD selection: objects and their sub-elements\n(faces/edges/vertices). Empty when no GUI is attached.",
+    "description": "Read the current FreeCAD selection: objects and their sub-elements\n    (faces/edges/vertices). Empty when no GUI is attached.",
     "inputSchema": {
       "properties": {},
       "title": "get_selectionArguments",
@@ -614,7 +643,7 @@
   },
   {
     "name": "link_property",
-    "description": "Bind `object.property` to a parameter via an Expression (=Params.<parameter>)\nso the dimension is driven by the spreadsheet cell. `object` is an object name\n(e.g. 'Pad'), `property` a numeric property (e.g. 'Length'), `parameter` a name\nalready created by add_parameter. Works on feature properties (Pad.Length,\nPocket.Length); it does NOT drive raw sketch geometry coordinates.",
+    "description": "Bind `object.property` to a parameter via an Expression (=Params.<parameter>)\n    so the dimension is driven by the spreadsheet cell. `object` is an object name\n    (e.g. 'Pad'), `property` a numeric property (e.g. 'Length'), `parameter` a name\n    already created by add_parameter. Works on feature properties (Pad.Length,\n    Pocket.Length); it does NOT drive raw sketch geometry coordinates.",
     "inputSchema": {
       "properties": {
         "object": {
@@ -641,7 +670,7 @@
   },
   {
     "name": "list_objects",
-    "description": "List every object in the active document (name, label, TypeId,\nvisibility, state).",
+    "description": "List every object in the active document (name, label, TypeId,\n    visibility, state).",
     "inputSchema": {
       "properties": {},
       "title": "list_objectsArguments",
@@ -684,7 +713,7 @@
   },
   {
     "name": "log",
-    "description": "Write a line into the FreeCAD console/log. `level` is message/warning/\nerror/log.",
+    "description": "Write a line into the FreeCAD console/log. `level` is message/warning/\n    error/log.",
     "inputSchema": {
       "properties": {
         "level": {
@@ -909,7 +938,7 @@
   },
   {
     "name": "measure_clearance",
-    "description": "Validate clearance between objects (mm). Give `a`+`b` for one pair, or\n`objects=[names]` for all pairs. Returns `min_distance_mm` (min surface gap;\n0 when touching/overlapping) and `overlaps`/`common_volume_mm3` when the\nshapes' intersection has positive volume (a real collision). Use after any\ngeometric change to confirm parts do not interpenetrate.",
+    "description": "Validate clearance between objects (mm). Give `a`+`b` for one pair, or\n    `objects=[names]` for all pairs. Returns `min_distance_mm` (min surface gap;\n    0 when touching/overlapping) and `overlaps`/`common_volume_mm3` when the\n    shapes' intersection has positive volume (a real collision). Use after any\n    geometric change to confirm parts do not interpenetrate.",
     "inputSchema": {
       "properties": {
         "a": {
@@ -958,7 +987,7 @@
   },
   {
     "name": "mirror",
-    "description": "Mirror the previous (or named `feature`) about a body plane (XY/XZ/YZ)\nusing PartDesign::Mirrored.",
+    "description": "Mirror the previous (or named `feature`) about a body plane (XY/XZ/YZ)\n    using PartDesign::Mirrored.",
     "inputSchema": {
       "properties": {
         "feature": {
@@ -990,7 +1019,7 @@
   },
   {
     "name": "mirror_object",
-    "description": "Mirror a whole Part object about a plane at `base` along `normal`\n(Part workbench mirroring, e.g. a box about the YZ plane).",
+    "description": "Mirror a whole Part object about a plane at `base` along `normal`\n    (Part workbench mirroring, e.g. a box about the YZ plane).",
     "inputSchema": {
       "properties": {
         "source": {
@@ -1042,7 +1071,7 @@
   },
   {
     "name": "move_cursor",
-    "description": "Move the mouse cursor to a logical viewport position (x, y in px) and\nreturn the sampled position + hovered object.",
+    "description": "Move the mouse cursor to a logical viewport position (x, y in px) and\n    return the sampled position + hovered object.",
     "inputSchema": {
       "properties": {
         "x": {
@@ -1081,7 +1110,7 @@
   },
   {
     "name": "new_sketch",
-    "description": "Create a new sketch. `plane` is XY/XZ/YZ. `body` is 'auto' (create or\nreuse a PartDesign::Body), a body name, or 'None' for a free sketch.\nReturns the sketch name, its body and plane.",
+    "description": "Create a new sketch. `plane` is XY/XZ/YZ. `body` is 'auto' (create or\n    reuse a PartDesign::Body), a body name, or 'None' for a free sketch.\n    Returns the sketch name, its body and plane.",
     "inputSchema": {
       "properties": {
         "name": {
@@ -1106,7 +1135,7 @@
   },
   {
     "name": "open_document",
-    "description": "Open an existing FreeCAD document (.FCStd, .step, .brep, ...) and\nreturn its name.",
+    "description": "Open an existing FreeCAD document (.FCStd, .step, .brep, ...) and\n    return its name.",
     "inputSchema": {
       "properties": {
         "path": {
@@ -1123,7 +1152,7 @@
   },
   {
     "name": "pad",
-    "description": "Extrude the `sketch` (a closed, non-self-intersecting profile) into a solid\nand add it as a PartDesign::Pad in the Body. `length` is in mm; `symmetric`\nextrudes both ways about the sketch plane; `reversed` flips the direction.\nThe sketch must be closed/coincident to form a valid profile - check it with\nvalidate_sketch first. After recompute, verify with get_property(Body,...,'Length')\nor inspect the result.",
+    "description": "Extrude the `sketch` (a closed, non-self-intersecting profile) into a solid\n    and add it as a PartDesign::Pad in the Body. `length` is in mm; `symmetric`\n    extrudes both ways about the sketch plane; `reversed` flips the direction.\n    The sketch must be closed/coincident to form a valid profile - check it with\n    validate_sketch first. After recompute, verify with get_property(Body,...,'Length')\n    or inspect the result.",
     "inputSchema": {
       "properties": {
         "sketch": {
@@ -1229,7 +1258,7 @@
   },
   {
     "name": "pocket",
-    "description": "Cut the `sketch`'s profile out of the solid (PartDesign::Pocket). `length`\nis the cut depth in mm (larger than the body if you want a through cut);\n`symmetric` cuts both ways; `reversed` flips the cut direction. The profile\nmust lie on a face/plane of the body. After recompute, verify with\nget_property or measure_clearance.",
+    "description": "Cut the `sketch`'s profile out of the solid (PartDesign::Pocket). `length`\n    is the cut depth in mm (larger than the body if you want a through cut);\n    `symmetric` cuts both ways; `reversed` flips the cut direction. The profile\n    must lie on a face/plane of the body. After recompute, verify with\n    get_property or measure_clearance.",
     "inputSchema": {
       "properties": {
         "sketch": {
@@ -1270,6 +1299,26 @@
     "inputSchema": {
       "properties": {},
       "title": "recomputeArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "restart_freecad",
+    "description": "Restart the FreeCAD GUI, reopening the active document (or `path`) and\n    suppressing the crash-recovery dialog.  Unsaved documents are parked in a\n    temp file and reopened, so the scene survives the restart.  Blocks until\n    the replacement FreeCAD guest is live again.",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "default": "",
+          "title": "Path",
+          "type": "string"
+        },
+        "clean_recovery": {
+          "default": true,
+          "title": "Clean Recovery",
+          "type": "boolean"
+        }
+      },
+      "title": "restart_freecadArguments",
       "type": "object"
     }
   },
@@ -1336,7 +1385,7 @@
   },
   {
     "name": "run_python",
-    "description": "Run a FreeCAD Python snippet. mode='exec' for statements, 'eval' for a\nsingle expression. Returns any printed stdout and the eval result.",
+    "description": "Run a FreeCAD Python snippet. mode='exec' for statements, 'eval' for a\n    single expression. Returns any printed stdout and the eval result.",
     "inputSchema": {
       "properties": {
         "code": {
@@ -1415,7 +1464,7 @@
   },
   {
     "name": "set_parameter",
-    "description": "Update a named parameter's value (creates it if missing). `value` is a\nnumber or a '40 mm' string; `unit` appends a unit to a numeric value. Changing\na value propagates to any property linked via link_property.",
+    "description": "Update a named parameter's value (creates it if missing). `value` is a\n    number or a '40 mm' string; `unit` appends a unit to a numeric value. Changing\n    a value propagates to any property linked via link_property.",
     "inputSchema": {
       "properties": {
         "name": {
@@ -1500,7 +1549,7 @@
   },
   {
     "name": "set_render_mode",
-    "description": "Switch the 3D viewport renderer backend. mode='opengl'|'vulkan'|'raytracing'.\nSets the preference and recreates the active 3D view.",
+    "description": "Switch the 3D viewport renderer backend. mode='opengl'|'vulkan'|'raytracing'.\n    Sets the preference and recreates the active 3D view.",
     "inputSchema": {
       "properties": {
         "mode": {
@@ -1571,8 +1620,23 @@
     }
   },
   {
+    "name": "show_report_view",
+    "description": "Show or hide the FreeCAD ReportView dock. `visible=True` (default) shows\n    it, raises it, and brings its Output tab to the front. Requires the GUI.",
+    "inputSchema": {
+      "properties": {
+        "visible": {
+          "default": true,
+          "title": "Visible",
+          "type": "boolean"
+        }
+      },
+      "title": "show_report_viewArguments",
+      "type": "object"
+    }
+  },
+  {
     "name": "sketch_arc",
-    "description": "Add an arc to `sketch` (center=[x,y], angles in degrees).\n`construction=True` makes it a reference arc.",
+    "description": "Add an arc to `sketch` (center=[x,y], angles in degrees).\n    `construction=True` makes it a reference arc.",
     "inputSchema": {
       "properties": {
         "sketch": {
@@ -1624,7 +1688,7 @@
   },
   {
     "name": "sketch_circle",
-    "description": "Add a full circle to `sketch` (center=[x,y]). `construction=True` makes\nit a reference circle (e.g. a bolt circle, not part of the solid).",
+    "description": "Add a full circle to `sketch` (center=[x,y]). `construction=True` makes\n    it a reference circle (e.g. a bolt circle, not part of the solid).",
     "inputSchema": {
       "properties": {
         "sketch": {
@@ -1666,7 +1730,7 @@
   },
   {
     "name": "sketch_ellipse",
-    "description": "Add an ellipse to `sketch` (center=[x,y]). `construction=True` makes it\na reference ellipse.",
+    "description": "Add an ellipse to `sketch` (center=[x,y]). `construction=True` makes it\n    a reference ellipse.",
     "inputSchema": {
       "properties": {
         "sketch": {
@@ -1713,7 +1777,7 @@
   },
   {
     "name": "sketch_line",
-    "description": "Add a single line segment to `sketch` from p0 to p1 ([x,y]).\n`construction=True` makes it a reference line (used for symmetry/helpers,\nnot part of the solid).",
+    "description": "Add a single line segment to `sketch` from p0 to p1 ([x,y]).\n    `construction=True` makes it a reference line (used for symmetry/helpers,\n    not part of the solid).",
     "inputSchema": {
       "properties": {
         "sketch": {
@@ -1783,7 +1847,7 @@
   },
   {
     "name": "sketch_polygon",
-    "description": "Add a regular closed N-gon to `sketch` (center=[x,y]). `construction`\ntoggles reference (non-solid-driving) geometry.",
+    "description": "Add a regular closed N-gon to `sketch` (center=[x,y]). `construction`\n    toggles reference (non-solid-driving) geometry.",
     "inputSchema": {
       "properties": {
         "sketch": {
@@ -1830,7 +1894,7 @@
   },
   {
     "name": "sketch_polyline",
-    "description": "Add a polyline to `sketch`. `points` is [[x,y], ...]; set closed=True\nto link the last point back to the first. `construction` toggles reference\n(non-solid-driving) geometry.",
+    "description": "Add a polyline to `sketch`. `points` is [[x,y], ...]; set closed=True\n    to link the last point back to the first. `construction` toggles reference\n    (non-solid-driving) geometry.",
     "inputSchema": {
       "properties": {
         "sketch": {
@@ -1868,7 +1932,7 @@
   },
   {
     "name": "sketch_rectangle",
-    "description": "Add a closed rectangle to `sketch` (corner-to-corner). Set\n`construction=True` for a reference line that does not drive the solid.",
+    "description": "Add a closed rectangle to `sketch` (corner-to-corner). Set\n    `construction=True` for a reference line that does not drive the solid.",
     "inputSchema": {
       "properties": {
         "sketch": {
@@ -1910,7 +1974,7 @@
   },
   {
     "name": "sketch_slot",
-    "description": "Add a rounded slot (stadium) to `sketch` (center=[x,y]).\n`construction=True` makes it a reference slot.",
+    "description": "Add a rounded slot (stadium) to `sketch` (center=[x,y]).\n    `construction=True` makes it a reference slot.",
     "inputSchema": {
       "properties": {
         "sketch": {
@@ -1957,7 +2021,7 @@
   },
   {
     "name": "sketch_spline",
-    "description": "Add a spline to `sketch` through the given [[x,y], ...] points.\n`construction=True` makes it a reference spline.",
+    "description": "Add a spline to `sketch` through the given [[x,y], ...] points.\n    `construction=True` makes it a reference spline.",
     "inputSchema": {
       "properties": {
         "sketch": {
@@ -1990,7 +2054,7 @@
   },
   {
     "name": "snapshot",
-    "description": "Return viewport + document + selection + camera state (a live probe\nsnapshot).",
+    "description": "Return viewport + document + selection + camera state (a live probe\n    snapshot).",
     "inputSchema": {
       "properties": {},
       "title": "snapshotArguments",
@@ -1999,7 +2063,7 @@
   },
   {
     "name": "status",
-    "description": "Report the live FreeCAD instance: active document, object count,\nselection, GUI availability, and the socket in use.",
+    "description": "Report the live FreeCAD instance: active document, object count,\n    selection, GUI availability, and the socket in use.",
     "inputSchema": {
       "properties": {},
       "title": "statusArguments",
@@ -2008,7 +2072,7 @@
   },
   {
     "name": "suggest_constraints",
-    "description": "Suggest what to do to a sketch: remove redundant/conflicting constraints,\nFreeCAD's missing-constraint hints, and a reason about remaining DOF.\nmode='apply' runs FreeCAD's autoconstraint to add missing constraints.",
+    "description": "Suggest what to do to a sketch: remove redundant/conflicting constraints,\n    FreeCAD's missing-constraint hints, and a reason about remaining DOF.\n    mode='apply' runs FreeCAD's autoconstraint to add missing constraints.",
     "inputSchema": {
       "properties": {
         "sketch": {
@@ -2030,7 +2094,7 @@
   },
   {
     "name": "validate_sketch",
-    "description": "Solver diagnostics for a sketch: degrees of freedom (DoF), FullyConstrained\nflag, status string, redundant/conflicting/malformed constraint indices, a\nper-constraint breakdown and a geometry outline.",
+    "description": "Solver diagnostics for a sketch: degrees of freedom (DoF), FullyConstrained\n    flag, status string, redundant/conflicting/malformed constraint indices, a\n    per-constraint breakdown and a geometry outline.",
     "inputSchema": {
       "properties": {
         "sketch": {

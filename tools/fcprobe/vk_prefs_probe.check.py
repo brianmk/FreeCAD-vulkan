@@ -6,7 +6,7 @@ The probe cycles the Vulkan-only View prefs (VulkanWireframe / VulkanShowPoints
 per phase and dumping frames.  Two invariants:
 
   - Code path: the `[VK-TRACE] View3DInventorViewer::applyVulkanSettings` breadcrumb
-    must have recorded the wireframe=0->1 (and points=1) transitions the probe made.
+    must have recorded the edgeOverlay=0->1 (and points=1) transitions the probe made.
   - Render: with the wireframe overlay on, at least one dumped frame must contain
     >= `MIN_PX` red-dominant edge pixels (the overlays actually drew); with it off
     (baseline) some frame must have none (so a stuck-on overlay is caught).
@@ -22,12 +22,12 @@ import re
 
 EDGE_LINE = re.compile(
     r"\[VK-TRACE\] View3DInventorViewer::applyVulkanSettings "
-    r"wireframe=(\d+) points=(\d+)")
+    r"edgeOverlay=(\d+) points=(\d+)")
 MIN_PX = 50
 
 
 def _breadcrumbs(lines):
-    # [(wireframe, points)] for every applyVulkanSettings record.
+    # [(edgeOverlay, points)] for every applyVulkanSettings record.
     return [(int(m.group(1)), int(m.group(2)))
             for line in lines for m in [EDGE_LINE.search(line)] if m]
 
@@ -61,13 +61,13 @@ def check(lines, report):
             "is FC_VULKAN_BREADCRUMBS=1 set?)")
         return
 
-    wireframe_on = [e for e in crumbs if e[0] == 1]
-    wireframe_off = [e for e in crumbs if e[0] == 0]
+    edge_on = [e for e in crumbs if e[0] == 1]
+    edge_off = [e for e in crumbs if e[0] == 0]
     points_on = [p for p in crumbs if p[1] == 1]
-    if not wireframe_on:
-        err("applyVulkanSettings never recorded wireframe=1")
-    if not wireframe_off:
-        err("applyVulkanSettings never recorded wireframe=0 (baseline)")
+    if not edge_on:
+        err("applyVulkanSettings never recorded edgeOverlay=1")
+    if not edge_off:
+        err("applyVulkanSettings never recorded edgeOverlay=0 (baseline)")
     if not points_on:
         err("applyVulkanSettings never recorded points=1")
 

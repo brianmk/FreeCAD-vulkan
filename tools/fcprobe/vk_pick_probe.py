@@ -29,7 +29,7 @@ import sys
 
 import FreeCAD
 import FreeCADGui
-from PySide import QtCore, QtGui, QtWidgets
+from PySide import QtCore
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from freecad_probe import Session

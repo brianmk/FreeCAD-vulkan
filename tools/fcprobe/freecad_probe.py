@@ -55,18 +55,6 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional
 # lenient key=value parser.  Any unrecognized token is kept as a raw field.
 _PICKPROBE_FIELDS = {"event", "pos", "hit", "obj", "bbox", "local", "sub"}
 
-# Substrings that identify an output line as a Khronos Vulkan validation-layer
-# diagnostic (VUID = Vulkan Validation ID).  These are ranked by specificity so
-# the scanner picks a stable classification; a line is classified as validation
-# output when any non-empty marker matches.
-_VALIDATION_MARKERS = (
-    "VUID-",
-    "UNASSIGNED-",
-    "Validation Error",
-    "Validation Warning",
-    "vk",
-)
-
 
 def _split_kv(token: str) -> Optional[tuple[str, str]]:
     """Split ``key=value`` (key word chars only).  Returns None if not a kv."""
@@ -640,20 +628,6 @@ def iter_events(lines: Iterable[str]) -> Iterator[dict[str, Any]]:
         ev = parse_event(line)
         if ev is not None:
             yield ev
-
-
-def format_event(ev: dict[str, Any]) -> str:
-    """Render a normalized event back to a canonical single-line record."""
-    parts = []
-    if ev.get("kind"):
-        parts.append(str(ev["kind"]))
-    for k, v in ev.get("fields", {}).items():
-        if k == "_extra":
-            parts.extend(str(x) for x in v)
-        else:
-            parts.append(f"{k}={v}")
-    text = ev.get("text") or " ".join(parts)
-    return f"[{ev['source']}] {text}"
 
 
 # ---------------------------------------------------------------------------
@@ -1886,10 +1860,6 @@ _FC_IMPORT_ROOTS = frozenset({
     "PySide", "PyQt", "PyQt6", "PyQt5", "pivy", "shiboken",
 })
 
-# Modules the probe imports that are NOT FreeCAD/PySide-ecosystem and do not
-# need to be re-imported in a fresh interpreter for the smoke test.
-_LINT_LOCAL_MODULES = frozenset({"freecad_probe"})
-
 
 def _builtin_names() -> frozenset[str]:
     b = __builtins__
@@ -2368,12 +2338,6 @@ def _build_parser() -> Any:
         type=int,
         default=50,
         help="minimum edge-colored pixels for --check-preferences (default 50)",
-    )
-    run.add_argument(
-        "--lint",
-        action="store_true",
-        help="(deprecated; the pre-flight now always runs) run pre-flight "
-             "checks and abort before launching FreeCAD if any ERROR is found",
     )
     run.add_argument(
         "--no-focus",

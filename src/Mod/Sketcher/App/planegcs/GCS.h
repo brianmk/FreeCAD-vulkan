@@ -624,8 +624,6 @@ public:
     void evaluateDrivenConstraints();
 
     void undoSolution();
-    // FIXME: looks like XconvergenceFine is not the solver precision, at least in DogLeg
-    // solver.
     //  Note: Yes, every solver has a different way of interpreting precision
     //  but one has to study what is this needed for in order to decide
     //  what to return (this is unchanged from previous versions)

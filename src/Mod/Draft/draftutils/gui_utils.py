@@ -58,6 +58,48 @@ if App.GuiUp:
     # from PySide import QtSvg  # for load_texture
 
 
+# Restore-time update coalescing helpers.
+#
+# When a document is opened, GuiDocument.xml restores every view property one
+# at a time and each set fires onChanged()/updateData() on the Python view
+# provider. Expensive providers (dimensions, windows, axes, ...) that rebuild
+# geometry or colors on every call therefore repeat that work once per restored
+# property, which dominates the open time. These helpers let a provider skip
+# the intermediate updates while a restore is in progress and re-apply its
+# state exactly once from finishRestoring().
+def defer_restore_update(proxy):
+    """Return True if an in-progress document restore should defer this update.
+
+    Call at the top of ``onChanged``/``updateData``. The first deferred call
+    sets ``_restore_deferred`` so ``finishRestoring()`` knows that a
+    consolidated update is needed.
+    """
+    if getattr(proxy, "_restore_applying", False):
+        return False
+    is_restoring = getattr(App, "isRestoring", None)
+    if is_restoring is None or not is_restoring():
+        return False
+    proxy._restore_deferred = True
+    return True
+
+
+def begin_restore_apply(proxy):
+    """Begin the consolidated update in ``finishRestoring()``.
+
+    Returns False when no update was deferred, so the caller can return early.
+    """
+    if not getattr(proxy, "_restore_deferred", False):
+        return False
+    proxy._restore_deferred = False
+    proxy._restore_applying = True
+    return True
+
+
+def end_restore_apply(proxy):
+    """End the consolidated update started by ``begin_restore_apply``."""
+    proxy._restore_applying = False
+
+
 def get_3d_view():
     """Return the current 3D view.
 
@@ -353,6 +395,31 @@ def remove_hidden(objectslist):
 removeHidden = remove_hidden
 
 
+# Cache of face counts keyed by the owning document object.
+#
+# `len(shape.Faces)` materialises every face and is surprisingly expensive
+# (tens of ms for a few hundred faces), and it dominates get_diffuse_color()
+# because the same objects are re-scanned for every building part that shares
+# their subtree. The count cannot be cached on the shape: `obj.Shape` returns a
+# fresh Python wrapper on every access, so its id is never reused. Instead the
+# cache is keyed by the document object (whose Python wrapper is stable) and
+# validated with `Part.TopoShape.isSame()`, so the count is recomputed only
+# when the shape actually changes.
+_face_count_cache = {}
+
+
+def _shape_face_count(obj):
+    cached = _face_count_cache.get(obj)
+    shape = obj.Shape
+    if cached is not None and cached[0].isSame(shape):
+        return cached[1]
+    count = len(shape.Faces)
+    if len(_face_count_cache) > 20000:
+        _face_count_cache.clear()
+    _face_count_cache[obj] = (shape, count)
+    return count
+
+
 def get_diffuse_color(objs):
     """Get a (cumulative) diffuse color from one or more objects.
 
@@ -386,7 +453,7 @@ def get_diffuse_color(objs):
                 cols = _get_color(base) * count
                 if obj.ColoredElements is None:
                     return cols
-                face_num = len(base.Shape.Faces)
+                face_num = _shape_face_count(base)
                 for elm, override in zip(obj.ColoredElements[1], obj.ViewObject.OverrideColorList):
                     if (
                         "Face" in elm
@@ -419,12 +486,13 @@ def get_diffuse_color(objs):
             else:
                 return []
         elif hasattr(obj.ViewObject, "DiffuseColor"):
-            if len(obj.ViewObject.DiffuseColor) == len(obj.Shape.Faces):
+            n_faces = _shape_face_count(obj)
+            if len(obj.ViewObject.DiffuseColor) == n_faces:
                 return obj.ViewObject.DiffuseColor
             else:
                 col = obj.ViewObject.ShapeColor
                 col = (col[0], col[1], col[2], 1.0 - obj.ViewObject.Transparency / 100.0)
-                return [col] * len(obj.Shape.Faces)
+                return [col] * n_faces
         elif obj.hasExtension("App::GeoFeatureGroupExtension"):
             cols = []
             for sub in obj.Group:
@@ -441,7 +509,7 @@ def get_diffuse_color(objs):
             and hasattr(obj.ViewObject, "DiffuseColor")
             and (
                 len(obj.ViewObject.DiffuseColor) == 1
-                or len(obj.ViewObject.DiffuseColor) == len(obj.Shape.Faces)
+                or len(obj.ViewObject.DiffuseColor) == _shape_face_count(obj)
             )
         ):
             return obj.ViewObject.DiffuseColor

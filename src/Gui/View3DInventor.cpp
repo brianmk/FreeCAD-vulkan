@@ -539,8 +539,8 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
         // settings.rasterOnly(), which is seeded below by applyVulkanSettings()
         // after the mode is persisted.  This keeps the gate in one place so
         // re-pushed preferences can never re-enable path tracing or the
-        // denoiser while the viewport is in a raster mode.  (The wireframe /
-        // point overlays are raster-only and are honored in raster modes.)
+        // denoiser while the viewport is in a raster mode.  (The point overlay
+        // is raster-only; the model edge overlay is honoured in every mode.)
     }
     if (_vulkanAdapter) {
         // Table-driven apply: the mode selects the view mode, whether the ray
@@ -588,16 +588,16 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
 #ifdef FREECAD_USE_VULKAN
     // Persist the mode so the view reopens in the same state and the
     // pref-driven pushSettings() stays consistent with the viewport.  The
-    // wireframe / point overlays are the user's own choice and are preserved;
+    // edge and point overlays are the user's own choice and are preserved;
     // the runtime render state is gated in pushSettings() by
     // VulkanViewSettings::rasterOnly(), seeded once the mode below is persisted.
     if (auto grp = App::GetApplication().GetParameterGroupByPath(
             "User parameter:BaseApp/Preferences/View")) {
         // Write the render mode so a reopened view (or a later mode switch)
-        // never inherits a leftover from a prior mode/session.  The wireframe /
-        // point overlays are the user's own choice and are honored in every
-        // mode -- they are a raster-backend feature and the RTX backend simply
-        // ignores them -- so they are left untouched here.
+        // never inherits a leftover from a prior mode/session.  The edge and
+        // point overlays are the user's own choice and are left untouched here;
+        // the point overlay's runtime enable stays gated by rasterOnly() in
+        // pushSettings(), while the edge overlay is honoured in every mode.
         // VulkanRenderMode is the single source of the render mode; there is no
         // separate path-tracing flag to keep in sync.
         grp->SetInt("VulkanRenderMode", static_cast<int>(mode));
@@ -649,15 +649,14 @@ void View3DInventor::setEnvMap(int index)
 
 bool View3DInventor::getWireframe() const
 {
-    // The wireframe (edge) overlay is a raster-backend feature: pushSettings()
-    // forces it off in the ray-traced modes (the RTX backend ignores it), so
-    // report the *effective* state and the status-bar toggle mirrors what is
-    // actually drawn instead of just the stored preference.
+    // The model feature-edge overlay is honoured in every Vulkan mode now: the
+    // raster main pass and the ray-tracing composite both gate their line
+    // residue on the same flag (see SoVulkanRenderBackend::setEdgeOverlayVisible),
+    // so the status-bar button mirrors the stored preference directly.
     if (!_viewer) {
         return false;
     }
-    const VulkanViewSettings& settings = _viewer->getVulkanViewSettings();
-    return settings.rasterOnly() && settings.wireframe;
+    return _viewer->getVulkanViewSettings().edgeOverlay;
 }
 
 void View3DInventor::setWireframe(bool enabled)
