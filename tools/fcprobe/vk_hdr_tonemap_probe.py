@@ -10,7 +10,7 @@ The host asserts the renderer accepted each operator by reading the
 ``[VK-SET] ... hdrToneMap=N`` breadcrumbs, and fails on any Vulkan validation
 error or report-view error (the harness does that automatically).  The swapchain
 format (``[VK-HDR] initSwapChainResources colorFormat=...``) records whether HDR
-was actually active: 64 = VK_FORMAT_A2B10G10R10_UNORM_PACK32, 44 = 8-bit BGRA.
+was actually active: 97 = VK_FORMAT_R16G16B16A16_SFLOAT (scRGB), 44 = 8-bit BGRA.
 
 Usage:
   FreeCAD tools/fcprobe/vk_hdr_tonemap_probe.py
@@ -41,6 +41,24 @@ def log(msg):
 s = Session(name="hdrtonemap")
 steps = [0]
 
+# The HDR prefs are written to the real user config by set_pref(), so save the
+# prior values and restore them at the end: otherwise this probe leaves
+# VulkanHDR=1 behind and every later harness run inherits the FP16/scRGB
+# swapchain (which the 8-bit frame dumper cannot read).
+_p = FreeCAD.ParamGet(VIEW)
+_PRIOR = {
+    "VulkanHDR": _p.GetBool("VulkanHDR", False),
+    "VulkanHDRExposure": _p.GetFloat("VulkanHDRExposure", 1.0),
+    "VulkanHDRToneMap": _p.GetInt("VulkanHDRToneMap", 0),
+}
+
+
+def restore_prefs():
+    s.set_pref(VIEW, "VulkanHDR", _PRIOR["VulkanHDR"])
+    s.set_pref(VIEW, "VulkanHDRExposure", _PRIOR["VulkanHDRExposure"])
+    s.set_pref(VIEW, "VulkanHDRToneMap", _PRIOR["VulkanHDRToneMap"])
+    log("restored prefs: " + repr(_PRIOR))
+
 
 def build_scene():
     FreeCADGui.activateWorkbench("PartWorkbench")
@@ -69,7 +87,7 @@ def step():
         s.set_pref(VIEW, "UseVulkanRenderer", True)
         s.set_pref(VIEW, "VulkanRenderMode", 1)   # RasterVulkan
         s.set_pref(VIEW, "VulkanHDR", True)
-        s.set_pref(VIEW, "VulkanHDRExposure", 0.02)
+        s.set_pref(VIEW, "VulkanHDRExposure", 1.0)
         s.set_pref(VIEW, "VulkanHDRToneMap", 0)
         build_scene()
         s.frame_phase("clip")
@@ -99,6 +117,7 @@ def step():
             s.vulkan_render()
         s.frame_phase("hable")
         s.snapshot()
+        restore_prefs()
         s.finish()
         FreeCADGui.getMainWindow().close()
         return

@@ -47,6 +47,12 @@ public:
     float maxNits() const;
     //! Minimum luminance in cd/m².  0 when unknown.
     float minNits() const;
+    //! True when the output the viewport is on is actually driven in an HDR
+    //! mode.  The compositor describes an HDR/wide-gamut output with a PQ or
+    //! HLG transfer function (or a peak luminance well above SDR white), so
+    //! this is the authoritative "is HDR live on this screen" signal.  It is
+    //! false until the asynchronous probe answers.
+    bool isHdrOutput() const;
 
     //! Start (or restart) the probe for \a screen.  Safe to call repeatedly
     //! and a no-op off Wayland / without the protocol.

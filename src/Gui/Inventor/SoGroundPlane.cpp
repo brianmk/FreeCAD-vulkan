@@ -26,6 +26,7 @@
 
 #include <Inventor/SbViewVolume.h>
 #include <Inventor/actions/SoGLRenderAction.h>
+#include <Inventor/actions/SoGetBoundingBoxAction.h>
 #ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/actions/SoIRRenderAction.h>
 #endif
@@ -141,6 +142,20 @@ void SoGroundPlane::GLRender(SoGLRenderAction* action)
     }
     updateGrid(action->getState());
     inherited::GLRender(action);
+}
+
+void SoGroundPlane::getBoundingBox(SoGetBoundingBoxAction* action)
+{
+    // The grid is an unbounded decoration whose extent is derived from the
+    // camera's view volume: updateGrid() samples the near and far corners of
+    // the current view volume to size the grid.  If the grid contributed to the
+    // scene bounding box, the two would form a closed feedback loop -- the
+    // Vulkan viewport computes the camera near/far from the scene bbox and
+    // publishes them onto the camera, the grid then grows to cover that larger
+    // view volume, which enlarges the next bbox (and thus near/far) by ~3x per
+    // frame until the coordinates blow up.  Keep the grid out of bounding-box
+    // queries; it is always drawn, so nothing depends on its extent.
+    (void)action;
 }
 
 void SoGroundPlane::updateGrid(SoState* state)

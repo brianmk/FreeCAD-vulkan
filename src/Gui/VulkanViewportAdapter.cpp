@@ -50,32 +50,6 @@
 
 using namespace Gui;
 
-#ifdef FREECAD_USE_VULKAN
-namespace {
-
-//! The VulkanHDRExposure preference default (see VulkanViewSettings).  It is
-//! the "auto" sentinel: at this value the display's detected reference white is
-//! preferred, any other value is an explicit user choice.
-constexpr float kDefaultHdrExposure = 0.02f;
-
-//! Resolve the HDR exposure pushed to the renderer.  The manual preference wins
-//! unless it is still at its default, in which case the compositor-reported
-//! reference white (cd/m², mapped to the 10000 cd/m² PQ scale) is used when
-//! available.  Without a detected value the built-in convention is kept.
-float resolveHdrExposure(float prefExposure)
-{
-    if (std::abs(prefExposure - kDefaultHdrExposure) < 1e-6f) {
-        const DisplayLuminance& luminance = DisplayLuminance::instance();
-        if (luminance.hasValue() && luminance.referenceWhiteNits() > 0.0f) {
-            return luminance.referenceWhiteNits() / 10000.0f;
-        }
-    }
-    return prefExposure;
-}
-
-} // namespace
-#endif // FREECAD_USE_VULKAN
-
 VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
                                              View3DInventorViewer* viewer,
                                              QObject* parent)
@@ -117,9 +91,10 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
     _viewer->applyVulkanSettings();
     if (_viewer->getVulkanViewSettings().hdrEnabled) {
         _vulkanViewer->setHdrOutputEnabled(true);
-        // Auto-detect the display's reference white for the HDR exposure.  The
-        // probe is asynchronous, so changed() re-pushes the settings once the
-        // compositor answers (and after an output reconfiguration).
+        // The output's HDR state gates the HDR encode (see pushSettings) and
+        // supplies the reference white.  The probe is asynchronous, so
+        // changed() re-pushes the settings once the compositor answers, and
+        // again after an output reconfiguration.
         DisplayLuminance& luminance = DisplayLuminance::instance();
         QScreen* screen = _vulkanViewer->screen();
         luminance.query(screen ? screen : QGuiApplication::primaryScreen());
@@ -498,28 +473,35 @@ void VulkanViewportAdapter::pushSettings()
     vs.pointsOverlay = effPoints;
     vs.edgeOverlay = effEdgeOverlay;
     vs.edgeColor = settings.edgeColor;
-    // HDR output: encode only when the preference asked for it AND the live
-    // swapchain actually came up with an HDR format (the window chooses the
-    // format before the settings can be pushed).  Otherwise the output stays
-    // SDR, matching the 8-bit surface.
+    // scRGB output is enabled whenever the preference asked for it AND the
+    // window actually came up on the FP16 extended-linear swapchain (it chooses
+    // the format before the settings can be pushed).  It is deliberately NOT
+    // gated on the output currently being in HDR: an extended-linear surface is
+    // correctly anchored by the compositor on an SDR output too, whereas
+    // turning the encode off while the FP16 surface is live would write sRGB
+    // code values into a surface the compositor reads as linear.  The detected
+    // output state is logged below for diagnostics only.
+    const DisplayLuminance& luminance = DisplayLuminance::instance();
     vs.hdrOutput = settings.hdrEnabled && _vulkanViewer->isHdrOutputActive();
-    // Map scene-white to the user's reference white (see VulkanViewSettings),
-    // preferring the display's detected reference white at the default.
-    vs.hdrExposure = resolveHdrExposure(settings.hdrExposure);
-    // Highlight rolloff: 0 = clip, 1 = Reinhard, 2 = ACES, 3 = Hable.
+    // scRGB white gain (1.0 = reference white) and the optional ray-traced
+    // highlight rolloff (see VulkanViewSettings).
+    vs.hdrExposure = settings.hdrExposure;
     vs.hdrToneMap = settings.hdrToneMap;
 
     if (Base::envFlagEnabled("FC_VULKAN_BACKEND_DEBUG")) {
         Base::Console().message(
-            "[VK-SET] pushSettings raster=%d edgeOverlay=%d points=%d "
-            "edgeColor=(%.2f,%.2f,%.2f,%.2f) pt=%d bounces=%d settle=%d "
-            "hdr=%d hdrExposure=%.4f hdrToneMap=%d "
-            "(prefEdgeOverlay=%d prefPoints=%d)\n",
+            "[VK-SET] pushSettings raster={} edgeOverlay={} points={} "
+            "edgeColor=({:.2f},{:.2f},{:.2f},{:.2f}) pt={} bounces={} settle={} "
+            "hdr={} hdrExposure={:.4f} hdrToneMap={} "
+            "outHdr={} refNits={:.0f} maxNits={:.0f} "
+            "(prefEdgeOverlay={} prefPoints={})\n",
             raster ? 1 : 0, effEdgeOverlay ? 1 : 0, effPoints ? 1 : 0,
             settings.edgeColor[0], settings.edgeColor[1],
             settings.edgeColor[2], settings.edgeColor[3], !raster ? 1 : 0,
             settings.pathTracingBounces, settings.pathTracingSettleFrames,
             vs.hdrOutput ? 1 : 0, vs.hdrExposure, vs.hdrToneMap,
+            luminance.isHdrOutput() ? 1 : 0,
+            luminance.referenceWhiteNits(), luminance.maxNits(),
             settings.edgeOverlay ? 1 : 0, settings.showPoints ? 1 : 0);
     }
     _vulkanViewer->setViewSettings(vs);

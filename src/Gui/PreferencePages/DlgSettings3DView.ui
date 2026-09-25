@@ -664,10 +664,10 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
       <item>
        <widget class="Gui::PrefCheckBox" name="CheckBox_VulkanHDR">
         <property name="text">
-         <string>HDR output (HDR10 / PQ)</string>
+         <string>HDR output (scRGB)</string>
         </property>
         <property name="toolTip">
-         <string>Render the Vulkan viewport in high dynamic range: the scene is tone-mapped and encoded as HDR10 (BT.2020 primaries, SMPTE ST 2084 / PQ) and presented through the compositor's color-management protocol.  Requires a native Wayland session whose compositor exposes wp_color_manager_v1 with ST 2084 support, an HDR-enabled output, and a GPU/swapchain that supports a 10-bit HDR format.  Falls back to SDR automatically when any of these is unavailable.  Ignored by the standard OpenGL renderer.</string>
+         <string>Render the Vulkan viewport in high dynamic range, presented as scRGB: an FP16 extended-linear sRGB swapchain colour-managed through the compositor's wp_color_manager_v1 protocol (the same representation Blender and gamescope use on Wayland).  Diffuse white maps to the compositor's reference white and values above it carry the HDR highlights.  Requires a native Wayland session whose compositor exposes the colour-management protocol and whose output is actually in an HDR mode.  Falls back to SDR automatically when any of these is unavailable.  Ignored by the standard OpenGL renderer.</string>
         </property>
          <property name="prefEntry" stdset="0">
           <cstring>VulkanHDR</cstring>
@@ -682,33 +682,33 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
          <item>
           <widget class="QLabel" name="labelVulkanHdrExposure">
            <property name="text">
-            <string>HDR exposure (×10000 cd/m² reference white)</string>
-           </property>
-           <property name="toolTip">
-            <string>Linear gain applied to scene radiance before the HDR10 PQ encode.  Scene-white (radiance 1.0) is presented at this value times 10000 cd/m², so 0.02 maps diffuse white to the ~200 cd/m² reference white while brighter highlights still exceed it.  Increase to brighten the whole viewport, decrease to darken it.  Only used when HDR output is active.</string>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="Gui::PrefDoubleSpinBox" name="DoubleSpinBox_VulkanHdrExposure">
-           <property name="toolTip">
-            <string>Linear gain applied to scene radiance before the HDR10 PQ encode.  Scene-white (radiance 1.0) is presented at this value times 10000 cd/m², so 0.02 maps diffuse white to the ~200 cd/m² reference white while brighter highlights still exceed it.  Increase to brighten the whole viewport, decrease to darken it.  Only used when HDR output is active.</string>
-           </property>
-           <property name="decimals">
-            <number>4</number>
-           </property>
-           <property name="minimum">
-            <double>0.000100000000000</double>
-           </property>
-           <property name="maximum">
-            <double>10.000000000000000</double>
-           </property>
-           <property name="singleStep">
-            <double>0.005000000000000</double>
-           </property>
-           <property name="value">
-            <double>0.020000000000000</double>
-           </property>
+             <string>HDR white gain (1.0 = reference white)</string>
+            </property>
+            <property name="toolTip">
+             <string>Diffuse-white gain for the scRGB output.  1.0 presents scene white (linear 1.0) at the compositor's reference white; increase to brighten the whole viewport, decrease to darken it.  HDR highlights remain above 1.0 and are mapped by the compositor/display.  Only used when HDR output is active.</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="Gui::PrefDoubleSpinBox" name="DoubleSpinBox_VulkanHdrExposure">
+            <property name="toolTip">
+             <string>Diffuse-white gain for the scRGB output.  1.0 presents scene white (linear 1.0) at the compositor's reference white; increase to brighten the whole viewport, decrease to darken it.  HDR highlights remain above 1.0 and are mapped by the compositor/display.  Only used when HDR output is active.</string>
+            </property>
+            <property name="decimals">
+             <number>4</number>
+            </property>
+            <property name="minimum">
+             <double>0.100000000000000</double>
+            </property>
+            <property name="maximum">
+             <double>10.000000000000000</double>
+            </property>
+            <property name="singleStep">
+             <double>0.100000000000000</double>
+            </property>
+            <property name="value">
+             <double>1.000000000000000</double>
+            </property>
            <property name="prefEntry" stdset="0">
             <cstring>VulkanHDRExposure</cstring>
            </property>
@@ -727,14 +727,14 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
              <string>HDR tone mapping</string>
             </property>
             <property name="toolTip">
-             <string>How highlights above the reference white are compressed before the HDR10 PQ encode.  Clip leaves them to hard-clamp at the PQ peak (no tone map); Reinhard is the neutral published curve, ACES and Hable add progressively stronger filmic contrast.  Only used when HDR output is active.</string>
+             <string>Highlight compression for the ray-traced (path tracing) renderer, applied to the scene-linear radiance before the scRGB output.  Clip leaves highlights above the reference white untouched (they survive as HDR); Reinhard is the neutral published curve, ACES and Hable add progressively stronger filmic contrast but compress the result back to SDR.  The raster Vulkan renderer is already display-referred and never tone-maps, so this only affects path tracing.  Only used when HDR output is active.</string>
             </property>
            </widget>
           </item>
           <item>
            <widget class="Gui::PrefComboBox" name="ComboBox_VulkanHdrToneMap">
             <property name="toolTip">
-             <string>Highlight compression applied before the HDR10 PQ encode: Clip (none), Reinhard (neutral, default), ACES or Hable (filmic).  The operators are the published matrix-free curves and differ in brightness, so adjust the exposure to taste.  Only used when HDR output is active.</string>
+             <string>Highlight compression for the ray-traced (path tracing) renderer: Clip (none, default, preserves HDR highlights), Reinhard (neutral), ACES or Hable (filmic, compress to SDR).  The operators are the published matrix-free curves.  The raster Vulkan renderer never tone-maps.  Only used when HDR output is active.</string>
             </property>
             <property name="prefEntry" stdset="0">
              <cstring>VulkanHDRToneMap</cstring>

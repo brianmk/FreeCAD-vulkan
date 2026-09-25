@@ -27,8 +27,9 @@ namespace Gui
 namespace
 {
 
-//! Result callback: ok, min cd/m², max cd/m², reference-white cd/m².
-using LuminanceResult = std::function<void(bool, double, double, double)>;
+//! Result callback: ok, min cd/m², max cd/m², reference-white cd/m²,
+//! transfer-function enum (QtWayland::wp_color_manager_v1::transfer_function).
+using LuminanceResult = std::function<void(bool, double, double, double, uint32_t)>;
 
 //! Registered `wp_color_manager_v1` global.  Bound at protocol version 1: the
 //! v1 output image description still carries the luminance events we need, and
@@ -90,12 +91,21 @@ public:
         targetMax_ = max;
     }
 
+    //! Named transfer function of the output description.  An HDR/wide-gamut
+    //! output is described with st2084_pq / hlg; an SDR output with a
+    //! gamma/sRGB transfer.  This is what tells isHdrOutput() whether the
+    //! screen is actually being driven in HDR.
+    void wp_image_description_info_v1_tf_named(uint32_t tf) override
+    {
+        tf_ = tf;
+    }
+
     void wp_image_description_info_v1_done() override
     {
         if (result_) {
             const double max = targetMax_ != 0 ? targetMax_ : max_;
             // min_lum is scaled by 10000 for 4 decimals; the others are unscaled.
-            result_(true, min_ / 10000.0, max, reference_);
+            result_(true, min_ / 10000.0, max, reference_, tf_);
         }
         deleteLater();
     }
@@ -106,6 +116,7 @@ private:
     uint32_t max_ = 0;
     uint32_t reference_ = 0;
     uint32_t targetMax_ = 0;
+    uint32_t tf_ = 0;
 };
 
 void WlImageDescription::wp_image_description_v1_ready(uint32_t /*identity*/)
@@ -114,7 +125,7 @@ void WlImageDescription::wp_image_description_v1_ready(uint32_t /*identity*/)
         new Info(info, std::move(result_));
     }
     else if (result_) {
-        result_(false, 0.0, 0.0, 0.0);
+        result_(false, 0.0, 0.0, 0.0, 0);
     }
     deleteLater();
 }
@@ -122,7 +133,7 @@ void WlImageDescription::wp_image_description_v1_ready(uint32_t /*identity*/)
 void WlImageDescription::wp_image_description_v1_failed(uint32_t /*cause*/, const QString& /*message*/)
 {
     if (result_) {
-        result_(false, 0.0, 0.0, 0.0);
+        result_(false, 0.0, 0.0, 0.0, 0);
     }
     deleteLater();
 }
@@ -149,8 +160,9 @@ struct DisplayLuminance::Private
     double referenceWhiteNits = 0.0;
     double maxNits = 0.0;
     double minNits = 0.0;
+    uint32_t tf = 0;
 
-    void apply(bool ok, double min, double max, double reference)
+    void apply(bool ok, double min, double max, double reference, uint32_t tfValue)
     {
         if (!ok) {
             return;
@@ -159,7 +171,25 @@ struct DisplayLuminance::Private
         minNits = min;
         maxNits = max;
         referenceWhiteNits = reference;
+        tf = tfValue;
         Q_EMIT q->changed();
+    }
+
+    //! True when the output description uses an HDR transfer function or its
+    //! peak luminance is well above SDR white.  The transfer function is the
+    //! primary signal (an HDR output is described as st2084_pq / hlg); the
+    //! luminance is a fallback for a compositor that drives HDR through an
+    //! extended-linear description instead.
+    bool isHdrOutput() const
+    {
+        if (!hasValue) {
+            return false;
+        }
+        if (tf == QtWayland::wp_color_manager_v1::transfer_function_st2084_pq ||
+            tf == QtWayland::wp_color_manager_v1::transfer_function_hlg) {
+            return true;
+        }
+        return maxNits > 500.0;
     }
 
     void query(QScreen* target)
@@ -194,8 +224,9 @@ struct DisplayLuminance::Private
         }
         // The description is immutable and independent of the output, so the
         // wrapper owns itself from here.
-        new WlImageDescription(desc, [this](bool ok, double min, double max, double reference) {
-            apply(ok, min, max, reference);
+        new WlImageDescription(desc, [this](bool ok, double min, double max, double reference,
+                                            uint32_t tfValue) {
+            apply(ok, min, max, reference, tfValue);
         });
     }
 };
@@ -240,6 +271,11 @@ float DisplayLuminance::minNits() const
     return static_cast<float>(d->minNits);
 }
 
+bool DisplayLuminance::isHdrOutput() const
+{
+    return d->isHdrOutput();
+}
+
 #else  // FREECAD_HAVE_WAYLAND_COLOR_MANAGEMENT
 
 struct DisplayLuminance::Private
@@ -274,6 +310,11 @@ float DisplayLuminance::maxNits() const
 float DisplayLuminance::minNits() const
 {
     return 0.0f;
+}
+
+bool DisplayLuminance::isHdrOutput() const
+{
+    return false;
 }
 
 #endif  // FREECAD_HAVE_WAYLAND_COLOR_MANAGEMENT
