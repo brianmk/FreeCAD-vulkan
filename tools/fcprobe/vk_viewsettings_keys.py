@@ -7,7 +7,7 @@ data-driven rewrite there is one table; this tool checks that the table covers
 exactly the original behavior set, so no pref is dropped, mis-routed or
 mis-grouped on the rewrite.
 
-Self-contained: the expected key set (the 54 keys the old `strcmp` dispatch
+Self-contained: the expected key set (the 53 keys the old `strcmp` dispatch
 handled + the 5 background keys the old `else` catch-all handled) is embedded
 here, so validation works on a fresh checkout without a generated baseline.
 
@@ -32,7 +32,7 @@ BG = {
     "BackgroundColor", "BackgroundColor2", "BackgroundColor3", "BackgroundColor4",
     "UseBackgroundColorMid",
 }
-# The keys the original OnChange strcmp dispatch handled (54).
+# The keys the original OnChange strcmp dispatch handled (53).
 MAIN_STRCMP = {
     "AmbientLightColor", "AmbientLightIntensity", "AxisLetterColor", "AxisXColor",
     "AxisYColor", "AxisZColor", "BacklightColor", "BacklightDirection",
@@ -43,14 +43,14 @@ MAIN_STRCMP = {
     "FillLightIntensity", "Gradient", "GroundPlaneOpacity", "HeadlightColor",
     "HeadlightDirection", "HeadlightIntensity", "HighlightColor", "InvertZoom",
     "MaxFrameRate", "NavigationStyle", "OrbitStyle", "Orthographic", "PickRadius",
-    "PickRadiusScale", "PreselectionMessageRate", "RadialGradient", "RenderCache",
+    "PickRadiusScale", "RadialGradient", "RenderCache",
     "ResetCursorPosition", "RotationMode", "SelectionColor", "Sensitivity",
     "ShowAxisCross", "ShowFPS", "ShowGroundPlane", "ShowNaviCube",
     "TransparentObjectRenderType", "UseNavigationAnimations", "UseSpinningAnimations",
     "UseVBO", "UseVulkanRenderer", "ZoomAtCursor", "ZoomStep",
 }
 
-EXPECTED = MAIN_STRCMP | BG  # 59 explicit keys
+EXPECTED = MAIN_STRCMP | BG  # 58 explicit keys
 
 
 def _block(src, sig):

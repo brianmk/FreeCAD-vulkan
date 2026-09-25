@@ -27,7 +27,6 @@
 #include <set>
 
 #include <QApplication>
-#include <QElapsedTimer>
 
 #include <Base/VulkanBreadcrumbs.h>
 #include <App/Application.h>
@@ -1112,37 +1111,6 @@ void printPreselectionInfo(
     double precision
 )
 {
-    // Throttle the status-bar preselection message: rebuilding the unit
-    // translation + derived QString on EVERY mouse-move is the single most
-    // frequent allocation while dragging the cursor over geometry.  Coordinates
-    // barely change between events, so most of this work is recomputed
-    // identically each event.  The rate (Hz) is user-tunable via
-    // BaseApp/Preferences/View/PreselectionMessageRate (default 10, 0 = off).
-    static QElapsedTimer timer;
-    static qint64 lastMs = -1000;
-    static int lastRate = -1;
-    if (!timer.isValid()) {
-        timer.start();
-        lastMs = -1000;
-    }
-    const QString path = QStringLiteral("User parameter:BaseApp/Preferences/View");
-    const int rate = App::GetApplication()
-                         .GetParameterGroupByPath(qPrintable(path))
-                         ->GetInt("PreselectionMessageRate", 10);
-    if (rate != lastRate) {
-        lastRate = rate;
-        lastMs = -1000; // re-allow immediately after a rate change
-    }
-    if (rate <= 0) {
-        return; // throttling disabled
-    }
-    const qint64 elapsed = timer.elapsed();
-    const qint64 intervalMs = 1000 / rate;
-    if (lastMs >= 0 && (elapsed - lastMs) < intervalMs) {
-        return; // still inside the throttling window
-    }
-    lastMs = elapsed;
-
     if (getMainWindow()) {
         QString message
             = getPreselectionInfo(documentName, objectName, subElementName, x, y, z, precision);

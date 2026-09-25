@@ -661,6 +661,13 @@ public:
         logHdrSurfaceFormats(m_instance, m_window);
 
         m_dumper.initSwapChainResources();
+
+        // The swapchain color format is now known: notify the owner on the GUI
+        // thread so it can re-push its render settings with the real HDR output
+        // state (see the signal's documentation).  Queued because this runs on
+        // the render thread during QVulkanWindow's swapchain (re)initialization.
+        QMetaObject::invokeMethod(m_owner, "swapChainChanged",
+                                  Qt::QueuedConnection);
     }
 
     void releaseSwapChainResources() override
