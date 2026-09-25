@@ -131,6 +131,14 @@ void View3DSettings::migratePreferences()
         && viewGrp->GetBool("VulkanPathTracing", false)) {
         viewGrp->SetInt("VulkanRenderMode", static_cast<int>(ViewRenderMode::PathTracing));
     }
+    // Fold the even older UseVulkanRayTracing bool (it predates VulkanPathTracing
+    // and was dropped without a migration) into the mode as well, so a config
+    // that only has that key keeps reopening in the ray-traced viewport.
+    if (!viewPrefHasEntry(viewGrp, "VulkanRenderMode", ParameterGrp::ParamType::FCInt)
+        && viewPrefHasEntry(viewGrp, "UseVulkanRayTracing", ParameterGrp::ParamType::FCBool)
+        && viewGrp->GetBool("UseVulkanRayTracing", false)) {
+        viewGrp->SetInt("VulkanRenderMode", static_cast<int>(ViewRenderMode::PathTracing));
+    }
     // Fold the old edge-overlay pref name into the wireframe key (the key is
     // retained for compatibility; it now controls the model feature-edge
     // overlay in every Vulkan mode) before dropping the old key.
@@ -152,6 +160,7 @@ void View3DSettings::migratePreferences()
     }
 #endif
     viewGrp->RemoveBool("VulkanPathTracing");
+    viewGrp->RemoveBool("UseVulkanRayTracing");         // superseded: VulkanRenderMode
     viewGrp->RemoveBool("VulkanRenderMode");            // canonical: int
     viewGrp->RemoveBool("VulkanShowEdges");             // renamed: VulkanWireframe
     viewGrp->RemoveInt("VulkanShowEdges");              // renamed: VulkanWireframe
