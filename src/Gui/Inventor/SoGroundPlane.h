@@ -77,13 +77,23 @@ protected:
     ~SoGroundPlane() override;
 
     void GLRender(SoGLRenderAction* action) override;
+    // Coin's optimized SoSeparator child traversal calls GLRenderBelowPath()
+    // (and GLRenderInPath() when the node is on the current path), NOT
+    // GLRender(), on each child.  Because this node derives from SoSeparator,
+    // omitting these would dispatch to the inherited SoSeparator implementations
+    // and skip updateGrid() entirely -- the grid then renders with empty vertex
+    // buffers in the classic Coin/GL viewport.
+    void GLRenderBelowPath(SoGLRenderAction* action) override;
+    void GLRenderInPath(SoGLRenderAction* action) override;
 #ifdef HAVE_COIN_IR_RENDER_ACTION
     void IRRender(SoIRRenderAction* action) override;
 #endif
 
-    //! Keep the unbounded, view-volume-sized grid out of scene bounding-box
-    //! queries.  Otherwise the grid extent feeds back into the camera clip
-    //! planes (see the implementation for the runaway this caused).
+    //! Reports the real (bounded) child bounds.  An empty bound would let the
+    //! parent separator's frustum culling drop the grid before updateGrid()
+    //! ever produces geometry.  The grid is kept out of the *main* scene
+    //! bounding box structurally, by living in the per-frame decoration scene
+    //! rather than the retained main scene (see View3DInventorViewer).
     void getBoundingBox(SoGetBoundingBoxAction* action) override;
 
 private:
@@ -102,6 +112,20 @@ private:
     SoVertexProperty* m_minorVertexProperty = nullptr;
     SoVertexProperty* m_majorVertexProperty = nullptr;
     SoFieldSensor* m_transparencySensor = nullptr;
+
+    //! Cache of the view volume (its near/far corner points) from the last
+    //! buffer write.  SoMFVec3f/SoMFInt32::setValues() notifies the field's
+    //! auditors even when the values are identical, and the node lives in the
+    //! scene graph, so an unconditional rewrite on every render would wake the
+    //! viewport's scene redraw sensor from inside the frame -- a redraw feedback
+    //! loop that keeps rendering at full rate while completely idle.  Skipping
+    //! the rewrite while the view volume is unchanged breaks that loop.  The
+    //! corners are the complete input to the grid: the clipped line set depends
+    //! on the whole frustum (position, orientation, near/far, aspect), not just
+    //! a footprint.
+    bool m_gridValid = false;
+    SbVec3f m_gridNearCorners[4];
+    SbVec3f m_gridFarCorners[4];
 };
 
 }  // namespace Gui

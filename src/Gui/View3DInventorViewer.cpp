@@ -1414,6 +1414,10 @@ View3DInventorViewer::~View3DInventorViewer()
     this->foregroundroot = nullptr;
     this->decorationroot->unref();
     this->decorationroot = nullptr;
+    if (this->decorationSceneRoot) {
+        this->decorationSceneRoot->unref();
+        this->decorationSceneRoot = nullptr;
+    }
     this->pcBackGround->unref();
     this->pcBackGround = nullptr;
 
@@ -2348,6 +2352,29 @@ SoNode* View3DInventorViewer::getAxisCrossOverlay()
     return overlay.overlayNode;
 }
 
+SoSeparator* View3DInventorViewer::getDecorationRoot()
+{
+    if (!decorationSceneRoot) {
+        decorationSceneRoot = new SoSeparator;
+        decorationSceneRoot->ref();
+        decorationSceneRoot->setName("vulkanDecorationRoot");
+    }
+    // The Vulkan manager re-records this decoration scene every frame, whereas
+    // the main draw list is retained and replayed verbatim on camera-only
+    // frames.  The ground grid is camera-coupled (updateGrid() follows the view
+    // volume), so anchoring it here keeps it live on zoom/rotate; in the main
+    // scene it only refreshed on a scene change (e.g. creating a sketch) and
+    // otherwise stayed stale.
+    SoNode* axisCross = getAxisCrossOverlay();
+    if (axisCross && decorationSceneRoot->findChild(axisCross) < 0) {
+        decorationSceneRoot->addChild(axisCross);
+    }
+    // The ground grid is moved in/out of here by setGroundPlaneDecorationScene():
+    // it only belongs to the per-frame decoration scene while the Vulkan
+    // viewport is active (see that method).
+    return decorationSceneRoot;
+}
+
 void View3DInventorViewer::setAxisCross(bool on)
 {
     SoNode* scene = getSceneGraph();
@@ -2397,9 +2424,6 @@ void View3DInventorViewer::setGroundPlaneOpacity(float opacity)
 
 void View3DInventorViewer::setGroundPlane(bool on)
 {
-    SoNode* scene = getSceneGraph();
-    auto sep = static_cast<SoSeparator*>(scene);  // NOLINT
-
     if (on) {
         if (!groundPlane) {
             groundPlane = new SoGroundPlane;
@@ -2408,21 +2432,77 @@ void View3DInventorViewer::setGroundPlane(bool on)
             groundPlaneGroup = new SoSeparator;
             groundPlaneGroup->ref();
             groundPlaneGroup->setName("groundPlane");
+            // The grid is regenerated inside its own render call (updateGrid),
+            // so its bounding box is empty until the first traversal.  Coin's
+            // separator frustum culling would then skip the subtree before the
+            // geometry is ever produced (the classic Coin/GL viewport lost the
+            // grid this way); the grid is an always-drawn decoration, so culling
+            // is not wanted here.
+            groundPlaneGroup->renderCulling = SoSeparator::OFF;
+            groundPlaneGroup->renderCaching = SoSeparator::OFF;
+            groundPlaneGroup->boundingBoxCaching = SoSeparator::OFF;
+            groundPlane->renderCulling = SoSeparator::OFF;
+            groundPlane->renderCaching = SoSeparator::OFF;
+            groundPlane->boundingBoxCaching = SoSeparator::OFF;
             groundPlaneGroup->addChild(groundPlane);
 
-            // Draw the grid behind the model geometry. viewerSceneRoot's
-            // children are [viewerLightingRoot, pcViewProviderRoot, ...], so
-            // index 1 places the plane just before the document content.
-            sep->insertChild(groundPlaneGroup, 1);
+            // Default (classic Coin/GL) home: the main scene.  There the grid is
+            // re-traversed every frame, and -- because the scene bounds determine
+            // the camera clip range -- it also makes the far plane reach the drawn
+            // ground.  While the Vulkan viewport is active the grid is moved to
+            // the per-frame decoration scene instead (setGroundPlaneDecorationScene).
+            if (groundPlaneUsesDecorationScene) {
+                getDecorationRoot()->addChild(groundPlaneGroup);
+            }
+            else if (auto* sep = static_cast<SoSeparator*>(getSceneGraph())) {  // NOLINT
+                sep->addChild(groundPlaneGroup);
+            }
         }
     }
     else {
         if (groundPlane) {
-            sep->removeChild(groundPlaneGroup);
+            if (decorationSceneRoot) {
+                decorationSceneRoot->removeChild(groundPlaneGroup);
+            }
+            if (auto* sep = static_cast<SoSeparator*>(getSceneGraph())) {  // NOLINT
+                if (sep->findChild(groundPlaneGroup) >= 0) {
+                    sep->removeChild(groundPlaneGroup);
+                }
+            }
             groundPlaneGroup->unref();
             groundPlaneGroup = nullptr;
             groundPlane->unref();
             groundPlane = nullptr;
+        }
+    }
+}
+
+void View3DInventorViewer::setGroundPlaneDecorationScene(bool on)
+{
+    if (this->groundPlaneUsesDecorationScene == on) {
+        return;
+    }
+    this->groundPlaneUsesDecorationScene = on;
+
+    if (!groundPlaneGroup) {
+        return;
+    }
+    auto* mainRoot = static_cast<SoSeparator*>(getSceneGraph());  // NOLINT
+    if (on) {
+        // Vulkan: the main draw list is retained verbatim on camera-only frames,
+        // so a camera-coupled grid there goes stale on zoom; the decoration scene
+        // is re-recorded every frame.
+        if (mainRoot && mainRoot->findChild(groundPlaneGroup) >= 0) {
+            mainRoot->removeChild(groundPlaneGroup);
+        }
+        getDecorationRoot()->addChild(groundPlaneGroup);
+    }
+    else {
+        if (decorationSceneRoot && decorationSceneRoot->findChild(groundPlaneGroup) >= 0) {
+            decorationSceneRoot->removeChild(groundPlaneGroup);
+        }
+        if (mainRoot && mainRoot->findChild(groundPlaneGroup) < 0) {
+            mainRoot->addChild(groundPlaneGroup);
         }
     }
 }

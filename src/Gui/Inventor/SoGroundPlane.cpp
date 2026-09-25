@@ -39,12 +39,96 @@
 #include <Inventor/sensors/SoFieldSensor.h>
 
 #include <algorithm>
+#include <array>
 #include <cfloat>
 #include <cmath>
 #include <cstdint>
 #include <vector>
 
 using namespace Gui;
+
+namespace {
+
+//! A convex half-space: "inside" is dot(normal, p - point) >= 0.
+struct GridHalfSpace
+{
+    SbVec3f normal;  //!< points into the view volume
+    SbVec3f point;   //!< a point on the boundary plane
+};
+
+//! Build the six inward-facing half-spaces of the view volume from its eight
+//! corners (four on the near plane, four on the far plane, matching NDC order).
+std::array<GridHalfSpace, 6> viewVolumeHalfSpaces(const SbVec3f (&nearC)[4],
+                                                  const SbVec3f (&farC)[4])
+{
+    SbVec3f center(0.0F, 0.0F, 0.0F);
+    for (int i = 0; i < 4; ++i) {
+        center += nearC[i];
+        center += farC[i];
+    }
+    center *= 0.125F;
+
+    std::array<GridHalfSpace, 6> planes {};
+    auto setPlane = [&center](GridHalfSpace& hs, const SbVec3f& a, const SbVec3f& b,
+                              const SbVec3f& c) {
+        // Orient the face normal outward (away from the volume centre), then
+        // expose the inward normal for the half-space test.
+        SbVec3f outward = (b - a).cross(c - a);
+        if (outward.dot(a - center) < 0.0F) {
+            outward = -outward;
+        }
+        const float len = outward.length();
+        if (len > 0.0F) {
+            outward /= len;
+        }
+        hs.normal = -outward;
+        hs.point = a;
+    };
+
+    setPlane(planes[0], nearC[0], nearC[1], nearC[2]);  // near
+    setPlane(planes[1], farC[0], farC[1], farC[2]);     // far
+    for (int i = 0; i < 4; ++i) {                       // sides
+        const int j = (i + 1) % 4;
+        setPlane(planes[2 + i], nearC[i], nearC[j], farC[j]);
+    }
+    return planes;
+}
+
+//! Clip segment [a, b] to the convex volume.  Returns false if it is entirely
+//! outside; otherwise a/b are narrowed to the visible portion.
+bool clipSegmentToVolume(SbVec3f& a, SbVec3f& b,
+                         const std::array<GridHalfSpace, 6>& planes)
+{
+    const SbVec3f orig = a;
+    const SbVec3f dir = b - a;
+    float t0 = 0.0F;
+    float t1 = 1.0F;
+    for (const GridHalfSpace& hs : planes) {
+        const float da = hs.normal.dot(a - hs.point);
+        const float db = hs.normal.dot(b - hs.point);
+        if (da >= 0.0F && db >= 0.0F) {
+            continue;
+        }
+        if (da < 0.0F && db < 0.0F) {
+            return false;
+        }
+        const float t = da / (da - db);
+        if (da < 0.0F) {
+            t0 = std::max(t0, t);
+        }
+        else {
+            t1 = std::min(t1, t);
+        }
+        if (t0 > t1) {
+            return false;
+        }
+    }
+    a = orig + dir * t0;
+    b = orig + dir * t1;
+    return true;
+}
+
+}  // namespace
 
 SO_NODE_SOURCE(SoGroundPlane);
 
@@ -144,18 +228,39 @@ void SoGroundPlane::GLRender(SoGLRenderAction* action)
     inherited::GLRender(action);
 }
 
+void SoGroundPlane::GLRenderBelowPath(SoGLRenderAction* action)
+{
+    if (!enabled.getValue()) {
+        return;
+    }
+    // Regenerate geometry before the separator traverses its line sets; the
+    // child traversal reaches this method, not GLRender().
+    updateGrid(action->getState());
+    inherited::GLRenderBelowPath(action);
+}
+
+void SoGroundPlane::GLRenderInPath(SoGLRenderAction* action)
+{
+    if (!enabled.getValue()) {
+        return;
+    }
+    updateGrid(action->getState());
+    inherited::GLRenderInPath(action);
+}
+
 void SoGroundPlane::getBoundingBox(SoGetBoundingBoxAction* action)
 {
-    // The grid is an unbounded decoration whose extent is derived from the
-    // camera's view volume: updateGrid() samples the near and far corners of
-    // the current view volume to size the grid.  If the grid contributed to the
-    // scene bounding box, the two would form a closed feedback loop -- the
-    // Vulkan viewport computes the camera near/far from the scene bbox and
-    // publishes them onto the camera, the grid then grows to cover that larger
-    // view volume, which enlarges the next bbox (and thus near/far) by ~3x per
-    // frame until the coordinates blow up.  Keep the grid out of bounding-box
-    // queries; it is always drawn, so nothing depends on its extent.
-    (void)action;
+    // The grid is camera-coupled: updateGrid() sizes it from the current view
+    // volume.  It must NOT contribute to the *main* scene bounding box, or the
+    // Vulkan viewport (which derives near/far from that bbox and publishes them
+    // onto the camera) would close a loop that compounds near/far ~3x per frame
+    // until the coordinates blow up.  That is guaranteed structurally instead:
+    // the grid lives in the per-frame decoration scene (getDecorationRoot()),
+    // not the retained main scene, so it is not part of that bbox.  Report the
+    // real (bounded) child bounds here -- returning nothing makes the parent
+    // separator's bounding box empty, and Coin then frustum-culls the grid away
+    // in the classic Coin/GL viewport.
+    inherited::getBoundingBox(action);
 }
 
 void SoGroundPlane::updateGrid(SoState* state)
@@ -169,50 +274,60 @@ void SoGroundPlane::updateGrid(SoState* state)
         return;
     }
 
-    // Project the camera's view volume onto the Z = 0 plane to determine the
-    // rectangular footprint the ground grid needs to cover. Use both near and
-    // far corners so the grid fills the whole visible area independently of
-    // the camera position.
-    std::vector<SbVec3f> worldCorners;
-    worldCorners.reserve(16);
-
-    const float nearDepth = viewVolume.getNearDist();
-    const float farDepth = nearDepth + viewVolume.getDepth();
-
-    auto collectCorners = [&](float depth) {
-        if (depth <= 0.0F) {
-            return;
-        }
-        // Sample the four normalized view corners lying on this depth plane
-        // instead of relying on the (private) getPlaneRectangle.
-        const SbVec2f normCorners[] = {
-            SbVec2f(-1.0F, -1.0F),
-            SbVec2f(1.0F, -1.0F),
-            SbVec2f(1.0F, 1.0F),
-            SbVec2f(-1.0F, 1.0F),
-        };
-        for (const SbVec2f& corner : normCorners) {
-            worldCorners.push_back(viewVolume.getPlanePoint(depth, corner));
-        }
+    const SbVec2f ndc[4] = {
+        SbVec2f(-1.0F, -1.0F),
+        SbVec2f(1.0F, -1.0F),
+        SbVec2f(1.0F, 1.0F),
+        SbVec2f(-1.0F, 1.0F),
     };
+    const float nearDepth = viewVolume.getNearDist();
 
-    collectCorners(nearDepth);
-    collectCorners(farDepth);
+    // Size the footprint from the camera's lateral view extent, NOT from the
+    // camera's far plane.  The clip-range computation includes this grid's
+    // bounds (so the far plane reaches the drawn ground); a far-dependent
+    // footprint would close the loop far -> footprint -> far and diverge ~3x
+    // per frame.  One view size past the near plane is far enough to cover the
+    // visible ground at any tilt while keeping the extent stable.
+    const float viewSize = std::max(viewVolume.getWidth(), viewVolume.getHeight());
+    const float farDepth = nearDepth
+        + (viewSize > 0.0F ? viewSize : std::max(viewVolume.getDepth(), 1.0F));
 
-    if (worldCorners.empty()) {
-        return;
+    SbVec3f nearC[4];
+    SbVec3f farC[4];
+    for (int i = 0; i < 4; ++i) {
+        nearC[i] = viewVolume.getPlanePoint(nearDepth, ndc[i]);
+        farC[i] = viewVolume.getPlanePoint(farDepth, ndc[i]);
     }
 
-    // Gather the XY footprint of all sampled corners (grid lies on Z = 0).
+    // The clipped grid is a pure function of the view volume.  Skip the
+    // (notifying) buffer rewrite when it is unchanged -- see the header.
+    if (m_gridValid) {
+        bool unchanged = true;
+        for (int i = 0; i < 4 && unchanged; ++i) {
+            unchanged = nearC[i] == m_gridNearCorners[i]
+                && farC[i] == m_gridFarCorners[i];
+        }
+        if (unchanged) {
+            return;
+        }
+    }
+
+    const std::array<GridHalfSpace, 6> planes = viewVolumeHalfSpaces(nearC, farC);
+
+    // Lateral generation footprint on Z = 0.  The visible region is within the
+    // convex hull of the frustum corners, so their XY bounds contain it.
     float minX = FLT_MAX;
     float minY = FLT_MAX;
     float maxX = -FLT_MAX;
     float maxY = -FLT_MAX;
-    for (const SbVec3f& c : worldCorners) {
-        minX = std::min(minX, c[0]);
-        maxX = std::max(maxX, c[0]);
-        minY = std::min(minY, c[1]);
-        maxY = std::max(maxY, c[1]);
+    for (int i = 0; i < 4; ++i) {
+        const SbVec3f corners[2] = {nearC[i], farC[i]};
+        for (const SbVec3f& c : corners) {
+            minX = std::min(minX, c[0]);
+            maxX = std::max(maxX, c[0]);
+            minY = std::min(minY, c[1]);
+            maxY = std::max(maxY, c[1]);
+        }
     }
 
     float centerX = 0.5F * (minX + maxX);
@@ -220,7 +335,7 @@ void SoGroundPlane::updateGrid(SoState* state)
     float halfWidth = 0.5F * (maxX - minX);
     float halfHeight = 0.5F * (maxY - minY);
 
-    // Apply the extent factor so the grid extends a bit past the visible area.
+    // Extend a little past the visible area so lines reach the viewport edge.
     const float factor = std::max(extentFactor.getValue(), 0.1F);
     halfWidth *= factor;
     halfHeight *= factor;
@@ -246,26 +361,25 @@ void SoGroundPlane::updateGrid(SoState* state)
     std::vector<SbVec3f> majorVertices;
     std::vector<SbVec3f> centerVertices;
 
+    // Clip every generated line segment to the view volume (near/far + sides).
+    // This is what keeps the grid inside the depth range the camera renders:
+    // an axis-aligned grid sized from the footprint alone stretches far beyond
+    // [near, far] on a tilted view and would be cut away by the clip planes.
+    auto emitLine = [&planes](std::vector<SbVec3f>& out, float x0, float y0, float x1,
+                              float y1) {
+        SbVec3f a(x0, y0, 0.0F);
+        SbVec3f b(x1, y1, 0.0F);
+        if (clipSegmentToVolume(a, b, planes)) {
+            out.push_back(a);
+            out.push_back(b);
+        }
+    };
+
     auto snapFloor = [step](float value) {
         return std::floor(value / step) * step;
     };
     auto snapCeil = [step](float value) {
         return std::ceil(value / step) * step;
-    };
-
-    auto addLine = [](std::vector<SbVec3f>& out,
-                      float x0,
-                      float y0,
-                          float x1,
-                          float y1,
-                          bool crossesOriginX,
-                          bool crossesOriginY) {
-        // A constant coordinate that is exactly a multiple of step may not be
-        // aligned with the origin; only the zero line is treated as a center one.
-        (void)crossesOriginX;
-        (void)crossesOriginY;
-        out.emplace_back(x0, y0, 0.0F);
-        out.emplace_back(x1, y1, 0.0F);
     };
 
     const float startX = snapFloor(centerX - halfWidth);
@@ -279,15 +393,9 @@ void SoGroundPlane::updateGrid(SoState* state)
         const bool isCenter = std::abs(lineX) < step * 0.001F;
         const int lineIndex = static_cast<int>(std::round(lineX / step));
         const bool isMajor = (lineIndex % 5) == 0;
-        if (isCenter) {
-            addLine(centerVertices, lineX, startY, lineX, endY, true, false);
-        }
-        else if (isMajor) {
-            addLine(majorVertices, lineX, startY, lineX, endY, false, false);
-        }
-        else {
-            addLine(minorVertices, lineX, startY, lineX, endY, false, false);
-        }
+        std::vector<SbVec3f>& target =
+            isCenter ? centerVertices : (isMajor ? majorVertices : minorVertices);
+        emitLine(target, lineX, startY, lineX, endY);
     }
 
     // Horizontal lines: constant Y, running along X.
@@ -296,15 +404,15 @@ void SoGroundPlane::updateGrid(SoState* state)
         const bool isCenter = std::abs(lineY) < step * 0.001F;
         const int lineIndex = static_cast<int>(std::round(lineY / step));
         const bool isMajor = (lineIndex % 5) == 0;
-        if (isCenter) {
-            addLine(centerVertices, startX, lineY, endX, lineY, false, true);
-        }
-        else if (isMajor) {
-            addLine(majorVertices, startX, lineY, endX, lineY, false, false);
-        }
-        else {
-            addLine(minorVertices, startX, lineY, endX, lineY, false, false);
-        }
+        std::vector<SbVec3f>& target =
+            isCenter ? centerVertices : (isMajor ? majorVertices : minorVertices);
+        emitLine(target, startX, lineY, endX, lineY);
+    }
+
+    m_gridValid = true;
+    for (int i = 0; i < 4; ++i) {
+        m_gridNearCorners[i] = nearC[i];
+        m_gridFarCorners[i] = farC[i];
     }
 
     auto fillLineSet = [](SoLineSet* lineSet,

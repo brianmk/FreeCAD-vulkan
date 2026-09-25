@@ -629,6 +629,17 @@ public:
     //! a SoAxisCrossOverlay scoping the shared axis/letter graphs to the
     //! bottom-right corner viewport in the overlay render pass.
     SoNode* getAxisCrossOverlay();
+    //! The per-frame decoration scene for the IR (Vulkan) render path: the
+    //! axis-cross overlay plus the adaptive ground-plane grid.  The Vulkan
+    //! manager re-records this every frame, unlike the retained main scene, so
+    //! camera-coupled geometry anchored here tracks the view volume live.
+    SoSeparator* getDecorationRoot();
+    //! Move the ground grid between the main scene (classic Coin/GL: re-drawn
+    //! every frame and included in the clip-range scene bounds) and the
+    //! per-frame decoration scene (Vulkan: the main draw list is retained
+    //! verbatim on camera-only frames, so a camera-coupled grid there goes
+    //! stale).  Called by the Vulkan adapter as the viewport is created/destroyed.
+    void setGroundPlaneDecorationScene(bool on);
     //! Refresh the axis cross overlay nodes (transforms, colors, letters)
     //! without issuing any GL rendering; called by drawAxisCross() and by
     //! the Vulkan viewport sync so the hidden GL viewer's frame loop is not
@@ -876,6 +887,12 @@ private:
     SoSeparator* groundPlaneGroup;
     SoGroundPlane* groundPlane;
     float groundPlaneOpacity;
+    //! Per-frame IR decoration scene (axis cross + ground plane), consumed by
+    //! the Vulkan adapter's setDecorationSceneGraph().
+    SoSeparator* decorationSceneRoot = nullptr;
+    //! When true the ground grid lives in decorationSceneRoot (Vulkan active)
+    //! instead of the main scene.
+    bool groundPlaneUsesDecorationScene = false;
 
     SoGroup* rotationCenterGroup;
 
