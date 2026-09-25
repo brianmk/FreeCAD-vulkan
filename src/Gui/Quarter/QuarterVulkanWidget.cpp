@@ -1444,9 +1444,12 @@ QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent)
 // pointer to nullptr so the next widget (e.g. closing a document and
 // reopening it, which destroys and re-creates the view) allocates a fresh
 // instance instead of reusing a freed one.
-void QuarterVulkanWidget::ensureSharedInstance()
+// Create (if needed) and return the process-wide QVulkanInstance.  The caller
+// must already hold g_sharedVulkanInstance.mutex.  Split out from
+// ensureSharedInstance() so prewarmSharedInstance() can create the instance
+// during startup without tying it to a widget.
+static QVulkanInstance * ensureSharedVulkanInstanceLocked()
 {
-    QMutexLocker locker(&g_sharedVulkanInstance.mutex);
     if (g_sharedVulkanInstance.instance &&
         !g_sharedVulkanInstance.instance->isValid() &&
         g_sharedVulkanInstance.refs == 0) {
@@ -1514,10 +1517,27 @@ void QuarterVulkanWidget::ensureSharedInstance()
                       g_sharedVulkanInstance.instance->errorCode()));
         }
     }
+    return g_sharedVulkanInstance.instance;
+}
+
+void QuarterVulkanWidget::ensureSharedInstance()
+{
+    QMutexLocker locker(&g_sharedVulkanInstance.mutex);
+    ensureSharedVulkanInstanceLocked();
     ++g_sharedVulkanInstance.refs;
     d->instance = g_sharedVulkanInstance.instance;
     d->instanceRefs = &g_sharedVulkanInstance.refs;
     d->instanceMutex = &g_sharedVulkanInstance.mutex;
+}
+
+// Startup warm-up: create the shared instance (and thereby load the Vulkan
+// loader/ICD + GPU driver) ahead of the first 3D view, so opening the first
+// document does not pay the one-time driver initialization.  Idempotent; a
+// failed creation is logged and the views fall back exactly as before.
+void QuarterVulkanWidget::prewarmSharedInstance()
+{
+    QMutexLocker locker(&g_sharedVulkanInstance.mutex);
+    ensureSharedVulkanInstanceLocked();
 }
 
 // Drop a widget's reference on the shared instance; the last widget destroys
