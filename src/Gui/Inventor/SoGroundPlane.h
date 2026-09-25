@@ -33,6 +33,7 @@ class SoSensor;
 class SoState;
 class SoVertexProperty;
 class SoFieldSensor;
+class SoGetBoundingBoxAction;
 
 namespace Gui
 {
@@ -79,6 +80,11 @@ protected:
 #ifdef HAVE_COIN_IR_RENDER_ACTION
     void IRRender(SoIRRenderAction* action) override;
 #endif
+
+    //! Keep the unbounded, view-volume-sized grid out of scene bounding-box
+    //! queries.  Otherwise the grid extent feeds back into the camera clip
+    //! planes (see the implementation for the runaway this caused).
+    void getBoundingBox(SoGetBoundingBoxAction* action) override;
 
 private:
     void updateGrid(SoState* state);

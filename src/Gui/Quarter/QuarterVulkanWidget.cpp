@@ -128,15 +128,17 @@ static void vkMessage(VkLogLevel level, const char * fmt, ...)
     char buf[1024];
     std::vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
+    // Console() takes std::format placeholders (not printf), so pass the
+    // already-formatted tag/body as arguments rather than into the format.
     switch (level) {
         case VkLogLevel::Log:
-            Base::Console().log("%s%s\n", VK_TAG, buf);
+            Base::Console().log("{}{}\n", VK_TAG, buf);
             break;
         case VkLogLevel::Warning:
-            Base::Console().warning("%s%s\n", VK_TAG, buf);
+            Base::Console().warning("{}{}\n", VK_TAG, buf);
             break;
         case VkLogLevel::Error:
-            Base::Console().error("%s%s\n", VK_TAG, buf);
+            Base::Console().error("{}{}\n", VK_TAG, buf);
             break;
     }
 }
@@ -155,10 +157,11 @@ static QByteArray vkVersionStr(uint32_t v)
 
 //! Log the swapchain surface formats relevant to HDR output.
 //!
-//! The HDR output path renders into a 10-bit HDR10
-//! (VK_FORMAT_A2B10G10R10_UNORM_PACK32) or FP16 scRGB
-//! (VK_FORMAT_R16G16B16A16_SFLOAT) swapchain image.  Whether the driver/surface
-//! exposes those is independent of the compositor's color-management protocol,
+//! The HDR output path renders into an FP16 scRGB
+//! (VK_FORMAT_R16G16B16A16_SFLOAT) swapchain image; the 10-bit HDR10
+//! (VK_FORMAT_A2B10G10R10_UNORM_PACK32) capability is logged too so a surface
+//! that only offers the latter is visible in the trace.  Whether the
+//! driver/surface exposes these is independent of the color-management protocol,
 //! so it is enumerated here (read-only; QVulkanWindow still chooses the actual
 //! swapchain format from the preferred-format list).  Call it once the surface
 //! exists (initSwapChainResources).
@@ -977,8 +980,8 @@ private:
             static int syncLog = 0;
             if (syncLog++ < 3) {
                 Base::Console().message(
-                    "[VK-SET] startNextFrame wire=%d points=%d "
-                    "edge=(%.2f,%.2f,%.2f,%.2f)\n",
+                    "[VK-SET] startNextFrame wire={} points={} "
+                    "edge=({:.2f},{:.2f},{:.2f},{:.2f})\n",
                     frame.viewSettings.wireframeOverlay ? 1 : 0,
                     frame.viewSettings.pointsOverlay ? 1 : 0,
                     frame.viewSettings.edgeColor[0],
@@ -1033,8 +1036,8 @@ private:
                          const SbColor4f & background, bool multisample)
     {
         // HDR raster path: the manager owns the whole pass lifecycle (offscreen
-        // linear RGBA16F pass, barrier, output/PQ pass into Qt's framebuffer),
-        // so do NOT begin Qt's default render pass here.
+        // RGBA16F pass, barrier, output/scRGB pass into Qt's framebuffer), so
+        // do NOT begin Qt's default render pass here.
         if (m_manager.isHdrRasterActive()) {
             const SbBool hdrOk = m_manager.renderExternalHdr(
                 false, false, cb, m_window->defaultRenderPass(),
@@ -1354,8 +1357,9 @@ public:
     SoNode * overlayScene = nullptr;
     SoNode * decorationScene = nullptr;
     SoCamera * camera = nullptr;
-    //! HDR10 output requested (see setHdrOutputEnabled).  The actual swapchain
-    //! format is reported by isHdrOutputActive() once the window is shown.
+    //! scRGB HDR output requested (see setHdrOutputEnabled).  The actual
+    //! swapchain format is reported by isHdrOutputActive() once the window is
+    //! shown.
     bool hdrRequested = false;
     //! HDR was refused because the GPU driver is on the known-unsafe list
     //! (see hdrDriverBlocked); the SDR swapchain is used instead.
@@ -2371,24 +2375,28 @@ void QuarterVulkanWidget::setHdrOutputEnabled(bool enabled)
         vkLog("setHdrOutputEnabled: off (SDR swapchain)");
         return;
     }
-    // Ask for a 10-bit HDR10 swapchain image, keeping the 8-bit format as a
-    // fallback so a surface without a 10-bit format still comes up (in SDR).
-    // QVulkanWindow picks the first requested format present in the surface's
-    // format list; on Wayland it then uses VK_COLOR_SPACE_PASS_THROUGH_EXT, and
-    // the HDR mapping is carried by Qt's wp_image_description instead.
+    // Ask for an FP16 swapchain image, keeping the 8-bit format as a fallback
+    // so a surface without FP16 still comes up (in SDR).  QVulkanWindow picks
+    // the first requested format present in the surface's format list; on
+    // Wayland it then uses VK_COLOR_SPACE_PASS_THROUGH_EXT and the color
+    // mapping is carried by Qt's wp_image_description instead.
     d->window->setPreferredColorFormats(QList<VkFormat>()
-        << VK_FORMAT_A2B10G10R10_UNORM_PACK32
+        << VK_FORMAT_R16G16B16A16_SFLOAT
         << VK_FORMAT_B8G8R8A8_UNORM);
 
-    // Tag the window's surface format with the HDR10 color space (BT.2020
-    // primaries + SMPTE ST 2084 PQ).  Qt's Wayland platform reads this in
-    // QWaylandWindow::initializeColorSpace() and attaches the matching
-    // wp_image_description; on other platforms it is ignored.  Must be set
+    // Tag the window's surface format with an extended-linear sRGB (scRGB)
+    // color space.  Qt's Wayland platform reads this in
+    // QWaylandWindow::initializeColorSpace() and attaches a
+    // wp_color_manager_v1 image description with the extended-linear transfer
+    // function and sRGB primaries (the description Blender uses for Wayland
+    // HDR); on other platforms it is ignored.  Diffuse white is then 1.0 and
+    // the compositor maps the >1.0 highlights onto the output.  Must be set
     // before the window is first shown.
     QSurfaceFormat fmt = d->window->format();
-    fmt.setColorSpace(QColorSpace(QColorSpace::Bt2100Pq));
+    fmt.setColorSpace(QColorSpace(QColorSpace::SRgbLinear));
     d->window->setFormat(fmt);
-    VK_BREADCRUMB("[VK-HDR] setHdrOutputEnabled: requested HDR10 swapchain + Bt2100Pq\n");
+    VK_BREADCRUMB("[VK-HDR] setHdrOutputEnabled: requested scRGB FP16 swapchain + "
+                  "extended-linear sRGB\n");
 }
 
 bool QuarterVulkanWidget::isHdrOutputRequested() const
@@ -2402,8 +2410,7 @@ bool QuarterVulkanWidget::isHdrOutputActive() const
         return false;
     }
     const VkFormat fmt = d->window->colorFormat();
-    return fmt == VK_FORMAT_A2B10G10R10_UNORM_PACK32
-        || fmt == VK_FORMAT_R16G16B16A16_SFLOAT;
+    return fmt == VK_FORMAT_R16G16B16A16_SFLOAT;
 }
 
 void QuarterVulkanWidget::redraw()

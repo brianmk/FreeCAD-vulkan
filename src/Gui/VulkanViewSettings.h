@@ -124,25 +124,27 @@ struct VulkanViewSettings
     //! their line residue on it; the point overlay stays raster-only.
     bool edgeOverlay = true;
     bool showPoints = false;
-    //! HDR output (HDR10 / BT.2020 + ST 2084 PQ) for the Vulkan viewport.
+    //! HDR output for the Vulkan viewport, presented as scRGB: an FP16
+    //! extended-linear sRGB swapchain (the representation Blender and gamescope
+    //! use on Wayland) that the compositor color-manages through the
+    //! wp_color_manager_v1 protocol.  Diffuse white is linear 1.0 (the
+    //! compositor's reference white) and values above 1.0 carry HDR highlights.
     //! Only effective on a native Wayland session whose compositor exposes the
-    //! color-management protocol and an HDR-capable output; the viewport falls
-    //! back to SDR when the capability probe fails.  Ignored by the classic
+    //! color-management protocol and whose output is actually in an HDR mode;
+    //! the viewport falls back to SDR otherwise.  Ignored by the classic
     //! Coin/OpenGL viewport.
     bool hdrEnabled = false;
-    //! Linear exposure/gain applied to scene radiance before the PQ encode in
-    //! the HDR output pass.  Scene-white (radiance 1.0) lands at
-    //! hdrExposure * 10000 cd/m^2, so 0.02 maps diffuse white to the ~200
-    //! cd/m^2 SDR reference white while highlights (radiance > 1) can still
-    //! exceed it up to the 10000 cd/m^2 PQ peak.
-    float hdrExposure = 0.02f;
-    //! Tone-mapping operator applied between the exposure and the PQ encode:
-    //! 0 = clip (no tone map: highlights hard-clamp at the PQ peak),
-    //! 1 = Reinhard (default), 2 = ACES, 3 = Hable.  The non-clip operators roll
-    //! highlights off smoothly instead of clipping; they are the published
-    //! matrix-free forms and the exposure is the linear pre-scale.  Ignored
-    //! when HDR is off.
-    int hdrToneMap = 1;
+    //! Diffuse-white gain for the scRGB output.  1.0 presents scene white
+    //! (linear 1.0) at the compositor's reference white; > 1 brightens the
+    //! whole viewport, < 1 darkens it.  HDR highlights remain above 1.0 and are
+    //! mapped by the compositor/display.
+    float hdrExposure = 1.0f;
+    //! Highlight compression for the scene-linear ray-traced path (the raster
+    //! path is display-referred and never tone-maps): 0 = clip (no tone map,
+    //! highlights pass through above 1.0), 1 = Reinhard, 2 = ACES, 3 = Hable.
+    //! The filmic operators compress the result into [0,1].  Ignored when HDR
+    //! is off.
+    int hdrToneMap = 0;
     //! Interaction LOD: while the camera is navigating, reduce per-frame work
     //! so an orbit/pan of a heavy scene stays responsive, then restore full
     //! quality once the camera settles.  Applies to every Vulkan mode: a

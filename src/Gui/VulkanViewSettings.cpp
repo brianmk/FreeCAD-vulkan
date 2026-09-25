@@ -5,6 +5,7 @@
 #include "VulkanViewSettings.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace Gui {
@@ -28,11 +29,18 @@ VulkanViewSettings::load(const ParameterGrp::handle & hGrp)
     this->edgeOverlay = hGrp->GetBool("VulkanWireframe", true);
     this->showPoints = hGrp->GetBool("VulkanShowPoints", false);
     this->hdrEnabled = hGrp->GetBool("VulkanHDR", false);
-    this->hdrExposure = std::clamp(
-        static_cast<float>(hGrp->GetFloat("VulkanHDRExposure", 0.02f)),
-        0.0001f, 10.0f);
+    // scRGB white gain: 1.0 maps diffuse white (linear 1.0) onto the
+    // compositor's reference white.  A stored value from the old HDR10/PQ path
+    // used the PQ peak fraction (0.02 / 0.0203) and would render nearly black
+    // under the extended-linear output, so migrate those two values to neutral.
+    float hdrExposure = static_cast<float>(hGrp->GetFloat("VulkanHDRExposure", 1.0f));
+    if (std::abs(hdrExposure - 0.02f) < 1e-4f ||
+        std::abs(hdrExposure - 0.0203f) < 1e-4f) {
+        hdrExposure = 1.0f;
+    }
+    this->hdrExposure = std::clamp(hdrExposure, 0.0001f, 10.0f);
     this->hdrToneMap = std::clamp(
-        static_cast<int>(hGrp->GetInt("VulkanHDRToneMap", 1)), 0, 3);
+        static_cast<int>(hGrp->GetInt("VulkanHDRToneMap", 0)), 0, 3);
     this->interactionLod = hGrp->GetBool("VulkanInteractionLod", true);
     // Colors are stored as Unsigned (0xRRGGBBAA) to survive INT_MAX; the
     // alpha is pinned to 1 (the edge overlay is opaque).
