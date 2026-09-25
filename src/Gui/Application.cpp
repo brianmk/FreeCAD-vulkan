@@ -97,6 +97,9 @@
 #include "LinkViewPy.h"
 #include "MainWindow.h"
 #include "Macro.h"
+#ifdef FREECAD_USE_VULKAN
+# include "Quarter/QuarterVulkanWidget.h"
+#endif
 #include "FreeCADGuiModulePy.h"
 #include "PreferencePackManager.h"
 #include "PythonConsolePy.h"
@@ -2815,6 +2818,19 @@ void Application::runApplication()
     init3DMouse(&mw, &mainApp);
 
     Instance->d->startingUp = false;
+
+#ifdef FREECAD_USE_VULKAN
+    // Warm the shared QVulkanInstance on the first event-loop turn, before the
+    // deferred document open (delayedStartup below), so the first document does
+    // not pay the one-time Vulkan loader/GPU-driver initialization.
+    if (App::GetApplication()
+            .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
+            ->GetBool("UseVulkanRenderer", false)) {
+        QTimer::singleShot(0, &mw, [] {
+            SIM::Coin3D::Quarter::QuarterVulkanWidget::prewarmSharedInstance();
+        });
+    }
+#endif
 
     // gets called once we start the event loop
     QTimer::singleShot(0, &mw, SLOT(delayedStartup()));

@@ -56,6 +56,18 @@ public:
     explicit QuarterVulkanWidget(QWidget * parent = nullptr);
     ~QuarterVulkanWidget() override;
 
+    /*!
+      \brief Create the process-wide QVulkanInstance ahead of the first view.
+
+      The shared QVulkanInstance (and the Vulkan loader/ICD and GPU driver it
+      pulls in) is otherwise created lazily when the first 3D view is built, so
+      the first document open pays that one-time driver initialization.  Calling
+      this once during GUI startup moves the cost off the document-open path.
+      Idempotent; a creation failure is logged and the views fall back exactly as
+      before.  Only available in Vulkan builds.
+    */
+    static void prewarmSharedInstance();
+
 Q_SIGNALS:
     //! Emitted when the Vulkan swapchain size is known or changes.
     //! Delivered on the GUI thread.
