@@ -121,7 +121,7 @@ verification pending; `[ ]` not started.
 | 6 | **Overlays as scene subtrees**: navi-cube/axis-cross/ground-grid roots on the view model; drop `setGroundPlaneDecorationScene`. | `ViewState.*`, `View3DInventorViewer.*`, `VulkanViewportAdapter.*` | `[x]` `194c59a6d5` (axis-cross still in IR wrapper) |
 | 7 | **Drop `getSoRenderManager()` from the neutral interface.** | `InteractionHost.h`, `Navigation/*` | `[~]` done by #96; only GL-only consumers keep it |
 | 8 | **Coin: backend-agnostic scene manager**: common base for `SoRenderManager` + `SoVulkanRenderManager`. | `src/3rdParty/coin/**` | `[ ]` patch ready: coin `21aa55b32`, not integrated |
-| 9 | **Endgame**: Vulkan-only view builds controller+view model without `View3DInventorViewer`/`SoRenderManager`. | `View3DInventor.*`, `VulkanViewportAdapter.*` | `[ ]` design in `/tmp/opencode/step9_design.md` |
+| 9 | **Endgame**: Vulkan-only view builds controller+view model without `View3DInventorViewer`/`SoRenderManager`. | `View3DInventor.*`, `VulkanViewportAdapter.*` | `[~]` 9a `1997d0f8c5`, 9c-partial `b93bc41b40`; design in `/tmp/opencode/step9_design.md` |
 
 ## Workstream split
 
@@ -154,17 +154,20 @@ step 8 is the only genuinely parallel one.
 ## Status
 
 - `[x]` Step 1 · `[x]` Step 2 · `[x]` Step 3 · `[~]` Step 4 · `[x]` Step 5
-- `[x]` Step 6 · `[~]` Step 7 · `[ ]` Step 8 · `[ ]` Step 9
+- `[x]` Step 6 · `[~]` Step 7 · `[ ]` Step 8 · `[~]` Step 9
 
-Progress: `194c59a6d5` (1/2/6) → `23fd7b4397` (3/5) → `e7a82a54ab` (4, partial).
+Progress: `194c59a6d5` (1/2/6) → `23fd7b4397` (3/5) → `e7a82a54ab` (4, partial)
+→ `1997d0f8c5` (9a, ViewState neutral model) → `b93bc41b40` (9c partial).
 
 Next actions:
 
-1. Once the concurrent session's benchmark finishes, run a full relink + the
-   pick/presel probes to verify the step-4 device-ownership change.
-2. Integrate WS-COIN step 8 (`21aa55b32178f90a5deac14b0953946ba92dc9be`, patch
-   `/tmp/opencode/coin-step8.patch`): land it on the coin fork, bump the
+1. Integrate WS-COIN step 8 (`21aa55b32178f90a5deac14b0953946ba92dc9be`, patch
+   `/tmp/opencode/coin-step8.patch`): blocked until the concurrent session's Coin
+   branch is pushed/settled; then land it on the coin fork, bump the
    `src/3rdParty/coin` gitlink, full relink, GL/Vulkan parity probes.
-3. WS-CLEANUP step 9 (design in `/tmp/opencode/step9_design.md`): the Vulkan-only
-   session; also retire the step-4 tablet/touch relay and gesture grab.
-4. Delete this document before the branch is proposed for merge.
+2. Step 9 remaining (design in `/tmp/opencode/step9_design.md`): 9b (event
+   manager on the current surface), 9c (retire the remaining `_glSurface`
+   forwards — animation, pick radius, navcube, event manager), 9d (GL-free
+   construction path in `View3DInventor`), 9e/9f (neutral pick/clipping). Also
+   retire the step-4 tablet/touch relay and gesture grab.
+3. Delete this document before the branch is proposed for merge.
