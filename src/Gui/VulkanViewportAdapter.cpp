@@ -1037,7 +1037,18 @@ SoEventManager* VulkanViewportAdapter::getSoEventManager() const
 
 SbVec3f VulkanViewportAdapter::getFocalPoint() const
 {
-    return _glSurface ? _glSurface->getFocalPoint() : SbVec3f();
+    // getFocalPoint() is a pure function of the shared camera, which now lives
+    // on ViewState (the GL viewer derives it the same way), so compute it here
+    // instead of forwarding through the hidden GL surface.
+    ViewState* state = _viewer ? _viewer->getViewState() : nullptr;
+    const SoCamera* camera = state ? state->camera() : nullptr;
+    if (!camera) {
+        return {0., 0., 0.};
+    }
+
+    SbVec3f direction;
+    camera->orientation.getValue().multVec(SbVec3f(0, 0, -1), direction);
+    return camera->position.getValue() + camera->focalDistance.getValue() * direction;
 }
 
 float VulkanViewportAdapter::getPickRadius() const
@@ -1060,27 +1071,35 @@ QWidget* VulkanViewportAdapter::getGLWidget() const
 
 bool VulkanViewportAdapter::isEditing() const
 {
-    return _glSurface && _glSurface->isEditing();
+    // Neutral view-model state: the GL viewer mirrors into ViewState, so read
+    // the authoritative flag directly instead of forwarding to the hidden GL
+    // surface.
+    ViewState* state = _viewer ? _viewer->getViewState() : nullptr;
+    return state && state->isEditing();
 }
 
 bool VulkanViewportAdapter::isEditingViewProvider() const
 {
-    return _glSurface && _glSurface->isEditingViewProvider();
+    ViewState* state = _viewer ? _viewer->getViewState() : nullptr;
+    return state && state->isEditingViewProvider();
 }
 
 bool VulkanViewportAdapter::isSelectionEnabled() const
 {
-    return _glSurface && _glSurface->isSelectionEnabled();
+    ViewState* state = _viewer ? _viewer->getViewState() : nullptr;
+    return state && state->isSelectionEnabled();
 }
 
 bool VulkanViewportAdapter::isViewing() const
 {
-    return _glSurface && _glSurface->isViewing();
+    ViewState* state = _viewer ? _viewer->getViewState() : nullptr;
+    return state && state->isViewing();
 }
 
 bool VulkanViewportAdapter::isSeekMode() const
 {
-    return _glSurface && _glSurface->isSeekMode();
+    ViewState* state = _viewer ? _viewer->getViewState() : nullptr;
+    return state && state->isSeekMode();
 }
 
 void VulkanViewportAdapter::setViewing(bool enable)
@@ -1219,12 +1238,17 @@ void VulkanViewportAdapter::scheduleRedraw()
 
 SoGroup* VulkanViewportAdapter::getObjectGroup() const
 {
-    return _glSurface ? _glSurface->getObjectGroup() : nullptr;
+    // Neutral view-model state: the GL viewer already answers this from
+    // ViewState, so read it directly instead of forwarding through the hidden
+    // GL surface.
+    ViewState* state = _viewer ? _viewer->getViewState() : nullptr;
+    return state ? state->objectGroup() : nullptr;
 }
 
 SoSeparator* VulkanViewportAdapter::getForegroundRoot() const
 {
-    return _glSurface ? _glSurface->getForegroundRoot() : nullptr;
+    ViewState* state = _viewer ? _viewer->getViewState() : nullptr;
+    return state ? state->foregroundRoot() : nullptr;
 }
 
 void VulkanViewportAdapter::bindMouseSelection(AbstractMouseSelection* selection)
@@ -1246,7 +1270,8 @@ bool VulkanViewportAdapter::surfaceProcessNaviCubeEvent(const SoEvent* ev)
 
 bool VulkanViewportAdapter::surfaceIsRedirectedToSceneGraph() const
 {
-    return _glSurface && _glSurface->surfaceIsRedirectedToSceneGraph();
+    ViewState* state = _viewer ? _viewer->getViewState() : nullptr;
+    return state && state->redirectToSceneGraph();
 }
 
 QWidget* VulkanViewportAdapter::surfaceRawEventTarget() const
