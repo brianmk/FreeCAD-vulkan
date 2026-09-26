@@ -36,6 +36,7 @@ namespace Coin3D {
 namespace Quarter {
 
 class QuarterVulkanWidgetPrivate;
+class EventFilter;
 
 /*!
   \brief Self-contained Vulkan viewport widget for FreeCAD's Quarter layer.
@@ -153,6 +154,16 @@ public:
       InputDeviceHost and delivered through setEventSink().
     */
     void setRawEventSink(std::function<bool(QEvent *)> sink);
+
+    /*!
+      \brief The widget's Coin input-device event filter.
+
+      Quarter's `EventFilter` is installed on the embedded window/container and
+      owns this widget's mouse/keyboard devices; the InteractionController
+      also registers FreeCAD's gesture/SpaceNavigator devices on it while this
+      surface is current.  Returns nullptr before construction completes.
+    */
+    EventFilter * getEventFilter() const;
 
     /*!
       \brief Set the sink that receives translated Coin events.

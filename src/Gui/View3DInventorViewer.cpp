@@ -1355,12 +1355,12 @@ void View3DInventorViewer::init()
     installEventFilter(viewerEventFilter);
 #if defined(USE_3DCONNEXION_NAVLIB)
     if (SpaceMouseParameter::instance()->getLegacySpaceMouseDevices()) {
-        getEventFilter()->registerInputDevice(new SpaceNavigatorDevice);
+        interactionController->registerInputDevice(new SpaceNavigatorDevice);
     }
 #else
-    getEventFilter()->registerInputDevice(new SpaceNavigatorDevice);
+    interactionController->registerInputDevice(new SpaceNavigatorDevice);
 #endif
-    getEventFilter()->registerInputDevice(new GesturesDevice(this));
+    interactionController->registerInputDevice(new GesturesDevice(this));
 
     try {
 #ifndef Q_OS_MACOS
@@ -2781,6 +2781,13 @@ QWidget* View3DInventorViewer::surfaceRawEventTarget() const
     // event filter), so raw tablet/touch/context-menu events are delivered to
     // the viewer widget.
     return getWidget();
+}
+
+Quarter::EventFilter* View3DInventorViewer::surfaceEventFilter() const
+{
+    // The GL viewer's own Quarter event filter, on which the controller keeps
+    // FreeCAD's gesture/SpaceNavigator devices while this surface is current.
+    return getEventFilter();
 }
 
 void View3DInventorViewer::surfaceNotifyCameraMoved()

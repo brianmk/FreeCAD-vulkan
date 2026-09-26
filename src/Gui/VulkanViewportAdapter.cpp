@@ -1257,6 +1257,18 @@ QWidget* VulkanViewportAdapter::surfaceRawEventTarget() const
     return _glSurface ? _glSurface->surfaceRawEventTarget() : nullptr;
 }
 
+SIM::Coin3D::Quarter::EventFilter* VulkanViewportAdapter::surfaceEventFilter() const
+{
+    // The Vulkan widget's own Quarter event filter: the controller moves
+    // FreeCAD's gesture/SpaceNavigator devices onto it while this surface is
+    // current so they translate events delivered to the visible surface.
+#ifdef FREECAD_USE_VULKAN
+    return _vulkanViewer ? _vulkanViewer->getEventFilter() : nullptr;
+#else
+    return nullptr;
+#endif
+}
+
 void VulkanViewportAdapter::surfaceNotifyCameraMoved()
 {
     // Let the GL viewer run its bookkeeping; the adapter's camera sensor is

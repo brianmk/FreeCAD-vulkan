@@ -19,7 +19,7 @@ class QTimer;
 class SoNodeSensor;
 class SoSensor;
 
-namespace SIM::Coin3D::Quarter { class QuarterVulkanWidget; }
+namespace SIM::Coin3D::Quarter { class QuarterVulkanWidget; class EventFilter; }
 
 namespace Gui
 {
@@ -215,6 +215,7 @@ public:
     bool surfaceNaviCubeEnabled() const override;
     bool surfaceProcessNaviCubeEvent(const SoEvent* ev) override;
     bool surfaceIsRedirectedToSceneGraph() const override;
+    SIM::Coin3D::Quarter::EventFilter* surfaceEventFilter() const override;
     QWidget* surfaceRawEventTarget() const override;
     void surfaceNotifyCameraMoved() override;
     void surfaceSetEventManager(SoEventManager* manager) override;

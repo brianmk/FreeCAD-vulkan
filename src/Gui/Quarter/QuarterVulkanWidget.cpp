@@ -1092,6 +1092,11 @@ void QuarterVulkanWidget::setEventSink(std::function<bool(const SoEvent *)> sink
     d->eventSink = std::move(sink);
 }
 
+EventFilter * QuarterVulkanWidget::getEventFilter() const
+{
+    return d->eventFilter;
+}
+
 qreal QuarterVulkanWidget::devicePixelRatio() const
 {
     return QWidget::devicePixelRatio();
