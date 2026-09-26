@@ -48,6 +48,16 @@ inline bool rtDebug()
     return Base::envFlagEnabled("FC_VULKAN_RT_DEBUG");
 }
 
+//! `FC_VULKAN_PARALLEL_RECORD`: record the opaque pass with the Coin Vulkan
+//! backend's parallel recorder.  The backend needs VK_EXT_nested_command_buffer
+//! to execute secondary command buffers from a subpass, so this also decides
+//! whether the widget requests that extension/feature at device creation.
+//! Opt-in: leaving it unset keeps the default fully-inline path.
+inline bool parallelRecord()
+{
+    return Base::envFlagEnabled("FC_VULKAN_PARALLEL_RECORD");
+}
+
 //! `FC_VULKAN_BREADCRUMBS`: mirror the GUI-side trace to the trace file.
 inline bool breadcrumbs()
 {
