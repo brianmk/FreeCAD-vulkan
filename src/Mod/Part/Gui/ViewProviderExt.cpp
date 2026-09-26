@@ -72,12 +72,14 @@
 #include <Inventor/nodes/SoCoordinate3.h>
 #include <Inventor/nodes/SoDrawStyle.h>
 #include <Inventor/nodes/SoMaterial.h>
+#include <Inventor/nodes/SoPhysicalMaterial.h>
 #include <Inventor/nodes/SoMaterialBinding.h>
 #include <Inventor/nodes/SoNormal.h>
 #include <Inventor/nodes/SoNormalBinding.h>
 #include <Inventor/nodes/SoPolygonOffset.h>
 #include <Inventor/nodes/SoSeparator.h>
 #include <Inventor/nodes/SoShapeHints.h>
+#include <Inventor/nodes/SoTextureCoordinateProjection.h>
 
 #include <boost/algorithm/string/predicate.hpp>
 
@@ -336,8 +338,19 @@ void ViewProviderPartExt::attach(App::DocumentObject* pcFeat)
     // just faces with no edges or points
     pcFlatRoot->addChild(pShapeHints);
     pcFlatRoot->addChild(pcFaceBind);
+    // Physical (metallic-roughness) material state, applied to the faces below
+    // regardless of whether the material or a texture path is active.
+    if (pcShapePhysical) {
+        pcFlatRoot->addChild(pcShapePhysical);
+    }
     pcFlatRoot->addChild(texture.getAppearance());
     texture.setup(pcShapeMaterial);
+    // Object-space texture mapping.  BREP faces carry no texture coordinates,
+    // so a textured Part shape would otherwise sample a single texel (flat
+    // colour).  SoTextureCoordinateProjection projects the object coordinates
+    // (and, in BOX mode, picks the plane from the surface normal), so the
+    // mapping scale and projection match a SolidWorks-like appearance.
+    pcFlatRoot->addChild(pcTexCoordProjection);
     SoDrawStyle* pcFaceStyle = new SoDrawStyle();
     pcFaceStyle->setName("FaceStyle");
     pcFaceStyle->style = SoDrawStyle::FILLED;
@@ -577,6 +590,41 @@ void ViewProviderPartExt::setHighlightedFaces(const std::vector<App::Material>& 
         pcShapeMaterial->emissiveColor.finishEditing();
         pcShapeMaterial->shininess.finishEditing();
         pcShapeMaterial->transparency.finishEditing();
+
+        // Per-face physical (metallic-roughness) parameters, indexed with the
+        // same material index as the colors above so the renderer picks the
+        // values belonging to each face.
+        if (pcShapePhysical) {
+            pcShapePhysical->enabled.setNum(size);
+            pcShapePhysical->metalness.setNum(size);
+            pcShapePhysical->roughness.setNum(size);
+
+            SbBool* en = pcShapePhysical->enabled.startEditing();
+            float* pm = pcShapePhysical->metalness.startEditing();
+            float* pr = pcShapePhysical->roughness.startEditing();
+            for (int i = 0; i < size; i++) {
+                en[i] = materials[i].usePhysicalMaterial ? TRUE : FALSE;
+                pm[i] = materials[i].metallic;
+                pr[i] = materials[i].roughness;
+            }
+            pcShapePhysical->enabled.finishEditing();
+            pcShapePhysical->metalness.finishEditing();
+            pcShapePhysical->roughness.finishEditing();
+            // The map strengths are scalar (not per-face): take them from the
+            // first material in the list.
+            if (size > 0) {
+                pcShapePhysical->roughnessStrength.setValue(
+                    materials[0].roughnessStrength);
+                pcShapePhysical->normalStrength.setValue(
+                    materials[0].normalStrength);
+                pcShapePhysical->emissiveIntensity.setValue(
+                    materials[0].emissiveIntensity);
+                pcShapePhysical->transmissionIor.setValue(
+                    materials[0].transmissionIor);
+                pcShapePhysical->transmissionAbsorption.setValue(
+                    materials[0].transmissionAbsorption);
+            }
+        }
     }
     else if (size == 1) {
         pcFaceBind->value = SoMaterialBinding::OVERALL;
@@ -587,6 +635,58 @@ void ViewProviderPartExt::setHighlightedFaces(const std::vector<App::Material>& 
 void ViewProviderPartExt::setHighlightedFaces(const App::PropertyMaterialList& appearance)
 {
     setHighlightedFaces(appearance.getValues());
+}
+
+namespace
+{
+SoTextureCoordinateProjection::Mapping toCoinMapping(App::Material::TextureMapping mapping)
+{
+    switch (mapping) {
+        case App::Material::MappingBox:
+            return SoTextureCoordinateProjection::BOX;
+        case App::Material::MappingSpherical:
+            return SoTextureCoordinateProjection::SPHERICAL;
+        case App::Material::MappingCylindrical:
+            return SoTextureCoordinateProjection::CYLINDRICAL;
+        case App::Material::MappingPlanar:
+        default:
+            return SoTextureCoordinateProjection::PLANAR;
+    }
+}
+}  // namespace
+
+void ViewProviderPartExt::setCoinAppearance(const App::Material& source)
+{
+    ViewProviderGeometryObject::setCoinAppearance(source);
+    // Apply (or clear) the embedded shape texture.  The extension toggles its
+    // appearance switch between the plain material and the texture subtree.
+    texture.setCoinAppearance(pcShapeMaterial, source);
+
+    // Texture mapping: one tile spans textureSize millimetres of object space.
+    // The projection node multiplies the object coordinates by 1/size, so a
+    // larger texture size produces fewer, larger tiles.
+    const float size = source.textureSize > 0.001F ? source.textureSize : 100.0F;
+    const float inv = 1.0F / size;
+    if (pcTexCoordProjection) {
+        pcTexCoordProjection->mapping.setValue(toCoinMapping(source.textureMapping));
+        pcTexCoordProjection->scale.setValue(SbVec3f(inv, inv, inv));
+    }
+
+    // The projected texture coordinates are baked into the display geometry,
+    // so toggling the texture or changing its tile size or projection must
+    // rebuild it; otherwise the shape keeps stale, coordinate-less (or wrongly
+    // scaled/mapped) geometry and appears as a flat or mis-tiled texel.
+    const bool hadTexture = !lastCoinImage.empty();
+    const bool hasTexture = !source.image.empty();
+    const bool sizeChanged = (size != lastCoinTextureSize);
+    const bool mappingChanged = (source.textureMapping != lastCoinTextureMapping);
+    lastCoinImage = source.image;
+    lastCoinTextureSize = size;
+    lastCoinTextureMapping = source.textureMapping;
+    if (hadTexture != hasTexture || (hasTexture && (sizeChanged || mappingChanged))) {
+        VisualTouched = true;
+        updateVisualIfVisible();
+    }
 }
 
 std::map<std::string, Base::Color> ViewProviderPartExt::getElementColors(const char* element) const
@@ -2245,6 +2345,9 @@ ViewProviderPartExt::~ViewProviderPartExt()
     faceset->unref();
     norm->unref();
     normb->unref();
+    if (pcTexCoordProjection) {
+        pcTexCoordProjection->unref();
+    }
     lineset->unref();
     nodeset->unref();
 }
@@ -2410,6 +2513,13 @@ ViewProviderPartExt::ViewProviderPartExt()
     pShapeHints = new SoShapeHints;
     pShapeHints->shapeType = SoShapeHints::UNKNOWN_SHAPE_TYPE;
     pShapeHints->ref();
+    // Default mapping: PLANAR projection, one texture tile per 100 mm;
+    // setCoinAppearance() overrides the mode and scale from the material.
+    pcTexCoordProjection = new SoTextureCoordinateProjection;
+    pcTexCoordProjection->mapping.setValue(SoTextureCoordinateProjection::PLANAR);
+    pcTexCoordProjection->scale.setValue(SbVec3f(0.01f, 0.01f, 0.01f));
+    pcTexCoordProjection->ref();
+    pcTexCoordProjection->setName("TextureCoordinateProjection");
     Lighting.touch();
     DrawStyle.touch();
 

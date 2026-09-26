@@ -33,6 +33,7 @@ class SoSensor;
 class SbVec2s;
 class SoBaseColor;
 class SoNodeSensor;
+class SoPhysicalMaterial;
 
 namespace Gui
 {
@@ -118,13 +119,23 @@ protected:
         const char* TypeName,
         const char* PropName
     ) override;
-    void setCoinAppearance(const App::Material& source);
+    virtual void setCoinAppearance(const App::Material& source);
+
+    /** Physical (metallic-roughness) material node paired with pcShapeMaterial.
+     *  It carries the authored PBR parameters; the Vulkan raster backend reads
+     *  them for the SolidWorks-like appearance. Subclasses that insert
+     *  pcShapeMaterial should insert this node alongside it. */
+    SoPhysicalMaterial* getPhysicalMaterialNode() const
+    {
+        return pcShapePhysical;
+    }
 
 private:
     bool isSelectionEnabled() const;
 
 protected:
     SoMaterial* pcShapeMaterial {nullptr};
+    SoPhysicalMaterial* pcShapePhysical {nullptr};
     SoFCBoundingBox* pcBoundingBox {nullptr};
     SoSwitch* pcBoundSwitch {nullptr};
     SoBaseColor* pcBoundColor {nullptr};

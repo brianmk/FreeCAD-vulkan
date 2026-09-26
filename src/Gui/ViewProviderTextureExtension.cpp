@@ -23,11 +23,13 @@
 
 
 #include <Inventor/nodes/SoCoordinate3.h>
+#include <Inventor/nodes/SoGroup.h>
 #include <Inventor/nodes/SoIndexedFaceSet.h>
 #include <Inventor/nodes/SoMaterial.h>
 #include <Inventor/nodes/SoSwitch.h>
 #include <Inventor/nodes/SoTexture2.h>
 #include <Inventor/nodes/SoTexture3.h>
+#include <Inventor/nodes/SoTextureUnit.h>
 
 
 #include "ViewProviderTextureExtension.h"
@@ -52,9 +54,30 @@ ViewProviderTextureExtension::ViewProviderTextureExtension()
     pcSwitchTexture->ref();
     pcSwitchTexture->setName("SwitchTexture");
 
+    pcTextureGroup2D = new SoGroup;
+    pcTextureGroup2D->ref();
+    pcTextureGroup2D->setName("TextureGroup2D");
+
     pcShapeTexture2D = new SoTexture2;
     pcShapeTexture2D->ref();
     pcShapeTexture2D->setName("ShapeTexture2D");
+
+    // Optional PBR maps.  Each map is wrapped in an SoTextureUnit so the
+    // subsequent SoTexture2 is bound to unit 1/2/3 rather than the base unit 0.
+    pcMapGroup = new SoGroup;
+    pcMapGroup->ref();
+    pcMapGroup->setName("PhysicalMapGroup");
+    for (int i = 0; i < 3; ++i) {
+        auto unit = new SoTextureUnit;
+        unit->ref();
+        unit->unit.setValue(i + 1);
+        pcMapUnits[i] = unit;
+        auto texture = new SoTexture2;
+        texture->ref();
+        pcMapTextures[i] = texture;
+        pcMapGroup->addChild(unit);
+        pcMapGroup->addChild(texture);
+    }
 
     pcTextureGroup3D = new SoGroup;
     pcTextureGroup3D->ref();
@@ -66,7 +89,9 @@ void ViewProviderTextureExtension::setup(SoMaterial* pcShapeMaterial)
     // Materials go first, with textured faces drawing over them
     pcSwitchAppearance->addChild(pcShapeMaterial);
     pcSwitchAppearance->addChild(pcSwitchTexture);
-    pcSwitchTexture->addChild(pcShapeTexture2D);
+    pcTextureGroup2D->addChild(pcShapeTexture2D);
+    pcTextureGroup2D->addChild(pcMapGroup);
+    pcSwitchTexture->addChild(pcTextureGroup2D);
     pcSwitchTexture->addChild(pcTextureGroup3D);
     pcSwitchAppearance->whichChild.setValue(0);
     pcSwitchTexture->whichChild.setValue(SO_SWITCH_NONE);
@@ -76,7 +101,13 @@ ViewProviderTextureExtension::~ViewProviderTextureExtension()
 {
     pcSwitchAppearance->unref();
     pcSwitchTexture->unref();
+    pcTextureGroup2D->unref();
     pcShapeTexture2D->unref();
+    for (int i = 0; i < 3; ++i) {
+        pcMapUnits[i]->unref();
+        pcMapTextures[i]->unref();
+    }
+    pcMapGroup->unref();
     pcTextureGroup3D->unref();
 }
 
@@ -95,7 +126,11 @@ void ViewProviderTextureExtension::setCoinAppearance(
     const App::Material& source
 )
 {
-    if (!source.image.empty()) {
+    const bool hasBaseImage = !source.image.empty();
+    const bool hasMapImage = !source.roughnessImage.empty()
+        || !source.normalImage.empty() || !source.emissiveImage.empty();
+
+    if (hasBaseImage) {
         activateTexture2D();
 
         QByteArray by = QByteArray::fromBase64(QString::fromStdString(source.image).toUtf8());
@@ -106,8 +141,21 @@ void ViewProviderTextureExtension::setCoinAppearance(
         pcShapeTexture2D->image = texture;
     }
     else {
-        activateMaterial();
+        // Clear any base texture from a previous appearance so unit 0 stays
+        // disabled; the optional PBR maps are still shown when present.
+        pcShapeTexture2D->image = SoSFImage();
+        if (hasMapImage) {
+            activateTexture2D();
+        }
+        else {
+            activateMaterial();
+        }
     }
+
+    // Optional PBR maps (roughness/normal/emissive) on texture units 1-3.
+    setMapImage(pcMapTextures[0], source.roughnessImage);
+    setMapImage(pcMapTextures[1], source.normalImage);
+    setMapImage(pcMapTextures[2], source.emissiveImage);
 
     // Always set the material for items such as lines that don't support textures
     pcShapeMaterial->ambientColor
@@ -120,6 +168,25 @@ void ViewProviderTextureExtension::setCoinAppearance(
         .setValue(source.emissiveColor.r, source.emissiveColor.g, source.emissiveColor.b);
     pcShapeMaterial->shininess.setValue(source.shininess);
     pcShapeMaterial->transparency.setValue(source.transparency);
+}
+
+void ViewProviderTextureExtension::setMapImage(SoTexture2* texture,
+                                               const std::string& base64Image)
+{
+    if (base64Image.empty()) {
+        texture->image = SoSFImage();
+        return;
+    }
+    QByteArray by = QByteArray::fromBase64(
+        QString::fromStdString(base64Image).toUtf8());
+    QImage image = QImage::fromData(by, "PNG");
+    if (image.isNull()) {
+        texture->image = SoSFImage();
+        return;
+    }
+    SoSFImage converted;
+    Gui::BitmapFactory().convert(image, converted);
+    texture->image = converted;
 }
 
 void ViewProviderTextureExtension::activateMaterial()

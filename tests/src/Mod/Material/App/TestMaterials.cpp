@@ -27,6 +27,7 @@
 #include <QString>
 
 #include <App/Application.h>
+#include <App/Material.h>
 #include <Base/Interpreter.h>
 #include <Base/Quantity.h>
 #include <App/MetaTypes.h>
@@ -216,6 +217,62 @@ TEST_F(TestMaterial, TestAddAppearanceModel)
     material.removeAppearance(Materials::ModelUUIDs::ModelUUID_Rendering_Advanced);
     models = material.getAppearanceModels();
     EXPECT_EQ(models->size(), 0);
+}
+
+TEST_F(TestMaterial, TestAppearancePhysicalRoundTrip)
+{
+    Materials::Material material;
+    App::Material source;
+    source.usePhysicalMaterial = true;
+    source.metallic = 0.8F;
+    source.roughness = 0.2F;
+    source.diffuseColor = Base::Color(0.1F, 0.2F, 0.3F, 1.0F);
+    source.textureSize = 42.0F;
+    source.textureMapping = App::Material::MappingBox;
+    source.image = "c29tZS1pbWFnZQ==";
+    source.roughnessImage = "cm91Z2g=";
+    source.roughnessImagePath = "/tmp/rough.png";
+    source.roughnessStrength = 0.7F;
+    source.normalImage = "bm9ybQ==";
+    source.normalStrength = 0.4F;
+    source.emissiveImage = "ZW1pcw==";
+    source.emissiveIntensity = 3.0F;
+    source.transmissionIor = 1.62F;
+    source.transmissionAbsorption = 0.35F;
+
+    material = source;  // operator=(const App::Material&)
+
+    App::Material back = material.getMaterialAppearance();
+    EXPECT_TRUE(back.usePhysicalMaterial);
+    EXPECT_FLOAT_EQ(back.metallic, 0.8F);
+    EXPECT_FLOAT_EQ(back.roughness, 0.2F);
+    EXPECT_FLOAT_EQ(back.textureSize, 42.0F);
+    EXPECT_EQ(back.textureMapping, App::Material::MappingBox);
+    EXPECT_EQ(back.diffuseColor, source.diffuseColor);
+    EXPECT_EQ(back.roughnessImage, source.roughnessImage);
+    EXPECT_EQ(back.roughnessImagePath, source.roughnessImagePath);
+    EXPECT_FLOAT_EQ(back.roughnessStrength, 0.7F);
+    EXPECT_EQ(back.normalImage, source.normalImage);
+    EXPECT_FLOAT_EQ(back.normalStrength, 0.4F);
+    EXPECT_EQ(back.emissiveImage, source.emissiveImage);
+    EXPECT_FLOAT_EQ(back.emissiveIntensity, 3.0F);
+    EXPECT_FLOAT_EQ(back.transmissionIor, 1.62F);
+    EXPECT_FLOAT_EQ(back.transmissionAbsorption, 0.35F);
+}
+
+TEST_F(TestMaterial, TestAppearanceLegacyNoPhysical)
+{
+    Materials::Material material;
+    App::Material source;
+    source.usePhysicalMaterial = false;
+    source.metallic = 0.9F;  // must be ignored without the physical flag
+    source.diffuseColor = Base::Color(0.2F, 0.4F, 0.6F, 1.0F);
+
+    material = source;
+
+    App::Material back = material.getMaterialAppearance();
+    EXPECT_FALSE(back.usePhysicalMaterial);
+    EXPECT_EQ(back.diffuseColor, source.diffuseColor);
 }
 
 QString parseQuantity(const std::string& value)

@@ -50,3 +50,67 @@ AppearanceModel:
     Units: ''
     URL: ''
     Description: " "
+  TextureMapping:
+    DisplayName: "Texture Mapping"
+    Type: 'String'
+    Units: ''
+    URL: ''
+    Description: >
+      Projection used to map the texture image onto the shape. One of
+      'Planar', 'Box', 'Spherical' or 'Cylindrical'. Box maps each face from
+      the closest axis-aligned plane; Planar projects the object X/Y
+      coordinates.
+  TextureRoughness:
+    DisplayName: "Roughness Map"
+    Type: 'Image'
+    Units: ''
+    URL: ''
+    Description: "Embedded roughness texture, sampled with the base texture coordinates"
+  TextureRoughnessPath:
+    DisplayName: "Roughness Map Path"
+    Type: 'File'
+    Units: ''
+    URL: ''
+    Description: "Path to an external roughness map, used when the embedded map is empty"
+  TextureNormal:
+    DisplayName: "Normal Map"
+    Type: 'Image'
+    Units: ''
+    URL: ''
+    Description: "Embedded tangent-space normal map"
+  TextureNormalPath:
+    DisplayName: "Normal Map Path"
+    Type: 'File'
+    Units: ''
+    URL: ''
+    Description: "Path to an external normal map, used when the embedded map is empty"
+  TextureEmissive:
+    DisplayName: "Emissive Map"
+    Type: 'Image'
+    Units: ''
+    URL: ''
+    Description: "Embedded emissive texture, added to the emissive color"
+  TextureEmissivePath:
+    DisplayName: "Emissive Map Path"
+    Type: 'File'
+    Units: ''
+    URL: ''
+    Description: "Path to an external emissive map, used when the embedded map is empty"
+  TextureRoughnessStrength:
+    DisplayName: "Roughness Strength"
+    Type: 'Float'
+    Units: ''
+    URL: ''
+    Description: "Multiplies the sampled roughness-map value"
+  TextureNormalStrength:
+    DisplayName: "Normal Strength"
+    Type: 'Float'
+    Units: ''
+    URL: ''
+    Description: "Scales the tangent-space normal-map perturbation"
+  TextureEmissiveIntensity:
+    DisplayName: "Emissive Intensity"
+    Type: 'Float'
+    Units: ''
+    URL: ''
+    Description: "Scales the emissive-map contribution"

@@ -8,11 +8,18 @@ add_executable(Material_tests_run
         TestMaterialValue.cpp
         TestModel.cpp
         TestModelProperties.cpp
+        TestRenderIRMaterial.cpp
 )
 
 target_include_directories(Material_tests_run SYSTEM PUBLIC
         ${QtCore_INCLUDE_DIRS}
 )
+
+# TestRenderIRMaterial exercises the consolidated material mapping in Coin's
+# retained render IR (SoRenderIR::packMaterialBlock / effectiveMaterialAmbient),
+# which both the raster and ray-tracing backends share.  Linking the Coin target
+# supplies its SYSTEM INTERFACE include directory.
+target_link_libraries(Material_tests_run Coin)
 
 set(MaterialTestData_Files
         Materials/TestAcrylicLegacy.FCMat

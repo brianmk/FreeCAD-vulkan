@@ -302,6 +302,7 @@ SET(MaterialModel_Files
     "Resources/Models/Render Workbench/RenderWB.yml"
     Resources/Models/Rendering/AdvancedRendering.yml
     Resources/Models/Rendering/BasicRendering.yml
+    Resources/Models/Rendering/PhysicalRendering.yml
     Resources/Models/Rendering/TextureRendering.yml
     Resources/Models/Rendering/VectorRendering.yml
     "Resources/Models/Test/Test Model.yml"

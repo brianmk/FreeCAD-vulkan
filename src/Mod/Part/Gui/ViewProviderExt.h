@@ -57,6 +57,7 @@ class SoIndexedFaceSet;
 class SoNormal;
 class SoNormalBinding;
 class SoMaterialBinding;
+class SoTextureCoordinateProjection;
 class SoIndexedLineSet;
 
 namespace PartGui
@@ -213,6 +214,8 @@ protected:
 protected:
     /// get called by the container whenever a property has been changed
     void onChanged(const App::Property* prop) override;
+    /// Apply the shape appearance, including an embedded texture image.
+    void setCoinAppearance(const App::Material& source) override;
     bool loadParameter();
     void updateVisual();
     /// Rebuild the visual immediately when the object is visible (or an
@@ -251,12 +254,19 @@ protected:
     SoBrepFaceSet* faceset;
     SoNormal* norm;
     SoNormalBinding* normb;
+    SoTextureCoordinateProjection* pcTexCoordProjection {nullptr};
     SoBrepEdgeSet* lineset;
     SoBrepPointSet* nodeset;
 
     bool VisualTouched;
     bool NormalsFromUV;
     bool faceHighlightActive = false;
+    // Last embedded texture state applied to the Coin appearance; used to
+    // detect a texture toggle or size change so the display geometry (which
+    // bakes the projected texture coordinates) is rebuilt.
+    std::string lastCoinImage;
+    float lastCoinTextureSize {0.0F};
+    App::Material::TextureMapping lastCoinTextureMapping {App::Material::MappingPlanar};
 
 private:
     Gui::ViewProviderFaceTexture texture;
