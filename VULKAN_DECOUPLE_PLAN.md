@@ -116,7 +116,7 @@ verification pending; `[ ]` not started.
 | 1 | **Invert viewport authority**: one neutral `viewportRegion`+`dpr`; delete `applySurfaceViewportToGL` + GL-widget event filter. | `ViewState.*`, `View3DInventorViewer.*`, `VulkanViewportAdapter.*` | `[x]` `194c59a6d5` |
 | 2 | **Lift scene+camera off `SoRenderManager`**: neutral owner holds scene root + camera; hosts return those; GL manager references them. | `ViewState.*`, `View3DInventorViewer.*`, `VulkanViewportAdapter.*` | `[x]` `194c59a6d5` |
 | 3 | **Picking as a service**: neutral `pick(ray)` (scene+cam+viewport); selection calls it; Vulkan picks its own pixels. | `ViewState.*` + call sites | `[x]` `23fd7b4397` |
-| 4 | **Own events in the controller**: event manager + gesture devices bound to the current surface; drop the hidden-GL relay (`setRawEventTarget`). | `InteractionController.*`, `InteractionSurface.h`, `View3DInventorViewer.*` | `[~]` `e7a82a54ab`; devices owned per surface, tablet/touch relay + gesture grab left |
+| 4 | **Own events in the controller**: event manager + gesture devices bound to the current surface; drop the hidden-GL relay (`setRawEventTarget`). | `InteractionController.*`, `InteractionSurface.h`, `View3DInventorViewer.*` | `[~]` `e7a82a54ab`; relink green, pick/presel probes PASS; tablet/touch relay + gesture grab left |
 | 5 | **Lights + background as view-model state**: camera-anchored headlight/backlight/fill and background on the view model; delete the GL gather (`pushSceneLights`, `getBackgroundColor`). | `ViewState.*`, `VulkanViewportAdapter.*`, `View3DInventor.*` | `[x]` `23fd7b4397` |
 | 6 | **Overlays as scene subtrees**: navi-cube/axis-cross/ground-grid roots on the view model; drop `setGroundPlaneDecorationScene`. | `ViewState.*`, `View3DInventorViewer.*`, `VulkanViewportAdapter.*` | `[x]` `194c59a6d5` (axis-cross still in IR wrapper) |
 | 7 | **Drop `getSoRenderManager()` from the neutral interface.** | `InteractionHost.h`, `Navigation/*` | `[~]` done by #96; only GL-only consumers keep it |
@@ -128,8 +128,8 @@ verification pending; `[ ]` not started.
 - **WS-CORE (steps 1,2,6)** — *done*: committed `194c59a6d5`, verified
   (full relink green; Vulkan raster+RT pick PASS; GL presel `(44,99,144)`).
 - **WS-INTERACT (steps 3,4,5)** — *mostly done*: steps 3+5 committed
-  `23fd7b4397`; the step-4 device-ownership change is `e7a82a54ab` (syntax-clean,
-  runtime verification pending). Step 4's tablet/touch relay and gesture grab
+  `23fd7b4397`; the step-4 device-ownership change is `e7a82a54ab` (relink green,
+  pick/presel probes PASS; 3D-mouse/gesture behaviour untested headlessly). Step 4's tablet/touch relay and gesture grab
   move to WS-CLEANUP.
 - **WS-COIN (step 8)** — independent; owns `src/3rdParty/coin/**`. Can run in
   parallel with WS-INTERACT (disjoint tree) once build configuration is frozen.
