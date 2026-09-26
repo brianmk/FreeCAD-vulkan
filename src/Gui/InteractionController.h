@@ -14,6 +14,7 @@
 
 #include <memory>
 
+class QEvent;
 class SoCamera;
 class SoEvent;
 class SoEventManager;
@@ -50,6 +51,13 @@ public:
     //! Dispatch one event through the NaviCube/navigation/base pipeline.
     //! Moved out of `View3DInventorViewer::processSoEvent()`.
     bool processSoEvent(const SoEvent* ev);
+
+    //! Relay an untranslated native event (tablet/touch/context-menu) to the
+    //! surface that owns FreeCAD's gesture/tablet devices.  The surface reports
+    //! that target via `surfaceRawEventTarget()`, so the Vulkan adapter no
+    //! longer reaches for the hidden GL widget itself; returns true when the
+    //! event was accepted.
+    bool processRawEvent(QEvent* ev);
 
     //! Replace the active navigation style.  Moved out of the viewer.
     void setNavigationType(Base::Type type);

@@ -4,7 +4,11 @@
 
 #include "ViewState.h"
 
+#include <Inventor/SoPickedPoint.h>
+#include <Inventor/actions/SoRayPickAction.h>
 #include <Inventor/nodes/SoCamera.h>
+#include <Inventor/nodes/SoDirectionalLight.h>
+#include <Inventor/nodes/SoEnvironment.h>
 #include <Inventor/nodes/SoGroup.h>
 #include <Inventor/nodes/SoSeparator.h>
 
@@ -216,4 +220,155 @@ void ViewState::setDevicePixelRatio(float ratio)
 float ViewState::devicePixelRatio() const
 {
     return _devicePixelRatio;
+}
+
+void ViewState::applyPick(SoRayPickAction& action) const
+{
+    // The classic GL path picks the render manager's superscene, which wraps
+    // the scene root with the active camera (plus a headlight that is
+    // irrelevant to ray picking).  Reproduce only the camera+scene part here so
+    // picking needs neither the superscene nor the GL render manager: a
+    // transient separator applies the owned camera before the shared scene
+    // root.  Only the camera/scene references are shared; the wrapper is
+    // discarded as soon as the action has run.
+    SoSeparator* root = new SoSeparator;
+    root->ref();
+    if (_camera) {
+        root->addChild(_camera);
+    }
+    if (_sceneRoot) {
+        root->addChild(_sceneRoot);
+    }
+    action.apply(root);
+    root->unref();
+}
+
+SoPickedPoint* ViewState::pickPoint(const SbVec2s& pos, float radius) const
+{
+    SoRayPickAction action(_viewportRegion);
+    action.setPoint(pos);
+    if (radius > 0.0F) {
+        action.setRadius(radius);
+    }
+    applyPick(action);
+
+    const SoPickedPoint* pick = action.getPickedPoint();
+    return (pick ? new SoPickedPoint(*pick) : nullptr);
+}
+
+void ViewState::setLights(
+    SoDirectionalLight* headlight,
+    SoDirectionalLight* backlight,
+    SoDirectionalLight* fillLight,
+    SoEnvironment* environment
+)
+{
+    _headlight = headlight;
+    _backlight = backlight;
+    _fillLight = fillLight;
+    _environment = environment;
+}
+
+SoDirectionalLight* ViewState::headlight() const
+{
+    return _headlight;
+}
+
+SoDirectionalLight* ViewState::backlight() const
+{
+    return _backlight;
+}
+
+SoDirectionalLight* ViewState::fillLight() const
+{
+    return _fillLight;
+}
+
+SoEnvironment* ViewState::environment() const
+{
+    return _environment;
+}
+
+SoLightingData ViewState::sceneLights() const
+{
+    SoLightingData lighting;
+
+    // World <- eye rotation for the current camera: the camera orientation is
+    // the inverse of the view rotation, i.e. exactly what SoRenderIR::
+    // lightToWorld() expects.  The eye<->world convention lives in SoRenderIR
+    // rather than being re-derived here.
+    SbMatrix eyeToWorld;
+    if (_camera) {
+        const SbRotation camRot = _camera->orientation.getValue();
+        camRot.getValue(eyeToWorld);
+    }
+
+    // Scene ambient from the viewer's environment node (so a scene lit purely
+    // by ambient still reads non-black).
+    if (_environment) {
+        const SbColor& ac = _environment->ambientColor.getValue();
+        const float ai = _environment->ambientIntensity.getValue();
+        lighting.ambient = SbVec3f(ac[0] * ai, ac[1] * ai, ac[2] * ai);
+    }
+
+    // Push each enabled directional light with the same world-space convention
+    // the raster IR uses (headlight + backlight + fill, matching the viewer's
+    // three-point lighting), but anchored to the camera so the Vulkan backends
+    // follow the view like Coin GL.
+    lighting.lights.reserve(3);
+    const SoDirectionalLight* lights[] = {_headlight, _backlight, _fillLight};
+    for (const SoDirectionalLight* light : lights) {
+        if (!light || !light->on.getValue()) {
+            continue;
+        }
+        SoLightData l;
+        l.type = SO_LIGHT_DIRECTIONAL;
+        const SbVec3f c = light->color.getValue();
+        const float i = light->intensity.getValue();
+        l.color = SbVec3f(c[0] * i, c[1] * i, c[2] * i);
+        SbVec3f eyeDir = -light->direction.getValue();
+        if (eyeDir.normalize() == 0.0F) {
+            eyeDir = SbVec3f(0.0F, 0.0F, 1.0F);
+        }
+        l.direction = eyeDir;
+        lighting.lights.push_back(SoRenderIR::lightToWorld(l, eyeToWorld));
+    }
+
+    return lighting;
+}
+
+void ViewState::setBackgroundColor(const SbColor4f& color)
+{
+    _backgroundColor = color;
+}
+
+const SbColor4f& ViewState::backgroundColor() const
+{
+    return _backgroundColor;
+}
+
+void ViewState::setBackgroundGradientEnabled(bool enabled)
+{
+    _backgroundGradient = enabled;
+}
+
+bool ViewState::hasBackgroundGradient() const
+{
+    return _backgroundGradient;
+}
+
+void ViewState::setBackgroundGradientColors(const SbColor& top, const SbColor& bottom)
+{
+    _backgroundTop = top;
+    _backgroundBottom = bottom;
+}
+
+const SbColor& ViewState::backgroundTop() const
+{
+    return _backgroundTop;
+}
+
+const SbColor& ViewState::backgroundBottom() const
+{
+    return _backgroundBottom;
 }

@@ -25,12 +25,6 @@
 #include <Inventor/SoEventManager.h>
 #include <Inventor/nodes/SoAnnotation.h>
 #include <Inventor/nodes/SoCamera.h>
-#include <Inventor/nodes/SoDirectionalLight.h>
-#include <Inventor/nodes/SoEnvironment.h>
-#include <Inventor/nodes/SoPointLight.h>
-#include <Inventor/nodes/SoSpotLight.h>
-#include <Inventor/SoRenderManager.h>
-#include <Inventor/rendering/SoRenderIR.h>
 #include <Inventor/rendering/vulkan/SoVulkanViewSettings.h>
 #include <Inventor/sensors/SoNodeSensor.h>
 #include <Inventor/sensors/SoSensor.h>
@@ -145,9 +139,14 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
     // an InputDeviceHost) and delivers Coin events to this sink, which drives
     // the InteractionController.  Navigation and picking therefore run on the
     // shared controller without the hidden GL viewer's event manager.  Tablet/
-    // touch/context-menu events are not translated by the Coin devices, so
-    // relay them to the hidden GL viewer that owns FreeCAD's gesture devices.
-    _vulkanViewer->setRawEventTarget(_viewer->getWidget());
+    // touch/context-menu events are not translated by the Coin devices, so hand
+    // them to the controller, which owns the event/surface abstraction (and the
+    // raw-event target) rather than the adapter reaching for the hidden GL
+    // widget directly.
+    _vulkanViewer->setRawEventSink([this](QEvent* ev) {
+        auto* controller = _viewer ? _viewer->getInteractionController() : nullptr;
+        return controller && controller->processRawEvent(ev);
+    });
     _vulkanViewer->setEventSink([this](const SoEvent* ev) {
         auto* controller = _viewer ? _viewer->getInteractionController() : nullptr;
         return controller && controller->processSoEvent(ev);
@@ -432,29 +431,20 @@ void VulkanViewportAdapter::pushSettings()
     const bool effEdgeOverlay = settings.edgeOverlay;
     const bool effPoints = raster ? settings.showPoints : false;
 
-    // Background is a single view of truth derived here from the hidden GL
-    // viewer (render-manager solid color + pcBackGround gradient) and pushed
-    // in one place along with the environment preset.  syncViewer() no longer
-    // sets the background directly; it only re-seeds scene/camera/overlays and
-    // lets pushSettings() refresh the background, so there is one push path
-    // and the solid/gradient/env state cannot drift between the two callers.
-    SbColor4f bgColor = SbColor4f(0.0f, 0.0f, 0.0f, 1.0f);
-    float bgTop[3] = {0.0f, 0.0f, 0.0f};
-    float bgBottom[3] = {0.0f, 0.0f, 0.0f};
-    bool bgGradient = false;
-    if (SoRenderManager* rm = _viewer->getSoRenderManager()) {
-        bgColor = rm->getBackgroundColor();
-        const View3DInventorViewer::Background gradient =
-            _viewer->getGradientBackground();
-        bgGradient = (gradient != View3DInventorViewer::Background::NoGradient);
-        if (bgGradient) {
-            SbColor from;
-            SbColor to;
-            _viewer->getGradientBackgroundColor(from, to);
-            bgTop[0] = from[0]; bgTop[1] = from[1]; bgTop[2] = from[2];
-            bgBottom[0] = to[0]; bgBottom[1] = to[1]; bgBottom[2] = to[2];
-        }
-    }
+    // Background is a single view of truth owned by the neutral view state
+    // (solid colour + optional gradient) and pushed in one place along with the
+    // environment preset.  syncViewer() no longer sets the background directly;
+    // it only re-seeds scene/camera/overlays and lets pushSettings() refresh the
+    // background, so there is one push path and the solid/gradient/env state
+    // cannot drift between the two callers.  The viewer writes the state when it
+    // sets the GL background, so this no longer reads the GL render manager.
+    ViewState* state = _viewer->getViewState();
+    const SbColor4f bgColor = state ? state->backgroundColor() : SbColor4f(0, 0, 0, 1);
+    const bool bgGradient = state && state->hasBackgroundGradient();
+    const SbColor from = state ? state->backgroundTop() : SbColor();
+    const SbColor to = state ? state->backgroundBottom() : SbColor();
+    const float bgTop[3] = {from[0], from[1], from[2]};
+    const float bgBottom[3] = {to[0], to[1], to[2]};
 
     // One settings blob for the whole display/tuning state.  The render
     // manager diffs it and re-applies only on change, so this is safe to call
@@ -571,68 +561,23 @@ VulkanViewportAdapter::pushSceneLights()
         return;
     }
 
-    // World-space light set.  The GL viewer's three-point lighting is
-    // VIEW-RELATIVE: the headlight and backlight are traversed before the
-    // camera node (so glLightfv sees an identity modelview and their raw
-    // direction is applied in eye space), and the fill light hangs under an
-    // SoRotation connected to the camera orientation, which also makes it
-    // eye-space-fixed.  Reproduce that here by taking each light's eye-space
-    // travel direction (the negated direction field) and rotating it into
-    // world space by the current camera orientation, so the backends -- which
-    // shade in world space -- keep the highlights following the camera exactly
-    // as Coin GL does.  Without the camera rotation the head/back lights would
-    // stay world-fixed in Vulkan and the reflections would not track the view.
-    SoLightingData lighting;
-
+    // The world-space, camera-anchored light set is owned by the neutral view
+    // state.  ViewState::sceneLights() performs the eye->world derivation that
+    // used to be gathered here from the GL viewer's three lights and
+    // environment, so the adapter no longer reaches back through the viewer.
     ViewState* state = _viewer->getViewState();
-    SbRotation camRot;
-    // World <- eye rotation for the current camera: the camera orientation is
-    // the inverse of the view rotation, i.e. exactly what SoRenderIR::
-    // lightToWorld() expects.  The eye<->world convention lives in SoRenderIR
-    // instead of being re-derived here.
-    SbMatrix eyeToWorld;
-    if (SoCamera* cam = state ? state->camera() : nullptr) {
-        camRot = cam->orientation.getValue();
-        camRot.getValue(eyeToWorld);
+    if (!state) {
+        return;
     }
-
-    // Scene ambient from the viewer's environment node (so a scene lit purely
-    // by ambient still reads non-black).
-    if (SoEnvironment* env = _viewer->getEnvironment()) {
-        const SbColor& ac = env->ambientColor.getValue();
-        float ai = env->ambientIntensity.getValue();
-        lighting.ambient = SbVec3f(ac[0] * ai, ac[1] * ai, ac[2] * ai);
-    }
-
-    // Push each enabled directional light with the same world-space
-    // convention the raster IR uses (headlight + backlight + fill, matching
-    // the GL viewer's three-point lighting), but anchored to the camera so
-    // the Vulkan backends follow the view like Coin GL.
-    lighting.lights.reserve(3);
-    const SoDirectionalLight* lightsL[] = {
-        _viewer->getHeadlight(), _viewer->getBacklight(), _viewer->getFillLight()};
-    for (const SoDirectionalLight* light : lightsL) {
-        if (!light || !light->on.getValue()) {
-            continue;
-        }
-        SoLightData l;
-        l.type = SO_LIGHT_DIRECTIONAL;
-        const SbVec3f c = light->color.getValue();
-        float i = light->intensity.getValue();
-        l.color = SbVec3f(c[0] * i, c[1] * i, c[2] * i);
-        SbVec3f eyeDir = -light->direction.getValue();
-        if (eyeDir.normalize() == 0.0f) {
-            eyeDir = SbVec3f(0.0f, 0.0f, 1.0f);
-        }
-        l.direction = eyeDir;
-        lighting.lights.push_back(SoRenderIR::lightToWorld(l, eyeToWorld));
-    }
+    SoLightingData lighting = state->sceneLights();
 
 #ifdef FREECAD_VULKAN_DEBUG_HOOKS
     if (VkDebug::lightTrace()) {
         static int _n = 0;
         if (_n++ < 400) {
-            SoCamera* cam = state ? state->camera() : nullptr;
+            SoCamera* cam = state->camera();
+            const SbRotation camRot =
+                cam ? cam->orientation.getValue() : SbRotation();
             fprintf(stderr,
                     "[LTRACE] pushSceneLights n=%d cam=%p rot=(%.4f,%.4f,%.4f,%.4f) nlights=%zu\n",
                     _n, static_cast<void*>(cam), camRot[0], camRot[1], camRot[2], camRot[3],
@@ -1017,7 +962,7 @@ VulkanViewportAdapter::~VulkanViewportAdapter()
     if (_vulkanViewer) {
         // Stop delivering input to the (soon-dead) GL viewer/controller.
         _vulkanViewer->setEventSink(nullptr);
-        _vulkanViewer->setRawEventTarget(nullptr);
+        _vulkanViewer->setRawEventSink(nullptr);
         QWidget* host = _vulkanViewer->parentWidget();
         if (auto* stack = qobject_cast<QStackedWidget*>(host)) {
             stack->removeWidget(_vulkanViewer);
@@ -1302,6 +1247,14 @@ bool VulkanViewportAdapter::surfaceProcessNaviCubeEvent(const SoEvent* ev)
 bool VulkanViewportAdapter::surfaceIsRedirectedToSceneGraph() const
 {
     return _glSurface && _glSurface->surfaceIsRedirectedToSceneGraph();
+}
+
+QWidget* VulkanViewportAdapter::surfaceRawEventTarget() const
+{
+    // Tablet/touch/context-menu events are still owned by the base GL surface
+    // (FreeCAD's gesture devices live there), so delegate the lookup instead of
+    // naming the hidden GL widget here.
+    return _glSurface ? _glSurface->surfaceRawEventTarget() : nullptr;
 }
 
 void VulkanViewportAdapter::surfaceNotifyCameraMoved()

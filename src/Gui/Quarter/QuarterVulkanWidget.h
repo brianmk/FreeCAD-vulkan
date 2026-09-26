@@ -25,6 +25,7 @@
 class QVulkanInstance;
 class QVulkanWindow;
 class QImage;
+class QEvent;
 
 class SoCamera;
 class SoNode;
@@ -142,15 +143,16 @@ public:
     void setEdgeColor(const SbColor4f & color);
 
     /*!
-      \brief Forward non-translated input events to another widget.
+      \brief Forward non-translated input events to a sink.
 
       Tablet, touch and context-menu events are not translated by the Coin
-      input devices, so they are still relayed to \a target (the hidden OpenGL
-      viewer that owns FreeCAD's gesture/tablet devices).  Mouse, wheel and
-      keyboard events are translated by this widget's own InputDeviceHost and
-      delivered through setEventSink().
+      input devices, so they are handed to \a sink (the InteractionController,
+      which relays them to the surface that owns FreeCAD's gesture/tablet
+      devices).  Returning true from the sink marks the event accepted.  Mouse,
+      wheel and keyboard events are translated by this widget's own
+      InputDeviceHost and delivered through setEventSink().
     */
-    void setRawEventTarget(QWidget * target);
+    void setRawEventSink(std::function<bool(QEvent *)> sink);
 
     /*!
       \brief Set the sink that receives translated Coin events.

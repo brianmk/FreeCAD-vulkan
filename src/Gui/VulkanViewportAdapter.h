@@ -215,6 +215,7 @@ public:
     bool surfaceNaviCubeEnabled() const override;
     bool surfaceProcessNaviCubeEvent(const SoEvent* ev) override;
     bool surfaceIsRedirectedToSceneGraph() const override;
+    QWidget* surfaceRawEventTarget() const override;
     void surfaceNotifyCameraMoved() override;
     void surfaceSetEventManager(SoEventManager* manager) override;
     //@}

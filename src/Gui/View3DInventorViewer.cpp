@@ -1289,6 +1289,11 @@ void View3DInventorViewer::init()
     viewState->setSceneRoot(viewerSceneRoot);
     viewState->setObjectGroup(objectGroup);
     viewState->setForegroundRoot(foregroundroot);
+    // The three-point lights and the environment are viewer-owned and stable;
+    // the neutral view state holds the (non-owning) references so the Vulkan
+    // adapter can derive the camera-anchored light set without reaching back
+    // through the viewer.
+    viewState->setLights(this->getHeadlight(), backlight, fillLight, environment);
     if (auto* rm = this->getSoRenderManager()) {
         viewState->setCamera(rm->getCamera());
         viewState->setViewportRegion(rm->getViewportRegion());
@@ -1820,14 +1825,14 @@ SoPickedPoint* View3DInventorViewer::getPointOnRay(const SbVec2s& pos, const Vie
         SoSearchAction sa;
         sa.setNode(vp->getRoot());
         sa.setSearchingAll(true);
-        sa.apply(getSoRenderManager()->getSceneGraph());
+        sa.apply(getViewState()->sceneRoot());
         path = sa.getPath();
         if (!path) {
             return nullptr;
         }
         path->ref();
     }
-    SoGetMatrixAction gm(getSoRenderManager()->getViewportRegion());
+    SoGetMatrixAction gm(getViewState()->viewportRegion());
     gm.apply(path);
 
     auto trans = new SoTransform;
@@ -1838,12 +1843,12 @@ SoPickedPoint* View3DInventorViewer::getPointOnRay(const SbVec2s& pos, const Vie
     // transformation
     auto root = new SoSeparator;
     root->ref();
-    root->addChild(getSoRenderManager()->getCamera());
+    root->addChild(getViewState()->camera());
     root->addChild(trans);
     root->addChild(path->getTail());
 
     // get the picked point
-    SoRayPickAction rp(getSoRenderManager()->getViewportRegion());
+    SoRayPickAction rp(getViewState()->viewportRegion());
     rp.setPoint(pos);
     rp.setRadius(getPickRadius());
     rp.apply(root);
@@ -1875,14 +1880,14 @@ SoPickedPoint* View3DInventorViewer::getPointOnRay(
         SoSearchAction sa;
         sa.setNode(vp->getRoot());
         sa.setSearchingAll(true);
-        sa.apply(getSoRenderManager()->getSceneGraph());
+        sa.apply(getViewState()->sceneRoot());
         path = sa.getPath();
         if (!path) {
             return nullptr;
         }
         path->ref();
     }
-    SoGetMatrixAction gm(getSoRenderManager()->getViewportRegion());
+    SoGetMatrixAction gm(getViewState()->viewportRegion());
     gm.apply(path);
 
     // build a temporary scenegraph only keeping this viewproviders nodes and the accumulated
@@ -1893,12 +1898,12 @@ SoPickedPoint* View3DInventorViewer::getPointOnRay(
 
     auto root = new SoSeparator;
     root->ref();
-    root->addChild(getSoRenderManager()->getCamera());
+    root->addChild(getViewState()->camera());
     root->addChild(trans);
     root->addChild(path->getTail());
 
     // get the picked point
-    SoRayPickAction rp(getSoRenderManager()->getViewportRegion());
+    SoRayPickAction rp(getViewState()->viewportRegion());
     rp.setRay(pos, dir);
     rp.setRadius(getPickRadius());
     rp.apply(root);
@@ -2065,6 +2070,16 @@ void View3DInventorViewer::handleEventCB(void* userdata, SoEventCallback* n)
     SoGLWidgetElement::set(action->getState(), qobject_cast<QOpenGLWidget*>(that->getGLWidget()));
 }
 
+void View3DInventorViewer::setBackgroundColor(const QColor& color)
+{
+    inherited::setBackgroundColor(color);
+    if (viewState) {
+        viewState->setBackgroundColor(
+            SbColor4f(color.redF(), color.greenF(), color.blueF(), color.alphaF())
+        );
+    }
+}
+
 void View3DInventorViewer::setGradientBackground(View3DInventorViewer::Background grad)
 {
     switch (grad) {
@@ -2086,6 +2101,7 @@ void View3DInventorViewer::setGradientBackground(View3DInventorViewer::Backgroun
             }
             break;
     }
+    this->syncViewStateBackground();
 }
 
 View3DInventorViewer::Background View3DInventorViewer::getGradientBackground() const
@@ -2105,6 +2121,21 @@ void View3DInventorViewer::getGradientBackgroundColor(SbColor& fromColor, SbColo
 {
     fromColor = pcBackGround->fromColor.getValue();
     toColor = pcBackGround->toColor.getValue();
+}
+
+void View3DInventorViewer::syncViewStateBackground()
+{
+    if (!viewState) {
+        return;
+    }
+    const Background gradient = getGradientBackground();
+    viewState->setBackgroundGradientEnabled(gradient != Background::NoGradient);
+    if (gradient != Background::NoGradient) {
+        SbColor from;
+        SbColor to;
+        getGradientBackgroundColor(from, to);
+        viewState->setBackgroundGradientColors(from, to);
+    }
 }
 
 void View3DInventorViewer::applyVulkanSettings()
@@ -2132,6 +2163,9 @@ void View3DInventorViewer::applyVulkanSettings()
 void View3DInventorViewer::setGradientBackgroundColor(const SbColor& fromColor, const SbColor& toColor)
 {
     pcBackGround->setColorGradient(fromColor, toColor);
+    if (viewState) {
+        viewState->setBackgroundGradientColors(fromColor, toColor);
+    }
 }
 
 void View3DInventorViewer::setGradientBackgroundColor(
@@ -2141,6 +2175,9 @@ void View3DInventorViewer::setGradientBackgroundColor(
 )
 {
     pcBackGround->setColorGradient(fromColor, toColor, midColor);
+    if (viewState) {
+        viewState->setBackgroundGradientColors(fromColor, toColor);
+    }
 }
 
 void View3DInventorViewer::setEnabledFPSCounter(bool on)
@@ -2736,6 +2773,14 @@ bool View3DInventorViewer::surfaceProcessNaviCubeEvent(const SoEvent* ev)
 bool View3DInventorViewer::surfaceIsRedirectedToSceneGraph() const
 {
     return isRedirectedToSceneGraph();
+}
+
+QWidget* View3DInventorViewer::surfaceRawEventTarget() const
+{
+    // The viewer itself owns the Coin gesture/tablet devices (registered on its
+    // event filter), so raw tablet/touch/context-menu events are delivered to
+    // the viewer widget.
+    return getWidget();
 }
 
 void View3DInventorViewer::surfaceNotifyCameraMoved()
@@ -4529,9 +4574,9 @@ bool View3DInventorViewer::hasClippingPlane() const
 bool View3DInventorViewer::pickPoint(const SbVec2s& pos, SbVec3f& point, SbVec3f& norm) const
 {
     // attempting raypick in the event_cb() callback method
-    SoRayPickAction rp(getSoRenderManager()->getViewportRegion());
+    SoRayPickAction rp(getViewState()->viewportRegion());
     rp.setPoint(pos);
-    rp.apply(getSoRenderManager()->getSceneGraph());
+    getViewState()->applyPick(rp);
     SoPickedPoint* Point = rp.getPickedPoint();
 
     if (Point) {
@@ -4551,9 +4596,9 @@ bool View3DInventorViewer::pickPoint(const SbVec2s& pos, SbVec3f& point, SbVec3f
  */
 SoPickedPoint* View3DInventorViewer::pickPoint(const SbVec2s& pos) const
 {
-    SoRayPickAction rp(getSoRenderManager()->getViewportRegion());
+    SoRayPickAction rp(getViewState()->viewportRegion());
     rp.setPoint(pos);
-    rp.apply(getSoRenderManager()->getSceneGraph());
+    getViewState()->applyPick(rp);
 
     // returns a copy of the point
     SoPickedPoint* pick = rp.getPickedPoint();

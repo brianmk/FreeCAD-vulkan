@@ -126,7 +126,7 @@ public:
   RenderMode renderMode() const;
   StereoMode stereoMode() const;
 
-  void setBackgroundColor(const QColor & color);
+  virtual void setBackgroundColor(const QColor & color);
   QColor backgroundColor() const;
 
   qreal devicePixelRatio() const override;

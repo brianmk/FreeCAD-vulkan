@@ -1212,9 +1212,10 @@ RayPickInfo View3DInventor::getObjInfoRay(Base::Vector3d* startvec, Base::Vector
     float nearClippingPlane = 0.1F;
 
     RayPickInfo ret = {false, Base::Vector3d(), "", "", std::nullopt, std::nullopt, std::nullopt};
-    SoRayPickAction action(getViewer()->getSoRenderManager()->getViewportRegion());
+    ViewState* state = getViewer()->getViewState();
+    SoRayPickAction action(state->viewportRegion());
     action.setRay(SbVec3f(vsx, vsy, vsz), SbVec3f(vdx, vdy, vdz), nearClippingPlane);
-    action.apply(getViewer()->getSoRenderManager()->getSceneGraph());
+    state->applyPick(action);
     SoPickedPoint* Point = action.getPickedPoint();
 
     if (!Point) {

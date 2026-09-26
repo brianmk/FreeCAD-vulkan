@@ -36,6 +36,12 @@ public:
     virtual bool surfaceProcessNaviCubeEvent(const SoEvent* ev) = 0;
     //! Whether events should be redirected straight into the scene graph.
     virtual bool surfaceIsRedirectedToSceneGraph() const = 0;
+    //! The native widget that owns FreeCAD's gesture/tablet devices for this
+    //! surface.  Tablet/touch/context-menu events are not translated by the
+    //! Coin input devices, so the controller relays them here.  Keeping the
+    //! lookup on the surface lets the Vulkan adapter answer it without naming
+    //! the hidden GL widget itself.
+    virtual QWidget* surfaceRawEventTarget() const = 0;
     //! The active camera pose changed in place (navigation mutated the shared
     //! camera node); the surface wakes its renderer / emits cameraMoved().
     virtual void surfaceNotifyCameraMoved() = 0;

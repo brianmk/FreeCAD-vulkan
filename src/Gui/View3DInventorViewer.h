@@ -588,6 +588,10 @@ public:
 
     void alignToSelection();
 
+    //! Override the Quarter/Qt background setter so the neutral ViewState
+    //! (which the Vulkan backends read) stays in step with the GL render
+    //! manager's clear colour.
+    void setBackgroundColor(const QColor& color) override;
     void setGradientBackground(Background);
     Background getGradientBackground() const;
     void getGradientBackgroundColor(SbColor& fromColor, SbColor& toColor) const;
@@ -737,6 +741,7 @@ public:
     bool surfaceNaviCubeEnabled() const override;
     bool surfaceProcessNaviCubeEvent(const SoEvent* ev) override;
     bool surfaceIsRedirectedToSceneGraph() const override;
+    QWidget* surfaceRawEventTarget() const override;
     void surfaceNotifyCameraMoved() override;
     void surfaceSetEventManager(SoEventManager* manager) override;
     //@}
@@ -823,6 +828,7 @@ private:
     static void deselectCB(void* viewer, SoPath* path);
     static SoPath* pickFilterCB(void* viewer, const SoPickedPoint* pp);
     void initialize();
+    void syncViewStateBackground();
     void syncNaviCubeVisibility();
     void drawAxisCross();
     void drawSingleBackground(const QColor&);

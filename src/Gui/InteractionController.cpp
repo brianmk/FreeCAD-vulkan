@@ -20,6 +20,9 @@
 #include <Inventor/SbVec2s.h>
 #include <Inventor/SbVec3f.h>
 
+#include <QCoreApplication>
+#include <QWidget>
+
 using namespace Gui;
 
 InteractionController::InteractionController(InteractionSurface* surface)
@@ -146,6 +149,22 @@ bool InteractionController::processSoEvent(const SoEvent* ev)
         _surface->surfaceNotifyCameraMoved();
     }
     return result;
+}
+
+bool InteractionController::processRawEvent(QEvent* ev)
+{
+    // The gesture/tablet devices are still installed on the base GL surface;
+    // the controller owns the lookup (through the surface) so the adapter does
+    // not name the hidden GL widget.  Sending the event to that widget runs the
+    // same device/event-filter path as before.
+    if (!_surface || !ev) {
+        return false;
+    }
+    QWidget* target = _surface->surfaceRawEventTarget();
+    if (!target) {
+        return false;
+    }
+    return QCoreApplication::sendEvent(target, ev);
 }
 
 SoCamera* InteractionController::getCamera() const
