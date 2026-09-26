@@ -40,6 +40,10 @@ inputs:
     description: "Shell command to use for action steps (e.g. 'pixi run bash -l {0}')"
     default: "bash -l {0}"
     required: false
+  includeVulkanPartGui:
+    description: "Also run the Vulkan-only PartGui tests (PartGui_tests_run). Set by the Vulkan build jobs; the target only exists when FREECAD_USE_VULKAN is ON."
+    default: "false"
+    required: false
 
 runs:
   using: "composite"
@@ -138,6 +142,18 @@ runs:
           testCommand: ${{ inputs.builddir }}/tests/PartDesign_tests_run --gtest_output=json:${{ inputs.reportdir }}partdesign_gtest_results.json
           testLogFile: ${{ inputs.reportdir }}PartDesign_gtest_test_log.txt
           testName: PartDesign
+          shellCmd: ${{ inputs.shellCmd }}
+      - name: C++ PartGui tests
+        id: partgui
+        # Vulkan-only: the target (and its SoIRRenderAction-based selection
+        # regression) is built only when FREECAD_USE_VULKAN is ON, so it is
+        # skipped in the non-Vulkan jobs rather than failing on a missing binary.
+        if: ${{ inputs.includeVulkanPartGui == 'true' }}
+        uses: ./.github/workflows/actions/runCPPTests/runSingleTest
+        with:
+          testCommand: ${{ inputs.builddir }}/tests/PartGui_tests_run --gtest_output=json:${{ inputs.reportdir }}partgui_gtest_results.json
+          testLogFile: ${{ inputs.reportdir }}partgui_gtest_test_log.txt
+          testName: PartGui
           shellCmd: ${{ inputs.shellCmd }}
       - name: C++ Points tests
         id: points

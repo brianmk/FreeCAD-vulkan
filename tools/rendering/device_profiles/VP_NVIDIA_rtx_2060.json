@@ -1,0 +1,28 @@
+{
+  "$schema": "https://schema.khronos.org/vulkan/profiles-0.8-latest.json#",
+  "contributors": {
+    "FreeCAD fcprobe": "Lower-tier RTX (Turing) limit simulation for the Vulkan renderer probes."
+  },
+  "capabilities": {
+    "rtx2060_limits": {
+      "properties": {
+        "VkPhysicalDeviceProperties": {
+          "limits": {
+            "maxMemoryAllocationCount": 65536
+          }
+        }
+      }
+    }
+  },
+  "profiles": {
+    "VP_NVIDIA_rtx_2060": {
+      "version": 1,
+      "api-version": "1.3.0",
+      "label": "NVIDIA GeForce RTX 2060 (Turing limit simulation)",
+      "description": "A constrained lower-tier RTX (Turing) limit set: a finite maxMemoryAllocationCount instead of the unbounded desktop value, exercised together with the post-Turing extension exclusions in the rtx-2060 device profile. NOTE: the Vulkan Profiles schema can override only device LIMITS (not deviceName/deviceID/deviceType, and not memory heaps), so this simulates capability/limit degradation, not device identity or 6 GB VRAM.",
+      "capabilities": [
+        "rtx2060_limits"
+      ]
+    }
+  }
+}
