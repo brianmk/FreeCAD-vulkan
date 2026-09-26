@@ -12,8 +12,8 @@
 #include <Inventor/SbColor4f.h>
 #include <Inventor/SbVec3f.h>
 #include <Inventor/rendering/SoRenderIR.h>
-#include <Inventor/rendering/SoVulkanViewMode.h>
-#include <Inventor/rendering/SoVulkanViewSettings.h>
+#include <Inventor/rendering/vulkan/SoVulkanViewMode.h>
+#include <Inventor/rendering/vulkan/SoVulkanViewSettings.h>
 #include <vector>
 
 #include <Quarter/InputDeviceHost.h>
@@ -439,7 +439,7 @@ public:
     void setPathTracingSettleFrames(int frames);
 
     /*!
-      \brief Select the denoiser backend by name ("rtx", "oidn", "fsr",
+      \brief Select the denoiser backend by name ("rtx", "oidn", "dnsr",
       "none"); an empty string uses the default (backend env / built-in)
       choice.  Forwarded to the ray-tracing backend.  Denoising itself is
       required for path tracing and is enabled automatically by the renderer.

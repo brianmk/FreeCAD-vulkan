@@ -614,15 +614,15 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
        </widget>
       </item>
       <item>
-       <widget class="Gui::PrefCheckBox" name="CheckBox_VulkanWireframe">
+       <widget class="Gui::PrefCheckBox" name="CheckBox_VulkanEdgeOverlay">
         <property name="text">
-         <string>Show wireframe (edge overlay)</string>
+         <string>Show model edges (edge overlay)</string>
         </property>
         <property name="checked">
          <bool>true</bool>
         </property>
         <property name="prefEntry" stdset="0">
-         <cstring>VulkanWireframe</cstring>
+         <cstring>VulkanEdgeOverlay</cstring>
         </property>
         <property name="prefPath" stdset="0">
          <cstring>View</cstring>
@@ -809,14 +809,69 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
          </layout>
         </item>
         <item>
-         <widget class="QCheckBox" name="CheckBox_VulkanPathTracing">
-         <property name="text">
-          <string>Path tracing (global illumination)</string>
-         </property>
-         <property name="toolTip">
-          <string>Render with the Vulkan ray-tracing path tracer: multi-bounce global illumination with shadow rays, progressive accumulation and edge-stopping denoising.  Enabling starts a progressive render; camera moves drop back to a live preview and the accumulation auto-restarts once the camera settles.  Requires UseVulkanRenderer and a ray-tracing capable GPU.  Also available from Python as startPathTracing() on the view.</string>
-         </property>
-        </widget>
+         <layout class="QHBoxLayout" name="horizontalLayoutVulkanRenderMode">
+          <item>
+           <widget class="QLabel" name="labelVulkanRenderMode">
+            <property name="text">
+             <string>Rendering mode</string>
+            </property>
+            <property name="toolTip">
+             <string>Render mode of a newly opened 3D view, and the mode shown in the status bar for the active view. It mirrors the status-bar selector: this is the single VulkanRenderMode preference, so changing it from the status bar updates the value shown here and vice versa.</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="Gui::PrefComboBox" name="ComboBox_VulkanRenderMode">
+            <property name="toolTip">
+             <string>Render mode of a newly opened 3D view, and the mode shown in the status bar for the active view: Interactive (raster Coin) and Interactive (raster Vulkan) draw with no ray tracing, Wireframe draws the raster wireframe, Ray Tracing is a cheap single-sample ray preview, Path Tracing is the accumulating ray path tracer (multi-bounce global illumination with denoising), Environment is a single-sample image-based-lighting preview, and Path Tracing Max adds physically-based dielectric glass. This mirrors the status-bar selector through the single VulkanRenderMode preference. Requires UseVulkanRenderer and, for the ray-traced modes, a ray-tracing capable GPU.</string>
+            </property>
+            <property name="currentIndex">
+             <number>1</number>
+            </property>
+            <property name="prefEntry" stdset="0">
+             <cstring>VulkanRenderMode</cstring>
+            </property>
+            <property name="prefPath" stdset="0">
+             <cstring>View</cstring>
+            </property>
+            <item>
+             <property name="text">
+              <string>Interactive (raster Coin)</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>Interactive (raster Vulkan)</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>Wireframe</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>Ray Tracing</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>Path Tracing</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>Environment</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>Path Tracing Max</string>
+             </property>
+            </item>
+           </widget>
+          </item>
+         </layout>
         </item>
         <item>
          <widget class="QGroupBox" name="groupBoxPathTracingSettings">
@@ -1018,7 +1073,7 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
             <string>Denoiser</string>
            </property>
            <property name="toolTip">
-            <string>Which machine-learning denoiser cleans the path-traced frames.  RTX (OptiX) runs on the GPU and is the fastest; OIDN runs on the CPU; FSR is only available in a build with the AMD FFX SDK.  None disables denoising and shows the raw accumulated radiance.</string>
+            <string>Which machine-learning denoiser cleans the path-traced frames.  RTX (OptiX) runs on the GPU and is the fastest; OIDN runs on the CPU; DNSR (AMD FidelityFX ray-regeneration) is only available in a build with the DNSR denoiser enabled.  None disables denoising and shows the raw accumulated radiance.</string>
            </property>
           </widget>
          </item>
@@ -1042,7 +1097,7 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
            </item>
            <item>
             <property name="text">
-             <string>FSR (AMD FFX)</string>
+             <string>DNSR (AMD FFX)</string>
             </property>
            </item>
            <item>
@@ -1089,16 +1144,87 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
              <property name="prefEntry" stdset="0">
               <cstring>VulkanPathTracingDenoiserScale</cstring>
              </property>
-             <property name="prefPath" stdset="0">
-              <cstring>View</cstring>
-             </property>
-            </widget>
-           </item>
-          </layout>
+           <property name="prefPath" stdset="0">
+            <cstring>View</cstring>
+           </property>
+          </widget>
          </item>
-            </layout>
-           </widget>
-          </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="horizontalLayoutVulkanEnvMap">
+         <item>
+          <widget class="QLabel" name="labelVulkanEnvMap">
+           <property name="text">
+            <string>Environment map</string>
+           </property>
+           <property name="toolTip">
+            <string>Procedural cubemap used as the sky/environment (IBL) for the ray-traced Vulkan modes.  Viewport Background uses no cubemap, so the viewport gradient is the environment.  Mirrors the status-bar environment selector: both edit the same VulkanEnvironmentMap preference.</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QComboBox" name="ComboBox_VulkanEnvironmentMap">
+           <property name="toolTip">
+            <string>Procedural cubemap used as the sky/environment (IBL) for the ray-traced Vulkan modes.  Viewport Background uses no cubemap, so the viewport gradient is the environment.  Mirrors the status-bar environment selector: both edit the same VulkanEnvironmentMap preference.</string>
+           </property>
+           <item>
+            <property name="text">
+             <string>Viewport Background</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>Daylight</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>Sunset</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>Overcast</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>Neutral Studio</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>Night</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>Desk</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>Table</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>White Lab</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>White Background</string>
+            </property>
+           </item>
+          </widget>
+         </item>
+        </layout>
+       </item>
+      </layout>
+    </widget>
+    </item>
          <item>
            <layout class="QHBoxLayout" name="horizontalLayoutVulkanEdge">
         <item>

@@ -33,9 +33,10 @@ class NavigationAnimation;
  *  and keyboard filtering), and forwards the surface-independent camera/scene/
  *  viewport/cursor/redraw queries to the `InteractionSurface` it was built for.
  *
- *  Today the GL `View3DInventorViewer` is the only surface; the Vulkan widget
- *  can implement `InteractionSurface` and instantiate the same controller, so
- *  navigation and picking stop depending on the hidden GL viewer.
+ *  Both the GL `View3DInventorViewer` and `VulkanViewportAdapter` implement
+ *  `InteractionSurface`, so the controller (and therefore navigation and
+ *  picking) runs against whichever surface is current without depending on the
+ *  hidden GL viewer.
  */
 class GuiExport InteractionController: public InteractionHost
 {
@@ -64,12 +65,11 @@ public:
     /** Swap the active render surface.
      *
      *  Used by the Vulkan adapter to make itself the surface while its page is
-     *  current, so surface-presentation calls (`getGLWidget()`,
-     *  `scheduleRedraw()`, cursor) reach the visible surface while everything
-     *  else is delegated back to the GL viewer.  The `SoEventManager` is *not*
-     *  re-injected: it stays installed on the GL viewer (the base event-dispatch
-     *  authority), and a delegating surface forwards `surfaceSetEventManager()`
-     *  there.  Pass nullptr to detach (used on teardown).
+     *  current, so camera/scene/viewport and surface-presentation calls
+     *  (`getGLWidget()`, `scheduleRedraw()`, cursor) reach the visible Vulkan
+     *  surface.  The `SoEventManager` is *not* re-injected: it stays installed
+     *  on the GL viewer (the base event-dispatch authority) and is answered by
+     *  the controller itself.  Pass nullptr to detach (used on teardown).
      */
     void setSurface(InteractionSurface* surface);
 
@@ -98,7 +98,6 @@ public:
     SoCamera* getCamera() const override;
     SoNode* getSceneGraph() const override;
     const SbViewportRegion& getViewportRegion() const override;
-    SoRenderManager* getSoRenderManager() const override;
     SoEventManager* getSoEventManager() const override;
     SbVec3f getFocalPoint() const override;
     float getPickRadius() const override;

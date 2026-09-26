@@ -20,13 +20,20 @@ VulkanViewSettings::load(const ParameterGrp::handle & hGrp)
     if (!hGrp) {
         return;
     }
-    this->renderMode = hGrp->GetInt("VulkanRenderMode", 1);
+    // VulkanRenderMode is an int on purpose (it must survive a non-Vulkan
+    // build), so clamp it to the valid ViewRenderMode range (0 RasterCoin ..
+    // 6 PathTracingMax) here -- the enum itself is only defined with
+    // FREECAD_USE_VULKAN.
+    constexpr int maxRenderMode = 6;
+    this->renderMode = std::clamp(static_cast<int>(hGrp->GetInt("VulkanRenderMode", 1)),
+                                  0,
+                                  maxRenderMode);
     this->envMap = hGrp->GetInt("VulkanEnvironmentMap", -1);
 
-    // VulkanWireframe backs the status-bar "show model edges" toggle: true
+    // VulkanEdgeOverlay backs the status-bar "show model edges" toggle: true
     // (the historical default look) shows the BRep feature edges, false hides
     // them.  Default true so an unset preference keeps the edges visible.
-    this->edgeOverlay = hGrp->GetBool("VulkanWireframe", true);
+    this->edgeOverlay = hGrp->GetBool("VulkanEdgeOverlay", true);
     this->showPoints = hGrp->GetBool("VulkanShowPoints", false);
     this->hdrEnabled = hGrp->GetBool("VulkanHDR", false);
     // scRGB white gain: 1.0 maps diffuse white (linear 1.0) onto the
@@ -38,7 +45,7 @@ VulkanViewSettings::load(const ParameterGrp::handle & hGrp)
         std::abs(hdrExposure - 0.0203f) < 1e-4f) {
         hdrExposure = 1.0f;
     }
-    this->hdrExposure = std::clamp(hdrExposure, 0.0001f, 10.0f);
+    this->hdrExposure = std::clamp(hdrExposure, 0.1f, 10.0f);
     this->hdrToneMap = std::clamp(
         static_cast<int>(hGrp->GetInt("VulkanHDRToneMap", 0)), 0, 3);
     this->interactionLod = hGrp->GetBool("VulkanInteractionLod", true);
@@ -68,14 +75,14 @@ VulkanViewSettings::load(const ParameterGrp::handle & hGrp)
     this->pathTracingMaxSamples = std::clamp(
         static_cast<int>(hGrp->GetInt("VulkanPathTracingMaxSamples", 256)),
         1, 4096);
-    // Denoiser backend, stored as the combo index (0=RTX, 1=OIDN, 2=FSR,
+    // Denoiser backend, stored as the combo index (0=RTX, 1=OIDN, 2=DNSR,
     // 3=None); map to the backend name the RT renderer expects.
     switch (hGrp->GetInt("VulkanPathTracingDenoiser", 0)) {
         case 1:
             this->pathTracingDenoiser = "oidn";
             break;
         case 2:
-            this->pathTracingDenoiser = "fsr";
+            this->pathTracingDenoiser = "dnsr";
             break;
         case 3:
             this->pathTracingDenoiser = "none";

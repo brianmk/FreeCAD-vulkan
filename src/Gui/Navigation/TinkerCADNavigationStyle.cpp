@@ -185,7 +185,7 @@ SbBool TinkerCADNavigationStyle::processSoEvent(const SoEvent* const ev)
         else if (curmode == NavigationStyle::PANNING) {
             float ratio = vp.getViewportAspectRatio();
             panCamera(
-                viewer->getSoRenderManager()->getCamera(),
+                viewer->getCamera(),
                 ratio,
                 this->panningplane,
                 posn,

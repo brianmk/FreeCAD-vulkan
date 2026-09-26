@@ -1232,7 +1232,9 @@ void MainWindow::closeActiveWindow()
 int MainWindow::confirmSave(App::Document* doc, QWidget* parent, bool addCheckbox)
 {
     // Testing flag: skip the unsaved-document prompt and discard changes.
-    // Enabled by the FC_SKIP_UNSAVED_PROMPT environment variable.
+    // Enabled by the FC_SKIP_UNSAVED_PROMPT environment variable; only built
+    // with the Vulkan debug hooks (the fcprobe harness sets it).
+#ifdef FREECAD_VULKAN_DEBUG_HOOKS
     static int skipUnsaved = -1;
     if (skipUnsaved == -1) {
         const char* env = getenv("FC_SKIP_UNSAVED_PROMPT");
@@ -1244,6 +1246,7 @@ int MainWindow::confirmSave(App::Document* doc, QWidget* parent, bool addCheckbo
     if (skipUnsaved) {
         return ConfirmSaveResult::DiscardAll;
     }
+#endif
     QMessageBox box(parent ? parent : this);
     box.setObjectName(QStringLiteral("confirmSave"));
     box.setIcon(QMessageBox::Question);
@@ -3032,15 +3035,25 @@ void MainWindow::changeEvent(QEvent* e)
     }
     else if (e->type() == QEvent::ActivationChange) {
         static SbTime savedRealTimeInterval = SoDB::getRealTimeInterval();
+        // Qt delivers ActivationChange repeatedly, and Coin's
+        // enableRealTimeSensor() warns (COIN_DEBUG) when called with the state
+        // it already has, so only toggle the sensor on an actual transition.
+        // SensorManager sets the interval at startup but leaves the sensor
+        // unscheduled, so the tracked state starts disabled.
+        static bool realTimeSensorOn = false;
         if (isActiveWindow()) {
             QMdiSubWindow* mdi = d->mdiArea->currentSubWindow();
             setActiveSubWindow(mdi);
-            SoDB::enableRealTimeSensor(true);
+            if (!realTimeSensorOn) {
+                SoDB::enableRealTimeSensor(true);
+                realTimeSensorOn = true;
+            }
             SoDB::setRealTimeInterval(savedRealTimeInterval);
         }
-        else {
+        else if (realTimeSensorOn) {
             savedRealTimeInterval = SoDB::getRealTimeInterval();
             SoDB::enableRealTimeSensor(false);
+            realTimeSensorOn = false;
         }
     }
     else {

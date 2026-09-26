@@ -206,12 +206,14 @@ View3DInventor::View3DInventor(
         // other path happened to re-push them.
         connect(_viewer, &View3DInventorViewer::cameraMoved,
                 _vulkanAdapter, [this] {
+#ifdef FREECAD_VULKAN_DEBUG_HOOKS
                     if (getenv("FC_LIGHT_TRACE")) {
                         static int _n = 0;
                         if (_n++ < 400) {
                             fprintf(stderr, "[LTRACE] cameraMoved n=%d\n", _n);
                         }
                     }
+#endif
                     if (_vulkanAdapter) {
                         // The camera is now user-controlled; never let the
                         // one-time initial re-fit snap it back.
@@ -361,15 +363,20 @@ View3DInventor::~View3DInventor()
 
 void View3DInventor::deleteSelf()
 {
-    _viewer->setSceneGraph(nullptr);
-    _viewer->setDocument(nullptr);
-    // Drop the Vulkan viewport now, while _viewer and its scene graph are
-    // still valid.  The adapter is a QObject child destroyed only when `this`
-    // is, which is after _viewer; leaving it connected lets its Vulkan widget
-    // re-sync against the freed viewer/scene during this close (the backend
-    // shutdown/initialized cycling and the QVulkanInstance::functions() crash).
+    // Drop the Vulkan viewport FIRST, while _viewer and its scene graph are
+    // still valid: the adapter destructor hands the controller back to the GL
+    // viewer and moves the ground-plane grid out of the per-frame decoration
+    // scene into the main scene, both of which need a live viewer/scene graph.
+    // Clearing the scene graph first leaves the destructor operating on a
+    // torn-down viewer and segfaults in setGroundPlaneDecorationScene().  The
+    // adapter is a QObject child destroyed only when `this` is, which is after
+    // _viewer; leaving it connected lets its Vulkan widget re-sync against the
+    // freed viewer/scene during this close (the backend shutdown/initialized
+    // cycling and the QVulkanInstance::functions() crash).
     delete _vulkanAdapter;
     _vulkanAdapter = nullptr;
+    _viewer->setSceneGraph(nullptr);
+    _viewer->setDocument(nullptr);
     MDIViewWithCamera::deleteSelf();
 }
 
@@ -664,12 +671,12 @@ void View3DInventor::setWireframe(bool enabled)
     if (getWireframe() == enabled) {
         return;
     }
-    // The wireframe overlay is driven by the VulkanWireframe preference; update
+    // The edge overlay is driven by the VulkanEdgeOverlay preference; update
     // the preference then reload the settings so the viewer emits
     // vulkanSettingsChanged(), which the adapter re-pushes to the renderer.
     if (auto grp = App::GetApplication().GetParameterGroupByPath(
             "User parameter:BaseApp/Preferences/View")) {
-        grp->SetBool("VulkanWireframe", enabled);
+        grp->SetBool("VulkanEdgeOverlay", enabled);
     }
     if (_viewer) {
         _viewer->applyVulkanSettings();
