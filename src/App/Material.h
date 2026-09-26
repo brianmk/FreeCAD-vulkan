@@ -62,6 +62,15 @@ public:
         USER_DEFINED
     };
 
+    /** Projection used to map the embedded texture image onto a shape. */
+    enum TextureMapping
+    {
+        MappingPlanar,      /**< Project the object X/Y coordinates. */
+        MappingBox,         /**< Per-face axis-aligned box projection. */
+        MappingSpherical,   /**< Spherical projection around the object Z axis. */
+        MappingCylindrical  /**< Cylindrical projection around the object Z axis. */
+    };
+
 public:
     /** @name Constructors
      */
@@ -132,8 +141,49 @@ public:
     Base::Color emissiveColor; /**< Defines the emissive color. */
     float shininess;
     float transparency;
+    /**
+     * Metallic-roughness parameters of a physically based material. These are
+     * only meaningful when usePhysicalMaterial is true; otherwise the legacy
+     * Blinn-Phong fields above define the appearance.
+     */
+    float metallic;              /**< 0 = dielectric, 1 = conductor. */
+    float roughness;             /**< 0 = mirror, 1 = fully diffuse. */
+    bool usePhysicalMaterial;    /**< Enable the physical material path. */
+    /**
+     * Real-world size, in model units (mm), spanned by one tile of the
+     * embedded texture image. Smaller values tile the texture more densely.
+     */
+    float textureSize;
+    /** Projection used to map the embedded texture image onto a shape. */
+    TextureMapping textureMapping;
     std::string image;
     std::string imagePath;
+    /**
+     * Optional secondary physically-based texture maps, embedded exactly like
+     * `image` (base64 PNG). An empty string means the map is not used. They
+     * are sampled with the same texture coordinates as the base image.
+     */
+    std::string roughnessImage;
+    std::string roughnessImagePath;
+    std::string normalImage;
+    std::string normalImagePath;
+    std::string emissiveImage;
+    std::string emissiveImagePath;
+    /** Multiplies the sampled roughness-map value (1 = as authored). */
+    float roughnessStrength;
+    /** Scales the tangent-space normal-map perturbation (1 = as authored). */
+    float normalStrength;
+    /** Scales the emissive-map contribution (1 = as authored). */
+    float emissiveIntensity;
+    /**
+     * Dielectric optics of a physically based material with a transmissive
+     * (glass) response. They are only meaningful when usePhysicalMaterial is
+     * true and the material is transparent (transparency > 0); the viewport's
+     * global glass settings are the fallback for materials without a physical
+     * definition.
+     */
+    float transmissionIor;         /**< Index of refraction (1.5 = window glass). */
+    float transmissionAbsorption;  /**< Beer-Lambert absorption (0 = clear). */
     std::string uuid;
     // NOLINTEND
     //@}
@@ -146,12 +196,28 @@ public:
         }
         return shininess == m.shininess
             && transparency == m.transparency
+            && metallic == m.metallic
+            && roughness == m.roughness
+            && usePhysicalMaterial == m.usePhysicalMaterial
+            && textureSize == m.textureSize
+            && textureMapping == m.textureMapping
             && ambientColor == m.ambientColor
             && diffuseColor == m.diffuseColor
             && specularColor == m.specularColor
             && emissiveColor == m.emissiveColor
             && image == m.image
-            && imagePath == m.imagePath;
+            && imagePath == m.imagePath
+            && roughnessImage == m.roughnessImage
+            && roughnessImagePath == m.roughnessImagePath
+            && normalImage == m.normalImage
+            && normalImagePath == m.normalImagePath
+            && emissiveImage == m.emissiveImage
+            && emissiveImagePath == m.emissiveImagePath
+            && roughnessStrength == m.roughnessStrength
+            && normalStrength == m.normalStrength
+            && emissiveIntensity == m.emissiveIntensity
+            && transmissionIor == m.transmissionIor
+            && transmissionAbsorption == m.transmissionAbsorption;
         // clang-format on
     }
     bool operator!=(const Material& m) const

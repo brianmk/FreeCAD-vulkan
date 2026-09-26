@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>292</width>
-    <height>296</height>
+    <height>530</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -200,6 +200,252 @@
     </widget>
    </item>
    <item row="1" column="0">
+    <widget class="QGroupBox" name="physicalGroupBox">
+     <property name="title">
+      <string>Physical material</string>
+     </property>
+     <layout class="QGridLayout">
+      <property name="leftMargin">
+       <number>9</number>
+      </property>
+      <property name="topMargin">
+       <number>9</number>
+      </property>
+      <property name="rightMargin">
+       <number>9</number>
+      </property>
+      <property name="bottomMargin">
+       <number>9</number>
+      </property>
+      <property name="spacing">
+       <number>6</number>
+      </property>
+      <item row="0" column="0" colspan="2">
+       <widget class="QCheckBox" name="usePhysicalMaterial">
+        <property name="text">
+         <string>Use physical (metallic-roughness) appearance</string>
+        </property>
+        <property name="toolTip">
+         <string>When enabled, the metallic-roughness parameters below drive the appearance instead of the shininess and specular color above. This is the SolidWorks-like metallic/roughness model used by the Vulkan viewport.</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="0">
+       <widget class="QLabel" name="metallicLabel">
+        <property name="text">
+         <string>Metallic</string>
+        </property>
+        <property name="toolTip">
+         <string>Controls the reflectivity of the surface: 0 is a dielectric (plastic, concrete), 1 is a conductor (metal).</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="QDoubleSpinBox" name="metallic">
+        <property name="minimumSize">
+         <size>
+          <width>122</width>
+          <height>0</height>
+         </size>
+        </property>
+        <property name="decimals">
+         <number>2</number>
+        </property>
+        <property name="singleStep">
+         <double>0.050000000000000</double>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="0">
+       <widget class="QLabel" name="roughnessLabel">
+        <property name="text">
+         <string>Roughness</string>
+        </property>
+        <property name="toolTip">
+         <string>Controls the blurriness of reflections (surface finish): 0 is a polished mirror, 1 is fully rough (brushed or matte).</string>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="1">
+       <widget class="QDoubleSpinBox" name="roughness">
+        <property name="minimumSize">
+         <size>
+          <width>122</width>
+          <height>0</height>
+         </size>
+        </property>
+        <property name="decimals">
+         <number>2</number>
+        </property>
+        <property name="singleStep">
+         <double>0.050000000000000</double>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="0">
+       <widget class="QLabel" name="transmissionIorLabel">
+        <property name="text">
+         <string>Transmission IOR</string>
+        </property>
+        <property name="toolTip">
+         <string>Index of refraction of the glass (transmissive) response: 1.5 is window glass, 1.0 is air. Only used when the material is transparent.</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="1">
+       <widget class="QDoubleSpinBox" name="transmissionIor">
+        <property name="minimumSize">
+         <size>
+          <width>122</width>
+          <height>0</height>
+         </size>
+        </property>
+        <property name="decimals">
+         <number>3</number>
+        </property>
+        <property name="minimum">
+         <double>1.000000000000000</double>
+        </property>
+        <property name="maximum">
+         <double>4.000000000000000</double>
+        </property>
+        <property name="singleStep">
+         <double>0.050000000000000</double>
+        </property>
+        <property name="value">
+         <double>1.500000000000000</double>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="0">
+       <widget class="QLabel" name="transmissionAbsorptionLabel">
+        <property name="text">
+         <string>Transmission Absorption</string>
+        </property>
+        <property name="toolTip">
+         <string>Beer-Lambert absorption strength of the glass: 0 is perfectly clear, higher values tint the transmission with thickness.</string>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="1">
+       <widget class="QDoubleSpinBox" name="transmissionAbsorption">
+        <property name="minimumSize">
+         <size>
+          <width>122</width>
+          <height>0</height>
+         </size>
+        </property>
+        <property name="decimals">
+         <number>3</number>
+        </property>
+        <property name="maximum">
+         <double>10.000000000000000</double>
+        </property>
+        <property name="singleStep">
+         <double>0.050000000000000</double>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item row="2" column="0">
+    <widget class="QGroupBox" name="textureGroupBox">
+     <property name="title">
+      <string>Texture</string>
+     </property>
+     <layout class="QGridLayout">
+      <property name="leftMargin">
+       <number>9</number>
+      </property>
+      <property name="topMargin">
+       <number>9</number>
+      </property>
+      <property name="rightMargin">
+       <number>9</number>
+      </property>
+      <property name="bottomMargin">
+       <number>9</number>
+      </property>
+      <property name="spacing">
+       <number>6</number>
+      </property>
+      <item row="0" column="0">
+       <widget class="QLabel" name="textureSizeLabel">
+        <property name="text">
+         <string>Texture size</string>
+        </property>
+        <property name="toolTip">
+         <string>Real-world size spanned by one tile of the texture image. Bigger values stretch the texture; smaller values repeat it more densely.</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QDoubleSpinBox" name="textureSize">
+        <property name="minimumSize">
+         <size>
+          <width>122</width>
+          <height>0</height>
+         </size>
+        </property>
+        <property name="suffix">
+         <string> mm</string>
+        </property>
+        <property name="decimals">
+         <number>2</number>
+        </property>
+        <property name="minimum">
+         <double>0.100000000000000</double>
+        </property>
+        <property name="maximum">
+         <double>100000.000000000000000</double>
+        </property>
+        <property name="singleStep">
+         <double>10.000000000000000</double>
+        </property>
+        <property name="value">
+         <double>100.000000000000000</double>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="0">
+       <widget class="QLabel" name="textureMappingLabel">
+        <property name="text">
+         <string>Mapping</string>
+        </property>
+        <property name="toolTip">
+         <string>How the texture image is projected onto the shape. Box maps each face from the closest axis-aligned plane; Planar projects the object X/Y coordinates.</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="QComboBox" name="textureMapping">
+        <item>
+         <property name="text">
+          <string>Planar</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>Box</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>Spherical</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>Cylindrical</string>
+         </property>
+        </item>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item row="3" column="0">
     <widget class="QDialogButtonBox" name="buttonBox">
      <property name="standardButtons">
       <set>QDialogButtonBox::Close</set>

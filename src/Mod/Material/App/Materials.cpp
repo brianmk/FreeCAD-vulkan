@@ -1640,6 +1640,38 @@ Material& Material::operator=(const Material& other)
     return *this;
 }
 
+namespace
+{
+QString textureMappingToString(App::Material::TextureMapping mapping)
+{
+    switch (mapping) {
+        case App::Material::MappingBox:
+            return QStringLiteral("Box");
+        case App::Material::MappingSpherical:
+            return QStringLiteral("Spherical");
+        case App::Material::MappingCylindrical:
+            return QStringLiteral("Cylindrical");
+        case App::Material::MappingPlanar:
+        default:
+            return QStringLiteral("Planar");
+    }
+}
+
+App::Material::TextureMapping textureMappingFromString(const QString& value)
+{
+    if (value == QStringLiteral("Box")) {
+        return App::Material::MappingBox;
+    }
+    if (value == QStringLiteral("Spherical")) {
+        return App::Material::MappingSpherical;
+    }
+    if (value == QStringLiteral("Cylindrical")) {
+        return App::Material::MappingCylindrical;
+    }
+    return App::Material::MappingPlanar;
+}
+}  // namespace
+
 Material& Material::operator=(const App::Material& other)
 {
     if (!hasAppearanceModel(ModelUUIDs::ModelUUID_Rendering_Basic)) {
@@ -1653,6 +1685,19 @@ Material& Material::operator=(const App::Material& other)
     getAppearanceProperty(QStringLiteral("Shininess"))->setFloat(other.shininess);
     getAppearanceProperty(QStringLiteral("Transparency"))->setFloat(other.transparency);
 
+    if (other.usePhysicalMaterial) {
+        if (!hasAppearanceModel(ModelUUIDs::ModelUUID_Rendering_Physical)) {
+            addAppearance(ModelUUIDs::ModelUUID_Rendering_Physical);
+        }
+
+        getAppearanceProperty(QStringLiteral("Metallic"))->setFloat(other.metallic);
+        getAppearanceProperty(QStringLiteral("Roughness"))->setFloat(other.roughness);
+        getAppearanceProperty(QStringLiteral("TransmissionIor"))
+            ->setFloat(other.transmissionIor);
+        getAppearanceProperty(QStringLiteral("TransmissionAbsorption"))
+            ->setFloat(other.transmissionAbsorption);
+    }
+
     if (!other.image.empty() || !other.imagePath.empty()) {
         if (!hasAppearanceModel(ModelUUIDs::ModelUUID_Rendering_Texture)) {
             addAppearance(ModelUUIDs::ModelUUID_Rendering_Texture);
@@ -1660,6 +1705,32 @@ Material& Material::operator=(const App::Material& other)
 
         getAppearanceProperty(QStringLiteral("TextureImage"))->setString(other.image);
         getAppearanceProperty(QStringLiteral("TexturePath"))->setString(other.imagePath);
+        getAppearanceProperty(QStringLiteral("TextureScaling"))->setFloat(other.textureSize);
+        getAppearanceProperty(QStringLiteral("TextureMapping"))
+            ->setString(textureMappingToString(other.textureMapping));
+    }
+
+    if (!other.roughnessImage.empty() || !other.roughnessImagePath.empty()
+        || !other.normalImage.empty() || !other.normalImagePath.empty()
+        || !other.emissiveImage.empty() || !other.emissiveImagePath.empty()) {
+        if (!hasAppearanceModel(ModelUUIDs::ModelUUID_Rendering_Texture)) {
+            addAppearance(ModelUUIDs::ModelUUID_Rendering_Texture);
+        }
+
+        getAppearanceProperty(QStringLiteral("TextureRoughness"))->setString(other.roughnessImage);
+        getAppearanceProperty(QStringLiteral("TextureRoughnessPath"))
+            ->setString(other.roughnessImagePath);
+        getAppearanceProperty(QStringLiteral("TextureNormal"))->setString(other.normalImage);
+        getAppearanceProperty(QStringLiteral("TextureNormalPath"))->setString(other.normalImagePath);
+        getAppearanceProperty(QStringLiteral("TextureEmissive"))->setString(other.emissiveImage);
+        getAppearanceProperty(QStringLiteral("TextureEmissivePath"))
+            ->setString(other.emissiveImagePath);
+        getAppearanceProperty(QStringLiteral("TextureRoughnessStrength"))
+            ->setFloat(other.roughnessStrength);
+        getAppearanceProperty(QStringLiteral("TextureNormalStrength"))
+            ->setFloat(other.normalStrength);
+        getAppearanceProperty(QStringLiteral("TextureEmissiveIntensity"))
+            ->setFloat(other.emissiveIntensity);
     }
 
     return *this;
@@ -1774,6 +1845,28 @@ App::Material Material::getMaterialAppearance() const
         material.transparency = getAppearanceProperty(QStringLiteral("Transparency"))->getFloat();
         custom = true;
     }
+    if (hasAppearanceProperty(QStringLiteral("Metallic"))) {
+        material.metallic = getAppearanceProperty(QStringLiteral("Metallic"))->getFloat();
+        material.usePhysicalMaterial = true;
+        custom = true;
+    }
+    if (hasAppearanceProperty(QStringLiteral("Roughness"))) {
+        material.roughness = getAppearanceProperty(QStringLiteral("Roughness"))->getFloat();
+        material.usePhysicalMaterial = true;
+        custom = true;
+    }
+    if (hasAppearanceProperty(QStringLiteral("TransmissionIor"))) {
+        material.transmissionIor =
+            getAppearanceProperty(QStringLiteral("TransmissionIor"))->getFloat();
+        material.usePhysicalMaterial = true;
+        custom = true;
+    }
+    if (hasAppearanceProperty(QStringLiteral("TransmissionAbsorption"))) {
+        material.transmissionAbsorption =
+            getAppearanceProperty(QStringLiteral("TransmissionAbsorption"))->getFloat();
+        material.usePhysicalMaterial = true;
+        custom = true;
+    }
     if (hasAppearanceProperty(QStringLiteral("TextureImage"))) {
         auto property = getAppearanceProperty(QStringLiteral("TextureImage"));
         if (!property->isNull()) {
@@ -1792,6 +1885,46 @@ App::Material Material::getMaterialAppearance() const
 
         custom = true;
     }
+
+    if (hasAppearanceProperty(QStringLiteral("TextureScaling"))) {
+        auto property = getAppearanceProperty(QStringLiteral("TextureScaling"));
+        if (!property->isNull()) {
+            material.textureSize = property->getFloat();
+        }
+    }
+    if (hasAppearanceProperty(QStringLiteral("TextureMapping"))) {
+        auto property = getAppearanceProperty(QStringLiteral("TextureMapping"));
+        if (!property->isNull()) {
+            material.textureMapping = textureMappingFromString(property->getString());
+        }
+    }
+
+    const auto readImageProperty = [this](const QString& name, std::string& target) {
+        if (hasAppearanceProperty(name)) {
+            auto property = getAppearanceProperty(name);
+            if (!property->isNull()) {
+                target = property->getString().toStdString();
+            }
+        }
+    };
+    readImageProperty(QStringLiteral("TextureRoughness"), material.roughnessImage);
+    readImageProperty(QStringLiteral("TextureRoughnessPath"), material.roughnessImagePath);
+    readImageProperty(QStringLiteral("TextureNormal"), material.normalImage);
+    readImageProperty(QStringLiteral("TextureNormalPath"), material.normalImagePath);
+    readImageProperty(QStringLiteral("TextureEmissive"), material.emissiveImage);
+    readImageProperty(QStringLiteral("TextureEmissivePath"), material.emissiveImagePath);
+
+    const auto readFloatProperty = [this](const QString& name, float& target) {
+        if (hasAppearanceProperty(name)) {
+            auto property = getAppearanceProperty(name);
+            if (!property->isNull()) {
+                target = static_cast<float>(property->getFloat());
+            }
+        }
+    };
+    readFloatProperty(QStringLiteral("TextureRoughnessStrength"), material.roughnessStrength);
+    readFloatProperty(QStringLiteral("TextureNormalStrength"), material.normalStrength);
+    readFloatProperty(QStringLiteral("TextureEmissiveIntensity"), material.emissiveIntensity);
 
     if (custom) {
         material.setType(App::Material::USER_DEFINED);
