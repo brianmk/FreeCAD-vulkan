@@ -664,6 +664,17 @@ public:
     //! pipeline for this surface (see InteractionController).
     InteractionController* getInteractionController() const;
 
+    /** Process a native (Qt) input event through the active surface's devices.
+     *
+     *  FreeCAD's native 3D-mouse handler posts `Spaceball::*` events to the
+     *  focus widget and the main window re-delivers the leftover motion event
+     *  to the active viewer.  The gesture/SpaceNavigator devices are owned by
+     *  the interaction controller and live on the current surface's event
+     *  filter, so the viewer routes the event through the controller instead of
+     *  relying on its own (now device-less while Vulkan is current) filter.
+     */
+    bool processNativeInputEvent(QEvent* ev);
+
     //! The neutral owner of this view's scene roots, camera, viewport and
     //! device pixel ratio.  Both the GL render manager and the Vulkan viewport
     //! consume the state from here instead of the render manager.

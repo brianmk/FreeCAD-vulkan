@@ -2666,6 +2666,11 @@ InteractionController* View3DInventorViewer::getInteractionController() const
     return interactionController.get();
 }
 
+bool View3DInventorViewer::processNativeInputEvent(QEvent* ev)
+{
+    return interactionController && interactionController->processNativeEvent(ev);
+}
+
 void View3DInventorViewer::setCursorTarget(QWidget* target)
 {
     cursorTarget = target;

@@ -203,6 +203,18 @@ bool InteractionController::processSoEvent(const SoEvent* ev)
     return result;
 }
 
+bool InteractionController::processNativeEvent(QEvent* ev)
+{
+    if (!_eventFilter || !ev) {
+        return false;
+    }
+    // EventFilter ignores the watched object and uses its own device list and
+    // host, so the same translation the Qt event filter would run for an event
+    // delivered to the surface's widget is run here for an event delivered
+    // elsewhere (see the header).
+    return _eventFilter->processEvent(ev);
+}
+
 bool InteractionController::processRawEvent(QEvent* ev)
 {
     // FreeCAD's gesture/SpaceNavigator devices now live on the current

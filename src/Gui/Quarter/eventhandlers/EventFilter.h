@@ -52,6 +52,15 @@ public:
   void registerInputDevice(InputDevice * device);
   void unregisterInputDevice(InputDevice * device);
 
+  //! Translate a native Qt event against the registered devices and deliver the
+  //! resulting Coin event through the host.  The protected event-filter entry
+  //! point forwards here, so this can also be called directly to route an event
+  //! that was delivered to the wrong widget -- e.g. a `Spaceball::MotionEvent`
+  //! posted by FreeCAD's native 3D-mouse handler to the focus widget (or
+  //! re-sent by the main window to the hidden GL viewer) while the devices live
+  //! on another surface's event filter.
+  bool processEvent(QEvent * event);
+
   const QPoint & globalMousePosition() const;
 
 protected:

@@ -1560,7 +1560,12 @@ bool MainWindow::event(QEvent* e)
         View3DInventorViewer* view = spaceballMotionEventTarget();
         if (view) {
             Spaceball::MotionEvent anotherEvent(*motionEvent);
-            qApp->sendEvent(view, &anotherEvent);
+            // Route through the viewer's interaction controller: the
+            // SpaceNavigator device lives on the *current* surface's event
+            // filter, which is the Vulkan widget while the Vulkan viewport is
+            // active -- not this (hidden) GL viewer.  Sending the event to the
+            // viewer, as before, would no longer reach the device.
+            view->processNativeInputEvent(&anotherEvent);
         }
         return true;
     }
