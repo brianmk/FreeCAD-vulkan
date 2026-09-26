@@ -104,6 +104,7 @@
 #include <QMimeData>
 #include <QOpenGLFramebufferObject>
 #include <QOpenGLWidget>
+#include <QResizeEvent>
 #include <QScopeGuard>
 #include <QSurfaceFormat>
 #include <QTimer>
@@ -1279,6 +1280,28 @@ void View3DInventorViewer::init()
     objectGroup->setName("ObjectGroup");
     pcViewProviderRoot->addChild(objectGroup);
 
+    // Neutral view state: the single owner of the scene root, camera, object
+    // group, foreground root, per-frame decoration root and viewport.  The GL
+    // render manager below keeps rendering the same nodes (its superscene wraps
+    // the view state's scene root) and the Vulkan adapter reads them from here
+    // rather than from the render manager.
+    viewState = std::make_unique<ViewState>();
+    viewState->setSceneRoot(viewerSceneRoot);
+    viewState->setObjectGroup(objectGroup);
+    viewState->setForegroundRoot(foregroundroot);
+    if (auto* rm = this->getSoRenderManager()) {
+        viewState->setCamera(rm->getCamera());
+        viewState->setViewportRegion(rm->getViewportRegion());
+        viewState->setDevicePixelRatio(rm->getDevicePixelRatio());
+    }
+    // A projection change replaces the camera node; announce it like the
+    // explicit signal did so the Vulkan viewport re-points at the new node.
+    viewState->addChangeCallback([this](ViewState::Change change) {
+        if (change == ViewState::Change::Camera) {
+            Q_EMIT cameraChanged();
+        }
+    });
+
     // Set our own render action which show a bounding box if
     // the SoFCSelection::BOX style is set
     //
@@ -2358,20 +2381,20 @@ SoSeparator* View3DInventorViewer::getDecorationRoot()
         decorationSceneRoot = new SoSeparator;
         decorationSceneRoot->ref();
         decorationSceneRoot->setName("vulkanDecorationRoot");
+        // The per-frame (camera-coupled) decorations the view state owns --
+        // camera child + ground grid -- are shared with the GL decoration pass.
+        if (viewState && viewState->decorationRoot()) {
+            decorationSceneRoot->addChild(viewState->decorationRoot());
+        }
     }
     // The Vulkan manager re-records this decoration scene every frame, whereas
     // the main draw list is retained and replayed verbatim on camera-only
     // frames.  The ground grid is camera-coupled (updateGrid() follows the view
-    // volume), so anchoring it here keeps it live on zoom/rotate; in the main
-    // scene it only refreshed on a scene change (e.g. creating a sketch) and
-    // otherwise stayed stale.
+    // volume), so anchoring it here keeps it live on zoom/rotate.
     SoNode* axisCross = getAxisCrossOverlay();
     if (axisCross && decorationSceneRoot->findChild(axisCross) < 0) {
         decorationSceneRoot->addChild(axisCross);
     }
-    // The ground grid is moved in/out of here by setGroundPlaneDecorationScene():
-    // it only belongs to the per-frame decoration scene while the Vulkan
-    // viewport is active (see that method).
     return decorationSceneRoot;
 }
 
@@ -2446,63 +2469,26 @@ void View3DInventorViewer::setGroundPlane(bool on)
             groundPlane->boundingBoxCaching = SoSeparator::OFF;
             groundPlaneGroup->addChild(groundPlane);
 
-            // Default (classic Coin/GL) home: the main scene.  There the grid is
-            // re-traversed every frame, and -- because the scene bounds determine
-            // the camera clip range -- it also makes the far plane reach the drawn
-            // ground.  While the Vulkan viewport is active the grid is moved to
-            // the per-frame decoration scene instead (setGroundPlaneDecorationScene).
-            if (groundPlaneUsesDecorationScene) {
-                getDecorationRoot()->addChild(groundPlaneGroup);
-            }
-            else if (auto* sep = static_cast<SoSeparator*>(getSceneGraph())) {  // NOLINT
-                sep->addChild(groundPlaneGroup);
+            // The grid lives on the shared per-frame decoration root for both
+            // backends: the GL decoration pass applies it standalone (its
+            // camera child is first in that root), and the Vulkan manager
+            // re-records it every frame, so the camera-coupled geometry tracks
+            // the view volume on zoom/rotate.
+            if (viewState && viewState->decorationRoot()) {
+                viewState->decorationRoot()->addChild(groundPlaneGroup);
             }
         }
     }
     else {
         if (groundPlane) {
-            if (decorationSceneRoot) {
-                decorationSceneRoot->removeChild(groundPlaneGroup);
-            }
-            if (auto* sep = static_cast<SoSeparator*>(getSceneGraph())) {  // NOLINT
-                if (sep->findChild(groundPlaneGroup) >= 0) {
-                    sep->removeChild(groundPlaneGroup);
-                }
+            if (viewState && viewState->decorationRoot()
+                && viewState->decorationRoot()->findChild(groundPlaneGroup) >= 0) {
+                viewState->decorationRoot()->removeChild(groundPlaneGroup);
             }
             groundPlaneGroup->unref();
             groundPlaneGroup = nullptr;
             groundPlane->unref();
             groundPlane = nullptr;
-        }
-    }
-}
-
-void View3DInventorViewer::setGroundPlaneDecorationScene(bool on)
-{
-    if (this->groundPlaneUsesDecorationScene == on) {
-        return;
-    }
-    this->groundPlaneUsesDecorationScene = on;
-
-    if (!groundPlaneGroup) {
-        return;
-    }
-    auto* mainRoot = static_cast<SoSeparator*>(getSceneGraph());  // NOLINT
-    if (on) {
-        // Vulkan: the main draw list is retained verbatim on camera-only frames,
-        // so a camera-coupled grid there goes stale on zoom; the decoration scene
-        // is re-recorded every frame.
-        if (mainRoot && mainRoot->findChild(groundPlaneGroup) >= 0) {
-            mainRoot->removeChild(groundPlaneGroup);
-        }
-        getDecorationRoot()->addChild(groundPlaneGroup);
-    }
-    else {
-        if (decorationSceneRoot && decorationSceneRoot->findChild(groundPlaneGroup) >= 0) {
-            decorationSceneRoot->removeChild(groundPlaneGroup);
-        }
-        if (mainRoot && mainRoot->findChild(groundPlaneGroup) < 0) {
-            mainRoot->addChild(groundPlaneGroup);
         }
     }
 }
@@ -2625,17 +2611,47 @@ void View3DInventorViewer::setCursorTarget(QWidget* target)
 // is current (this viewer, or the Vulkan viewport adapter).
 SoCamera* View3DInventorViewer::getCamera() const
 {
-    return inherited::getCamera();
+    return viewState ? viewState->camera() : inherited::getCamera();
 }
 
 SoNode* View3DInventorViewer::getSceneGraph() const
 {
-    return inherited::getSceneGraph();
+    return viewState ? viewState->sceneRoot() : inherited::getSceneGraph();
 }
 
 const SbViewportRegion& View3DInventorViewer::getViewportRegion() const
 {
-    return inherited::getViewportRegion();
+    return viewState ? viewState->viewportRegion() : inherited::getViewportRegion();
+}
+
+void View3DInventorViewer::refreshCameraClipping()
+{
+    if (auto* rm = this->getSoRenderManager()) {
+        rm->updateClippingPlanes();
+    }
+}
+
+void View3DInventorViewer::resizeEvent(QResizeEvent* event)
+{
+    inherited::resizeEvent(event);
+
+    // While the GL widget is the visible surface it owns the viewport
+    // authority (QuarterWidget::resizeEvent just calibrated the render/event
+    // manager); mirror it into the neutral view state.  While the Vulkan
+    // surface is current the adapter is the authority and feeds the view state
+    // itself, so a hidden GL widget resize must not clobber it.
+    if (viewState && !this->vulkanDevicePixels()) {
+        if (auto* rm = this->getSoRenderManager()) {
+            viewState->setViewportRegion(rm->getViewportRegion());
+            viewState->setDevicePixelRatio(rm->getDevicePixelRatio());
+        }
+        if (auto* controller = this->getInteractionController()) {
+            controller->setViewportRegion(
+                viewState->viewportRegion(),
+                viewState->devicePixelRatio()
+            );
+        }
+    }
 }
 
 SoEventManager* View3DInventorViewer::getSoEventManager() const
@@ -2791,6 +2807,20 @@ void View3DInventorViewer::setSceneGraph(SoNode* root)
 #if (COIN_MAJOR_VERSION * 100 + COIN_MINOR_VERSION * 10 + COIN_MICRO_VERSION < 403)
     interactionController->navigationStyle()->findBoundingSphere();
 #endif
+
+    // Keep the neutral view state in step.  The inherited call above may have
+    // installed a new camera (QuarterWidget creates one when the scene has
+    // none), so re-read it after the assignment.
+    if (viewState) {
+        SoSeparator* stateRoot = nullptr;
+        if (root && root->isOfType(SoSeparator::getClassTypeId())) {
+            stateRoot = static_cast<SoSeparator*>(root);
+        }
+        viewState->setSceneRoot(stateRoot);
+        if (auto* rm = this->getSoRenderManager()) {
+            viewState->setCamera(rm->getCamera());
+        }
+    }
 }
 
 void View3DInventorViewer::savePicture(
@@ -2916,6 +2946,9 @@ void View3DInventorViewer::savePicture(
     root->addChild(foregroundroot);
     if (shouldRenderDecorations(intent)) {
         root->addChild(decorationroot);
+        if (this->groundPlane && viewState && viewState->decorationRoot()) {
+            root->addChild(viewState->decorationRoot());
+        }
     }
 
     try {
@@ -3590,6 +3623,9 @@ bool View3DInventorViewer::renderToFramebuffer(
     gl.apply(this->foregroundroot);
     if (shouldRenderDecorations(currentRenderIntent())) {
         gl.apply(this->decorationroot);
+        if (this->groundPlane && viewState && viewState->decorationRoot()) {
+            gl.apply(viewState->decorationRoot());
+        }
     }
 
     if (shouldRenderDecorations(currentRenderIntent()) && this->axiscrossEnabled) {
@@ -3774,6 +3810,11 @@ void View3DInventorViewer::renderGLActionScene(const QColor& backgroundColor, So
         glra->apply(this->foregroundroot);
         if (shouldRenderDecorations(currentRenderIntent())) {
             glra->apply(this->decorationroot);
+            // The camera-coupled ground grid lives on the view state's
+            // per-frame decoration root; its camera child frames it correctly.
+            if (this->groundPlane && viewState && viewState->decorationRoot()) {
+                glra->apply(viewState->decorationRoot());
+            }
         }
     }
 }
@@ -4582,7 +4623,15 @@ void View3DInventorViewer::setCameraType(SoType type)
 
     lightRotation->rotation.connectFrom(&cam->orientation);
 
-    Q_EMIT cameraChanged();
+    // The inherited call replaced the camera node on the render manager; lift
+    // the new node into the neutral view state (which also re-points the
+    // per-frame decoration root's camera child) and announce the change.
+    if (viewState) {
+        viewState->setCamera(cam);
+    }
+    else {
+        Q_EMIT cameraChanged();
+    }
 }
 
 bool View3DInventorViewer::setCamera(const char* pCamera)

@@ -63,10 +63,12 @@
 #include "CornerCrossLetters.h"
 #include "InteractionSurface.h"
 #include "View3DInventorSelection.h"
+#include "ViewState.h"
 #include "Quarter/SoQTQuarterAdaptor.h"
 
 class QOpenGLFramebufferObject;
 class QOpenGLWidget;
+class QResizeEvent;
 class QSurfaceFormat;
 class QTimer;
 
@@ -634,12 +636,6 @@ public:
     //! manager re-records this every frame, unlike the retained main scene, so
     //! camera-coupled geometry anchored here tracks the view volume live.
     SoSeparator* getDecorationRoot();
-    //! Move the ground grid between the main scene (classic Coin/GL: re-drawn
-    //! every frame and included in the clip-range scene bounds) and the
-    //! per-frame decoration scene (Vulkan: the main draw list is retained
-    //! verbatim on camera-only frames, so a camera-coupled grid there goes
-    //! stale).  Called by the Vulkan adapter as the viewport is created/destroyed.
-    void setGroundPlaneDecorationScene(bool on);
     //! Refresh the axis cross overlay nodes (transforms, colors, letters)
     //! without issuing any GL rendering; called by drawAxisCross() and by
     //! the Vulkan viewport sync so the hidden GL viewer's frame loop is not
@@ -660,6 +656,19 @@ public:
     //! The interaction controller that owns navigation + the Coin event
     //! pipeline for this surface (see InteractionController).
     InteractionController* getInteractionController() const;
+
+    //! The neutral owner of this view's scene roots, camera, viewport and
+    //! device pixel ratio.  Both the GL render manager and the Vulkan viewport
+    //! consume the state from here instead of the render manager.
+    ViewState* getViewState() const
+    {
+        return viewState.get();
+    }
+
+    //! Re-fit the active camera's near/far planes to the current scene bounds
+    //! (the GL render manager normally does this on render, which never runs
+    //! on the display-only Vulkan path).  Used to keep picking calibrated.
+    void refreshCameraClipping();
 
     /** Route navigation's cursor shapes to \a target instead of the GL widget.
      *
@@ -714,11 +723,11 @@ public:
     void scheduleRedraw() override;
     SoGroup* getObjectGroup() const override
     {
-        return objectGroup;
+        return viewState ? viewState->objectGroup() : objectGroup;
     }
     SoSeparator* getForegroundRoot() const override
     {
-        return foregroundroot;
+        return viewState ? viewState->foregroundRoot() : foregroundroot;
     }
     void bindMouseSelection(AbstractMouseSelection* selection) override;
     //@}
@@ -780,6 +789,7 @@ protected:
     void actualRedraw() override;
     void setSeekMode(bool on) override;
     void afterRealizeHook() override;
+    void resizeEvent(QResizeEvent* event) override;
     bool processSoEvent(const SoEvent* ev) override;
     void dropEvent(QDropEvent* ev) override;
     void dragEnterEvent(QDragEnterEvent* ev) override;
@@ -853,6 +863,10 @@ private:
 
     SoRotation* lightRotation;
 
+    //! Neutral owner of the view's authoritative scene roots, camera, viewport
+    //! and device pixel ratio; created once the scene roots exist.
+    std::unique_ptr<ViewState> viewState;
+
     // Scene graph root
     SoSeparator* pcViewProviderRoot;
     // Child group in the scene graph that contains view providers related to the physical object
@@ -889,9 +903,6 @@ private:
     //! Per-frame IR decoration scene (axis cross + ground plane), consumed by
     //! the Vulkan adapter's setDecorationSceneGraph().
     SoSeparator* decorationSceneRoot = nullptr;
-    //! When true the ground grid lives in decorationSceneRoot (Vulkan active)
-    //! instead of the main scene.
-    bool groundPlaneUsesDecorationScene = false;
 
     SoGroup* rotationCenterGroup;
 
