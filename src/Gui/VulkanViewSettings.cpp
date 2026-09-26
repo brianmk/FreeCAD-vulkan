@@ -42,6 +42,9 @@ VulkanViewSettings::load(const ParameterGrp::handle & hGrp)
     this->hdrToneMap = std::clamp(
         static_cast<int>(hGrp->GetInt("VulkanHDRToneMap", 0)), 0, 3);
     this->interactionLod = hGrp->GetBool("VulkanInteractionLod", true);
+    // Present mode (V-Sync): 0 FIFO (default), 1 Mailbox, 2 Immediate.
+    this->presentMode = std::clamp(
+        static_cast<int>(hGrp->GetInt("VulkanPresentMode", 0)), 0, 2);
     // Colors are stored as Unsigned (0xRRGGBBAA) to survive INT_MAX; the
     // alpha is pinned to 1 (the edge overlay is opaque).
     //

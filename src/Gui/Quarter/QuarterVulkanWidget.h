@@ -201,6 +201,20 @@ public:
     void setPreferredColorFormat(int vkFormat);
 
     /*!
+      \brief Request the swapchain present mode (V-Sync behaviour).
+
+      \a mode: 0 = FIFO (V-Sync, the default, always supported), 1 = Mailbox
+      (V-Sync, no tearing, lower latency; frames may be dropped under load),
+      2 = Immediate (no V-Sync, may tear, uncapped frame rate).  Must be called
+      before the window is first shown.  QVulkanWindow normally hardcodes FIFO;
+      this writes its present mode and falls back to FIFO when the requested
+      mode is not advertised by the surface (queried once the surface exists).
+      A window/swapchain property, so an already-open view keeps its mode until
+      it is reopened.
+    */
+    void setPresentMode(int mode);
+
+    /*!
       \brief Request HDR output for the viewport, presented as scRGB.
 
       Must be called before the window is first shown.  When enabled, the
