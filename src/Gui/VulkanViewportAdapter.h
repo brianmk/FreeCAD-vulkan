@@ -6,7 +6,7 @@
 
 #include <QObject>
 
-#include <Inventor/rendering/SoVulkanViewMode.h>
+#include <Inventor/rendering/vulkan/SoVulkanViewMode.h>
 
 #include "InteractionSurface.h"
 

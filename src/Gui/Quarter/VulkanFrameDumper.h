@@ -14,7 +14,7 @@
 
 #include <vulkan/vulkan.h>
 
-#include <Inventor/rendering/SoVulkanImageCopy.h>
+#include <Inventor/rendering/vulkan/SoVulkanImageCopy.h>
 
 #include <Base/Console.h>
 #include <Base/FileInfo.h>

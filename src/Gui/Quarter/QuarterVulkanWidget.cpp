@@ -16,8 +16,8 @@
 #include <Inventor/SbViewportRegion.h>
 #include <Inventor/nodes/SoCamera.h>
 #include <Inventor/nodes/SoNode.h>
-#include <Inventor/rendering/SoVulkanRenderManager.h>
-#include <Inventor/rendering/SoVulkanRenderTarget.h>
+#include <Inventor/rendering/vulkan/SoVulkanRenderManager.h>
+#include <Inventor/rendering/vulkan/SoVulkanRenderTarget.h>
 
 #include <vulkan/vulkan.h>
 

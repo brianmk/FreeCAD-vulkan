@@ -20,7 +20,7 @@
 
 #include <Base/Parameter.h>
 #include <Inventor/SbColor4f.h>
-#include <Inventor/rendering/SoVulkanViewMode.h>
+#include <Inventor/rendering/vulkan/SoVulkanViewMode.h>
 
 namespace Gui {
 

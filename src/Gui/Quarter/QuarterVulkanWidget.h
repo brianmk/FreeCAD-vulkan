@@ -12,8 +12,8 @@
 #include <Inventor/SbColor4f.h>
 #include <Inventor/SbVec3f.h>
 #include <Inventor/rendering/SoRenderIR.h>
-#include <Inventor/rendering/SoVulkanViewMode.h>
-#include <Inventor/rendering/SoVulkanViewSettings.h>
+#include <Inventor/rendering/vulkan/SoVulkanViewMode.h>
+#include <Inventor/rendering/vulkan/SoVulkanViewSettings.h>
 #include <vector>
 
 #include <Quarter/InputDeviceHost.h>

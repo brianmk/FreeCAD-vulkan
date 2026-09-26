@@ -30,7 +30,7 @@
 #include <Inventor/nodes/SoSpotLight.h>
 #include <Inventor/SoRenderManager.h>
 #include <Inventor/rendering/SoRenderIR.h>
-#include <Inventor/rendering/SoVulkanViewSettings.h>
+#include <Inventor/rendering/vulkan/SoVulkanViewSettings.h>
 #include <Inventor/sensors/SoNodeSensor.h>
 #include <Inventor/sensors/SoSensor.h>
 
