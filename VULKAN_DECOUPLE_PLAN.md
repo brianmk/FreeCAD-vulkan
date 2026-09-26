@@ -108,27 +108,29 @@ mirror).
 
 ## Steps
 
-Status legend: `[~]` applied, build-green, runtime-verify pending; `[ ]` not
-started.
+Status legend: `[x]` committed + verified; `[~]` implemented, final
+verification pending; `[ ]` not started.
 
 | # | Step | Owns (files) | Status |
 |---|------|--------------|--------|
-| 1 | **Invert viewport authority**: one neutral `viewportRegion`+`dpr`; delete `applySurfaceViewportToGL` + GL-widget event filter. | `ViewState.*`, `View3DInventorViewer.*`, `VulkanViewportAdapter.*` | `[~]` |
-| 2 | **Lift scene+camera off `SoRenderManager`**: neutral owner holds scene root + camera; hosts return those; GL manager references them. | `ViewState.*`, `View3DInventorViewer.*`, `VulkanViewportAdapter.*` | `[~]` |
-| 3 | **Picking as a service**: neutral `pick(ray)` (scene+cam+viewport); selection calls it; Vulkan picks its own pixels. | `SoFCUnifiedSelection.cpp`, `SoFCSelection.cpp`, `ViewState.*` | `[ ]` |
-| 4 | **Own events in the controller**: event manager + gesture devices bound to the current surface; drop the hidden-GL relay (`setRawEventTarget`). | `InteractionController.*`, `View3DInventorViewer.*` | `[ ]` |
-| 5 | **Lights + background as view-model state**: camera-anchored headlight/backlight/fill and background on the view model; delete the GL gather (`pushSceneLights`, `getBackgroundColor`). | `ViewState.*`, `VulkanViewportAdapter.*`, `View3DInventor.*` | `[ ]` |
-| 6 | **Overlays as scene subtrees**: navi-cube/axis-cross/ground-grid roots on the view model; drop `setGroundPlaneDecorationScene`. | `ViewState.*`, `View3DInventorViewer.*`, `VulkanViewportAdapter.*` | `[~]` (axis-cross still in IR wrapper) |
+| 1 | **Invert viewport authority**: one neutral `viewportRegion`+`dpr`; delete `applySurfaceViewportToGL` + GL-widget event filter. | `ViewState.*`, `View3DInventorViewer.*`, `VulkanViewportAdapter.*` | `[x]` `194c59a6d5` |
+| 2 | **Lift scene+camera off `SoRenderManager`**: neutral owner holds scene root + camera; hosts return those; GL manager references them. | `ViewState.*`, `View3DInventorViewer.*`, `VulkanViewportAdapter.*` | `[x]` `194c59a6d5` |
+| 3 | **Picking as a service**: neutral `pick(ray)` (scene+cam+viewport); selection calls it; Vulkan picks its own pixels. | `ViewState.*` + call sites | `[x]` `23fd7b4397` |
+| 4 | **Own events in the controller**: event manager + gesture devices bound to the current surface; drop the hidden-GL relay (`setRawEventTarget`). | `InteractionController.*`, `InteractionSurface.h`, `View3DInventorViewer.*` | `[~]` `e7a82a54ab`; devices owned per surface, tablet/touch relay + gesture grab left |
+| 5 | **Lights + background as view-model state**: camera-anchored headlight/backlight/fill and background on the view model; delete the GL gather (`pushSceneLights`, `getBackgroundColor`). | `ViewState.*`, `VulkanViewportAdapter.*`, `View3DInventor.*` | `[x]` `23fd7b4397` |
+| 6 | **Overlays as scene subtrees**: navi-cube/axis-cross/ground-grid roots on the view model; drop `setGroundPlaneDecorationScene`. | `ViewState.*`, `View3DInventorViewer.*`, `VulkanViewportAdapter.*` | `[x]` `194c59a6d5` (axis-cross still in IR wrapper) |
 | 7 | **Drop `getSoRenderManager()` from the neutral interface.** | `InteractionHost.h`, `Navigation/*` | `[~]` done by #96; only GL-only consumers keep it |
-| 8 | **Coin: backend-agnostic scene manager**: common base for `SoRenderManager` + `SoVulkanRenderManager`. | `src/3rdParty/coin/**` | `[ ]` |
-| 9 | **Endgame**: Vulkan-only view builds controller+view model without `View3DInventorViewer`/`SoRenderManager`. | `View3DInventor.*`, `VulkanViewportAdapter.*` | `[ ]` |
+| 8 | **Coin: backend-agnostic scene manager**: common base for `SoRenderManager` + `SoVulkanRenderManager`. | `src/3rdParty/coin/**` | `[ ]` patch ready: coin `21aa55b32`, not integrated |
+| 9 | **Endgame**: Vulkan-only view builds controller+view model without `View3DInventorViewer`/`SoRenderManager`. | `View3DInventor.*`, `VulkanViewportAdapter.*` | `[ ]` design in `/tmp/opencode/step9_design.md` |
 
 ## Workstream split
 
-- **WS-CORE (steps 1,2,6)** — *done*: applied on this branch, `FreeCADGui`
-  green. Remaining: commit + runtime verification.
-- **WS-INTERACT (steps 3,4,5)** — next; the natural continuation. Owns
-  selection/picking, `InteractionController`, lights/background.
+- **WS-CORE (steps 1,2,6)** — *done*: committed `194c59a6d5`, verified
+  (full relink green; Vulkan raster+RT pick PASS; GL presel `(44,99,144)`).
+- **WS-INTERACT (steps 3,4,5)** — *mostly done*: steps 3+5 committed
+  `23fd7b4397`; the step-4 device-ownership change is `e7a82a54ab` (syntax-clean,
+  runtime verification pending). Step 4's tablet/touch relay and gesture grab
+  move to WS-CLEANUP.
 - **WS-COIN (step 8)** — independent; owns `src/3rdParty/coin/**`. Can run in
   parallel with WS-INTERACT (disjoint tree) once build configuration is frozen.
 - **WS-CLEANUP (step 9)** — after WS-INTERACT: Vulkan-only session path (step 7
@@ -151,8 +153,18 @@ step 8 is the only genuinely parallel one.
 
 ## Status
 
-- `[~]` Step 1 · `[~]` Step 2 · `[ ]` Step 3 · `[ ]` Step 4 · `[ ]` Step 5
-- `[~]` Step 6 · `[~]` Step 7 · `[ ]` Step 8 · `[ ]` Step 9
+- `[x]` Step 1 · `[x]` Step 2 · `[x]` Step 3 · `[~]` Step 4 · `[x]` Step 5
+- `[x]` Step 6 · `[~]` Step 7 · `[ ]` Step 8 · `[ ]` Step 9
 
-Immediate next actions: commit the WS-CORE work, run a full relink + the pick
-probes to verify steps 1/2/6, then start WS-INTERACT (3,4,5).
+Progress: `194c59a6d5` (1/2/6) → `23fd7b4397` (3/5) → `e7a82a54ab` (4, partial).
+
+Next actions:
+
+1. Once the concurrent session's benchmark finishes, run a full relink + the
+   pick/presel probes to verify the step-4 device-ownership change.
+2. Integrate WS-COIN step 8 (`21aa55b32178f90a5deac14b0953946ba92dc9be`, patch
+   `/tmp/opencode/coin-step8.patch`): land it on the coin fork, bump the
+   `src/3rdParty/coin` gitlink, full relink, GL/Vulkan parity probes.
+3. WS-CLEANUP step 9 (design in `/tmp/opencode/step9_design.md`): the Vulkan-only
+   session; also retire the step-4 tablet/touch relay and gesture grab.
+4. Delete this document before the branch is proposed for merge.
