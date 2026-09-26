@@ -15,11 +15,11 @@ Record a FreeCAD run into a `.gfxr`, then replay it without FreeCAD:
 ```sh
 # Capture frames 1-30 of a probe (the layer appends the frame range to the
 # requested name, so the harness discovers the real file).
-python3 tools/fcprobe/freecad_probe.py run tools/fcprobe/vk_diag_probe.py \
+python3 ../FreeCAD-DevTools/fcprobe/freecad_probe.py run ../FreeCAD-DevTools/fcprobe/vk_diag_probe.py \
     --profile vulkan --gfxreconstruct --gfxreconstruct-frames 1-30 --name gfxr
 
 # Replay headless and dump one PNG per frame into the artifact dir.
-python3 tools/fcprobe/freecad_probe.py replay \
+python3 ../FreeCAD-DevTools/fcprobe/freecad_probe.py replay \
     /tmp/opencode/runs/gfxr-*/capture_frames_1_through_30.gfxr \
     --screenshots 1-30 --name gfxr-replay
 ```
@@ -30,7 +30,7 @@ python3 tools/fcprobe/freecad_probe.py replay \
 Replay with the capture's own WSI instead:
 
 ```sh
-python3 tools/fcprobe/freecad_probe.py replay <capture.gfxr> --wsi wayland
+python3 ../FreeCAD-DevTools/fcprobe/freecad_probe.py replay <capture.gfxr> --wsi wayland
 ```
 
 `--wsi xcb` works too when the capture was made on the XCB platform (see
@@ -46,7 +46,7 @@ the harness sets `FC_PROBE_RENDERDOC=1` and the probe calls
 frame to present:
 
 ```sh
-python3 tools/fcprobe/freecad_probe.py run tools/fcprobe/vk_diag_probe.py \
+python3 ../FreeCAD-DevTools/fcprobe/freecad_probe.py run ../FreeCAD-DevTools/fcprobe/vk_diag_probe.py \
     --profile vulkan --renderdoc --name rdc
 # -> <artifact>/renderdoc_frameNN.rdc
 qrenderdoc <artifact>/renderdoc_frameNN.rdc
@@ -71,7 +71,7 @@ Notes:
 ## 3. Nsight Systems — where the CPU time goes
 
 ```sh
-python3 tools/fcprobe/freecad_probe.py run tools/fcprobe/vk_diag_probe.py \
+python3 ../FreeCAD-DevTools/fcprobe/freecad_probe.py run ../FreeCAD-DevTools/fcprobe/vk_diag_probe.py \
     --profile vulkan --nsys --name nsys
 nsys stats --report vulkan_api_sum --format table <artifact>/nsys.nsys-rep
 nsys stats --report cuda_gpu_kern_sum --format table <artifact>/nsys.nsys-rep
@@ -98,14 +98,14 @@ fast; enable them by invoking `nsys profile` directly if needed.
 Single run:
 
 ```sh
-python3 tools/fcprobe/freecad_probe.py run tools/fcprobe/vk_diag_probe.py \
+python3 ../FreeCAD-DevTools/fcprobe/freecad_probe.py run ../FreeCAD-DevTools/fcprobe/vk_diag_probe.py \
     --profile vulkan --device-profile no-ray-tracing --name devprof
 ```
 
 Matrix (runs the Vulkan profile once per device and asserts each passes):
 
 ```sh
-python3 tools/fcprobe/freecad_probe.py matrix tools/fcprobe/vk_diag_probe.py \
+python3 ../FreeCAD-DevTools/fcprobe/freecad_probe.py matrix ../FreeCAD-DevTools/fcprobe/vk_diag_probe.py \
     --device-profile no-ray-tracing \
     --device-profile no-descriptor-indexing \
     --device-profile portability --name devmatrix

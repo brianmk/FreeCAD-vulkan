@@ -54,7 +54,11 @@ from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_FCPROBE = os.path.join(os.path.dirname(_HERE), "fcprobe")
+# The fcprobe harness moved to its own repo (FreeCAD-DevTools); locate it via
+# FREECAD_DEVTOOLS_FCPROBE or a sibling checkout.
+_FCPROBE = os.environ.get("FREECAD_DEVTOOLS_FCPROBE") or os.path.normpath(
+    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), "..", "FreeCAD-DevTools", "fcprobe"))
 if _FCPROBE not in sys.path:
     sys.path.insert(0, _FCPROBE)
 

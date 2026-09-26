@@ -78,3 +78,6 @@ tsupdate_stdout.log
 
 # Local coding-agent instructions (not part of the project)
 AGENTS.md
+
+# Local upstream base checkout used for the perf comparison
+/FreeCAD_base/

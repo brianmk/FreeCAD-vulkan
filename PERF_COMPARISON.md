@@ -4,6 +4,15 @@ Controlled benchmarks of the fork's **Vulkan viewport** (with the
 `VulkanPresentMode` setting) against the fork's **GL fallback** and a
 **pristine upstream build**.
 
+> **Verification status — read first.** The numbers below are **provisional and
+> unverified**. They compare Vulkan running in `Immediate` mode (V-Sync
+> disabled, on xcb) against a GL baseline on its default pacing, so part of the
+> gap — most visibly the "empty scene: 48 → 380 fps" jump — is a present-pacing
+> artifact rather than render throughput. The driver scripts are committed under
+> [`tools/perf/vulkan_vs_base/`](tools/perf/vulkan_vs_base/) with the full
+> caveat list; re-run **both** sides under matched present mode and platform
+> before quoting these figures.
+
 Graphs (in `docs/vulkan-perf/`):
 [`perf_dashboard.png`](docs/vulkan-perf/perf_dashboard.png) ·
 [`perf_throughput.png`](docs/vulkan-perf/perf_throughput.png) ·
@@ -15,7 +24,7 @@ Graphs (in `docs/vulkan-perf/`):
 
 | | Baseline | Fork |
 | --- | --- | --- |
-| Source | `FreeCAD_base/FreeCAD` @ `acdce56122` (upstream) | `feat/hdr-luminance-2` + WIP |
+| Source | `FreeCAD_base/FreeCAD` @ `acdce56122` (upstream) | `feat/vulkan-present-mode` |
 | Build | `build/release`, Release | `build/release-vulkan`, Release |
 | Binary | `FreeCAD_base/FreeCAD/build/release/bin/FreeCAD` | `build/release-vulkan/bin/FreeCAD` |
 | Toolchain | pixi `default` (clang++, mold, Ninja) | same |
@@ -125,13 +134,18 @@ Raster Vulkan → Path Tracing Max (mode 6), `BIMExample.FCStd` (camera flies in
 
 ## Reproduce
 
+The drivers are committed under `tools/perf/vulkan_vs_base/` (with its own
+[README](tools/perf/vulkan_vs_base/README.md)); point them at your builds with
+`PC_BASE_BIN` / `PC_FORK_BIN` and run:
+
 ```sh
-python3 /tmp/opencode/perf_compare/compare_scene_xcb.py   # scene throughput
-python3 /tmp/opencode/perf_compare/bench_extra.py         # vorontest / rotate / PT
-python3 /tmp/opencode/perf_compare/bench_open.py          # startup / open
-python3 /tmp/opencode/perf_compare/make_graphs.py         # charts
+python3 tools/perf/vulkan_vs_base/compare_scene_xcb.py   # scene throughput
+python3 tools/perf/vulkan_vs_base/bench_extra.py         # vorontest / rotate / PT
+python3 tools/perf/vulkan_vs_base/bench_open.py          # startup / open
+python3 tools/perf/vulkan_vs_base/make_graphs.py         # charts
 ```
 
-Artifacts: `/tmp/opencode/perf_compare/{results,results_extra,results_open}/`,
-probes `scene_bench_probe_io.py` / `open_bench_probe.py`, the verification
-layer `novsync_layer/`, and the chart tool `make_graphs.py`.
+Results are written to `tools/perf/vulkan_vs_base/{results,results_extra,results_open}/`.
+Probes `scene_bench_probe_io.py` / `open_bench_probe.py`, the verification
+layer `novsync_layer/` and the chart tool `make_graphs.py` live in the same
+directory.
