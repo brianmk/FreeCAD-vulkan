@@ -230,10 +230,10 @@ SoPickedPointList ViewProviderGeometryObject::getPickedPoints(
     auto root = new SoSeparator;
     root->ref();
     root->addChild(viewer.getHeadlight());
-    root->addChild(viewer.getSoRenderManager()->getCamera());
+    root->addChild(viewer.getViewState()->camera());
     root->addChild(getRoot());
 
-    SoRayPickAction rp(viewer.getSoRenderManager()->getViewportRegion());
+    SoRayPickAction rp(viewer.getViewState()->viewportRegion());
     rp.setPickAll(pickAll);
     rp.setRadius(viewer.getPickRadius());
     rp.setPoint(pos);
@@ -252,10 +252,10 @@ SoPickedPoint* ViewProviderGeometryObject::getPickedPoint(
     auto root = new SoSeparator;
     root->ref();
     root->addChild(viewer.getHeadlight());
-    root->addChild(viewer.getSoRenderManager()->getCamera());
+    root->addChild(viewer.getViewState()->camera());
     root->addChild(getRoot());
 
-    SoRayPickAction rp(viewer.getSoRenderManager()->getViewportRegion());
+    SoRayPickAction rp(viewer.getViewState()->viewportRegion());
     rp.setPoint(pos);
     rp.setRadius(viewer.getPickRadius());
     rp.apply(root);

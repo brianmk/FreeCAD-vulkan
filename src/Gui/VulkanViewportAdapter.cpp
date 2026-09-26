@@ -25,12 +25,6 @@
 #include <Inventor/SoEventManager.h>
 #include <Inventor/nodes/SoAnnotation.h>
 #include <Inventor/nodes/SoCamera.h>
-#include <Inventor/nodes/SoDirectionalLight.h>
-#include <Inventor/nodes/SoEnvironment.h>
-#include <Inventor/nodes/SoPointLight.h>
-#include <Inventor/nodes/SoSpotLight.h>
-#include <Inventor/SoRenderManager.h>
-#include <Inventor/rendering/SoRenderIR.h>
 #include <Inventor/rendering/vulkan/SoVulkanViewSettings.h>
 #include <Inventor/sensors/SoNodeSensor.h>
 #include <Inventor/sensors/SoSensor.h>
@@ -145,21 +139,26 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
     // an InputDeviceHost) and delivers Coin events to this sink, which drives
     // the InteractionController.  Navigation and picking therefore run on the
     // shared controller without the hidden GL viewer's event manager.  Tablet/
-    // touch/context-menu events are not translated by the Coin devices, so
-    // relay them to the hidden GL viewer that owns FreeCAD's gesture devices.
-    _vulkanViewer->setRawEventTarget(_viewer->getWidget());
+    // touch/context-menu events are not translated by the Coin devices, so hand
+    // them to the controller, which owns the event/surface abstraction (and the
+    // raw-event target) rather than the adapter reaching for the hidden GL
+    // widget directly.
+    _vulkanViewer->setRawEventSink([this](QEvent* ev) {
+        auto* controller = _viewer ? _viewer->getInteractionController() : nullptr;
+        return controller && controller->processRawEvent(ev);
+    });
     _vulkanViewer->setEventSink([this](const SoEvent* ev) {
         auto* controller = _viewer ? _viewer->getInteractionController() : nullptr;
         return controller && controller->processSoEvent(ev);
     });
     // Navigation's cursor shapes are routed to the visible surface by
     // View3DInventorViewer::setCursorTarget() (set in useVulkanViewport), so
-    // no cursor mirroring is needed.  The event filter on the GL widget only
-    // re-imposes the surface viewport region after a hidden-widget resize.
-    _viewer->getWidget()->installEventFilter(this);
-    // Keep the hidden GL viewer's viewport region in sync with the
-    // Vulkan surface so navigation (aspect/near-far) and ray picking
-    // use the visible surface size rather than a stale default.
+    // no cursor mirroring is needed.
+    // The visible Vulkan surface is the single viewport authority: its size is
+    // written into the viewer's neutral view state (and the controller) so
+    // navigation (aspect/near-far) and ray picking use the visible surface size
+    // rather than a stale default.  Nothing is written back into the hidden GL
+    // render manager.
     connect(_vulkanViewer,
             &SIM::Coin3D::Quarter::QuarterVulkanWidget::surfaceSizeChanged,
             this, &VulkanViewportAdapter::onSurfaceSizeChanged);
@@ -190,17 +189,15 @@ void VulkanViewportAdapter::syncViewer()
     if (!_vulkanViewer || !_viewer) {
         return;
     }
-    SoRenderManager* rm = _viewer->getSoRenderManager();
-    if (!rm) {
+    ViewState* state = _viewer->getViewState();
+    if (!state) {
         return;
     }
-    _vulkanViewer->setSceneGraph(rm->getSceneGraph());
+    _vulkanViewer->setSceneGraph(state->sceneRoot());
     _vulkanViewer->setOverlaySceneGraph(_viewer->getNaviCubeAnnotation());
-    // The grid is camera-coupled and the Vulkan main draw list is retained
-    // verbatim on camera-only frames; move it into the per-frame decoration
-    // scene so it tracks the view volume live (it returns to the main scene
-    // when the Vulkan viewport is destroyed).
-    _viewer->setGroundPlaneDecorationScene(true);
+    // The ground grid lives on the view state's per-frame decoration root (see
+    // View3DInventorViewer::setGroundPlane), so no backend-specific scene surgery
+    // is needed to keep it camera-coupled on the retained Vulkan path.
     // Re-point the camera + axis-cross decorations and re-attach the change
     // sensors (shared with the camera-changed fast path).
     this->resyncCameraAndDecorations();
@@ -220,11 +217,11 @@ void VulkanViewportAdapter::resyncCameraAndDecorations()
     if (!_vulkanViewer || !_viewer) {
         return;
     }
-    SoRenderManager* rm = _viewer->getSoRenderManager();
-    if (!rm) {
+    ViewState* state = _viewer->getViewState();
+    if (!state) {
         return;
     }
-    _vulkanViewer->setCamera(rm->getCamera());
+    _vulkanViewer->setCamera(state->camera());
     _viewer->updateAxisCrossNodes();
     // Per-frame decoration scene: axis cross + the camera-coupled ground grid.
     // The grid must live here (not the retained main scene) so it re-records
@@ -304,14 +301,13 @@ void VulkanViewportAdapter::useVulkanViewport(bool vulkan)
     }
     // The hidden GL viewer drives picking/navigation, but its own geometry is
     // unreliable (it is never shown, so it keeps a stale/default size).  The
-    // render-manager viewport region is the single source of truth and is
-    // pinned to the Vulkan surface (device pixels) by applySurfaceViewportToGL,
-    // so tell the event/DPR conversion to normalize cursor positions against
-    // that region (effectiveWindowSize) instead of the widget's own size.
-    // Without this the Y-flip used the stale hidden-widget height and hover/
-    // click picks landed far off the cursor.  In the classic GL page the
-    // region tracks the visible widget, so the flag is cleared and the cached
-    // logical size is used (upstream behavior).
+    // visible Vulkan surface is the single viewport authority and feeds the
+    // neutral view state (device pixels), so tell the event/DPR conversion to
+    // normalize cursor positions against that region (effectiveWindowSize)
+    // instead of the widget's own size.  Without this the Y-flip used the stale
+    // hidden-widget height and hover/click picks landed far off the cursor.  In
+    // the classic GL page the region tracks the visible widget, so the flag is
+    // cleared and the cached logical size is used (upstream behavior).
     _viewer->setVulkanDevicePixels(vulkan);
     // Route navigation's cursor shapes to the visible surface: the Vulkan
     // container while the Vulkan page is current, the GL widget otherwise.
@@ -333,10 +329,10 @@ void VulkanViewportAdapter::useVulkanViewport(bool vulkan)
     if (host->currentWidget() == target) {
         return;
     }
-    // The GL viewer drives navigation/picking and is the scene-graph authority;
-    // before the Vulkan surface is shown again, push its current
-    // scene/camera/background back in so the switch does not leave a stale
-    // frame on top.
+    // The neutral view state (fed by the Vulkan surface while it is visible)
+    // holds the camera/scene the controller drives; before the Vulkan surface
+    // is shown again, push its current scene/camera/background in so the switch
+    // does not leave a stale frame on top.
     if (vulkan) {
         syncViewer();
         if (!_vulkanActivated) {
@@ -356,14 +352,12 @@ void VulkanViewportAdapter::useVulkanViewport(bool vulkan)
                     return;
                 }
                 h->setCurrentWidget(_vulkanViewer);
-                // Making the Vulkan page current re-lays-out the stacked
-                // widget, which resets the hidden GL viewer's viewport region
-                // to its own default size (the pick/navigation authority).
-                // Re-impose the surface size now instead of waiting for the
-                // first frame's size notification, so a freshly created view
-                // is pickable immediately.
+                // Re-impose the visible surface size as the viewport authority
+                // now instead of waiting for the first frame's size
+                // notification, so a freshly created view is pickable
+                // immediately.
                 if (QWidget* c = _vulkanViewer->getNativeWidget()) {
-                    applySurfaceViewportToGL(c->size());
+                    updateViewportAuthority(c->size());
                 }
                 _vulkanViewer->redraw();
             });
@@ -373,7 +367,7 @@ void VulkanViewportAdapter::useVulkanViewport(bool vulkan)
     host->setCurrentWidget(target);
     if (vulkan) {
         if (QWidget* c = _vulkanViewer->getNativeWidget()) {
-            applySurfaceViewportToGL(c->size());
+            updateViewportAuthority(c->size());
         }
         _vulkanViewer->redraw();
     }
@@ -388,14 +382,12 @@ void VulkanViewportAdapter::resyncViewport()
     if (!_vulkanViewer || !_viewer) {
         return;
     }
-    // The hidden GL viewer is the pick/navigation authority; its viewport
-    // region is the source for SoRayPickAction's normalized coordinates.  It
-    // is reset to the GL widget's own size on every re-layout (a new document
-    // or the attachment task panel), so re-impose the visible surface size
-    // before re-pushing the scene.  Without this a freshly created view can
-    // keep picking against a stale region until the render mode is re-applied.
+    // The visible surface is the viewport authority; re-impose its size on the
+    // neutral view state (and the controller) before re-pushing the scene.
+    // Without this a freshly created view can keep picking against a stale
+    // region until the render mode is re-applied.
     if (QWidget* container = _vulkanViewer->getNativeWidget()) {
-        applySurfaceViewportToGL(container->size());
+        updateViewportAuthority(container->size());
     }
     // SoRayPickAction derives its ray depth range from the shared camera's
     // near/far planes.  A GL render auto-fits those planes to the scene, but
@@ -405,9 +397,7 @@ void VulkanViewportAdapter::resyncViewport()
     // document) the planes fall outside [near, far] and hover/click picks miss
     // until a render-mode round-trip runs the GL auto-clip.  Refresh the planes
     // here, from the same scene bounding box the GL render would use.
-    if (SoRenderManager* rm = _viewer->getSoRenderManager()) {
-        rm->updateClippingPlanes();
-    }
+    _viewer->refreshCameraClipping();
     syncViewer();
 #endif
 }
@@ -441,29 +431,20 @@ void VulkanViewportAdapter::pushSettings()
     const bool effEdgeOverlay = settings.edgeOverlay;
     const bool effPoints = raster ? settings.showPoints : false;
 
-    // Background is a single view of truth derived here from the hidden GL
-    // viewer (render-manager solid color + pcBackGround gradient) and pushed
-    // in one place along with the environment preset.  syncViewer() no longer
-    // sets the background directly; it only re-seeds scene/camera/overlays and
-    // lets pushSettings() refresh the background, so there is one push path
-    // and the solid/gradient/env state cannot drift between the two callers.
-    SbColor4f bgColor = SbColor4f(0.0f, 0.0f, 0.0f, 1.0f);
-    float bgTop[3] = {0.0f, 0.0f, 0.0f};
-    float bgBottom[3] = {0.0f, 0.0f, 0.0f};
-    bool bgGradient = false;
-    if (SoRenderManager* rm = _viewer->getSoRenderManager()) {
-        bgColor = rm->getBackgroundColor();
-        const View3DInventorViewer::Background gradient =
-            _viewer->getGradientBackground();
-        bgGradient = (gradient != View3DInventorViewer::Background::NoGradient);
-        if (bgGradient) {
-            SbColor from;
-            SbColor to;
-            _viewer->getGradientBackgroundColor(from, to);
-            bgTop[0] = from[0]; bgTop[1] = from[1]; bgTop[2] = from[2];
-            bgBottom[0] = to[0]; bgBottom[1] = to[1]; bgBottom[2] = to[2];
-        }
-    }
+    // Background is a single view of truth owned by the neutral view state
+    // (solid colour + optional gradient) and pushed in one place along with the
+    // environment preset.  syncViewer() no longer sets the background directly;
+    // it only re-seeds scene/camera/overlays and lets pushSettings() refresh the
+    // background, so there is one push path and the solid/gradient/env state
+    // cannot drift between the two callers.  The viewer writes the state when it
+    // sets the GL background, so this no longer reads the GL render manager.
+    ViewState* state = _viewer->getViewState();
+    const SbColor4f bgColor = state ? state->backgroundColor() : SbColor4f(0, 0, 0, 1);
+    const bool bgGradient = state && state->hasBackgroundGradient();
+    const SbColor from = state ? state->backgroundTop() : SbColor();
+    const SbColor to = state ? state->backgroundBottom() : SbColor();
+    const float bgTop[3] = {from[0], from[1], from[2]};
+    const float bgBottom[3] = {to[0], to[1], to[2]};
 
     // One settings blob for the whole display/tuning state.  The render
     // manager diffs it and re-applies only on change, so this is safe to call
@@ -580,68 +561,23 @@ VulkanViewportAdapter::pushSceneLights()
         return;
     }
 
-    // World-space light set.  The GL viewer's three-point lighting is
-    // VIEW-RELATIVE: the headlight and backlight are traversed before the
-    // camera node (so glLightfv sees an identity modelview and their raw
-    // direction is applied in eye space), and the fill light hangs under an
-    // SoRotation connected to the camera orientation, which also makes it
-    // eye-space-fixed.  Reproduce that here by taking each light's eye-space
-    // travel direction (the negated direction field) and rotating it into
-    // world space by the current camera orientation, so the backends -- which
-    // shade in world space -- keep the highlights following the camera exactly
-    // as Coin GL does.  Without the camera rotation the head/back lights would
-    // stay world-fixed in Vulkan and the reflections would not track the view.
-    SoLightingData lighting;
-
-    SoRenderManager* rm = _viewer->getSoRenderManager();
-    SbRotation camRot;
-    // World <- eye rotation for the current camera: the camera orientation is
-    // the inverse of the view rotation, i.e. exactly what SoRenderIR::
-    // lightToWorld() expects.  The eye<->world convention lives in SoRenderIR
-    // instead of being re-derived here.
-    SbMatrix eyeToWorld;
-    if (SoCamera* cam = rm ? rm->getCamera() : nullptr) {
-        camRot = cam->orientation.getValue();
-        camRot.getValue(eyeToWorld);
+    // The world-space, camera-anchored light set is owned by the neutral view
+    // state.  ViewState::sceneLights() performs the eye->world derivation that
+    // used to be gathered here from the GL viewer's three lights and
+    // environment, so the adapter no longer reaches back through the viewer.
+    ViewState* state = _viewer->getViewState();
+    if (!state) {
+        return;
     }
-
-    // Scene ambient from the viewer's environment node (so a scene lit purely
-    // by ambient still reads non-black).
-    if (SoEnvironment* env = _viewer->getEnvironment()) {
-        const SbColor& ac = env->ambientColor.getValue();
-        float ai = env->ambientIntensity.getValue();
-        lighting.ambient = SbVec3f(ac[0] * ai, ac[1] * ai, ac[2] * ai);
-    }
-
-    // Push each enabled directional light with the same world-space
-    // convention the raster IR uses (headlight + backlight + fill, matching
-    // the GL viewer's three-point lighting), but anchored to the camera so
-    // the Vulkan backends follow the view like Coin GL.
-    lighting.lights.reserve(3);
-    const SoDirectionalLight* lightsL[] = {
-        _viewer->getHeadlight(), _viewer->getBacklight(), _viewer->getFillLight()};
-    for (const SoDirectionalLight* light : lightsL) {
-        if (!light || !light->on.getValue()) {
-            continue;
-        }
-        SoLightData l;
-        l.type = SO_LIGHT_DIRECTIONAL;
-        const SbVec3f c = light->color.getValue();
-        float i = light->intensity.getValue();
-        l.color = SbVec3f(c[0] * i, c[1] * i, c[2] * i);
-        SbVec3f eyeDir = -light->direction.getValue();
-        if (eyeDir.normalize() == 0.0f) {
-            eyeDir = SbVec3f(0.0f, 0.0f, 1.0f);
-        }
-        l.direction = eyeDir;
-        lighting.lights.push_back(SoRenderIR::lightToWorld(l, eyeToWorld));
-    }
+    SoLightingData lighting = state->sceneLights();
 
 #ifdef FREECAD_VULKAN_DEBUG_HOOKS
     if (VkDebug::lightTrace()) {
         static int _n = 0;
         if (_n++ < 400) {
-            SoCamera* cam = rm ? rm->getCamera() : nullptr;
+            SoCamera* cam = state->camera();
+            const SbRotation camRot =
+                cam ? cam->orientation.getValue() : SbRotation();
             fprintf(stderr,
                     "[LTRACE] pushSceneLights n=%d cam=%p rot=(%.4f,%.4f,%.4f,%.4f) nlights=%zu\n",
                     _n, static_cast<void*>(cam), camRot[0], camRot[1], camRot[2], camRot[3],
@@ -755,8 +691,8 @@ void VulkanViewportAdapter::attachSensors()
     if (!_viewer || !_vulkanViewer) {
         return;
     }
-    SoRenderManager* rm = _viewer->getSoRenderManager();
-    if (!rm) {
+    ViewState* state = _viewer->getViewState();
+    if (!state) {
         return;
     }
     // Mirror Coin's SoRenderManager: a node sensor on the scene root redraws on
@@ -765,7 +701,7 @@ void VulkanViewportAdapter::attachSensors()
     // the navcube / view-home animation ticking the camera on a timer, and any
     // programmatic setCameraOrientation).  A node sensor is a node auditor, so
     // it fires on every field write of the tracked node.
-    SoNode* root = rm->getSceneGraph();
+    SoNode* root = state->sceneRoot();
     if (!_sceneSensor) {
         _sceneSensor = std::make_unique<SoNodeSensor>(&VulkanViewportAdapter::sceneChangedCB, this);
         _sceneSensor->setPriority(1);
@@ -776,7 +712,7 @@ void VulkanViewportAdapter::attachSensors()
             _sceneSensor->attach(root);
         }
     }
-    SoCamera* camera = rm->getCamera();
+    SoCamera* camera = state->camera();
     if (!_cameraSensor) {
         _cameraSensor = std::make_unique<SoNodeSensor>(&VulkanViewportAdapter::cameraChangedCB, this);
         _cameraSensor->setPriority(1);
@@ -879,7 +815,7 @@ void VulkanViewportAdapter::requestVulkanRender()
 #endif
 }
 
-void VulkanViewportAdapter::applySurfaceViewportToGL(const QSize& surfaceSize)
+void VulkanViewportAdapter::updateViewportAuthority(const QSize& surfaceSize)
 {
     // In a non-Vulkan build the whole viewport is a no-op and calling
     // _vulkanViewer->getNativeWidget() here would pull an undefined symbol
@@ -887,98 +823,63 @@ void VulkanViewportAdapter::applySurfaceViewportToGL(const QSize& surfaceSize)
     // compiled only with the Vulkan renderer.
     Q_UNUSED(surfaceSize);
 #ifdef FREECAD_USE_VULKAN
-    // The hidden GL viewer is the picking/navigation authority, but it is
-    // never shown, so QuarterWidget::resizeEvent() resets its render/event
-    // manager viewport region to the GL widget's own (typically default
-    // 400x400) size whenever the widget is re-laid-out (e.g. a document is
-    // created or opened).  SoRayPickAction's normalized coordinates are
-    // computed from that region, so a stale 400x400 region makes every pick
-    // miss.  The Vulkan surface is the single source of truth, so re-impose
-    // its size here.  Called on every surface size change and on any GL
-    // widget resize (see eventFilter).
-    // This whole function exists to keep the *hidden* GL viewer calibrated to
-    // the visible Vulkan surface.  It must not run while the classic Coin/GL
-    // page is the visible one: the GL widget is then the on-screen surface and
-    // is sized by the QStackedWidget layout, whereas the Vulkan container is
-    // hidden and still has its stale pre-expose default (100x30).  Forcing the
-    // visible GL widget to that size shrank the viewport to a navcube-sized
-    // sliver and fought the layout in an endless resize loop.  A Coin view
-    // opened straight from the persisted render mode hit exactly that (the
-    // Vulkan page was never shown, so the container never got a real size);
-    // switching Vulkan -> Coin at runtime worked only because the container
-    // still held the full window size at that moment.
+    if (!_viewer || !_vulkanViewer) {
+        return;
+    }
+    ViewState* state = _viewer->getViewState();
+    if (!state) {
+        return;
+    }
+    // The Vulkan surface is the single viewport authority, but this must not
+    // run while the classic Coin/GL page is the visible one: the Vulkan
+    // container is then hidden and still has its stale pre-expose default
+    // (100x30).  In that case the GL widget is sized by the layout and the GL
+    // resize path feeds the view state.
     if (!_wantVulkanViewport) {
         return;
     }
     QWidget* container = _vulkanViewer->getNativeWidget();
-    QWidget* glWidget = _viewer->getWidget();
-    if (!container || !glWidget) {
+    if (!container) {
         return;
     }
     const QSize logical = container->size();
     if (logical.width() <= 0 || logical.height() <= 0) {
         return;
     }
-    const qreal dpr = glWidget->devicePixelRatioF();
+    const qreal dpr = container->devicePixelRatioF();
     const int pw = qMax(1, qRound(logical.width() * dpr));
     const int ph = qMax(1, qRound(logical.height() * dpr));
-    const SbVec2s glSize =
-        _viewer->getSoRenderManager()->getViewportRegion().getViewportSizePixels();
+    const SbVec2s before = state->viewportRegion().getViewportSizePixels();
     VK_BREADCRUMB("[VK-TRACE] surfaceSizeChanged surface=%dx%d "
-                  "container=%dx%d logical=%dx%d glViewport(before)=%dx%d "
-                  "glWidgetSize=%dx%d dpr=%.3f\n",
+                  "container=%dx%d logical=%dx%d viewport(before)=%dx%d dpr=%.3f\n",
                   surfaceSize.width(), surfaceSize.height(),
                   container->width(), container->height(),
                   logical.width(), logical.height(),
-                  glSize[0], glSize[1],
-                  glWidget->width(), glWidget->height(), dpr);
+                  before[0], before[1], dpr);
 
-    // Event positions reach the hidden GL viewer already scaled to device
-    // pixels: EventFilter::trackPointerPosition() runs
-    // InputDevice::toDevicePixelPosition(), which multiplies the logical Qt
-    // position by the widget's device pixel ratio, and QuarterWidget::
-    // resizeEvent() sets the region to dpr * size.  The viewport region must
-    // therefore be in the same device-pixel space for SoRayPickAction's
-    // normalized coordinates to match the ray; using the logical size would
-    // shift hover picking and navigation by the DPI factor.
+    // Event positions reach the viewer already scaled to device pixels:
+    // EventFilter::trackPointerPosition() runs InputDevice::toDevicePixelPosition(),
+    // which multiplies the logical Qt position by the widget's device pixel
+    // ratio, and QuarterWidget::resizeEvent() sets the region to dpr * size.
+    // The viewport region must therefore be in the same device-pixel space for
+    // SoRayPickAction's normalized coordinates to match the ray; using the
+    // logical size would shift hover picking and navigation by the DPI factor.
     SbViewportRegion vp(static_cast<short>(pw), static_cast<short>(ph));
-    _viewer->getSoRenderManager()->setViewportRegion(vp);
-    // This surface reports the region through the InteractionHost contract
-    // (see getViewportRegion()); the GL render-manager region above is kept
-    // only for the GL/IR render path (line widths / point sizes).
+    state->setViewportRegion(vp);
+    // The viewport region is in device pixels (dpr * logical), so record the
+    // real device-pixel ratio.  This reaches the render backends and scales
+    // logical SoDrawStyle line widths / point sizes into device pixels.
+    state->setDevicePixelRatio(static_cast<float>(dpr));
+    // Mirror the region for the InteractionHost contract (getViewportRegion()).
+    // The neutral ViewState is the authority; the hidden GL render manager is
+    // deliberately left untouched (the surface is the single viewport source).
     _surfaceViewport = vp;
 
-    // The interaction controller owns the canonical region now: picking and
-    // navigation read it instead of the hidden GL viewer's render-manager copy,
-    // and the controller pushes it into the (controller-owned) event manager.
-    // The render-manager region above is kept only for the GL/IR render path
-    // (line widths / point sizes).
+    // The interaction controller owns the canonical region for picking and
+    // navigation and pushes it into the (controller-owned) event manager, so
+    // keep it in step with the visible surface.
     if (auto* controller = _viewer->getInteractionController()) {
         controller->setViewportRegion(vp, static_cast<float>(dpr));
-    }
-
-    // The viewport region is in device pixels (dpr * logical), so tell the
-    // render manager the real device-pixel ratio.  This propagates to the
-    // CoSoDevicePixelRatioElement and the render backend's params
-    // (.devicePixelRatio), which the GL and Vulkan backends use to scale
-    // logical SoDrawStyle line widths / point sizes into device pixels.
-    // Without it the ratio stayed 1.0, so on a fractional-scaling display
-    // (e.g. 1.25) lines and points rendered 1/dpr too thin and, for the
-    // NaviCube overlay, its edge/axis strokes and dots drifted off the cube.
-    _viewer->getSoRenderManager()->setDevicePixelRatio(static_cast<float>(dpr));
-
-    // Keep the hidden GL widget sized to the visible Vulkan container so its
-    // own resizeEvent computes the same device-pixel region (rather than the
-    // default 400x400).  The swapchain size is NOT used directly: resizing a
-    // non-current QStackedWidget page changes the stack's sizeHint, which
-    // feeds back into the window and, in turn, the swapchain (this produced
-    // an oscillating surface size).  Size the hidden viewer to the container.
-    if (glWidget->sizePolicy()
-        != QSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored)) {
-        glWidget->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
-    }
-    if (glWidget->size() != logical) {
-        glWidget->resize(logical);
     }
 #endif
 }
@@ -989,7 +890,7 @@ void VulkanViewportAdapter::onSurfaceSizeChanged(const QSize& surfaceSize)
     if (!_vulkanViewer || !_viewer) {
         return;
     }
-    applySurfaceViewportToGL(surfaceSize);
+    updateViewportAuthority(surfaceSize);
 
     // NOTE: Do NOT write the surface aspect into the shared camera's
     // aspectRatio field.  SoOrthographicCamera::getViewVolume() (and
@@ -1037,9 +938,6 @@ VulkanViewportAdapter::~VulkanViewportAdapter()
         if (controller && controller->surface() == this) {
             controller->setSurface(_glSurface);
         }
-        // Put the ground grid back in the main scene so the classic Coin/GL
-        // viewport re-draws it and its clip-range bounds include it again.
-        _viewer->setGroundPlaneDecorationScene(false);
     }
 #ifdef FREECAD_USE_VULKAN
     // Drop the GPU pick bridge before the widget goes away: its callback
@@ -1064,7 +962,7 @@ VulkanViewportAdapter::~VulkanViewportAdapter()
     if (_vulkanViewer) {
         // Stop delivering input to the (soon-dead) GL viewer/controller.
         _vulkanViewer->setEventSink(nullptr);
-        _vulkanViewer->setRawEventTarget(nullptr);
+        _vulkanViewer->setRawEventSink(nullptr);
         QWidget* host = _vulkanViewer->parentWidget();
         if (auto* stack = qobject_cast<QStackedWidget*>(host)) {
             stack->removeWidget(_vulkanViewer);
@@ -1073,26 +971,6 @@ VulkanViewportAdapter::~VulkanViewportAdapter()
         _vulkanViewer = nullptr;
     }
 #endif
-}
-
-bool VulkanViewportAdapter::eventFilter(QObject* watched, QEvent* event)
-{
-#ifdef FREECAD_USE_VULKAN
-    // The hidden GL widget's resizeEvent resets its render-manager viewport
-    // region to the GL widget's own size (default 400x400 after a document
-    // re-layout).  Re-impose the surface size so picking/navigation stay
-    // calibrated (see applySurfaceViewportToGL).
-    if (_vulkanViewer && _viewer && event->type() == QEvent::Resize) {
-        auto* widget = qobject_cast<QWidget*>(watched);
-        if (widget && widget == _viewer->getWidget()) {
-            applySurfaceViewportToGL(QSize());
-        }
-    }
-#else
-    Q_UNUSED(watched);
-    Q_UNUSED(event);
-#endif
-    return QObject::eventFilter(watched, event);
 }
 
 // ---------------------------------------------------------------------------
@@ -1159,7 +1037,18 @@ SoEventManager* VulkanViewportAdapter::getSoEventManager() const
 
 SbVec3f VulkanViewportAdapter::getFocalPoint() const
 {
-    return _glSurface ? _glSurface->getFocalPoint() : SbVec3f();
+    // getFocalPoint() is a pure function of the shared camera, which now lives
+    // on ViewState (the GL viewer derives it the same way), so compute it here
+    // instead of forwarding through the hidden GL surface.
+    ViewState* state = _viewer ? _viewer->getViewState() : nullptr;
+    const SoCamera* camera = state ? state->camera() : nullptr;
+    if (!camera) {
+        return {0., 0., 0.};
+    }
+
+    SbVec3f direction;
+    camera->orientation.getValue().multVec(SbVec3f(0, 0, -1), direction);
+    return camera->position.getValue() + camera->focalDistance.getValue() * direction;
 }
 
 float VulkanViewportAdapter::getPickRadius() const
@@ -1182,27 +1071,35 @@ QWidget* VulkanViewportAdapter::getGLWidget() const
 
 bool VulkanViewportAdapter::isEditing() const
 {
-    return _glSurface && _glSurface->isEditing();
+    // Neutral view-model state: the GL viewer mirrors into ViewState, so read
+    // the authoritative flag directly instead of forwarding to the hidden GL
+    // surface.
+    ViewState* state = _viewer ? _viewer->getViewState() : nullptr;
+    return state && state->isEditing();
 }
 
 bool VulkanViewportAdapter::isEditingViewProvider() const
 {
-    return _glSurface && _glSurface->isEditingViewProvider();
+    ViewState* state = _viewer ? _viewer->getViewState() : nullptr;
+    return state && state->isEditingViewProvider();
 }
 
 bool VulkanViewportAdapter::isSelectionEnabled() const
 {
-    return _glSurface && _glSurface->isSelectionEnabled();
+    ViewState* state = _viewer ? _viewer->getViewState() : nullptr;
+    return state && state->isSelectionEnabled();
 }
 
 bool VulkanViewportAdapter::isViewing() const
 {
-    return _glSurface && _glSurface->isViewing();
+    ViewState* state = _viewer ? _viewer->getViewState() : nullptr;
+    return state && state->isViewing();
 }
 
 bool VulkanViewportAdapter::isSeekMode() const
 {
-    return _glSurface && _glSurface->isSeekMode();
+    ViewState* state = _viewer ? _viewer->getViewState() : nullptr;
+    return state && state->isSeekMode();
 }
 
 void VulkanViewportAdapter::setViewing(bool enable)
@@ -1341,12 +1238,17 @@ void VulkanViewportAdapter::scheduleRedraw()
 
 SoGroup* VulkanViewportAdapter::getObjectGroup() const
 {
-    return _glSurface ? _glSurface->getObjectGroup() : nullptr;
+    // Neutral view-model state: the GL viewer already answers this from
+    // ViewState, so read it directly instead of forwarding through the hidden
+    // GL surface.
+    ViewState* state = _viewer ? _viewer->getViewState() : nullptr;
+    return state ? state->objectGroup() : nullptr;
 }
 
 SoSeparator* VulkanViewportAdapter::getForegroundRoot() const
 {
-    return _glSurface ? _glSurface->getForegroundRoot() : nullptr;
+    ViewState* state = _viewer ? _viewer->getViewState() : nullptr;
+    return state ? state->foregroundRoot() : nullptr;
 }
 
 void VulkanViewportAdapter::bindMouseSelection(AbstractMouseSelection* selection)
@@ -1368,7 +1270,28 @@ bool VulkanViewportAdapter::surfaceProcessNaviCubeEvent(const SoEvent* ev)
 
 bool VulkanViewportAdapter::surfaceIsRedirectedToSceneGraph() const
 {
-    return _glSurface && _glSurface->surfaceIsRedirectedToSceneGraph();
+    ViewState* state = _viewer ? _viewer->getViewState() : nullptr;
+    return state && state->redirectToSceneGraph();
+}
+
+QWidget* VulkanViewportAdapter::surfaceRawEventTarget() const
+{
+    // Tablet/touch/context-menu events are still owned by the base GL surface
+    // (FreeCAD's gesture devices live there), so delegate the lookup instead of
+    // naming the hidden GL widget here.
+    return _glSurface ? _glSurface->surfaceRawEventTarget() : nullptr;
+}
+
+SIM::Coin3D::Quarter::EventFilter* VulkanViewportAdapter::surfaceEventFilter() const
+{
+    // The Vulkan widget's own Quarter event filter: the controller moves
+    // FreeCAD's gesture/SpaceNavigator devices onto it while this surface is
+    // current so they translate events delivered to the visible surface.
+#ifdef FREECAD_USE_VULKAN
+    return _vulkanViewer ? _vulkanViewer->getEventFilter() : nullptr;
+#else
+    return nullptr;
+#endif
 }
 
 void VulkanViewportAdapter::surfaceNotifyCameraMoved()

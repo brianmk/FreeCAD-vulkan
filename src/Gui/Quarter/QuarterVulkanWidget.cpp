@@ -234,9 +234,10 @@ public:
     //! HDR was refused because the GPU driver is on the known-unsafe list
     //! (see hdrDriverBlocked); the SDR swapchain is used instead.
     bool hdrDriverBlocked = false;
-    // Auto-nulled when the raw-event widget is destroyed, so the event
-    // filter below can never dereference a dangling pointer.
-    QPointer<QWidget> rawEventTarget;
+    //! Receives tablet/touch/context-menu events the Coin input devices do not
+    //! translate.  The InteractionController relays them to the surface that
+    //! owns FreeCAD's gesture/tablet devices.
+    std::function<bool(QEvent*)> rawEventSink;
     //! Translates mouse/wheel/keyboard events into Coin events (the widget is
     //! an InputDeviceHost) and delivers them through eventSink.
     EventFilter* eventFilter = nullptr;
@@ -1081,14 +1082,19 @@ void QuarterVulkanWidget::setEdgeColor(const SbColor4f & color)
     redraw();
 }
 
-void QuarterVulkanWidget::setRawEventTarget(QWidget * target)
+void QuarterVulkanWidget::setRawEventSink(std::function<bool(QEvent *)> sink)
 {
-    d->rawEventTarget = target;
+    d->rawEventSink = std::move(sink);
 }
 
 void QuarterVulkanWidget::setEventSink(std::function<bool(const SoEvent *)> sink)
 {
     d->eventSink = std::move(sink);
+}
+
+EventFilter * QuarterVulkanWidget::getEventFilter() const
+{
+    return d->eventFilter;
 }
 
 qreal QuarterVulkanWidget::devicePixelRatio() const
@@ -1188,9 +1194,10 @@ bool QuarterVulkanWidget::eventFilter(QObject * watched, QEvent * event)
     // Mouse, wheel and keyboard are translated by d->eventFilter (this widget
     // is an InputDeviceHost) and delivered to the InteractionController.  The
     // remaining events -- tablet, touch and context menu -- are not handled by
-    // the Coin input devices, so relay them to the raw-event target (the
-    // hidden GL viewer that owns FreeCAD's gesture/tablet devices).
-    if (!d->rawEventTarget) {
+    // the Coin input devices, so hand them to the raw-event sink (the
+    // InteractionController relays them to the surface owning FreeCAD's
+    // gesture/tablet devices).
+    if (!d->rawEventSink) {
         return QWidget::eventFilter(watched, event);
     }
 
@@ -1219,7 +1226,7 @@ bool QuarterVulkanWidget::eventFilter(QObject * watched, QEvent * event)
     case QEvent::TouchUpdate:
     case QEvent::TouchEnd:
     case QEvent::ContextMenu:
-        if (QCoreApplication::sendEvent(d->rawEventTarget, event)) {
+        if (d->rawEventSink(event)) {
             return true;
         }
         break;

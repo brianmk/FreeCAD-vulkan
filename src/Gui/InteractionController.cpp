@@ -20,6 +20,12 @@
 #include <Inventor/SbVec2s.h>
 #include <Inventor/SbVec3f.h>
 
+#include <Quarter/devices/InputDevice.h>
+#include <Quarter/eventhandlers/EventFilter.h>
+
+#include <QCoreApplication>
+#include <QWidget>
+
 using namespace Gui;
 
 InteractionController::InteractionController(InteractionSurface* surface)
@@ -34,6 +40,9 @@ InteractionController::InteractionController(InteractionSurface* surface)
     if (_surface) {
         _surface->surfaceSetEventManager(_eventManager);
     }
+    // Bind to the initial surface's filter so a device registered right after
+    // construction goes to the surface that is current.
+    bindInputDevicesToSurface(surface);
 
     setNavigationType(CADNavigationStyle::getClassTypeId());
 }
@@ -45,6 +54,19 @@ InteractionController::~InteractionController()
     if (_surface) {
         _surface->surfaceSetEventManager(nullptr);
     }
+    // Unregister the devices before deleting them: the surface's EventFilter
+    // deletes every device still registered when it is destroyed, so leaving
+    // one registered here would free it twice.
+    if (_eventFilter) {
+        for (auto* device : _inputDevices) {
+            _eventFilter->unregisterInputDevice(device);
+        }
+        _eventFilter = nullptr;
+    }
+    for (auto* device : _inputDevices) {
+        delete device;
+    }
+    _inputDevices.clear();
     delete _eventManager;
 
     delete _navigation;
@@ -90,7 +112,40 @@ void InteractionController::setSurface(InteractionSurface* surface)
     // it.  The controller answers `getSoEventManager()` from its own
     // `_eventManager`, and the canonical viewport region/DPR is reported by the
     // surface that owns the visible swapchain.
-    _surface = surface;
+    if (surface != _surface) {
+        bindInputDevicesToSurface(surface);
+        _surface = surface;
+    }
+}
+
+void InteractionController::registerInputDevice(SIM::Coin3D::Quarter::InputDevice* device)
+{
+    if (!device) {
+        return;
+    }
+    _inputDevices.push_back(device);
+    if (_eventFilter) {
+        _eventFilter->registerInputDevice(device);
+    }
+}
+
+void InteractionController::bindInputDevicesToSurface(InteractionSurface* surface)
+{
+    auto* filter = surface ? surface->surfaceEventFilter() : nullptr;
+    if (filter == _eventFilter) {
+        return;
+    }
+    if (_eventFilter) {
+        for (auto* device : _inputDevices) {
+            _eventFilter->unregisterInputDevice(device);
+        }
+    }
+    _eventFilter = filter;
+    if (_eventFilter) {
+        for (auto* device : _inputDevices) {
+            _eventFilter->registerInputDevice(device);
+        }
+    }
 }
 
 bool InteractionController::processSoEvent(const SoEvent* ev)
@@ -146,6 +201,25 @@ bool InteractionController::processSoEvent(const SoEvent* ev)
         _surface->surfaceNotifyCameraMoved();
     }
     return result;
+}
+
+bool InteractionController::processRawEvent(QEvent* ev)
+{
+    // FreeCAD's gesture/SpaceNavigator devices now live on the current
+    // surface's event filter, so the events they translate never reach this
+    // relay.  What is left -- tablet/touch/context-menu -- is not translated by
+    // any Coin device and still needs the hidden GL widget's Qt handling
+    // (touch-to-mouse synthesis, context menu), so the surface reports that
+    // widget and the controller sends the event there without the adapter
+    // naming it.
+    if (!_surface || !ev) {
+        return false;
+    }
+    QWidget* target = _surface->surfaceRawEventTarget();
+    if (!target) {
+        return false;
+    }
+    return QCoreApplication::sendEvent(target, ev);
 }
 
 SoCamera* InteractionController::getCamera() const

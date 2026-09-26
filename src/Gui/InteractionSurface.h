@@ -9,6 +9,11 @@
 class SoEvent;
 class SoEventManager;
 
+namespace SIM::Coin3D::Quarter
+{
+class EventFilter;
+}
+
 namespace Gui
 {
 
@@ -36,6 +41,21 @@ public:
     virtual bool surfaceProcessNaviCubeEvent(const SoEvent* ev) = 0;
     //! Whether events should be redirected straight into the scene graph.
     virtual bool surfaceIsRedirectedToSceneGraph() const = 0;
+    //! The Quarter event filter that receives this surface's native events and
+    //! owns its Coin input devices, or nullptr when the surface has none.
+    //! FreeCAD's gesture/SpaceNavigator devices are registered on whichever
+    //! surface is current, so this lets the controller move them when the
+    //! active surface changes without naming the GL widget itself.
+    virtual SIM::Coin3D::Quarter::EventFilter* surfaceEventFilter() const
+    {
+        return nullptr;
+    }
+    //! The native widget that owns FreeCAD's gesture/tablet devices for this
+    //! surface.  Tablet/touch/context-menu events are not translated by the
+    //! Coin input devices, so the controller relays them here.  Keeping the
+    //! lookup on the surface lets the Vulkan adapter answer it without naming
+    //! the hidden GL widget itself.
+    virtual QWidget* surfaceRawEventTarget() const = 0;
     //! The active camera pose changed in place (navigation mutated the shared
     //! camera node); the surface wakes its renderer / emits cameraMoved().
     virtual void surfaceNotifyCameraMoved() = 0;
