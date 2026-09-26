@@ -394,6 +394,9 @@ public:
     void setRedirectToSceneGraph(bool redirect)
     {
         this->redirected = redirect;
+        if (viewState) {
+            viewState->setRedirectToSceneGraph(redirect);
+        }
     }
     bool isRedirectedToSceneGraph() const
     {

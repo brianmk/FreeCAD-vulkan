@@ -372,3 +372,142 @@ const SbColor& ViewState::backgroundBottom() const
 {
     return _backgroundBottom;
 }
+
+void ViewState::setEditing(bool editing)
+{
+    if (_editing == editing) {
+        return;
+    }
+    _editing = editing;
+    notify(Change::Interaction);
+}
+
+bool ViewState::isEditing() const
+{
+    return _editing;
+}
+
+void ViewState::setEditingViewProvider(bool editing)
+{
+    if (_editingViewProvider == editing) {
+        return;
+    }
+    _editingViewProvider = editing;
+    notify(Change::Interaction);
+}
+
+bool ViewState::isEditingViewProvider() const
+{
+    return _editingViewProvider;
+}
+
+void ViewState::setSelectionEnabled(bool enabled)
+{
+    if (_selectionEnabled == enabled) {
+        return;
+    }
+    _selectionEnabled = enabled;
+    notify(Change::Interaction);
+}
+
+bool ViewState::isSelectionEnabled() const
+{
+    return _selectionEnabled;
+}
+
+void ViewState::setViewing(bool viewing)
+{
+    if (_viewing == viewing) {
+        return;
+    }
+    _viewing = viewing;
+    notify(Change::Interaction);
+}
+
+bool ViewState::isViewing() const
+{
+    return _viewing;
+}
+
+void ViewState::setSeekMode(bool seek)
+{
+    if (_seekMode == seek) {
+        return;
+    }
+    _seekMode = seek;
+    notify(Change::Interaction);
+}
+
+bool ViewState::isSeekMode() const
+{
+    return _seekMode;
+}
+
+void ViewState::setRedirectToSceneGraph(bool redirect)
+{
+    if (_redirectToSceneGraph == redirect) {
+        return;
+    }
+    _redirectToSceneGraph = redirect;
+    notify(Change::Interaction);
+}
+
+bool ViewState::redirectToSceneGraph() const
+{
+    return _redirectToSceneGraph;
+}
+
+void ViewState::setRotationCenterShown(bool shown)
+{
+    if (_rotationCenterShown == shown) {
+        return;
+    }
+    _rotationCenterShown = shown;
+    notify(Change::RotationCenter);
+}
+
+bool ViewState::isRotationCenterShown() const
+{
+    return _rotationCenterShown;
+}
+
+void ViewState::setRotationCenterPosition(const SbVec3f& center)
+{
+    if (_rotationCenter == center) {
+        return;
+    }
+    _rotationCenter = center;
+    notify(Change::RotationCenter);
+}
+
+const SbVec3f& ViewState::rotationCenterPosition() const
+{
+    return _rotationCenter;
+}
+
+void ViewState::setCursorMode(int mode)
+{
+    if (_cursorMode == mode) {
+        return;
+    }
+    _cursorMode = mode;
+    notify(Change::Cursor);
+}
+
+int ViewState::cursorMode() const
+{
+    return _cursorMode;
+}
+
+void ViewState::setVulkanViewSettings(const VulkanViewSettings& settings)
+{
+    // No equality short-circuit: like applyVulkanSettings()'s
+    // vulkanSettingsChanged, every application re-announces the blob.
+    _vulkanSettings = settings;
+    notify(Change::VulkanSettings);
+}
+
+const VulkanViewSettings& ViewState::vulkanViewSettings() const
+{
+    return _vulkanSettings;
+}

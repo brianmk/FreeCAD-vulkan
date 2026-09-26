@@ -1294,6 +1294,15 @@ void View3DInventorViewer::init()
     // adapter can derive the camera-anchored light set without reaching back
     // through the viewer.
     viewState->setLights(this->getHeadlight(), backlight, fillLight, environment);
+    // Seed the interaction/view flags and the Vulkan settings the viewer
+    // mirrors into the neutral state (their setters keep it in sync from here).
+    viewState->setEditing(this->editing);
+    viewState->setEditingViewProvider(this->editViewProvider != nullptr);
+    viewState->setSelectionEnabled(this->selectionRoot->selectionEnabled.getValue());
+    viewState->setViewing(this->isViewing());
+    viewState->setSeekMode(this->isSeekMode());
+    viewState->setRedirectToSceneGraph(this->isRedirectedToSceneGraph());
+    viewState->setVulkanViewSettings(vulkanSettings_);
     if (auto* rm = this->getSoRenderManager()) {
         viewState->setCamera(rm->getCamera());
         viewState->setViewportRegion(rm->getViewportRegion());
@@ -1920,6 +1929,9 @@ SoPickedPoint* View3DInventorViewer::getPointOnRay(
 void View3DInventorViewer::setEditingViewProvider(Gui::ViewProvider* vp, int ModNum)
 {
     this->editViewProvider = vp;
+    if (viewState) {
+        viewState->setEditingViewProvider(vp != nullptr);
+    }
     this->editViewProvider->setEditViewer(this, ModNum);
 
 #if (COIN_MAJOR_VERSION * 100 + COIN_MINOR_VERSION * 10 + COIN_MICRO_VERSION < 403)
@@ -1951,6 +1963,9 @@ void View3DInventorViewer::resetEditingViewProvider()
             this->editViewProvider
         );
         this->editViewProvider = nullptr;
+        if (viewState) {
+            viewState->setEditingViewProvider(false);
+        }
     }
 }
 
@@ -2151,6 +2166,9 @@ void View3DInventorViewer::applyVulkanSettings()
     // the struct fields), so adding a setting updates one place instead of
     // letting this method and the pref-change observer drift apart.
     vulkanSettings_.load(hGrp);
+    if (viewState) {
+        viewState->setVulkanViewSettings(vulkanSettings_);
+    }
 
     VK_BREADCRUMB("[VK-TRACE] View3DInventorViewer::applyVulkanSettings "
                   "edgeOverlay=%d points=%d\n",
@@ -2553,6 +2571,9 @@ void View3DInventorViewer::showRotationCenter(bool show)
         SbVec3f center = interactionController->navigationStyle()->getRotationCenter(found);
 
         if (!found) {
+            if (viewState) {
+                viewState->setRotationCenterShown(rotationCenterGroup != nullptr);
+            }
             return;
         }
 
@@ -2604,11 +2625,18 @@ void View3DInventorViewer::showRotationCenter(bool show)
             rotationCenterGroup = nullptr;
         }
     }
+
+    if (viewState) {
+        viewState->setRotationCenterShown(rotationCenterGroup != nullptr);
+    }
 }
 
 // Changes the position of the rotation center indicator
 void View3DInventorViewer::changeRotationCenterPosition(const SbVec3f& newCenter)
 {
+    if (viewState) {
+        viewState->setRotationCenterPosition(newCenter);
+    }
     if (!rotationCenterGroup) {
         return;
     }
@@ -2842,6 +2870,9 @@ void View3DInventorViewer::setSceneGraph(SoNode* root)
         _ViewProviderSet.clear();
         _ViewProviderMap.clear();
         editViewProvider = nullptr;
+        if (viewState) {
+            viewState->setEditingViewProvider(false);
+        }
     }
 
     SoSearchAction sa;
@@ -3149,6 +3180,9 @@ const std::vector<SbVec2s>& View3DInventorViewer::getPolygon(SelectionRole* role
 void View3DInventorViewer::setSelectionEnabled(bool enable)
 {
     this->selectionRoot->selectionEnabled.setValue(enable);  // NOLINT
+    if (viewState) {
+        viewState->setSelectionEnabled(enable);
+    }
 }
 
 bool View3DInventorViewer::isSelectionEnabled() const
@@ -3983,6 +4017,9 @@ void View3DInventorViewer::setSeekMode(bool on)
     }
 
     inherited::setSeekMode(on);
+    if (viewState) {
+        viewState->setSeekMode(on);
+    }
     interactionController->navigationStyle()->setViewingMode(
         on ? NavigationStyle::SEEK_WAIT_MODE
            : (this->isViewing() ? NavigationStyle::IDLE : NavigationStyle::INTERACT)
@@ -5664,6 +5701,9 @@ void View3DInventorViewer::setViewing(bool enable)
 
     interactionController->navigationStyle()->setViewingMode(enable ? NavigationStyle::IDLE : NavigationStyle::INTERACT);
     inherited::setViewing(enable);
+    if (viewState) {
+        viewState->setViewing(enable);
+    }
 }
 
 unsigned char View3DInventorViewer::XPM_pixel_data[XPM_WIDTH * XPM_HEIGHT * XPM_BYTES_PER_PIXEL + 1]
@@ -5941,6 +5981,9 @@ void View3DInventorViewer::drawSingleBackground(const QColor& col)
 // Set cursor graphics according to mode.
 void View3DInventorViewer::setCursorRepresentation(int modearg)
 {
+    if (viewState) {
+        viewState->setCursorMode(modearg);
+    }
     // There is a synchronization problem between Qt and SoQt which
     // happens when popping up a context-menu. In this case the
     // Qt::WA_UnderMouse attribute is reset and never set again
@@ -6006,6 +6049,9 @@ void View3DInventorViewer::setCursorRepresentation(int modearg)
 void View3DInventorViewer::setEditing(bool edit)
 {
     this->editing = edit;
+    if (viewState) {
+        viewState->setEditing(edit);
+    }
     QWidget* cursorWindow = this->cursorTarget ? this->cursorTarget : this->getWidget();
     cursorWindow->setCursor(QCursor(Qt::ArrowCursor));
     this->editCursor = QCursor();
