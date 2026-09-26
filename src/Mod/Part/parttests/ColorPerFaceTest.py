@@ -190,12 +190,28 @@ class ColorPerFaceTest(unittest.TestCase):
         self.doc = App.openDocument(self.fileName)
 
         fuse = self.doc.ActiveObject
-        # The display geometry is computed asynchronously while a document is
-        # restored, so the Coin scene graph may not reflect the restored colours
-        # yet.  Force a synchronous display update before inspecting it (the
-        # object is visible, so hide/show triggers the rebuild).
-        fuse.ViewObject.Visibility = False
-        fuse.ViewObject.Visibility = True
+        # This fork builds the display geometry asynchronously while a document
+        # is restored, so the Coin scene graph can lag the restored properties
+        # for a moment after openDocument().  Pump pending GUI events until the
+        # material node reflects the 11 restored per-face colours (bounded),
+        # rather than toggling Visibility to force a synchronous rebuild: the
+        # toggle changes document state and hides the underlying asynchrony.
+        import time
+        import FreeCADGui
+
+        for _ in range(200):
+            probe = coin.SoSearchAction()
+            probe.setType(coin.SoMaterial.getClassTypeId())
+            probe.setInterest(coin.SoSearchAction.ALL)
+            probe.apply(fuse.ViewObject.RootNode)
+            probePaths = probe.getPaths()
+            if (
+                probePaths.getLength() > 1
+                and probePaths.get(1).getTail().diffuseColor.getNum() == 11
+            ):
+                break
+            FreeCADGui.updateGui()
+            time.sleep(0.005)
         self.assertEqual(len(fuse.Shape.Faces), 11)
         self.assertEqual(len(fuse.ViewObject.DiffuseColor), 11)
         self.assertEqual(fuse.ViewObject.DiffuseColor[0], (1.0, 0.0, 0.0, 1.0))

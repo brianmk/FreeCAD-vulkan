@@ -166,7 +166,7 @@ struct VulkanViewSettings
     int pathTracingBounces = 4;
     int pathTracingSettleFrames = 6;
     int pathTracingMaxSamples = 256;
-    // Denoiser backend name ("rtx", "oidn", "fsr", "none"); empty = default.
+    // Denoiser backend name ("rtx", "oidn", "dnsr", "none"); empty = default.
     // Denoising itself is required for path tracing and is enabled automatically
     // by the renderer; only the filter is configurable.
     std::string pathTracingDenoiser;

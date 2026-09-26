@@ -97,6 +97,16 @@ jobs:
         with:
           submodules: true
 
+      - name: Check out FreeCAD-DevTools (fcprobe harness + MCP server)
+        # The harness moved to its own repo; check it out beside the FreeCAD
+        # tree so the self-test and the raster gate below keep running.  Pinned
+        # to a full SHA for reproducibility -- bump when DevTools changes.
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: brianmk/FreeCAD-DevTools
+          ref: 5e7f1bc6b1614e5023364679753e2c2d08f59ba4
+          path: devtools
+
       - name: Check committed Vulkan SPIR-V header stamps
         # Toolchain-free staleness gate: re-derives each shader's source hash
         # from the GLSL and compares it with the stamp in the committed .spv.h.
@@ -127,6 +137,18 @@ jobs:
           sudo apt-get install -y -qq python3-pip
           python3 -m pip install --upgrade pip
           python3 -m pip install ifcopenshell==0.8.2 --break-system-packages
+
+      - name: fcprobe harness self-test
+        # Pure host-side unit test of the FreeCAD-DevTools fcprobe harness (no
+        # FreeCAD needed): pins the parser, digest, report and run_case
+        # behaviour.
+        timeout-minutes: 5
+        uses: ./.github/workflows/actions/runPythonTests
+        with:
+          testDescription: "fcprobe harness self-test"
+          testCommand: FREECAD_SRC="$PWD" python3 devtools/fcprobe/test_probe.py
+          logFile: ${{ env.logdir }}TestHarnessSelftest.log
+          reportFile: ${{ env.reportdir }}${{ env.reportfilename }}
 
       - name: Make needed directories, files and initializations
         id: Init
@@ -213,6 +235,48 @@ jobs:
           logFile: ${{ env.logdir }}TestGUIBuild.log
           reportFile: ${{env.reportdir}}${{ env.reportfilename }}
 
+      - name: Vulkan raster render gate (lavapipe)
+        # The one stage that actually RENDERS with the Vulkan viewport in CI.
+        # Runs the device-agnostic raster probe suite on the software Vulkan
+        # device (lavapipe) under Xvfb and golden-compares each case's
+        # draw-command fingerprint.  UseVulkanRenderer=1 is set by every probe;
+        # --env QT_QPA_PLATFORM=xcb because the profiles default to Wayland.
+        # Cases not yet in the committed golden are reported NEW and collected
+        # into the uploaded manifest (bootstrap); a committed case must match.
+        timeout-minutes: 30
+        uses: ./.github/workflows/actions/runPythonTests
+        with:
+          testDescription: "Vulkan raster render gate (lavapipe)"
+          testCommand: |
+            LVP_ICD="$(ls /usr/share/vulkan/icd.d/lvp_icd.*.json 2>/dev/null | head -1)"
+            if [ -z "$LVP_ICD" ]; then
+              echo "lavapipe ICD not found under /usr/share/vulkan/icd.d"; exit 1
+            fi
+            mkdir -p "${{ env.reportdir }}vk_ci_raster_runs"
+            xvfb-run -a -s "-screen 0 1280x1024x24" \
+              env VK_ICD_FILENAMES="$LVP_ICD" VK_DRIVER_FILES="$LVP_ICD" \
+              FREECAD_SRC="$PWD" \
+              python3 devtools/fcprobe/freecad_probe.py suite \
+                --manifest devtools/fcprobe/vk_ci_raster_suite.json \
+                --binary "${{ env.builddir }}bin/FreeCAD" \
+                --env QT_QPA_PLATFORM=xcb \
+                --golden devtools/fcprobe/golden/vk_ci_raster_hashes.json \
+                --golden-write "${{ env.reportdir }}vk_ci_raster_hashes.json" \
+                --out "${{ env.reportdir }}vk_ci_raster_runs" \
+                --no-focus
+          logFile: ${{ env.logdir }}TestVulkanRasterGate.log
+          reportFile: ${{ env.reportdir }}${{ env.reportfilename }}
+
+      - name: Upload Vulkan raster golden hashes
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.artifactBasename }}-VkRasterGolden
+          path: |
+            ${{ env.reportdir }}vk_ci_raster_hashes.json
+            ${{ env.reportdir }}vk_ci_raster_runs
+          if-no-files-found: warn
+
       - name: Coin node snapshot visual tests on build dir
         if: inputs.testCoinNodeSnapshots
         timeout-minutes: 15
@@ -240,6 +304,7 @@ jobs:
           reportdir: ${{ env.reportdir }}
           builddir: ${{ env.builddir }}
           reportFile: ${{ env.reportdir }}${{ env.reportfilename }}
+          includeVulkanPartGui: true
 
       - name: CMake Install
         uses: ./.github/workflows/actions/linux/install

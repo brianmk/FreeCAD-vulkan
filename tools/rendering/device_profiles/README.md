@@ -31,11 +31,11 @@ stdout and `/tmp/opencode/profiles_layer.log`, and appends
 
 ```sh
 # Single run on a simulated device:
-python3 tools/fcprobe/freecad_probe.py run tools/fcprobe/vk_live_probe.py \
+python3 ../FreeCAD-DevTools/fcprobe/freecad_probe.py run ../FreeCAD-DevTools/fcprobe/vk_live_probe.py \
     --profile vulkan --device-profile minimum-1-2
 
 # Parity matrix across several simulated devices:
-python3 tools/fcprobe/freecad_probe.py matrix tools/fcprobe/vk_live_probe.py \
+python3 ../FreeCAD-DevTools/fcprobe/freecad_probe.py matrix ../FreeCAD-DevTools/fcprobe/vk_live_probe.py \
     --device-profile minimum-1-2 --device-profile desktop-baseline-2022
 ```
 
@@ -49,3 +49,31 @@ python3 tools/fcprobe/freecad_probe.py matrix tools/fcprobe/vk_live_probe.py \
 | `no-descriptor-indexing` | real device minus `VK_EXT_descriptor_indexing` / `VK_EXT_descriptor_buffer` |
 | `no-ray-tracing`         | real device minus the ray-tracing extensions |
 | `portability`            | real device with portability-subset emulation forced on |
+| `rtx-2060`               | Strict Turing RTX 20-series sim: ray tracing present, but position-fetch and the Ada/Blackwell optional extensions (`VK_KHR_ray_tracing_position_fetch`, `VK_EXT_opacity_micromap`, NV cluster/partitioned AS, linear swept spheres) hidden, plus a constrained `maxMemoryAllocationCount` from `VP_NVIDIA_rtx_2060.json` |
+
+## Simulating a lower-tier RTX GPU
+
+`rtx-2060` hides position-fetch and the post-Turing optional extensions while
+leaving ray tracing advertised, and applies `VP_NVIDIA_rtx_2060.json`
+(`SIMULATE_PROPERTIES_BIT`) to constrain device limits, so the RTX backend must
+still initialize and path-trace with the five caps reported 0.  The
+`rtx-2060` / `rtx-2060-control` cases in `vk_suite.json` run the same probe with
+and without the profile and assert the caps flip (the control proves the
+profile, not the machine, is what zeroes them).
+
+> **What a device profile can and cannot simulate.** The Khronos profiles layer
+> can override device limits, extensions, features and formats. It **cannot**
+> override `deviceName` / `deviceID` / `deviceType` (`deviceType` is reported
+> "not modifiable") or memory heaps — the Vulkan Profiles schema has no
+> `deviceName` and no `VkPhysicalDeviceMemoryProperties`. So a "2060" profile
+> simulates the capability/limit set, not the 6 GB VRAM or the device string.
+
+```sh
+# Simulated RTX 2060 (four caps must read 0, RT still works)
+python3 ../FreeCAD-DevTools/fcprobe/freecad_probe.py run ../FreeCAD-DevTools/fcprobe/vk_rtx2060_probe.py \
+    --profile vulkan --device-profile rtx-2060 --env FC_VULKAN_RT_DEBUG=1
+
+# Unsimulated control (the real device advertises all four)
+python3 ../FreeCAD-DevTools/fcprobe/freecad_probe.py run ../FreeCAD-DevTools/fcprobe/vk_rtx2060_probe.py \
+    --profile vulkan --env FC_RTX2060_EXPECT=present --env FC_VULKAN_RT_DEBUG=1
+```

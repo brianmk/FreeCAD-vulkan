@@ -237,6 +237,18 @@ PrefPagePyProducer::PrefPagePyProducer(const Py::Object& p, const char* group)
         str = static_cast<std::string>(Py::String(type.getAttr("__name__")));
     }
 
+    // Python preference pages are frequently just called "PreferencesPage", so
+    // the bare class name is not guaranteed to be unique. Registering two
+    // different classes under the same key makes the second silently replace the
+    // first in the WidgetFactory, so both preference groups then instantiate the
+    // same class. Qualify the key with the defining module to keep them apart.
+    if (!str.empty() && type.hasAttr("__module__")) {
+        const std::string module = static_cast<std::string>(Py::String(type.getAttr("__module__")));
+        if (!module.empty()) {
+            str = module + "." + str;
+        }
+    }
+
     WidgetFactoryInst::instance().AddProducer(str.c_str(), this);
     Gui::Dialog::DlgPreferencesImp::addPage(str, group);
 }

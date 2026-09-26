@@ -34,7 +34,6 @@
 #include <Gui/Multisample.h>
 #include <Gui/View3DInventorViewer.h>
 #include <Gui/ViewParams.h>
-#include <Gui/VulkanViewSettings.h>
 
 #include "DlgSettings3DViewImp.h"
 #include "ui_DlgSettings3DView.h"
@@ -77,32 +76,17 @@ void DlgSettings3DViewImp::saveSettings()
     ui->yAxisColor->onSave();
     ui->zAxisColor->onSave();
     ui->CheckBox_UseVulkanRenderer->onSave();
-    ui->CheckBox_VulkanWireframe->onSave();
+    ui->CheckBox_VulkanEdgeOverlay->onSave();
     ui->CheckBox_VulkanShowPoints->onSave();
     ui->CheckBox_VulkanInteractionLod->onSave();
     ui->ComboBox_VulkanPresentMode->onSave();
     ui->CheckBox_VulkanHDR->onSave();
     ui->DoubleSpinBox_VulkanHdrExposure->onSave();
     ui->ComboBox_VulkanHdrToneMap->onSave();
-    // The "Path tracing" checkbox is a convenience view onto the single
-    // VulkanRenderMode pref (checked => PathTracing, unchecked => the Vulkan
-    // raster viewport), so it and the status-bar mode selector share one source
-    // and can never disagree.
-#ifdef FREECAD_USE_VULKAN
-    {
-        auto grp = App::GetApplication().GetParameterGroupByPath(
-            "User parameter:BaseApp/Preferences/View");
-        const int mode = static_cast<int>(grp->GetInt("VulkanRenderMode", 1));
-        if (ui->CheckBox_VulkanPathTracing->isChecked()
-            && mode != static_cast<int>(ViewRenderMode::PathTracing)) {
-            grp->SetInt("VulkanRenderMode", static_cast<int>(ViewRenderMode::PathTracing));
-        }
-        else if (!ui->CheckBox_VulkanPathTracing->isChecked()
-                 && mode == static_cast<int>(ViewRenderMode::PathTracing)) {
-            grp->SetInt("VulkanRenderMode", static_cast<int>(ViewRenderMode::RasterVulkan));
-        }
-    }
-#endif
+    // The render-mode selector is a view onto the single VulkanRenderMode pref,
+    // exactly like the status-bar selector, so the two share one source and can
+    // never disagree (including the Path Tracing Max mode).
+    ui->ComboBox_VulkanRenderMode->onSave();
     ui->SpinBox_VulkanBounces->onSave();
     ui->SpinBox_VulkanSettle->onSave();
     ui->SpinBox_VulkanMaxSamples->onSave();
@@ -111,6 +95,19 @@ void DlgSettings3DViewImp::saveSettings()
     ui->DoubleSpinBox_VulkanGlassIor->onSave();
     ui->DoubleSpinBox_VulkanGlassAbsorb->onSave();
     ui->VulkanEdgeColor->onSave();
+    // The environment map is a per-view choice whose preference is -1 for the
+    // viewport-background gradient, while a combo box is 0-based.  A plain
+    // PrefComboBox cannot express that offset (it stores the raw index), so map
+    // the index (0 = background) to the preference (-1 = background) here.  The
+    // item labels mirror the status-bar environment selector and the backend's
+    // RtxEnvPreset table, and must stay in the same order.
+    if (auto viewGrp = App::GetApplication().GetParameterGroupByPath(
+            "User parameter:BaseApp/Preferences/View")) {
+        viewGrp->SetInt(
+            "VulkanEnvironmentMap",
+            ui->ComboBox_VulkanEnvironmentMap->currentIndex() - 1
+        );
+    }
 }
 
 void DlgSettings3DViewImp::loadSettings()
@@ -132,25 +129,17 @@ void DlgSettings3DViewImp::loadSettings()
     ui->yAxisColor->onRestore();
     ui->zAxisColor->onRestore();
     ui->CheckBox_UseVulkanRenderer->onRestore();
-    ui->CheckBox_VulkanWireframe->onRestore();
+    ui->CheckBox_VulkanEdgeOverlay->onRestore();
     ui->CheckBox_VulkanShowPoints->onRestore();
     ui->CheckBox_VulkanInteractionLod->onRestore();
     ui->ComboBox_VulkanPresentMode->onRestore();
     ui->CheckBox_VulkanHDR->onRestore();
     ui->DoubleSpinBox_VulkanHdrExposure->onRestore();
     ui->ComboBox_VulkanHdrToneMap->onRestore();
-    // The checkbox mirrors the single VulkanRenderMode pref.
-#ifdef FREECAD_USE_VULKAN
-    {
-        auto grp = App::GetApplication().GetParameterGroupByPath(
-            "User parameter:BaseApp/Preferences/View");
-        const int mode = static_cast<int>(grp->GetInt("VulkanRenderMode", 1));
-        ui->CheckBox_VulkanPathTracing->setChecked(
-            mode == static_cast<int>(ViewRenderMode::PathTracing));
-    }
-#else
-    ui->CheckBox_VulkanPathTracing->setChecked(false);
-#endif
+    // The render-mode selector mirrors the single VulkanRenderMode pref, which
+    // the status bar also drives; restoring it here shows the mode currently in
+    // effect (Path Tracing Max included).
+    ui->ComboBox_VulkanRenderMode->onRestore();
     ui->SpinBox_VulkanBounces->onRestore();
     ui->SpinBox_VulkanSettle->onRestore();
     ui->SpinBox_VulkanMaxSamples->onRestore();
@@ -159,6 +148,17 @@ void DlgSettings3DViewImp::loadSettings()
     ui->DoubleSpinBox_VulkanGlassIor->onRestore();
     ui->DoubleSpinBox_VulkanGlassAbsorb->onRestore();
     ui->VulkanEdgeColor->onRestore();
+
+    // VulkanEnvironmentMap uses -1 for the viewport background; map it onto the
+    // 0-based combo (see saveSettings()).
+    if (auto viewGrp = App::GetApplication().GetParameterGroupByPath(
+            "User parameter:BaseApp/Preferences/View")) {
+        const int envMap = static_cast<int>(viewGrp->GetInt("VulkanEnvironmentMap", -1));
+        const int index = envMap + 1;
+        if (index >= 0 && index < ui->ComboBox_VulkanEnvironmentMap->count()) {
+            ui->ComboBox_VulkanEnvironmentMap->setCurrentIndex(index);
+        }
+    }
 
     loadAntiAliasing();
     loadRenderCache();

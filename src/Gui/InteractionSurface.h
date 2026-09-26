@@ -15,12 +15,15 @@ namespace Gui
 /** Surface hooks the `InteractionController` needs beyond the navigation
  *  contract in `InteractionHost`.
  *
- *  A *surface* is the thing that renders and receives native events: the GL
- *  `View3DInventorViewer` today, the Vulkan widget later.  `InteractionHost`
- *  already exposes the camera/scene/viewport/event-manager the navigation
- *  styles reach through; this adds the surface-owned overlay/redirect hooks the
- *  controller's `processSoEvent` dispatch needs, so the same controller can run
- *  on either surface.
+ *  A *surface* is the thing that renders and receives native events.  Both the
+ *  GL `View3DInventorViewer` and `VulkanViewportAdapter` implement this: the
+ *  controller owns the Coin event manager, lends it to the current surface via
+ *  `surfaceSetEventManager()`, and routes presentation-only calls
+ *  (`scheduleRedraw()`, cursor, `getGLWidget()`) to whichever surface is on
+ *  screen.  `InteractionHost` supplies the shared camera/scene/viewport; this
+ *  adds the surface-owned overlay/redirect hooks the controller's
+ *  `processSoEvent` dispatch needs, so the same controller runs on either
+ *  surface.
  */
 class GuiExport InteractionSurface: public InteractionHost
 {

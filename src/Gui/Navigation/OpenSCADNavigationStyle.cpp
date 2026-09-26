@@ -206,13 +206,13 @@ SbBool OpenSCADNavigationStyle::processSoEvent(const SoEvent* const ev)
             if (this->invertZoom) {
                 value = -value;
             }
-            zoom(viewer->getSoRenderManager()->getCamera(), value);
+            zoom(viewer->getCamera(), value);
             processed = true;
         }
         else if (curmode == NavigationStyle::PANNING) {
             float ratio = vp.getViewportAspectRatio();
             panCamera(
-                viewer->getSoRenderManager()->getCamera(),
+                viewer->getCamera(),
                 ratio,
                 this->panningplane,
                 posn,

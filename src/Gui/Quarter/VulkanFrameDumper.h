@@ -215,13 +215,21 @@ public:
             || m_dumpCount > windowFrames) {
             return;
         }
-        // Called after QVulkanWindow::frameReady(), which QVulkanWindow
-        // only emits once this frame's fence has signaled, so the recorded
-        // copy has completed and the staging buffer is safe to read.  A
-        // vkQueueWaitIdle here would additionally drain unrelated in-flight
-        // frames and stall the whole pipeline.
+        // Called after QVulkanWindow::frameReady(), which only *submits* the
+        // frame (Qt waits this frame's fence at the start of the next
+        // beginFrame()), so the recorded copy is not guaranteed complete here.
+        // Mapping now can read stale/partially-written bytes.  Drain the
+        // graphics queue first: frame dumping is a debug-only path, so the
+        // stall is acceptable and it keeps the readback honest.  A queue idle
+        // also makes the transfer writes visible to the host, so no explicit
+        // host-read barrier is needed.
         QVulkanDeviceFunctions * vkdf =
             m_instance->deviceFunctions(m_window->device());
+        if (vkdf->vkQueueWaitIdle(m_window->graphicsQueue()) != VK_SUCCESS) {
+            Base::Console().error("[Vulkan] frame dump: vkQueueWaitIdle "
+                                  "failed; skipping readback\n");
+            return;
+        }
         void * data = nullptr;
         if (vkdf->vkMapMemory(m_window->device(), m_memory, 0,
                               VK_WHOLE_SIZE, 0, &data) != VK_SUCCESS) {

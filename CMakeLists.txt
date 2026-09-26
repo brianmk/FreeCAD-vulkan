@@ -39,11 +39,16 @@ option(FREECAD_USE_CCACHE "Auto detect and use ccache during compilation" ON)
 # remains the default and fully supported fallback.
 option(FREECAD_USE_VULKAN "Enable the experimental Vulkan viewport" OFF)
 
-# Vulkan debug/test hooks: the synthetic mouse injector (FC_VULKAN_INJECT_PY)
-# and the frame dumper (FC_VULKAN_DUMP_FRAME).  Off by default so release
-# builds carry neither; auto-enabled for Debug builds (see src/Gui/CMakeLists)
-# where the probe harness relies on them.
+# Vulkan debug/test hooks: the synthetic mouse injector (FC_VULKAN_INJECT_PY),
+# the frame dumper (FC_VULKAN_DUMP_FRAME) and the diagnostic breadcrumbs in
+# Base/VulkanBreadcrumbs.h.  Off by default so product release builds carry
+# none of them; auto-enabled for Debug builds where the probe harness relies on
+# them.  Defined directory-wide (not just for FreeCADGui) because the shared
+# breadcrumb header is also included by App and the Mod Gui nodes.
 option(FREECAD_USE_VULKAN_DEBUG_HOOKS "Build the Vulkan debug/test hooks" OFF)
+add_compile_definitions(
+    "$<$<OR:$<BOOL:${FREECAD_USE_VULKAN_DEBUG_HOOKS}>,$<CONFIG:Debug>>:FREECAD_VULKAN_DEBUG_HOOKS=1>"
+)
 
 # FreeCAD does not use C++20 modules. Keep CMake 3.28+ from enabling module
 # dependency scanning on C++20 targets, especially with toolchains that do not

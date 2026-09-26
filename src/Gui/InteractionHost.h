@@ -19,7 +19,6 @@ class SoEvent;
 class SoEventManager;
 class SoGroup;
 class SoNode;
-class SoRenderManager;
 class SoSeparator;
 
 namespace Gui
@@ -32,14 +31,17 @@ class NavigationAnimation;
  *
  *  `NavigationStyle` and its subclasses used to reach directly into
  *  `View3DInventorViewer` for the camera, scene graph, viewport region, event
- *  manager, editing state and cursor/redraw.  That coupling is what forces
+ *  manager, editing state and cursor/redraw.  That coupling is what forced
  *  navigation (and picking) to run on the hidden GL viewer even when the
- *  Vulkan surface is the one on screen.
+ *  Vulkan surface was the one on screen.
  *
- *  `InteractionHost` is the seam that replaces that coupling.  The GL viewer
- *  implements it today; an interaction controller owned by the Vulkan surface
- *  can implement it later, so the same navigation styles drive whichever
- *  surface is current.
+ *  `InteractionHost` is the seam that replaces that coupling.  It deliberately
+ *  exposes no `SoRenderManager`: camera, scene graph and viewport region are
+ *  all the renderer-independent state navigation and picking need, so a
+ *  non-GL surface (the Vulkan viewport) can satisfy the contract without a GL
+ *  render manager.  `InteractionController` implements it for the active
+ *  surface, and every surface reports its own camera/scene/region, so the same
+ *  navigation styles drive whichever surface is current.
  */
 class GuiExport InteractionHost
 {
@@ -51,7 +53,6 @@ public:
     virtual SoCamera* getCamera() const = 0;
     virtual SoNode* getSceneGraph() const = 0;
     virtual const SbViewportRegion& getViewportRegion() const = 0;
-    virtual SoRenderManager* getSoRenderManager() const = 0;
     virtual SoEventManager* getSoEventManager() const = 0;
     virtual SbVec3f getFocalPoint() const = 0;
     virtual float getPickRadius() const = 0;

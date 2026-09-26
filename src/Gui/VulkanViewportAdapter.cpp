@@ -9,6 +9,7 @@
 #include "Application.h"
 #include "DisplayLuminance.h"
 #include "InteractionController.h"
+#include "VulkanDebugEnv.h"
 #include "View3DInventor.h"
 #include "View3DInventorViewer.h"
 
@@ -511,7 +512,7 @@ void VulkanViewportAdapter::pushSettings()
     vs.hdrExposure = settings.hdrExposure;
     vs.hdrToneMap = settings.hdrToneMap;
 
-    if (Base::envFlagEnabled("FC_VULKAN_BACKEND_DEBUG")) {
+    if (VkDebug::backendDebug()) {
         Base::Console().message(
             "[VK-SET] pushSettings raster={} edgeOverlay={} points={} "
             "edgeColor=({:.2f},{:.2f},{:.2f},{:.2f}) pt={} bounces={} settle={} "
@@ -636,7 +637,8 @@ VulkanViewportAdapter::pushSceneLights()
         lighting.lights.push_back(SoRenderIR::lightToWorld(l, eyeToWorld));
     }
 
-    if (Base::envFlagEnabled("FC_LIGHT_TRACE")) {
+#ifdef FREECAD_VULKAN_DEBUG_HOOKS
+    if (VkDebug::lightTrace()) {
         static int _n = 0;
         if (_n++ < 400) {
             SoCamera* cam = rm ? rm->getCamera() : nullptr;
@@ -652,6 +654,7 @@ VulkanViewportAdapter::pushSceneLights()
             }
         }
     }
+#endif
 
     _vulkanViewer->setSceneLights(lighting);
 #endif
@@ -690,12 +693,14 @@ void VulkanViewportAdapter::sceneChangedCB(void* data, SoSensor* /*sensor*/)
 
 void VulkanViewportAdapter::cameraChangedCB(void* data, SoSensor* /*sensor*/)
 {
-    if (Base::envFlagEnabled("FC_LIGHT_TRACE")) {
+#ifdef FREECAD_VULKAN_DEBUG_HOOKS
+    if (VkDebug::lightTrace()) {
         static int _n = 0;
         if (_n++ < 400) {
             fprintf(stderr, "[LTRACE] cameraChangedCB n=%d\n", _n);
         }
     }
+#endif
     auto* self = static_cast<VulkanViewportAdapter*>(data);
     self->noteCameraMoved();
     self->requestVulkanFrame();
@@ -938,6 +943,10 @@ void VulkanViewportAdapter::applySurfaceViewportToGL(const QSize& surfaceSize)
     // shift hover picking and navigation by the DPI factor.
     SbViewportRegion vp(static_cast<short>(pw), static_cast<short>(ph));
     _viewer->getSoRenderManager()->setViewportRegion(vp);
+    // This surface reports the region through the InteractionHost contract
+    // (see getViewportRegion()); the GL render-manager region above is kept
+    // only for the GL/IR render path (line widths / point sizes).
+    _surfaceViewport = vp;
 
     // The interaction controller owns the canonical region now: picking and
     // navigation read it instead of the hidden GL viewer's render-manager copy,
@@ -1097,16 +1106,42 @@ bool VulkanViewportAdapter::eventFilter(QObject* watched, QEvent* event)
 
 SoCamera* VulkanViewportAdapter::getCamera() const
 {
+    // The Vulkan widget shares the view's camera node (syncViewer() points it
+    // at the GL viewer's render-manager camera), so answer from the surface
+    // actually on screen rather than delegating to the hidden GL viewer.
+#ifdef FREECAD_USE_VULKAN
+    if (_vulkanViewer) {
+        if (SoCamera* cam = _vulkanViewer->getCamera()) {
+            return cam;
+        }
+    }
+#endif
     return _glSurface ? _glSurface->getCamera() : nullptr;
 }
 
 SoNode* VulkanViewportAdapter::getSceneGraph() const
 {
+    // Same as getCamera(): the Vulkan widget renders the shared scene-graph
+    // root (syncViewer() sets it from the GL viewer's render manager).
+#ifdef FREECAD_USE_VULKAN
+    if (_vulkanViewer) {
+        if (SoNode* root = _vulkanViewer->getSceneGraph()) {
+            return root;
+        }
+    }
+#endif
     return _glSurface ? _glSurface->getSceneGraph() : nullptr;
 }
 
 const SbViewportRegion& VulkanViewportAdapter::getViewportRegion() const
 {
+    // The visible surface is the source of truth for the viewport region; it
+    // is captured in applySurfaceViewportToGL().  Fall back to the hidden GL
+    // viewer only before the surface has reported a real size.
+    if (_surfaceViewport.getViewportSizePixels()[0] > 0
+        && _surfaceViewport.getViewportSizePixels()[1] > 0) {
+        return _surfaceViewport;
+    }
     if (_glSurface) {
         return _glSurface->getViewportRegion();
     }
@@ -1114,13 +1149,11 @@ const SbViewportRegion& VulkanViewportAdapter::getViewportRegion() const
     return empty;
 }
 
-SoRenderManager* VulkanViewportAdapter::getSoRenderManager() const
-{
-    return _glSurface ? _glSurface->getSoRenderManager() : nullptr;
-}
-
 SoEventManager* VulkanViewportAdapter::getSoEventManager() const
 {
+    // The Coin event manager is a view/controller authority, not surface
+    // presentation: the controller owns it and installs it on the GL viewer, so
+    // the adapter reports that shared instance rather than owning a second one.
     return _glSurface ? _glSurface->getSoEventManager() : nullptr;
 }
 

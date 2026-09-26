@@ -1449,6 +1449,7 @@ SoNaviCube::PickId SoNaviCube::pickAt(const SbVec2s& point) const
     pick.setPoint(localPoint);
     {
         float radius = 1.0F;
+#ifdef FREECAD_VULKAN_DEBUG_HOOKS
         if (const char* env = std::getenv("FREECAD_NAVICUBE_PICK_RADIUS")) {
             char* end = nullptr;
             const float value = std::strtof(env, &end);
@@ -1456,6 +1457,7 @@ SoNaviCube::PickId SoNaviCube::pickAt(const SbVec2s& point) const
                 radius = value;
             }
         }
+#endif
         pick.setRadius(radius);
     }
     pick.setPickAll(TRUE);
