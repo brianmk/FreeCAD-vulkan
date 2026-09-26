@@ -1344,6 +1344,7 @@ bool NaviCubeImplementation::mouseMoved(short x, short y)
 
 void NaviCubeImplementation::setHiliteWithHysteresis(PickId hilite)
 {
+#ifdef FREECAD_VULKAN_DEBUG_HOOKS
     static const int stableFrames = []() -> int {
         const char* env = std::getenv("FREECAD_NAVICUBE_PICK_STABLE_FRAMES");
         if (!env || !*env) {
@@ -1362,6 +1363,9 @@ void NaviCubeImplementation::setHiliteWithHysteresis(PickId hilite)
         }
         return static_cast<int>(v);
     }();
+#else
+    static const int stableFrames = 0;
+#endif
 
     if (stableFrames <= 1) {
         setHilite(hilite);

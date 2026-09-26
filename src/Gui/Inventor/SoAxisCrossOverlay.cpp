@@ -99,12 +99,14 @@ void SoAxisCrossOverlay::IRRender(SoIRRenderAction* action)
     // the corner rect: the backend draws the pass last, clearing the rect's
     // depth first, exactly like the navigation cube overlay.
     const int count = list.getNumCommands();
+#ifdef FREECAD_VULKAN_DEBUG_HOOKS
     if (getenv("FC_VULKAN_AXIS_DEBUG")) {
         fprintf(stderr,
                 "[AXIS] IRRender viewport=%dx%d corner=%d,%d %dx%d cmds=%d\n",
                 size[0], size[1], viewportX, viewportY, pixelarea, pixelarea,
                 count - firstCommand);
     }
+#endif
     for (int i = firstCommand; i < count; ++i) {
         SoRenderCommand& cmd = list.getCommand(i);
         cmd.pass = SO_RENDERPASS_OVERLAY;

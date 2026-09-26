@@ -19,25 +19,20 @@
 //
 // The rate-limited variants keep their counters in a function-local static,
 // so the limit applies per call site, not globally.
+//
+// Shipping policy: the trace machinery (the file open/truncate, the mutex and
+// the formatted writes) is compiled only when FREECAD_VULKAN_DEBUG_HOOKS is
+// defined.  That macro is set by the build for Debug configurations and for
+// research builds configured with -DFREECAD_USE_VULKAN_DEBUG_HOOKS=ON (see the
+// top-level CMakeLists.txt), so a product Release build carries neither the
+// /tmp log nor the instrumentation cost.  In that configuration the macros
+// expand to a no-op sink with the same signature, keeping the call sites
+// warning-clean.
 
 #pragma once
 
-// MSVC marks the standard CRT <cstdlib>/<cstdio> functions (getenv, fopen,
-// snprintf) as "unsafe" and with /WX this C4996 ends the build.  The code
-// intentionally uses the portable standard functions everywhere rather than
-// the MSVC-only _s variants, so silence the deprecation for this header.
-#ifdef _MSC_VER
-#    pragma warning(disable : 4996)
-#endif
-
-#include <cstdarg>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <mutex>
-#include <string>
-
-#include <Base/FileInfo.h>
 
 namespace Base {
 
@@ -45,6 +40,10 @@ namespace Base {
 //! Gui/Base side, mirroring SoVulkanShared's helpers inside Coin.  The two
 //! libraries are independent (Base is built before Coin and cannot include its
 //! headers), so the policy is duplicated by necessity but kept identical.
+//!
+//! These helpers are always compiled: they also drive user-facing runtime
+//! options (e.g. FC_VULKAN_VALIDATION, FC_VULKAN_PERSISTENT_RESOURCES) that are
+//! not debug scaffolding.
 //!
 //! NOTE: these functions deliberately do NOT cache in a function-local
 //! `static`: such a static is initialized once for the whole program, so the
@@ -89,6 +88,19 @@ inline float envFloat(const char* name, float defaultValue = 0.0f)
     const char* value = std::getenv(name);
     return value ? static_cast<float>(std::atof(value)) : defaultValue;
 }
+
+}  // namespace Base
+
+#ifdef FREECAD_VULKAN_DEBUG_HOOKS
+
+#include <cstdarg>
+#include <cstdio>
+#include <mutex>
+#include <string>
+
+#include <Base/FileInfo.h>
+
+namespace Base {
 
 //! Append a formatted breadcrumb to the trace log.
 //!
@@ -191,6 +203,32 @@ inline void vulkanBreadcrumb(const char* fmt, ...)
             ::Base::vulkanBreadcrumb(__VA_ARGS__);                             \
         }                                                                      \
     } while (0)
+
+#else  // !FREECAD_VULKAN_DEBUG_HOOKS
+
+namespace Base {
+
+//! Product Release build without the Vulkan debug hooks: a no-op sink with the
+//! same signature.  Keeping it a real function (instead of a macro that drops
+//! its arguments) means the call sites' format arguments are still referenced,
+//! so they compile cleanly under -Wunused, while no FILE, /tmp path, mutex or
+//! formatted write exists in the binary.  The optimizer removes the calls.
+inline void vulkanBreadcrumb(const char*, ...) noexcept
+{
+}
+
+}  // namespace Base
+
+#define VK_BREADCRUMB(...)                                                     \
+    ::Base::vulkanBreadcrumb(__VA_ARGS__)
+#define VK_BREADCRUMB_ONCE(...)                                                \
+    ::Base::vulkanBreadcrumb(__VA_ARGS__)
+#define VK_BREADCRUMB_LIMITED(limit, ...)                                      \
+    ::Base::vulkanBreadcrumb(__VA_ARGS__)
+#define VK_BREADCRUMB_SAMPLED(stride, ...)                                     \
+    ::Base::vulkanBreadcrumb(__VA_ARGS__)
+
+#endif  // FREECAD_VULKAN_DEBUG_HOOKS
 
 // Document the available variants: VK_BREADCRUMB (every call), VK_BREADCRUMB_ONCE
 // (first call), VK_BREADCRUMB_LIMITED(n) (first n calls), VK_BREADCRUMB_SAMPLED(n)

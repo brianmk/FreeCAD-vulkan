@@ -700,7 +700,6 @@ public:
     SoCamera* getCamera() const override;
     SoNode* getSceneGraph() const override;
     const SbViewportRegion& getViewportRegion() const override;
-    SoRenderManager* getSoRenderManager() const override;
     SoEventManager* getSoEventManager() const override;
     float getPickRadius() const override;
     QWidget* getGLWidget() const override;

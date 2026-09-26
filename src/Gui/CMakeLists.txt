@@ -133,14 +133,10 @@ if(FREECAD_USE_VULKAN)
     # when this macro is set, so FreeCAD must define it for its own
     # compilation of those headers (e.g. QuarterVulkanWidget.cpp).
     target_compile_definitions(FreeCADGui PRIVATE COIN_BUILD_VULKAN_RENDERER=1)
-    # Debug/test hooks (synthetic mouse injector + frame dumper).  Auto-on for
-    # Debug builds, where the fcprobe harness uses them; a release build only
-    # gets them with an explicit -DFREECAD_USE_VULKAN_DEBUG_HOOKS=ON.
-    # $<CONFIG:Debug> (not CMAKE_BUILD_TYPE) so multi-config generators
-    # (MSVC/Xcode/Ninja Multi-Config) -- where CMAKE_BUILD_TYPE is empty -- still
-    # define the hooks for their Debug configuration.
-    target_compile_definitions(FreeCADGui PRIVATE
-        "$<$<OR:$<BOOL:${FREECAD_USE_VULKAN_DEBUG_HOOKS}>,$<CONFIG:Debug>>:FREECAD_VULKAN_DEBUG_HOOKS=1>")
+    # FREECAD_VULKAN_DEBUG_HOOKS (synthetic mouse injector + frame dumper +
+    # Base/VulkanBreadcrumbs.h tracing) is defined directory-wide in the
+    # top-level CMakeLists.txt, so the shared breadcrumb header behaves
+    # identically in every target that includes it (App, Gui, Mod Gui).
     target_include_directories(FreeCADGui SYSTEM PRIVATE
         ${QtGui_INCLUDE_DIRS}
     )
@@ -157,6 +153,21 @@ if(FREECAD_USE_VULKAN)
         if(Qt6GuiPrivate_FOUND)
             list(APPEND FreeCADGui_LIBS Qt6::GuiPrivate)
             target_compile_definitions(FreeCADGui PRIVATE HAVE_QT6_GUI_PRIVATE=1)
+            # QVulkanWindow hardcodes VK_PRESENT_MODE_FIFO_KHR and exposes no
+            # public setter, so the present-mode (V-Sync) preference can only be
+            # applied by writing QVulkanWindowPrivate::presentMode from a Qt
+            # private header.  Keep that private-ABI coupling an explicitly
+            # controllable opt-in: it defaults ON where the private headers
+            # exist (preserving existing research builds) and can be turned off
+            # for product builds that must not depend on Qt internals:
+            #   -DFREECAD_USE_QT_PRIVATE_PRESENT_MODE=OFF
+            option(FREECAD_USE_QT_PRIVATE_PRESENT_MODE
+                   "Apply the Vulkan present mode via Qt's private QVulkanWindow API"
+                   ON)
+            if(FREECAD_USE_QT_PRIVATE_PRESENT_MODE)
+                target_compile_definitions(FreeCADGui
+                    PRIVATE FREECAD_USE_QT_PRIVATE_PRESENT_MODE=1)
+            endif()
         endif()
     endif()
 endif()
@@ -1048,7 +1059,7 @@ FILE(GLOB_RECURSE Quarter_CPP_SRC RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} Quarter/*
 FILE(GLOB_RECURSE Quarter_H_SRC RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} Quarter/*.h)
 if(NOT FREECAD_USE_VULKAN)
     list(FILTER Quarter_CPP_SRC EXCLUDE REGEX "QuarterVulkanWidget\\.cpp$|VulkanFrameDumper\\.cpp$")
-    list(FILTER Quarter_H_SRC EXCLUDE REGEX "QuarterVulkanWidget\\.h$|VulkanFrameDumper\\.h$")
+    list(FILTER Quarter_H_SRC EXCLUDE REGEX "QuarterVulkanWidget\\.h$|QuarterVulkanRenderer\\.h$|VulkanFrameDumper\\.h$")
 endif()
 
 SET(Quarter_MOC_HDR

@@ -191,7 +191,7 @@ SbBool TouchpadNavigationStyle::processSoEvent(const SoEvent* const ev)
             if (!blockPan) {
                 float ratio = vp.getViewportAspectRatio();
                 panCamera(
-                    viewer->getSoRenderManager()->getCamera(),
+                    viewer->getCamera(),
                     ratio,
                     this->panningplane,
                     posn,

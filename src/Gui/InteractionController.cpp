@@ -10,7 +10,6 @@
 #include <FCConfig.h>
 
 #include <Inventor/SoEventManager.h>
-#include <Inventor/SoRenderManager.h>
 #include <Inventor/errors/SoDebugError.h>
 #include <Inventor/events/SoKeyboardEvent.h>
 #include <Inventor/nodes/SoCamera.h>
@@ -86,11 +85,11 @@ NavigationStyle* InteractionController::navigationStyle() const
 
 void InteractionController::setSurface(InteractionSurface* surface)
 {
-    // Deliberately do not call surface->surfaceSetEventManager(): the manager
-    // stays on the GL viewer, and a delegating Vulkan surface forwards the
-    // hook back there (see InteractionSurface.h).  The canonical viewport
-    // region/DPR is likewise left untouched; it is reported by the surface
-    // that owns the visible swapchain.
+    // The SoEventManager stays on the GL viewer (the base dispatch authority
+    // for `processSoEventBase()`), so swapping the surface does not re-install
+    // it.  The controller answers `getSoEventManager()` from its own
+    // `_eventManager`, and the canonical viewport region/DPR is reported by the
+    // surface that owns the visible swapchain.
     _surface = surface;
 }
 
@@ -180,14 +179,13 @@ void InteractionController::setViewportRegion(
     }
 }
 
-SoRenderManager* InteractionController::getSoRenderManager() const
-{
-    return _surface->getSoRenderManager();
-}
-
 SoEventManager* InteractionController::getSoEventManager() const
 {
-    return _surface->getSoEventManager();
+    // The controller owns the Coin interaction authority; it is the same
+    // manager the surface borrows through surfaceSetEventManager().  Answering
+    // from here means navigation does not need a GL render manager (or any
+    // surface) to query the active event/grabber state.
+    return _eventManager;
 }
 
 SbVec3f InteractionController::getFocalPoint() const
