@@ -1247,7 +1247,17 @@ private:
 
         QVulkanDeviceFunctions * vkdf =
             m_instance->deviceFunctions(m_window->device());
-        vkdf->vkCmdBeginRenderPass(cb, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+        // When the device has VK_EXT_nested_command_buffer enabled the Coin
+        // backend records its opaque pass into secondary command buffers and
+        // replays them with vkCmdExecuteCommands().  That is only legal in a
+        // subpass begun with INLINE_AND_SECONDARY contents, and this pass is
+        // caller-owned (the backend does not begin it), so mirror the backend's
+        // choice here; with plain INLINE the backend records inline instead.
+        const VkSubpassContents subpassContents =
+            m_manager.nestedCommandBuffersEnabled()
+                ? VK_SUBPASS_CONTENTS_INLINE_AND_SECONDARY_COMMAND_BUFFERS_EXT
+                : VK_SUBPASS_CONTENTS_INLINE;
+        vkdf->vkCmdBeginRenderPass(cb, &rpBegin, subpassContents);
 
         // QVulkanWindow's default render pass already clears color and depth
         // with the values in rpBegin above, so the backend must not issue
