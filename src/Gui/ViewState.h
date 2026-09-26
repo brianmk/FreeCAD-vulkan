@@ -13,6 +13,8 @@
 #include <Inventor/SbViewportRegion.h>
 #include <Inventor/rendering/SoRenderIR.h>
 
+#include "VulkanViewSettings.h"
+
 #include <functional>
 #include <utility>
 #include <vector>
@@ -50,6 +52,12 @@ public:
         SceneRoot,
         Camera,
         Viewport,
+        //! editing / editingViewProvider / selectionEnabled / viewing /
+        //! seekMode / redirectToSceneGraph changed.
+        Interaction,
+        RotationCenter,
+        Cursor,
+        VulkanSettings,
     };
 
     using ChangeCallback = std::function<void(Change)>;
@@ -169,6 +177,64 @@ public:
     const SbColor& backgroundBottom() const;
     //@}
 
+    //! @name Interaction / view flags
+    //@{
+    //! A sketch/object is in edit mode (View3DInventorViewer::setEditing).
+    void setEditing(bool editing);
+    bool isEditing() const;
+
+    //! A ViewProvider is being edited in place
+    //! (View3DInventorViewer::setEditingViewProvider/resetEditingViewProvider).
+    void setEditingViewProvider(bool editing);
+    bool isEditingViewProvider() const;
+
+    //! Scene selection is enabled (View3DInventorViewer::setSelectionEnabled).
+    void setSelectionEnabled(bool enabled);
+    bool isSelectionEnabled() const;
+
+    //! Navigation/viewing mode (View3DInventorViewer::setViewing).
+    void setViewing(bool viewing);
+    bool isViewing() const;
+
+    //! Seek mode (View3DInventorViewer::setSeekMode).
+    void setSeekMode(bool seek);
+    bool isSeekMode() const;
+
+    //! Input is redirected to the scene graph
+    //! (View3DInventorViewer::setRedirectToSceneGraph).
+    void setRedirectToSceneGraph(bool redirect);
+    bool redirectToSceneGraph() const;
+    //@}
+
+    //! @name Rotation center
+    //@{
+    //! Whether the rotation-center indicator is currently shown
+    //! (View3DInventorViewer::showRotationCenter).
+    void setRotationCenterShown(bool shown);
+    bool isRotationCenterShown() const;
+
+    //! The navigation rotation center in world space
+    //! (View3DInventorViewer::changeRotationCenterPosition).
+    void setRotationCenterPosition(const SbVec3f& center);
+    const SbVec3f& rotationCenterPosition() const;
+    //@}
+
+    //! @name Cursor
+    //@{
+    //! The active navigation cursor shape
+    //! (View3DInventorViewer::setCursorRepresentation).
+    void setCursorMode(int mode);
+    int cursorMode() const;
+    //@}
+
+    //! @name Vulkan view settings
+    //@{
+    //! The Vulkan display/tuning blob mirrored from
+    //! View3DInventorViewer::applyVulkanSettings().
+    void setVulkanViewSettings(const VulkanViewSettings& settings);
+    const VulkanViewSettings& vulkanViewSettings() const;
+    //@}
+
 private:
     void notify(Change change);
     void syncDecorationCamera();
@@ -192,6 +258,24 @@ private:
     bool _backgroundGradient {false};
     SbColor _backgroundTop;
     SbColor _backgroundBottom;
+
+    //! View/interaction flags mirrored from the GL viewer.
+    bool _editing {false};
+    bool _editingViewProvider {false};
+    bool _selectionEnabled {true};
+    bool _viewing {false};
+    bool _seekMode {false};
+    bool _redirectToSceneGraph {false};
+
+    //! Rotation-center indicator (shown flag + world-space position).
+    bool _rotationCenterShown {false};
+    SbVec3f _rotationCenter {0.0F, 0.0F, 0.0F};
+
+    //! Active navigation cursor shape.
+    int _cursorMode {0};
+
+    //! Vulkan display/tuning state mirrored from the viewer.
+    VulkanViewSettings _vulkanSettings;
 
     std::vector<std::pair<CallbackId, ChangeCallback>> _callbacks;
     CallbackId _nextCallbackId {1};

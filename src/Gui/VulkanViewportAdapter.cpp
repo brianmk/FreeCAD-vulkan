@@ -1219,12 +1219,17 @@ void VulkanViewportAdapter::scheduleRedraw()
 
 SoGroup* VulkanViewportAdapter::getObjectGroup() const
 {
-    return _glSurface ? _glSurface->getObjectGroup() : nullptr;
+    // Neutral view-model state: the GL viewer already answers this from
+    // ViewState, so read it directly instead of forwarding through the hidden
+    // GL surface.
+    ViewState* state = _viewer ? _viewer->getViewState() : nullptr;
+    return state ? state->objectGroup() : nullptr;
 }
 
 SoSeparator* VulkanViewportAdapter::getForegroundRoot() const
 {
-    return _glSurface ? _glSurface->getForegroundRoot() : nullptr;
+    ViewState* state = _viewer ? _viewer->getViewState() : nullptr;
+    return state ? state->foregroundRoot() : nullptr;
 }
 
 void VulkanViewportAdapter::bindMouseSelection(AbstractMouseSelection* selection)
