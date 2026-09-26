@@ -1257,6 +1257,11 @@ private:
             m_manager.nestedCommandBuffersEnabled()
                 ? VK_SUBPASS_CONTENTS_INLINE_AND_SECONDARY_COMMAND_BUFFERS_EXT
                 : VK_SUBPASS_CONTENTS_INLINE;
+        // GPU timing: reset the backend's per-frame timestamp queries here,
+        // while we are still outside the render pass (vkCmdResetQueryPool is
+        // illegal inside one); the backend then writes the timestamps inside
+        // the pass.  No-op unless FC_VULKAN_GPU_TIMING is set.
+        m_manager.resetExternalGpuQueries(cb);
         vkdf->vkCmdBeginRenderPass(cb, &rpBegin, subpassContents);
 
         // QVulkanWindow's default render pass already clears color and depth
