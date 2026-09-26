@@ -38,6 +38,28 @@ per-frame phase shows as a full cap).
    swapchain acquire/present. Queue submission is in-order, so this scopes the
    wait rather than shortening it: `prepassSubmit` is unchanged (~12 ms).
 
+## Geometry LOD pre-pass
+
+The sub-pixel geometry LOD (`interactionLod`, or forced with
+`FC_VULKAN_GEOM_LOD_ALWAYS=1`) issued one indirect-cursor fill + barrier +
+compute dispatch per eligible triangle command. A scene of many small parts
+makes that pure fixed overhead: this bench has 1601 triangle commands of at most
+16 primitives, so 1601 dispatches were spent culling 16-triangle boxes.
+
+`GeometryLod.minPrims` (`FC_VULKAN_GEOM_LOD_MIN_PRIMS`, default 256; `0`
+disables) now rejects commands below the threshold -- they draw in full -- and
+the external pre-pass is skipped entirely when it compacted nothing and has no
+texture copies (`recordGeometryLodPrepass()` returns its count;
+`beginExternalPrepass()` reports "no pre-pass").
+
+| Phase (LD forced) | Before | After |
+| --- | ---: | ---: |
+| geometry LOD (`cpuTimingRaster lod`) | ~23 ms, `compacted=1601` | **0.03 ms, `compacted=0`** |
+
+Large meshes are unaffected: a 265k-primitive sphere still compacts
+(`compacted=1`, `maxPrims=265174`); `FC_VULKAN_GEOM_LOD_MIN_PRIMS=0` restores the
+old behaviour.
+
 ## Verification
 
 - `FC_VULKAN_VALIDATION=1` with `FC_VULKAN_GEOM_LOD_ALWAYS=1` (forces the
