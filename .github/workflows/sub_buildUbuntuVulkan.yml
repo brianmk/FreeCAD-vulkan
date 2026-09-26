@@ -248,9 +248,13 @@ jobs:
         with:
           testDescription: "Vulkan raster render gate (lavapipe)"
           testCommand: |
-            LVP_ICD="$(ls /usr/share/vulkan/icd.d/lvp_icd.*.json 2>/dev/null | head -1)"
+            # Mesa renamed the lavapipe manifest from lvp_icd.<arch>.json to
+            # lvp_icd.json (noble-updates mesa 25.x), so match both.
+            LVP_ICD="$(ls /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)"
             if [ -z "$LVP_ICD" ]; then
-              echo "lavapipe ICD not found under /usr/share/vulkan/icd.d"; exit 1
+              echo "lavapipe ICD not found under /usr/share/vulkan/icd.d; contents:"
+              ls -l /usr/share/vulkan/icd.d 2>/dev/null
+              exit 1
             fi
             mkdir -p "${{ env.reportdir }}vk_ci_raster_runs"
             xvfb-run -a -s "-screen 0 1280x1024x24" \
