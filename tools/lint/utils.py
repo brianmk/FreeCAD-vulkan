@@ -48,14 +48,12 @@ def emit_problem_matchers(log_path: str, matcher_filename: str, remove_owner: st
 
     This function will:
       1. Check if the log file exists.
-      2. Use the RUNNER_WORKSPACE environment variable to construct the matcher path.
+      2. Use the GITHUB_WORKSPACE environment variable to construct the matcher path.
       3. Print the add-matcher command, then the log content, then the remove-matcher command.
     """
     if os.path.isfile(log_path):
-        runner_workspace = os.getenv("RUNNER_WORKSPACE")
-        matcher_path = os.path.join(
-            runner_workspace, "FreeCAD", ".github", "problemMatcher", matcher_filename
-        )
+        workspace = os.getenv("GITHUB_WORKSPACE")
+        matcher_path = os.path.join(workspace, ".github", "problemMatcher", matcher_filename)
         print(f"::add-matcher::{matcher_path}")
         with open(log_path, "r", encoding="utf-8") as f:
             sys.stdout.write(f.read())
