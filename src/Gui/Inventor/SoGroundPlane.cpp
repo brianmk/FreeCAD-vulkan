@@ -274,13 +274,27 @@ void SoGroundPlane::updateGrid(SoState* state)
         return;
     }
 
+    // SbViewVolume::getPlanePoint() takes normalized [0, 1] coordinates (the
+    // canvas is covered by [0,1], see SbDPViewVolume::getPlanePoint and the
+    // callers in SoImage/SoText2), not OpenGL NDC [-1, 1].  Feeding [-1, 1]
+    // sampled a region twice the frustum, shifted to a corner, so the
+    // generated clip volume and footprint did not match the real view.
     const SbVec2f ndc[4] = {
-        SbVec2f(-1.0F, -1.0F),
-        SbVec2f(1.0F, -1.0F),
+        SbVec2f(0.0F, 0.0F),
+        SbVec2f(1.0F, 0.0F),
         SbVec2f(1.0F, 1.0F),
-        SbVec2f(-1.0F, 1.0F),
+        SbVec2f(0.0F, 1.0F),
     };
-    const float nearDepth = viewVolume.getNearDist();
+    // getNearDist() is the distance from the eye to the near plane; for an
+    // orthographic camera the near plane frequently sits BEHIND the eye
+    // (SoOrthographicCamera::getViewVolume passes nearDistance through, and
+    // the Vulkan manager publishes nearval = -box.max[2] - offset, which goes
+    // negative as soon as any extent is behind the projection point).  Starting
+    // the window there puts the whole clip volume behind the camera and it
+    // never reaches the ground at Z=0, so clipSegmentToVolume() discards the
+    // grid.  Clamp the near end to the eye plane: the true near plane is behind
+    // it, and anything in front is still bounded by the lateral planes.
+    const float nearDepth = std::max(viewVolume.getNearDist(), 0.0F);
 
     // Size the footprint from the camera's lateral view extent, NOT from the
     // camera's far plane.  The clip-range computation includes this grid's
