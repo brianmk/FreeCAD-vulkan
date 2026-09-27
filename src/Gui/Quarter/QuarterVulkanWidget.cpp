@@ -6,8 +6,6 @@
 #include "devices/InputDevice.h"
 #include "eventhandlers/EventFilter.h"
 #include "QuarterWidget.h"
-#include "VulkanFrameDumper.h"
-#include <Base/VulkanBreadcrumbs.h>
 
 #ifdef FREECAD_USE_VULKAN
 
@@ -101,10 +99,15 @@ uint64_t selectionRevision()
 
 static bool vulkanPersistentResourcesEnabled()
 {
-    // On by default; the shared helper honors the conventional 0/false/off
-    // opt-out (this was an inline copy of the policy).
-    static const bool enabled =
-        Base::envFlagTruthy("FC_VULKAN_PERSISTENT_RESOURCES", true);
+    // On by default; honors the conventional 0/false/off opt-out.
+    static const bool enabled = []() {
+        const char * value = std::getenv("FC_VULKAN_PERSISTENT_RESOURCES");
+        if (!value || !*value) {
+            return true;
+        }
+        return std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0
+            && std::strcmp(value, "off") != 0;
+    }();
     return enabled;
 }
 
@@ -166,7 +169,6 @@ public:
         , m_camera(camera)
         , m_window(window)
         , m_owner(owner)
-        , m_dumper(instance, window)
     {
     }
 
@@ -213,10 +215,6 @@ public:
                                const SbColor4f & top,
                                const SbColor4f & bottom)
     {
-        VK_BREADCRUMB("[VK-TRACE] QuarterVulkanRenderer::setBackgroundGradient "
-                      "enabled=%d top=(%.3f,%.3f,%.3f) bottom=(%.3f,%.3f,%.3f)\n",
-                      enabled ? 1 : 0, top[0], top[1], top[2],
-                      bottom[0], bottom[1], bottom[2]);
         QMutexLocker locker(&m_stateMutex);
         m_viewSettings.backgroundGradient = enabled;
         m_viewSettings.backgroundTop = top;
@@ -357,15 +355,12 @@ public:
               static_cast<int>(m_window->depthStencilFormat()));
         vkLog("  sample count: %d", static_cast<int>(samples));
         vkLog("  swapchain images: %d", m_window->swapChainImageCount());
-
-        m_dumper.initSwapChainResources();
     }
 
     void releaseSwapChainResources() override
     {
         vkLog("releaseSwapChainResources");
         m_manager.setRenderTarget(nullptr);
-        m_dumper.releaseSwapChainResources();
     }
 
     void releaseResources() override
@@ -426,17 +421,7 @@ public:
         recordScenePass(cb, size, frame.viewSettings.backgroundColor,
                         multisample);
 
-        // Env-gated frame dump (see Detail::VulkanFrameDumper): copy the
-        // swapchain color image into a staging buffer inside the same command
-        // buffer, then read it back after submission and write a PNG.  The
-        // PNG is named by the manager's per-frame ordinal so a frame dump can
-        // be correlated to the backend trace that produced it.
-        m_dumper.recordFrameCopy(cb, index, size,
-                                 m_manager.getRenderFrameCount());
-
         m_window->frameReady();
-
-        m_dumper.saveFrame();
 
         // The surface is display-only and owns no Coin sensors, so every
         // change must arrive as an explicit wake:
@@ -535,22 +520,13 @@ private:
         // ratio stayed 1.0 and overlay strokes (NaviCube edges/axes/service
         // dots) rendered 1/dpr too thin on a fractional-scaling display.
         m_manager.setDevicePixelRatio(static_cast<float>(m_owner->devicePixelRatioF()));
-        VK_BREADCRUMB_ONCE("[VK-TRACE] startNextFrame: setViewSettings "
-                           "bgGradient=%d top=(%.3f,%.3f,%.3f) bottom=(%.3f,%.3f,%.3f)\n",
-                           frame.viewSettings.backgroundGradient ? 1 : 0,
-                           frame.viewSettings.backgroundTop[0],
-                           frame.viewSettings.backgroundTop[1],
-                           frame.viewSettings.backgroundTop[2],
-                           frame.viewSettings.backgroundBottom[0],
-                           frame.viewSettings.backgroundBottom[1],
-                           frame.viewSettings.backgroundBottom[2]);
         // One call applies the whole display/tuning blob (the manager diffs it).
         m_manager.setViewSettings(frame.viewSettings);
         // Interaction LOD is a separate runtime state (not part of the diffed
         // settings blob).  The manager forwards it to the raster backend and is
         // idempotent, so applying it every frame is cheap.
         m_manager.setInteractionLod(frame.interactionLod ? TRUE : FALSE);
-        if (Base::envFlagEnabled("FC_VULKAN_BACKEND_DEBUG")) {
+        if (std::getenv("FC_VULKAN_BACKEND_DEBUG") != nullptr) {
             static int syncLog = 0;
             if (syncLog++ < 3) {
                 Base::Console().message(
@@ -713,7 +689,6 @@ private:
     mutable QMutex m_stateMutex;
     SoVulkanRenderManager m_manager;
     SoVulkanRenderTarget m_target;
-    Detail::VulkanFrameDumper m_dumper;
 };
 
 /*!
@@ -871,7 +846,7 @@ QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent)
     // file to poll (see pollInjectFile()).  Compiled out of release builds
     // unless FREECAD_USE_VULKAN_DEBUG_HOOKS is set.
 #ifdef FREECAD_VULKAN_DEBUG_HOOKS
-    if (const char * injectPath = Base::envString("FC_VULKAN_INJECT_PY")) {
+    if (const char * injectPath = std::getenv("FC_VULKAN_INJECT_PY")) {
         d->injectPath = injectPath;
         injectTimer = new QTimer(this);
         injectTimer->setInterval(10);
@@ -910,7 +885,7 @@ static QVulkanInstance * ensureSharedVulkanInstanceLocked()
         g_sharedVulkanInstance.instance->setApiVersion(QVersionNumber(1, 2, 0));
         // The validation layer is opt-in (FC_VULKAN_VALIDATION): it costs
         // real CPU per draw and must not ship enabled by default.
-        if (Base::envFlagEnabled("FC_VULKAN_VALIDATION")) {
+        if (std::getenv("FC_VULKAN_VALIDATION") != nullptr) {
             g_sharedVulkanInstance.instance->setLayers(
                 {QByteArrayLiteral("VK_LAYER_KHRONOS_validation")});
         }
@@ -1160,7 +1135,7 @@ void QuarterVulkanWidget::configureDeviceFeatures()
     // only requested when FC_VULKAN_DEBUG_PRINTF is set, since it changes the
     // SPIR-V the shaders must have been compiled with.
     if (d->vulkanWindow->debugPrintfAvailable
-        && Base::envFlagEnabled("FC_VULKAN_DEBUG_PRINTF")) {
+        && std::getenv("FC_VULKAN_DEBUG_PRINTF") != nullptr) {
         deviceExt << QByteArrayLiteral("VK_EXT_debug_printf")
                   << QByteArrayLiteral("VK_KHR_shader_non_semantic_info");
     }
@@ -1306,10 +1281,6 @@ void QuarterVulkanWidget::setBackgroundGradient(bool enabled,
                                                 const SbColor4f & topColor,
                                                 const SbColor4f & bottomColor)
 {
-    VK_BREADCRUMB("[VK-TRACE] QuarterVulkanWidget::setBackgroundGradient "
-                  "enabled=%d top=(%.3f,%.3f,%.3f) bottom=(%.3f,%.3f,%.3f)\n",
-                  enabled ? 1 : 0, topColor[0], topColor[1], topColor[2],
-                  bottomColor[0], bottomColor[1], bottomColor[2]);
     d->renderer->setBackgroundGradient(enabled, topColor, bottomColor);
     redraw();
 }
@@ -1437,23 +1408,6 @@ bool QuarterVulkanWidget::eventFilter(QObject * watched, QEvent * event)
     // hidden GL viewer that owns FreeCAD's gesture/tablet devices).
     if (!d->rawEventTarget) {
         return QWidget::eventFilter(watched, event);
-    }
-
-    if (event->type() == QEvent::MouseMove
-        || event->type() == QEvent::MouseButtonPress
-        || event->type() == QEvent::MouseButtonRelease) {
-        const auto* me = static_cast<const QMouseEvent*>(event);
-        const QWidget* container = d->container;
-        VK_BREADCRUMB_SAMPLED(32, "[VK-TRACE] eventFilter watched=%s type=%d pos=(%.1f,%.1f) "
-                      "global=(%.1f,%.1f) | container rect=(%d,%d %dx%d) dpr=%.2f\n",
-                      watched == d->container ? "container"
-                      : (watched == static_cast<QObject*>(d->window) ? "window"
-                                                                     : "other"),
-                      static_cast<int>(event->type()),
-                      me->position().x(), me->position().y(),
-                      me->globalPosition().x(), me->globalPosition().y(),
-                      container->x(), container->y(), container->width(),
-                      container->height(), container->devicePixelRatioF());
     }
 
     switch (event->type()) {

@@ -44,8 +44,6 @@
 #include <QWidget>
 #include <Inventor/events/SoEvents.h>
 
-#include <Base/VulkanBreadcrumbs.h>
-
 #include "devices/InputDevice.h"
 
 

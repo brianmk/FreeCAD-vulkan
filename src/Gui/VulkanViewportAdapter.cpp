@@ -4,14 +4,14 @@
 
 #include "VulkanViewportAdapter.h"
 
+#ifdef FREECAD_USE_VULKAN
 #include "Quarter/QuarterVulkanWidget.h"
+#endif
 #include "Quarter/QuarterWidget.h"
 #include "Application.h"
 #include "InteractionController.h"
 #include "View3DInventor.h"
 #include "View3DInventorViewer.h"
-
-#include <Base/VulkanBreadcrumbs.h>
 
 #include <Inventor/SbColor.h>
 #include <Inventor/SbColor4f.h>
@@ -26,8 +26,10 @@
 #include <Inventor/nodes/SoPointLight.h>
 #include <Inventor/nodes/SoSpotLight.h>
 #include <Inventor/SoRenderManager.h>
+#ifdef FREECAD_USE_VULKAN
 #include <Inventor/rendering/SoRenderIR.h>
 #include <Inventor/rendering/SoVulkanViewSettings.h>
+#endif
 #include <Inventor/sensors/SoNodeSensor.h>
 #include <Inventor/sensors/SoSensor.h>
 
@@ -40,6 +42,7 @@
 #include <QWidget>
 
 #include <cmath>
+#include <cstdlib>
 
 #ifdef FREECAD_USE_VULKAN
 #include <vulkan/vulkan.h>
@@ -84,7 +87,6 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
     // idempotent and its change signal has no listeners yet).
     _viewer->applyVulkanSettings();
     stack->addWidget(_vulkanViewer);
-    VK_BREADCRUMB("[VK-TRACE] View3DInventor: QuarterVulkanWidget created\n");
     syncViewer();
     // The viewer replaces its camera node whenever the projection type
     // changes (menu toggle, Python setCameraType, camera restore on
@@ -368,7 +370,7 @@ void VulkanViewportAdapter::pushSettings()
     vs.wireframeOverlay = effEdgeOverlay;
     vs.edgeColor = settings.edgeColor;
 
-    if (Base::envFlagEnabled("FC_VULKAN_BACKEND_DEBUG")) {
+    if (std::getenv("FC_VULKAN_BACKEND_DEBUG") != nullptr) {
         Base::Console().message(
             "[VK-SET] pushSettings edgeOverlay={} points={} "
             "edgeColor=({:.2f},{:.2f},{:.2f},{:.2f}) "
@@ -462,7 +464,7 @@ VulkanViewportAdapter::pushSceneLights()
         lighting.lights.push_back(SoRenderIR::lightToWorld(l, eyeToWorld));
     }
 
-    if (Base::envFlagEnabled("FC_LIGHT_TRACE")) {
+    if (std::getenv("FC_LIGHT_TRACE") != nullptr) {
         static int _n = 0;
         if (_n++ < 400) {
             SoCamera* cam = rm ? rm->getCamera() : nullptr;
@@ -516,7 +518,7 @@ void VulkanViewportAdapter::sceneChangedCB(void* data, SoSensor* /*sensor*/)
 
 void VulkanViewportAdapter::cameraChangedCB(void* data, SoSensor* /*sensor*/)
 {
-    if (Base::envFlagEnabled("FC_LIGHT_TRACE")) {
+    if (std::getenv("FC_LIGHT_TRACE") != nullptr) {
         static int _n = 0;
         if (_n++ < 400) {
             fprintf(stderr, "[LTRACE] cameraChangedCB n=%d\n", _n);
@@ -680,16 +682,6 @@ void VulkanViewportAdapter::applySurfaceViewportToGL(const QSize& surfaceSize)
     const qreal dpr = glWidget->devicePixelRatioF();
     const int pw = qMax(1, qRound(logical.width() * dpr));
     const int ph = qMax(1, qRound(logical.height() * dpr));
-    const SbVec2s glSize =
-        _viewer->getSoRenderManager()->getViewportRegion().getViewportSizePixels();
-    VK_BREADCRUMB("[VK-TRACE] surfaceSizeChanged surface=%dx%d "
-                  "container=%dx%d logical=%dx%d glViewport(before)=%dx%d "
-                  "glWidgetSize=%dx%d dpr=%.3f\n",
-                  surfaceSize.width(), surfaceSize.height(),
-                  container->width(), container->height(),
-                  logical.width(), logical.height(),
-                  glSize[0], glSize[1],
-                  glWidget->width(), glWidget->height(), dpr);
 
     // Event positions reach the hidden GL viewer already scaled to device
     // pixels: EventFilter::trackPointerPosition() runs

@@ -52,7 +52,6 @@
 #include <Inventor/errors/SoDebugError.h>
 #include <Inventor/events/SoEvents.h>
 
-#include <Base/VulkanBreadcrumbs.h>
 #include "devices/Mouse.h"
 
 
@@ -162,11 +161,6 @@ MouseP::resizeEvent(QResizeEvent * event)
 {
   this->windowsize = SbVec2s(event->size().width(),
                              event->size().height());
-  VK_BREADCRUMB(
-          "[VK-TRACE] MouseP::resizeEvent widget=%dx%d event=%dx%d -> windowsize=%d,%d\n",
-          publ->host->inputSize().width(), publ->host->inputSize().height(),
-          event->size().width(), event->size().height(),
-          this->windowsize[0], this->windowsize[1]);
 }
 
 const SoEvent *

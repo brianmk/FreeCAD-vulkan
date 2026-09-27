@@ -11,7 +11,6 @@
 	path = src/3rdParty/coin
 	url = https://github.com/brianmk/coin.git
 	branch = coin-Integrate
-	branch = freecad-master
 [submodule "src/3rdParty/pivy"]
 	path = src/3rdParty/pivy
 	url = https://github.com/FreeCAD/pivy.git

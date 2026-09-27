@@ -31,6 +31,7 @@
 
 
 using namespace Gui;
+namespace sc = boost::statechart;
 using NS = NavigationStateChart;
 
 NS::Event::Event()

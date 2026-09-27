@@ -25,8 +25,6 @@
 #include "NavigationAnimation.h"
 #include <Inventor/nodes/SoCamera.h>
 
-#include <cstdio>
-#include <cstdlib>
 #include <numbers>
 
 using namespace Gui;
@@ -122,7 +120,6 @@ void FixedTimeAnimation::update(const QVariant& value)
 
     prevAngle = angle;
     prevTranslation = translation;
-
 }
 
 /**

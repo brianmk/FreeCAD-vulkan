@@ -22,7 +22,6 @@
  ******************************************************************************/
 
 #include <FCConfig.h>
-#include <Base/VulkanBreadcrumbs.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -281,19 +280,11 @@ void SoBrepEdgeSet::IRRender(SoIRRenderAction* action)
 {
     auto state = action->getState();
     selCounter.checkRenderCache(state);
-    VK_BREADCRUMB_LIMITED(30, "[VK-TRACE] SoBrepEdgeSet::IRRender this=%p\n", this);
 
     SelContextPtr ctx2;
     SelContextPtr ctx =
         Gui::SoFCSelectionRoot::getRenderContext<SelContext>(this, selContext, ctx2);
     copyIRRenderContexts(ctx, ctx2);
-    VK_BREADCRUMB_LIMITED(30,
-                          "[VK-TRACE] SoBrepEdgeSet::IRRender ctx=%p hlIdx=%d selIdx=%zu "
-                          "ctx2=%p ctx2selIdx=%zu ctx2colors=%zu\n",
-                          ctx.get(), ctx ? ctx->highlightIndex : -2,
-                          ctx ? ctx->selectionIndex.size() : (size_t)-1,
-                          ctx2.get(), ctx2 ? ctx2->selectionIndex.size() : (size_t)-1,
-                          ctx2 ? ctx2->colors.size() : (size_t)-1);
     // Parity with GLRender(): an existing-but-empty secondary context
     // inhibits drawing of the base geometry in partial-render scenarios.
     if (ctx2 && ctx2->selectionIndex.empty() && ctx2->colors.empty()) {
@@ -575,11 +566,6 @@ void SoBrepEdgeSet::doAction(SoAction* action)
     if (action->getTypeId() == Gui::SoHighlightElementAction::getClassTypeId()) {
         Gui::SoHighlightElementAction* hlaction = static_cast<Gui::SoHighlightElementAction*>(action);
         selCounter.checkAction(hlaction);
-        VK_BREADCRUMB_LIMITED(30,
-                              "[VK-TRACE] SoBrepEdgeSet::doAction HL this=%p "
-                              "highlighted=%d detail=%p\n",
-                              this, hlaction->isHighlighted() ? 1 : 0,
-                              (const void*)hlaction->getElement());
         if (!hlaction->isHighlighted()) {
             SelContextPtr ctx
                 = Gui::SoFCSelectionRoot::getActionContext(action, this, selContext, false);

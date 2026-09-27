@@ -24,7 +24,6 @@
 #include <string>
 #include <cstring>
 
-#include <Base/VulkanBreadcrumbs.h>
 #include <QApplication>
 #include <QKeyEvent>
 #include <QEvent>
@@ -152,10 +151,6 @@ View3DInventor::View3DInventor(
     applySettings();
 
 #ifdef FREECAD_USE_VULKAN
-    VK_BREADCRUMB("[VK-TRACE] View3DInventor: UseVulkanRenderer=%d\n",
-                  App::GetApplication()
-                          .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
-                          ->GetBool("UseVulkanRenderer", false) ? 1 : 0);
     if (_viewer && App::GetApplication()
                            .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
                            ->GetBool("UseVulkanRenderer", false)) {

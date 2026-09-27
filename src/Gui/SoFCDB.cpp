@@ -60,7 +60,9 @@
 #include "Navigation/NavigationStyle.h"
 #include "Navigation/SiemensNXNavigationStyle.h"
 #include "SelectionObject.h"
+#ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/elements/SoDevicePixelRatioElement.h>
+#endif
 #include "SoFCColorBar.h"
 #include "SoFCInteractiveElement.h"
 #include "SoFCSelection.h"
@@ -105,12 +107,14 @@ SbBool Gui::SoFCDB::isInitialized()
 void Gui::SoFCDB::init()
 {
     SoInteraction::init();
+#ifdef HAVE_COIN_IR_RENDER_ACTION
     // The bundled Coin registers SoDevicePixelRatioElement itself in
     // SoElement::initClasses(); registering it again trips Coin's
     // initClass() assertion / corrupts the element list.
     if (SoDevicePixelRatioElement::getClassTypeId().isBad()) {
         SoDevicePixelRatioElement::initClass();
     }
+#endif
     SoGLRenderActionElement::initClass();
     SoFCInteractiveElement::initClass();
     SoGLWidgetElement::initClass();
