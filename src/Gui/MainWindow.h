@@ -388,6 +388,25 @@ private Q_SLOTS:
      * Activates the associated tab to this widget.
      */
     void onWindowActivated(QMdiSubWindow*);
+#ifdef FREECAD_USE_VULKAN
+    /**
+     * Applies the status-bar view rendering mode combo to the active 3D view.
+     */
+    void onViewModeComboChanged(int index);
+    /**
+     * Re-synchronises the status-bar view mode combo to the active view's mode.
+     */
+    void syncViewModeCombo();
+    /**
+     * Applies the status-bar wireframe-overlay toggle to the active 3D view.
+     */
+    void onWireframeToggled(bool checked);
+    /**
+     * Re-synchronises the status-bar wireframe button to the active view's
+     * current wireframe state.
+     */
+    void syncWireframeButton();
+#endif
     /**
      * Close tab at position index.
      */

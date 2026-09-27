@@ -81,6 +81,7 @@
 #include <Base/CrashReporter/Writer.h>
 #include <Base/ConsoleObserver.h>
 #include <Base/ServiceProvider.h>
+#include <Base/VulkanBreadcrumbs.h>
 #include <Base/CoordinateSystemPy.h>
 #include <Base/Exception.h>
 #include <Base/ExceptionFactory.h>
@@ -2424,6 +2425,7 @@ void parseProgramOptions(int ac, char ** av, const std::string& exe, boost::prog
     ("get-config", boost::program_options::value<std::string>(), "Prints the value of the requested configuration key")
     ("set-config", boost::program_options::value< std::vector<std::string> >()->multitoken(), "Sets the value of a configuration key")
     ("keep-deprecated-paths", "If set then config files are kept on the old location")
+    ("enable-vulkan", "Force enable the Vulkan renderer for 3D views (only when built with FREECAD_USE_VULKAN)")
     ;
 
     // Declare a group of options that will be
@@ -2698,6 +2700,11 @@ void processProgramOptions(const boost::program_options::variables_map& vm, std:
 
     if (vm.contains("single-instance")) {
         mConfig["SingleInstance"] = "1";
+    }
+
+    if (vm.contains("enable-vulkan")) {
+        VK_BREADCRUMB("[VK-TRACE] Application: --enable-vulkan -> UseVulkanRenderer=1\n");
+        mConfig["UseVulkanRenderer"] = "1";
     }
 
     if (vm.contains("dump-config")) {

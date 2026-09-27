@@ -36,6 +36,9 @@
 #include "SoFCSelectionAction.h"
 #include "View3DSettings.h"
 #include "View3DInventorViewer.h"
+#ifdef FREECAD_USE_VULKAN
+# include "VulkanViewSettings.h"
+#endif
 
 #include <Base/Tools.h>
 
@@ -122,10 +125,29 @@ void View3DSettings::applySettings()
     OnChange(*lightSourcesGrp, "FillLightIntensity");
     OnChange(*lightSourcesGrp, "AmbientLightColor");
     OnChange(*lightSourcesGrp, "AmbientLightIntensity");
+
+#ifdef FREECAD_USE_VULKAN
+    // The Vulkan display prefs are routed by a "Vulkan*" prefix rule rather
+    // than enumerated above; one representative kick loads the whole Vulkan
+    // preference set via applyVulkanSettings().
+    OnChange(*hGrp, "VulkanRenderMode");
+#endif
 }
 
 void View3DSettings::OnChange(ParameterGrp::SubjectType& rCaller, ParameterGrp::MessageType Reason)
 {
+#ifdef FREECAD_USE_VULKAN
+    // Vulkan display prefs are a single "Vulkan*" prefix rule: reload the whole
+    // Vulkan preference set on any of them (isDisplayPref() excludes the
+    // backend-choice key UseVulkanRenderer).
+    if (VulkanViewSettings::isDisplayPref(Reason)) {
+        for (auto _viewer : _viewers) {
+            _viewer->applyVulkanSettings();
+        }
+        return;
+    }
+#endif
+
     const ParameterGrp& rGrp = static_cast<ParameterGrp&>(rCaller);
     if (strcmp(Reason, "EnableHeadlight") == 0) {
         bool enable = rGrp.GetBool("EnableHeadlight", true);

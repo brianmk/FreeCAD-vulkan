@@ -19,10 +19,6 @@
 #include <Base/Console.h>
 #include <Base/FileInfo.h>
 
-#include <algorithm>
-#include <cmath>
-#include <cstring>
-
 namespace SIM {
 namespace Coin3D {
 namespace Quarter {
@@ -39,11 +35,11 @@ namespace Detail {
 //! The dump window is controlled with FC_VULKAN_DUMP_START /
 //! FC_VULKAN_DUMP_END (defaults 240-245).
 //!
-//! Swapchain-side counterpart of Coin's SoVulkanShared::dumpImageToHost()
-//! (which the RT storage-image dump uses).  They share the staging-buffer +
-//! copy + map + write shape and differ only in command-buffer ownership: this
-//! one records into the frame's own command buffer (no submit/wait, to avoid
-//! stalling the pipeline), while the Coin helper owns a one-shot submit.
+//! Swapchain-side counterpart of Coin's SoVulkanShared::dumpImageToHost().
+//! They share the staging-buffer + copy + map + write shape and differ only in
+//! command-buffer ownership: this one records into the frame's own command
+//! buffer (no submit/wait, to avoid stalling the pipeline), while the Coin
+//! helper owns a one-shot submit.
 #ifdef FREECAD_VULKAN_DEBUG_HOOKS
 class VulkanFrameDumper
 {
@@ -83,13 +79,6 @@ public:
             case VK_FORMAT_R8G8B8A8_UNORM:
                 m_qimageFormat = QImage::Format_RGBA8888;
                 m_bytesPerPixel = 4;
-                break;
-            case VK_FORMAT_R16G16B16A16_SFLOAT:
-                // The HDR (scRGB) swapchain: 4 half-floats, linear light.
-                // saveFrame() converts it to an sRGB-encoded 8-bit image so the
-                // dump is viewable and directly comparable with the SDR one.
-                m_halfFloat = true;
-                m_bytesPerPixel = 8;
                 break;
             default:
                 Base::Console().warning("[Vulkan] frame dump: unsupported "
@@ -227,30 +216,11 @@ public:
                               VK_WHOLE_SIZE, 0, &data) != VK_SUCCESS) {
             return;
         }
-        QImage img;
-        if (m_halfFloat) {
-            // FP16 scRGB: linear light.  Encode to sRGB for a viewable 8-bit
-            // PNG so the HDR frame can be compared against the SDR dump.
-            img = QImage(m_size, QImage::Format_ARGB32);
-            const auto * src = static_cast<const quint16 *>(data);
-            for (int y = 0; y < m_size.height(); ++y) {
-                auto * line = reinterpret_cast<QRgb *>(img.scanLine(y));
-                for (int x = 0; x < m_size.width(); ++x) {
-                    const quint16 * p = src
-                        + (static_cast<size_t>(y) * m_size.width() + x) * 4;
-                    line[x] = qRgba(linearToSrgb8(halfToFloat(p[0])),
-                                    linearToSrgb8(halfToFloat(p[1])),
-                                    linearToSrgb8(halfToFloat(p[2])), 255);
-                }
-            }
-        }
-        else {
-            img = QImage(static_cast<const uchar *>(data),
-                         m_size.width(), m_size.height(),
-                         static_cast<qsizetype>(m_size.width())
-                             * m_bytesPerPixel,
-                         m_qimageFormat);
-        }
+        QImage img = QImage(static_cast<const uchar *>(data),
+                            m_size.width(), m_size.height(),
+                            static_cast<qsizetype>(m_size.width())
+                                * m_bytesPerPixel,
+                            m_qimageFormat);
         // Use the OS temp dir (Base::FileInfo::getTempPath) rather than a
         // hardcoded /tmp so dumps land somewhere writeable on Windows/macOS.
         const QString path =
@@ -274,48 +244,6 @@ public:
     }
 
 private:
-    // IEEE 754 binary16 -> binary32.
-    static float halfToFloat(quint16 h)
-    {
-        const quint32 sign = static_cast<quint32>(h & 0x8000u) << 16;
-        quint32 exp = (h >> 10) & 0x1fu;
-        quint32 mant = h & 0x3ffu;
-        quint32 bits;
-        if (exp == 0) {
-            if (mant == 0) {
-                bits = sign;
-            }
-            else {
-                exp = 127 - 15 + 1;
-                while ((mant & 0x400u) == 0) {
-                    mant <<= 1;
-                    --exp;
-                }
-                mant &= 0x3ffu;
-                bits = sign | (exp << 23) | (mant << 13);
-            }
-        }
-        else if (exp == 31) {
-            bits = sign | 0x7f800000u | (mant << 13);
-        }
-        else {
-            bits = sign | ((exp - 15 + 127) << 23) | (mant << 13);
-        }
-        float out;
-        std::memcpy(&out, &bits, sizeof(out));
-        return out;
-    }
-
-    // Linear scRGB -> 8-bit sRGB (clamped).
-    static uchar linearToSrgb8(float v)
-    {
-        v = std::clamp(v, 0.0f, 1.0f);
-        const float s = v <= 0.0031308f
-            ? v * 12.92f
-            : 1.055f * std::pow(v, 1.0f / 2.4f) - 0.055f;
-        return static_cast<uchar>(std::lround(s * 255.0f));
-    }
-
     // Returns UINT32_MAX when no memory type matches, so callers can fail
     // with a diagnostic instead of silently falling back to type 0.  The
     // device memory properties are queried once and cached (they cannot change
@@ -348,7 +276,6 @@ private:
     VkDeviceMemory m_memory = VK_NULL_HANDLE;
     QSize m_size;
     int m_bytesPerPixel = 0;
-    bool m_halfFloat = false;
     QImage::Format m_qimageFormat = QImage::Format_ARGB32;
     int m_dumpCount = 0;
     int m_frameCount = 0;

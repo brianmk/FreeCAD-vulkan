@@ -77,6 +77,12 @@ public:
     Py::Object dumpNode(const Py::Tuple&);
     Py::Object saveImage(const Py::Tuple&);
     Py::Object saveVectorGraphic(const Py::Tuple&);
+#ifdef FREECAD_USE_VULKAN
+    Py::Object setRenderMode(const Py::Tuple&);
+    Py::Object getRenderMode();
+#endif
+    Py::Object getVulkanFrameCount();
+    Py::Object requestVulkanRender();
     Py::Object getCamera();
     Py::Object getViewDirection();
     Py::Object getUpDirection();

@@ -130,6 +130,38 @@ void View3DInventorPy::init_type()
     add_varargs_method("dumpNode", &View3DInventorPy::dumpNode, "dumpNode(node)");
     add_varargs_method("saveImage", &View3DInventorPy::saveImage, "saveImage()");
     add_varargs_method("saveVectorGraphic", &View3DInventorPy::saveVectorGraphic, "saveVectorGraphic()");
+#ifdef FREECAD_USE_VULKAN
+    add_varargs_method(
+        "setRenderMode",
+        &View3DInventorPy::setRenderMode,
+        "setRenderMode(mode): set the view's render mode: 0 = Interactive "
+        "(raster Coin), 1 = Interactive (raster Vulkan), 2 = Wireframe.  "
+        "No-op for Vulkan modes when the view has no Vulkan adapter "
+        "(UseVulkanRenderer preference off)."
+    );
+    add_noargs_method(
+        "getRenderMode",
+        &View3DInventorPy::getRenderMode,
+        "getRenderMode() -> int: the view's current render mode (see "
+        "setRenderMode)"
+    );
+#endif
+    add_noargs_method(
+        "getVulkanFrameCount",
+        &View3DInventorPy::getVulkanFrameCount,
+        "getVulkanFrameCount() -> int: ordinal of the Vulkan viewport's last "
+        "presented frame (0 when no Vulkan viewport).  The same ordinal "
+        "appears in the frame dump file names, so probe phase markers can "
+        "correlate on one key."
+    );
+    add_noargs_method(
+        "requestVulkanRender",
+        &View3DInventorPy::requestVulkanRender,
+        "requestVulkanRender(): force a single Vulkan frame even when the "
+        "viewport is converged-idle.  Scripted probes call this after a "
+        "scene/camera edit so the harness's doc.recompute()/updateGui() "
+        "(which bypasses Application::onUpdate) still produces a render."
+    );
     add_noargs_method("getCamera", &View3DInventorPy::getCamera, "getCamera()");
     add_noargs_method("getCameraNode", &View3DInventorPy::getCameraNode, "getCameraNode()");
     add_noargs_method(
@@ -1334,6 +1366,36 @@ Py::Object View3DInventorPy::dump(const Py::Tuple& args)
     catch (...) {
         throw Py::RuntimeError("Unknown C++ exception");
     }
+}
+
+#ifdef FREECAD_USE_VULKAN
+Py::Object View3DInventorPy::setRenderMode(const Py::Tuple& args)
+{
+    int mode = -1;
+    if (!PyArg_ParseTuple(args.ptr(), "i", &mode)) {
+        throw Py::Exception();
+    }
+    getView3DInventorPtr()->setRenderMode(static_cast<ViewRenderMode>(mode));
+    return Py::None();
+}
+
+Py::Object View3DInventorPy::getRenderMode()
+{
+    return Py::Long(static_cast<long>(
+        static_cast<int>(getView3DInventorPtr()->getRenderMode())));
+}
+#endif
+
+Py::Object View3DInventorPy::getVulkanFrameCount()
+{
+    return Py::Long(static_cast<unsigned long>(
+        getView3DInventorPtr()->getVulkanFrameCount()));
+}
+
+Py::Object View3DInventorPy::requestVulkanRender()
+{
+    getView3DInventorPtr()->requestVulkanRender();
+    return Py::None();
 }
 
 Py::Object View3DInventorPy::dumpNode(const Py::Tuple& args)

@@ -600,7 +600,30 @@ the widget is located within, and updated whenever any change occurs, emitting a
 qreal
 QuarterWidget::devicePixelRatio() const
 {
+  // Live ratio only for the Vulkan-driven (device-pixel viewport) widget --
+  // i.e. the hidden GL viewer that navigates off the Vulkan surface.  For the
+  // classic GL widget the render-manager viewport region is kept LOGICAL (the
+  // visible widget's own size) and the event position must stay in that same
+  // logical space, so return the cached snapshot that upstream used (no live
+  // ratio -> no 1/dpr drift).  Live ratio via QWidget's implementation rather
+  // than devicePixelRatioF(): that helper forwards to the virtual
+  // devicePixelRatio(), recursing back into this override.
+  if (this->_vulkanDevicePixels) {
+    return this->QWidget::devicePixelRatio();
+  }
   return PRIVATE(this)->device_pixel_ratio;
+}
+
+QSize
+QuarterWidget::inputSize() const
+{
+  return QSize(this->width(), this->height());
+}
+
+SbVec2s
+QuarterWidget::inputWindowSize() const
+{
+  return effectiveWindowSize(this);
 }
 
 /*!
@@ -626,6 +649,23 @@ QuarterWidget::setSceneGraph(SoNode * node)
     PRIVATE(this)->scene = node;
     PRIVATE(this)->scene->ref();
 
+    // The viewer headlight is the one lighting the whole view (and, in the
+    // retained path, the path tracer). It is a VIEWER-owned node, deliberately
+    // placed ABOVE the document content so any backend that traverses this
+    // superscene gets it. Lights are scene-graph data: the renderer must never
+    // synthesize or inject a light here, and a document that carries its own
+    // SoLight nodes must render with only those. Only this single headlight is
+    // implicitly "global" to the view.
+    //
+    // NOTE (Vulkan/RT): the RT backend currently receives `rm->getSceneGraph()`,
+    // which is this superscene, so the headlight is present. But its `on`
+    // field is driven by the "EnableHeadlight" preference (read from the
+    // "LightSources"/View group, see View3DSettings::OnChange). A stored value
+    // of 0 leaves the scene with zero lights and the path tracer renders faces
+    // at ambient-only (near-black). That is faithful to the lighting, not a
+    // bug, but easy to misread as "black material". If we want a neutral,
+    // non-black fill when a scene has no lights at all, that is a separate
+    // decision (a light-count==0 fallback), NOT an injected headlight.
     superscene = new SoSeparator;
     superscene->addChild(PRIVATE(this)->headlight);
 
@@ -639,10 +679,16 @@ QuarterWidget::setSceneGraph(SoNode * node)
     superscene->addChild(node);
   }
 
-  PRIVATE(this)->soeventmanager->setCamera(camera);
-  PRIVATE(this)->sorendermanager->setCamera(camera);
-  PRIVATE(this)->soeventmanager->setSceneGraph(superscene);
-  PRIVATE(this)->sorendermanager->setSceneGraph(superscene);
+  // The event manager can be externally owned (InteractionController) and
+  // detached before the widget is destroyed, so guard against a null manager.
+  if (PRIVATE(this)->soeventmanager) {
+    PRIVATE(this)->soeventmanager->setCamera(camera);
+    PRIVATE(this)->soeventmanager->setSceneGraph(superscene);
+  }
+  if (PRIVATE(this)->sorendermanager) {
+    PRIVATE(this)->sorendermanager->setCamera(camera);
+    PRIVATE(this)->sorendermanager->setSceneGraph(superscene);
+  }
 
   if (viewall) { this->viewAll(); }
   if (superscene) { superscene->touch(); }

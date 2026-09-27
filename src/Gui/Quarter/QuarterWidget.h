@@ -40,6 +40,7 @@
 #include <QUrl>
 
 #include "Basic.h"
+#include "InputDeviceHost.h"
 
 class QOpenGLContext;
 class QOpenGLWidget;
@@ -59,7 +60,7 @@ namespace SIM { namespace Coin3D { namespace Quarter {
 class EventFilter;
 const char DEFAULT_NAVIGATIONFILE []  = "coin:///scxml/navigation/examiner.xml";
 
-class QUARTER_DLL_API QuarterWidget : public QGraphicsView {
+class QUARTER_DLL_API QuarterWidget : public QGraphicsView, public InputDeviceHost {
   typedef QGraphicsView inherited;
   Q_OBJECT
 
@@ -128,7 +129,7 @@ public:
   void setBackgroundColor(const QColor & color);
   QColor backgroundColor() const;
 
-  qreal devicePixelRatio() const;
+  qreal devicePixelRatio() const override;
 
   void resetNavigationModeFile();
   void setNavigationModeFile(const QUrl & url = QUrl(QString::fromLatin1(DEFAULT_NAVIGATIONFILE)));
@@ -177,7 +178,7 @@ public:
   void addStateMachine(SoScXMLStateMachine * statemachine);
   void removeStateMachine(SoScXMLStateMachine * statemachine);
 
-  virtual bool processSoEvent(const SoEvent * event);
+  bool processSoEvent(const SoEvent * event) override;
   QSize minimumSizeHint() const override;
 
   QList<QAction *> transparencyTypeActions() const;
@@ -212,6 +213,53 @@ private:
   friend class QuarterWidgetP;
   class QuarterWidgetP * pimpl;
   bool initialized;
+
+public:
+  //! True when this widget's render-manager viewport region is in DEVICE
+  //! pixels, pinned to a Vulkan surface (the hidden GL viewer driving picking).
+  //! Classic GL mode keeps a logical region and the widget's own size; the
+  //! event/DPR handling only uses the live ratio + region normalization in the
+  //! Vulkan case, so GL picking stays in logical space (no 1/dpr drift).
+  void setVulkanDevicePixels(bool on) { _vulkanDevicePixels = on; }
+  bool vulkanDevicePixels() const override { return _vulkanDevicePixels; }
+
+  //! InputDeviceHost: the widget's own logical size.
+  QSize inputSize() const override;
+  //! InputDeviceHost: logical size cursor positions are normalized against.
+  SbVec2s inputWindowSize() const override;
+
+private:
+  bool _vulkanDevicePixels = false;
 };
+
+/*!
+  The Quarter widget's own size is unreliable while the widget is hidden
+  (it can report garbage device sizes or never receive resize events), which
+  corrupts the SoEvent position used by FreeCAD's navigation.  The render
+  manager viewport is kept correct by the Vulkan viewer integration, so use
+  it as the source of truth when converting Qt positions to Coin
+  device-pixel coordinates.
+*/
+inline SbVec2s effectiveWindowSize(const QuarterWidget * quarter)
+{
+  // Return the LOGICAL window size.  The render manager's viewport region is
+  // in DEVICE pixels (sized at the widget's devicePixelRatio, e.g. *1.25), but
+  // the cursor position toDevicePixelPosition() flips and multiplies against
+  // this size.  Using the physical viewport size there double-applies the ratio
+  // on the vertical axis and shifted hover/select picking by the DPI factor on
+  // a fractional-scaling display (125% Windows/Linux, 2.0 Retina).  Normalize
+  // back to logical by dividing the physical viewport size by the (live) ratio;
+  // this stays correct whether the widget itself tracks the container size
+  // (Coin mode) or its viewport region is pinned to the Vulkan surface (the
+  // hidden GL viewer).
+  if (SoRenderManager * rm = quarter->getSoRenderManager()) {
+    const SbVec2s & vpsize = rm->getViewportRegion().getViewportSizePixels();
+    if (vpsize[0] > 0 && vpsize[1] > 0) {
+      const qreal dpr = qMax(1.0, quarter->devicePixelRatio());
+      return SbVec2s(qRound(vpsize[0] / dpr), qRound(vpsize[1] / dpr));
+    }
+  }
+  return SbVec2s(quarter->width(), quarter->height());
+}
 
 }}} // namespace

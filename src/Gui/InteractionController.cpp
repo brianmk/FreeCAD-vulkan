@@ -103,9 +103,9 @@ bool InteractionController::processSoEvent(const SoEvent* ev)
     // Snapshot the camera pose before the event so a navigation/event that
     // rotates, pans or zooms (which mutates the shared camera node in place)
     // can be detected afterwards.  The display-only Vulkan widget owns no Coin
-    // sensors and, once the path tracer has converged, runs no continuous
-    // refine loop, so without this a camera move would never re-render:
-    // surfaceNotifyCameraMoved() lets the surface request one frame.
+    // sensors and runs no continuous refine loop, so without this a camera move
+    // would never re-render: surfaceNotifyCameraMoved() lets the surface
+    // request one frame.
     SoCamera* cam = getCamera();
     const SbVec3f camPosBefore = cam ? cam->position.getValue() : SbVec3f();
     const SbRotation camOriBefore = cam ? cam->orientation.getValue() : SbRotation();

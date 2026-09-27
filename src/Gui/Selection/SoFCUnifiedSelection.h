@@ -42,6 +42,7 @@
 class SoFullPath;
 class SoPickedPoint;
 class SoDetail;
+class SoIRRenderAction;
 class SbBox3f;
 class SbMatrix;
 
@@ -244,6 +245,10 @@ public:
     void GLRender(SoGLRenderAction* action) override;
     void GLRenderInPath(SoGLRenderAction* action) override;
 
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    void IRRender(SoIRRenderAction* action) override;
+#endif
+
     void getBoundingBox(SoGetBoundingBoxAction* action) override;
 
 protected:
@@ -304,6 +309,9 @@ public:
 
     void GLRenderBelowPath(SoGLRenderAction* action) override;
     void GLRenderInPath(SoGLRenderAction* action) override;
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    void IRRender(SoIRRenderAction* action) override;
+#endif
 
     void doAction(SoAction* action) override;
     void pick(SoPickAction* action) override;
@@ -471,6 +479,23 @@ public:
         const SbMatrix* mat = 0
     );
 
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    //! Retained/IR (Vulkan) equivalent of renderBBox(): records a line-mode
+    //! cube for the node's bounding box into the draw list.
+    static bool renderBBoxIR(
+        SoIRRenderAction* action,
+        SoNode* node,
+        const SbColor& color
+    );
+
+    static bool renderBBoxIR(
+        SoIRRenderAction* action,
+        SoNode* node,
+        const SbBox3f& bbox,
+        SbColor color
+    );
+#endif
+
     static void setupSelectionLineRendering(
         SoState* state,
         SoNode* node,
@@ -483,6 +508,10 @@ protected:
 
     void renderPrivate(SoGLRenderAction*, bool inPath);
     bool _renderPrivate(SoGLRenderAction*, bool inPath);
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    void renderPrivateIR(SoIRRenderAction*);
+    bool _renderPrivateIR(SoIRRenderAction*);
+#endif
 
     class Stack: public std::vector<SoNode*>
     {

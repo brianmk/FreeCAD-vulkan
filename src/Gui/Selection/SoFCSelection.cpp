@@ -22,11 +22,17 @@
  ***************************************************************************/
 
 
+#include <algorithm>
 #include <QString>
 #include <Inventor/SoFullPath.h>
 #include <Inventor/SoPickedPoint.h>
 #include <Inventor/actions/SoGLRenderAction.h>
 #include <Inventor/actions/SoHandleEventAction.h>
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+#include <Inventor/actions/SoIRRenderAction.h>
+#include <Inventor/rendering/SoRenderIR.h>
+#endif
+#include <Inventor/elements/SoViewportRegionElement.h>
 #include <Inventor/details/SoFaceDetail.h>
 #include <Inventor/details/SoLineDetail.h>
 #include <Inventor/elements/SoLazyElement.h>
@@ -647,6 +653,79 @@ void SoFCSelection::GLRenderInPath(SoGLRenderAction* action)
     }
 }
 
+// The Vulkan/IR path does not go through GLRender, so apply the same
+// selection/preselection color override before traversing the children with
+// the retained-render action.
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+void SoFCSelection::IRRender(SoIRRenderAction* action)
+{
+    SoState* state = action->getState();
+    SelContextPtr ctxOrig = Gui::SoFCSelectionRoot::getRenderContext<SelContext>(this, selContext);
+    const bool ownContext = (selContext == ctxOrig);
+    SelContextPtr ctx;
+    SelContextPtr ctx2;
+    if (useNewSelection.getValue()) {
+        ctx = ctxOrig;
+        ctx2 = selContext2
+            ? std::dynamic_pointer_cast<SelContext>(selContext2->copy())
+            : SelContextPtr();
+    }
+    else {
+        ctx = ctxOrig
+            ? std::dynamic_pointer_cast<SelContext>(ctxOrig->copy())
+            : SelContextPtr();
+        ctx2 = selContext2
+            ? std::dynamic_pointer_cast<SelContext>(selContext2->copy())
+            : SelContextPtr();
+    }
+    if (ctx2 && ctx2->checkGlobal(ctx)) {
+        ctx = ctx2;
+    }
+    if (!useNewSelection.getValue() && ownContext && ctx) {
+        ctx->selectionColor = this->colorSelection.getValue();
+        ctx->highlightColor = this->colorHighlight.getValue();
+        if (this->selected.getValue() == SELECTED) {
+            ctx->selectAll();
+        }
+        else {
+            ctx->selectionIndex.clear();
+        }
+        ctx->highlightIndex = this->highlighted ? 0 : -1;
+    }
+
+    if (this->setOverrideIR(action, ctx)) {
+        // A selection/preselection override is applied to the geometry the
+        // shape emits below (a recolor of the opaque command).  Promote the
+        // just-recorded geometry to the OVERLAY pass so the highlight is drawn
+        // as a separate layer on top without invalidating the cached base
+        // geometry.
+        SoDrawList& list = action->getMutableDrawList();
+        const int firstCommand = list.getNumCommands();
+        inherited::IRRender(action);
+        state->pop();
+        SoState* s = action->getState();
+        SbViewportRegion vp = SoViewportRegionElement::get(s);
+        const short vx = std::max(0, (int)vp.getViewportOriginPixels()[0]);
+        const short vy = std::max(0, (int)vp.getViewportOriginPixels()[1]);
+        const short vw = std::max(1, (int)vp.getViewportSizePixels()[0]);
+        const short vh = std::max(1, (int)vp.getViewportSizePixels()[1]);
+        const int count = list.getNumCommands();
+        for (int i = firstCommand; i < count; ++i) {
+            SoRenderCommand& cmd = list.getCommand(i);
+            cmd.pass = SO_RENDERPASS_OVERLAY;
+            cmd.state.raster.scissorEnabled = TRUE;
+            cmd.state.raster.scissorX = vx;
+            cmd.state.raster.scissorY = vy;
+            cmd.state.raster.scissorWidth = vw;
+            cmd.state.raster.scissorHeight = vh;
+        }
+    }
+    else {
+        inherited::IRRender(action);
+    }
+}
+#endif
+
 SbBool SoFCSelection::preRender(SoGLRenderAction* action, GLint& oldDepthFunc)
 //
 ////////////////////////////////////////////////////////////////////////
@@ -781,6 +860,66 @@ bool SoFCSelection::setOverride(SoGLRenderAction* action, SelContextPtr ctx)
     this->uniqueId = oldId;
     return true;
 }
+
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+// Retained/IR equivalent of setOverride(): apply the selection/preselection
+// color overrides to the traversal state without the GL-only bits (bounding
+// box rendering and depth-func handling).
+bool SoFCSelection::setOverrideIR(SoIRRenderAction* action, SelContextPtr ctx)
+{
+    bool preselected = false;
+    SbColor& color = this->overrideColor;
+    if (!getOverrideColor(ctx, preselected, color)) {
+        return false;
+    }
+
+    auto mystyle = static_cast<Styles>(this->style.getValue());
+    if (mystyle == SoFCSelection::BOX) {
+        if (ctx) {
+            SoFCSelectionRoot::renderBBoxIR(action, this, color);
+        }
+        return false;
+    }
+
+    SoState* state = action->getState();
+    state->push();
+
+    SoMaterialBindingElement::set(state, SoMaterialBindingElement::OVERALL);
+    SoOverrideElement::setMaterialBindingOverride(state, this, true);
+
+    if (ctx) {
+        SoLazyElement::setEmissive(state, &color);
+    }
+    SoOverrideElement::setEmissiveColorOverride(state, this, true);
+
+    if (SoLazyElement::getLightModel(state) == SoLazyElement::BASE_COLOR
+        || mystyle == SoFCSelection::EMISSIVE_DIFFUSE) {
+        if (ctx) {
+            SoLazyElement::setDiffuse(state, this, 1, &color, &colorpacker);
+        }
+        SoOverrideElement::setDiffuseColorOverride(state, this, true);
+    }
+
+    return true;
+}
+
+//! Shared decision logic for the GL and IR override paths: whether an
+//! override applies at all, whether it is a preselection (highlight) or a
+//! committed selection, and the color to use.
+bool SoFCSelection::getOverrideColor(SelContextPtr ctx, bool& preselected, SbColor& color) const
+{
+    auto mymode = static_cast<PreselectionModes>(this->preselectionMode.getValue());
+    preselected = ctx && ctx->isHighlighted() && (useNewSelection.getValue() || mymode == AUTO);
+    if (!preselected && mymode != ON && (!ctx || !ctx->isSelected())) {
+        return false;
+    }
+
+    if (ctx) {
+        color = preselected ? ctx->highlightColor : ctx->selectionColor;
+    }
+    return true;
+}
+#endif
 
 // private convenience method
 void SoFCSelection::turnoffcurrent(SoAction* action)

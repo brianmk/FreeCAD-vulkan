@@ -23,6 +23,7 @@
 
 #include <FCConfig.h>
 
+#include <algorithm>
 #include <Inventor/SoFullPath.h>
 #include <Inventor/SoPickedPoint.h>
 
@@ -32,6 +33,11 @@
 #include <Inventor/actions/SoGetPrimitiveCountAction.h>
 #include <Inventor/actions/SoGLRenderAction.h>
 #include <Inventor/actions/SoHandleEventAction.h>
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+#include <Inventor/actions/SoIRRenderAction.h>
+#include <Inventor/rendering/SoRenderIR.h>
+#endif
+#include <Inventor/elements/SoViewportRegionElement.h>
 #include <Inventor/actions/SoWriteAction.h>
 #include <Inventor/bundles/SoMaterialBundle.h>
 #include <Inventor/details/SoFaceDetail.h>
@@ -1721,6 +1727,115 @@ bool SoFCSelectionRoot::renderBBox(
     return true;
 }
 
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+bool SoFCSelectionRoot::renderBBoxIR(
+    SoIRRenderAction* action,
+    SoNode* node,
+    const SbColor& color
+)
+{
+    auto data = static_cast<SoFCBBoxRenderInfo*>(so_bbox_storage->get());
+    if (!data->bboxaction) {
+        data->bboxaction = new SoGetBoundingBoxAction(SbViewportRegion());
+    }
+
+    auto state = action->getState();
+    data->bboxaction->setViewportRegion(action->getViewportRegion());
+    SoSwitchElement::set(data->bboxaction->getState(), SoSwitchElement::get(state));
+
+    bool project = ViewParams::instance()->getRenderProjectedBBox();
+    if (project || !node->isOfType(SoGroup::getClassTypeId())) {
+        data->bboxaction->apply(node);
+    }
+    else {
+        SoTempPath resetPath(2);
+        resetPath.ref();
+        auto group = static_cast<SoGroup*>(node);
+        for (int i = 0, count = group->getNumChildren(); i < count; ++i) {
+            auto child = group->getChild(i);
+            if (child->isOfType(SoTransform::getClassTypeId())) {
+                resetPath.append(group);
+                resetPath.append(child);
+                data->bboxaction->setResetPath(&resetPath, false);
+                break;
+            }
+        }
+        data->bboxaction->apply(node);
+        data->bboxaction->setResetPath(0);
+        resetPath.unrefNoDelete();
+    }
+
+    SbXfBox3f xbbox = data->bboxaction->getXfBoundingBox();
+    if (xbbox.isEmpty()) {
+        return false;
+    }
+
+    if (project) {
+        xbbox.transform(SoModelMatrixElement::get(state));
+    }
+    return renderBBoxIR(action, node, xbbox.project(), color);
+}
+
+bool SoFCSelectionRoot::renderBBoxIR(
+    SoIRRenderAction* action,
+    SoNode* node,
+    const SbBox3f& bbox,
+    SbColor color
+)
+{
+    auto data = static_cast<SoFCBBoxRenderInfo*>(so_bbox_storage->get());
+    if (data->cube == nullptr) {
+        data->cube = new SoCube;
+        data->cube->ref();
+    }
+
+    SoState* state = action->getState();
+    state->push();
+
+    if (ViewParams::instance()->getRenderProjectedBBox()) {
+        SoModelMatrixElement::makeIdentity(state, node);
+    }
+    else if (node->isOfType(SoGroup::getClassTypeId())) {
+        auto group = static_cast<SoGroup*>(node);
+        for (int i = 0, count = group->getNumChildren(); i < count; ++i) {
+            auto child = group->getChild(i);
+            if (child->isOfType(SoTransform::getClassTypeId())) {
+                SbMatrix matrix;
+                auto transform = static_cast<SoTransform*>(child);
+                matrix.setTransform(
+                    transform->translation.getValue(),
+                    transform->rotation.getValue(),
+                    transform->scaleFactor.getValue(),
+                    transform->scaleOrientation.getValue(),
+                    transform->center.getValue()
+                );
+                SoModelMatrixElement::mult(state, node, matrix);
+                break;
+            }
+        }
+    }
+
+    uint32_t packed = color.getPackedValue(0.0);
+    setupSelectionLineRendering(state, node, &packed, false);
+
+    SoDrawStyleElement::set(state, SoDrawStyleElement::LINES);
+    SoLineWidthElement::set(state, ViewParams::instance()->getSelectionBBoxLineWidth());
+
+    float x, y, z;
+    bbox.getSize(x, y, z);
+    data->cube->width = x;
+    data->cube->height = y;
+    data->cube->depth = z;
+
+    SoModelMatrixElement::translateBy(state, node, bbox.getCenter());
+
+    data->cube->IRRender(action);
+
+    state->pop();
+    return true;
+}
+#endif
+
 static std::time_t _CyclicLastReported;
 
 void SoFCSelectionRoot::renderPrivate(SoGLRenderAction* action, bool inPath)
@@ -1889,6 +2004,145 @@ void SoFCSelectionRoot::GLRenderInPath(SoGLRenderAction* action)
     }
     renderPrivate(action, true);
 }
+
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+void SoFCSelectionRoot::IRRender(SoIRRenderAction* action)
+{
+    renderPrivateIR(action);
+}
+
+void SoFCSelectionRoot::renderPrivateIR(SoIRRenderAction* action)
+{
+    if (ViewParams::instance()->getCoinCycleCheck() && !SelStack.nodeSet.insert(this).second) {
+        std::time_t t = std::time(nullptr);
+        if (_CyclicLastReported < t) {
+            _CyclicLastReported = t + 5;
+            FC_ERR("Cyclic scene graph: " << getName());
+        }
+        return;
+    }
+    SelStack.push_back(this);
+    if (_renderPrivateIR(action)) {
+        inherited::IRRender(action);
+    }
+    SelStack.pop_back();
+    SelStack.nodeSet.erase(this);
+}
+
+bool SoFCSelectionRoot::_renderPrivateIR(SoIRRenderAction* action)
+{
+    // Record the command range emitted for this node so a selection/highlight
+    // override can promote the recorded geometry to the overlay pass.
+    SoDrawList& list = action->getMutableDrawList();
+    const int fcmd = list.getNumCommands();
+    auto ctx2 = std::static_pointer_cast<SelContext>(
+        getNodeContext2(SelStack, this, SelContext::merge)
+    );
+    if (ctx2 && ctx2->hideAll) {
+        return false;
+    }
+
+    auto state = action->getState();
+    SelContextPtr ctx = getRenderContext<SelContext>(this);
+    int style = selectionStyle.getValue();
+    if (ctx && ctx->hideAll) {
+        return false;
+    }
+
+    // Bounding-box selection drawing: record a line-mode cube for the
+    // selection bounding box, mirroring the GL _renderPrivate() Box branch.
+    // The box replaces the selection color override, not the geometry, so
+    // children still render normally below.
+    if ((style == SoFCSelectionRoot::Box || SoFCUnifiedSelection::getShowSelectionBoundingBox())
+        && ctx && !ctx->hideAll && (ctx->selAll || ctx->hlAll)) {
+        if (style == SoFCSelectionRoot::PassThrough) {
+            style = SoFCSelectionRoot::Box;
+        }
+        else {
+            const SbColor& color = (ctx->hlAll && !ctx->selAll) ? ctx->hlColor : ctx->selColor;
+            if (SoFCUnifiedSelection::getShowSelectionBoundingBox()) {
+                if (ViewParams::instance()->getUseTightBoundingBox() && viewProvider) {
+                    Base::Matrix4D mat;
+                    bool project = ViewParams::instance()->getRenderProjectedBBox();
+                    if (project) {
+                        mat = ViewProvider::convert(SoModelMatrixElement::get(state));
+                    }
+                    auto fcbox = viewProvider->getBoundingBox(nullptr, &mat, project);
+                    SbBox3f bbox(fcbox.MinX, fcbox.MinY, fcbox.MinZ,
+                                 fcbox.MaxX, fcbox.MaxY, fcbox.MaxZ);
+                    renderBBoxIR(action, this, bbox, color);
+                }
+                else {
+                    renderBBoxIR(action, this, color);
+                }
+            }
+            else {
+                renderBBoxIR(action, this, color);
+            }
+        }
+    }
+
+    bool selPushed = false;
+    bool hlPushed = false;
+    if (ctx) {
+        if ((selPushed = ctx->selAll)) {
+            SelColorStack.push_back(ctx->selColor);
+            if (style != SoFCSelectionRoot::Box) {
+                state->push();
+                auto& color = SelColorStack.back();
+                SoLazyElement::setEmissive(state, &color);
+                SoOverrideElement::setEmissiveColorOverride(state, this, true);
+                if (SoLazyElement::getLightModel(state) == SoLazyElement::BASE_COLOR) {
+                    auto& packer = shapeColorPacker;
+                    SoLazyElement::setDiffuse(state, this, 1, &color, &packer);
+                    SoOverrideElement::setDiffuseColorOverride(state, this, true);
+                    SoMaterialBindingElement::set(state, this, SoMaterialBindingElement::OVERALL);
+                    SoOverrideElement::setMaterialBindingOverride(state, this, true);
+                }
+            }
+        }
+        if ((hlPushed = ctx->hlAll)) {
+            HlColorStack.push_back(ctx->hlColor);
+        }
+    }
+
+    inherited::IRRender(action);
+
+    if (hlPushed) {
+        HlColorStack.pop_back();
+    }
+    if (selPushed) {
+        SelColorStack.pop_back();
+        if (style != SoFCSelectionRoot::Box) {
+            state->pop();
+        }
+    }
+
+    // When a selection or highlight override was active, the geometry just
+    // recorded belongs to a selected/highlighted object.  Promote it to the
+    // OVERLAY pass so the cached base geometry stays stable and the highlight
+    // is drawn as a layer on top.
+    if ((selPushed || hlPushed) && list.getNumCommands() > fcmd) {
+        const int count = list.getNumCommands();
+        SbViewportRegion vp = SoViewportRegionElement::get(state);
+        const short vx = std::max(0, (int)vp.getViewportOriginPixels()[0]);
+        const short vy = std::max(0, (int)vp.getViewportOriginPixels()[1]);
+        const short vw = std::max(1, (int)vp.getViewportSizePixels()[0]);
+        const short vh = std::max(1, (int)vp.getViewportSizePixels()[1]);
+        for (int i = fcmd; i < count; ++i) {
+            SoRenderCommand& cmd = list.getCommand(i);
+            cmd.pass = SO_RENDERPASS_OVERLAY;
+            cmd.state.raster.scissorEnabled = TRUE;
+            cmd.state.raster.scissorX = vx;
+            cmd.state.raster.scissorY = vy;
+            cmd.state.raster.scissorWidth = vw;
+            cmd.state.raster.scissorHeight = vh;
+        }
+    }
+
+    return false;
+}
+#endif
 
 bool SoFCSelectionRoot::checkColorOverride(SoState* state)
 {
@@ -2456,6 +2710,49 @@ void SoFCPathAnnotation::GLRenderInPath(SoGLRenderAction* action)
 {
     GLRenderBelowPath(action);
 }
+
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+void SoFCPathAnnotation::IRRender(SoIRRenderAction* action)
+{
+    if (!path || !path->getLength()) {
+        return;
+    }
+    SoState* state = action->getState();
+    if (!state) {
+        return;
+    }
+
+    // Record the highlighted shape using the scene camera matrices (so the
+    // highlight lands on the correct world-space face), then promote the
+    // recorded commands to the overlay pass, which is drawn as a layer above
+    // the base geometry.  The scissor is scoped to the current viewport so the
+    // overlay backend accepts the command (it skips unscissored overlays).
+    SoDrawList& list = action->getMutableDrawList();
+    const int firstCommand = list.getNumCommands();
+
+    state->push();
+
+    SbViewportRegion vp = SoViewportRegionElement::get(state);
+    const short vx = std::max(0, (int)vp.getViewportOriginPixels()[0]);
+    const short vy = std::max(0, (int)vp.getViewportOriginPixels()[1]);
+    const short vw = std::max(1, (int)vp.getViewportSizePixels()[0]);
+    const short vh = std::max(1, (int)vp.getViewportSizePixels()[1]);
+
+    inherited::IRRender(action);
+
+    const int count = list.getNumCommands();
+    for (int i = firstCommand; i < count; ++i) {
+        SoRenderCommand& cmd = list.getCommand(i);
+        cmd.pass = SO_RENDERPASS_OVERLAY;
+        cmd.state.raster.scissorEnabled = TRUE;
+        cmd.state.raster.scissorX = vx;
+        cmd.state.raster.scissorY = vy;
+        cmd.state.raster.scissorWidth = vw;
+        cmd.state.raster.scissorHeight = vh;
+    }
+    state->pop();
+}
+#endif
 
 void SoFCPathAnnotation::setDetail(SoDetail* d)
 {

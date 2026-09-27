@@ -44,6 +44,9 @@
 #include <Inventor/nodes/SoText2.h>
 #include <Inventor/nodes/SoTransform.h>
 #include <Inventor/actions/SoActions.h>
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+#include <Inventor/actions/SoIRRenderAction.h>
+#endif
 
 #include "ViewParams.h"
 #include "SoFCUnifiedSelection.h"
@@ -188,6 +191,42 @@ void SoFCBoundingBox::GLRender(SoGLRenderAction* action)
     }
     state->pop();
 }
+
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+void SoFCBoundingBox::IRRender(SoIRRenderAction* action)
+{
+    SoState* state = action->getState();
+    if (!state) {
+        return;
+    }
+
+    prepareGeometry(state);
+
+    const SbBool coord = coordsOn.getValue();
+    const SbBool dimension = dimensionsOn.getValue();
+
+    // Avoid shading, mirroring GLRender().  The SoText2 dimension/coordinate
+    // labels have no IR renderer, so they record no commands; the box lines
+    // themselves render with the current material.
+    state->push();
+
+    if (ViewParams::instance()->getRenderProjectedBBox()) {
+        SoModelMatrixElement::makeIdentity(state, this);
+    }
+
+    SoLazyElement::setLightModel(state, SoLazyElement::BASE_COLOR);
+
+    bboxSep->IRRender(action);
+    if (coord) {
+        textSep->IRRender(action);
+    }
+    if (dimension) {
+        dimSep->IRRender(action);
+    }
+
+    state->pop();
+}
+#endif
 
 void SoFCBoundingBox::prepareGeometry(SoState* state)
 {

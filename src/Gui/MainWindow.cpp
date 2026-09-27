@@ -27,6 +27,7 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QCloseEvent>
+#include <QComboBox>
 #include <QContextMenuEvent>
 #include <QDesktopServices>
 #include <QDockWidget>
@@ -47,10 +48,12 @@
 #include <QScreen>
 #include <QSettings>
 #include <QSignalMapper>
+#include <QSignalBlocker>
 #include <QStatusBar>
 #include <QThread>
 #include <QTimer>
 #include <QToolBar>
+#include <QToolButton>
 #include <QUrlQuery>
 #include <QWhatsThis>
 #include <QWindow>
@@ -316,6 +319,10 @@ struct StatusBarItem
     /// Whether the widget is currently held by the QStatusBar. A freshly-registered  item is not,
     /// so relayout should skip it to avoid Qt warnings about removing an unknown widget.
     bool placed = false;
+    /// Monotonic placement order. The status bar preserves insertion order, so
+    /// comparing it against the desired order lets relayout skip slots whose
+    /// sequence did not change and leave their (already shown) widgets alone.
+    int seq = 0;
 };
 
 // -------------------------------------
@@ -326,7 +333,12 @@ struct MainWindowP
     StatusBarLabel* actionLabel;
     InputHintWidget* hintLabel;
     QLabel* rightSideLabel;
+#ifdef FREECAD_USE_VULKAN
+    QComboBox* viewModeCombo = nullptr;
+    QToolButton* wireframeButton = nullptr;
+#endif
     std::vector<StatusBarItem> statusBarItems;
+    int statusBarNextSeq = 0;
     ParameterGrp::handle hStatusBar;
     QTimer* actionTimer;
     QTimer* statusTimer;
@@ -533,6 +545,59 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
          .order = 400,
          .persistentVisibility = true}
     );
+
+#ifdef FREECAD_USE_VULKAN
+    // View render-mode selector ("Interactive (raster Coin)", "Interactive
+    // (raster Vulkan)", "Wireframe").  Lives in the main window status bar and
+    // drives the ACTIVE 3D view's mode (each view keeps its own).
+    // Re-synchronised whenever the active view changes.  The raster modes map
+    // to ViewRenderMode::RasterCoin / RasterVulkan / Wireframe and always keep
+    // the Vulkan viewport in the pure raster path; the point overlay is
+    // raster-only and the model edge overlay is honoured in every mode.
+    d->viewModeCombo = new QComboBox(statusBar());
+    d->viewModeCombo->setObjectName(QStringLiteral("ViewRenderingMode"));
+    //: Status-bar view render-mode entry: the default raster rendering
+    //: (classic Coin raster).
+    d->viewModeCombo->addItem(tr("Interactive (raster Coin)"));
+    //: Status-bar view render-mode entry: Vulkan raster viewport.
+    d->viewModeCombo->addItem(tr("Interactive (raster Vulkan)"));
+    //: Status-bar view render-mode entry: raster wireframe draw style
+    d->viewModeCombo->addItem(tr("Wireframe"));
+    addStatusBarItem(
+        d->viewModeCombo,
+        {.id = "viewModeCombo",
+         //: A context menu action used to show or hide the view rendering mode
+         //: selector in the status bar
+         .title = tr("View Rendering Mode"),
+         .slot = StatusBarSlot::Right,
+         .order = 250,
+         .persistentVisibility = true}
+    );
+    connect(d->viewModeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, &MainWindow::onViewModeComboChanged);
+
+    // Toggle for the model feature-edge (BRep line) overlay in the Vulkan
+    // viewport.  Its checked state mirrors the active view and it is honoured
+    // in every render mode.
+    d->wireframeButton = new QToolButton(statusBar());
+    d->wireframeButton->setObjectName(QStringLiteral("WireframeButton"));
+    d->wireframeButton->setCheckable(true);
+    d->wireframeButton->setAutoRaise(true);
+    d->wireframeButton->setIcon(BitmapFactory().iconFromTheme("DrawStyleFlatLines"));
+    d->wireframeButton->setToolTip(tr("Toggle the model edge overlay"));
+    addStatusBarItem(
+        d->wireframeButton,
+        {.id = "wireframeButton",
+         //: A context menu action used to show or hide the wireframe overlay
+         //: toggle in the status bar
+         .title = tr("Wireframe Overlay"),
+         .slot = StatusBarSlot::Right,
+         .order = 253,
+         .persistentVisibility = true}
+    );
+    connect(d->wireframeButton, &QToolButton::toggled,
+            this, &MainWindow::onWireframeToggled);
+#endif // FREECAD_USE_VULKAN
 
     auto* toggleBottomPanelsButton = new QToolButton(statusBar());
     toggleBottomPanelsButton->setIconSize(QSize(16, 16));
@@ -1428,6 +1493,16 @@ void MainWindow::addWindow(MDIView* view)
 
     connect(view, &MDIView::message, this, &MainWindow::showMessage);
     connect(this, &MainWindow::windowStateChanged, view, &MDIView::windowStateChanged);
+#ifdef FREECAD_USE_VULKAN
+    // The render mode can auto-fall-back to raster when the hardware lacks ray
+    // tracing; keep the status-bar selector (and edge-overlay button) in step.
+    if (const auto* v3 = qobject_cast<View3DInventor*>(view)) {
+        connect(v3, &View3DInventor::renderModeChanged,
+                this, &MainWindow::syncViewModeCombo);
+        connect(v3, &View3DInventor::renderModeChanged,
+                this, &MainWindow::syncWireframeButton);
+    }
+#endif
 
     // listen to the incoming events of the view
     view->installEventFilter(this);
@@ -1459,6 +1534,14 @@ void MainWindow::removeWindow(Gui::MDIView* view, bool close)
     // free all connections
     disconnect(view, &MDIView::message, this, &MainWindow::showMessage);
     disconnect(this, &MainWindow::windowStateChanged, view, &MDIView::windowStateChanged);
+#ifdef FREECAD_USE_VULKAN
+    if (const auto* v3 = qobject_cast<View3DInventor*>(view)) {
+        disconnect(v3, &View3DInventor::renderModeChanged,
+                   this, &MainWindow::syncViewModeCombo);
+        disconnect(v3, &View3DInventor::renderModeChanged,
+                   this, &MainWindow::syncWireframeButton);
+    }
+#endif
 
     view->removeEventFilter(this);
 
@@ -1580,6 +1663,13 @@ void MainWindow::setActiveWindow(MDIView* view)
     d->activeView = view;
     Application::Instance->viewActivated(view);
 
+    // Keep the status-bar view rendering mode selector in step with the newly
+    // active view (each view owns its own render mode).
+#ifdef FREECAD_USE_VULKAN
+    syncViewModeCombo();
+    syncWireframeButton();
+#endif
+
     // activate/remember workbench by tab (if enabled)
 
     const ParameterGrp::handle hGrp = App::GetApplication().GetParameterGroupByPath(
@@ -1616,6 +1706,55 @@ void MainWindow::onWindowActivated(QMdiSubWindow* mdi)
     auto view = dynamic_cast<MDIView*>(mdi->widget());
     setActiveWindow(view);
 }
+
+#ifdef FREECAD_USE_VULKAN
+void MainWindow::syncViewModeCombo()
+{
+    if (!d->viewModeCombo) {
+        return;
+    }
+    // Reflect the active 3D view's render mode.  Views other than 3D views
+    // have no mode; show a neutral state (the default raster Coin mode).
+    View3DInventor* view = dynamic_cast<View3DInventor*>(d->activeView.data());
+    const Gui::ViewRenderMode mode =
+        view ? view->getRenderMode() : Gui::ViewRenderMode::RasterCoin;
+    QSignalBlocker blocker(d->viewModeCombo);
+    d->viewModeCombo->setCurrentIndex(static_cast<int>(mode));
+}
+
+void MainWindow::onViewModeComboChanged(int index)
+{
+    if (index < 0) {
+        return;
+    }
+    View3DInventor* view = dynamic_cast<View3DInventor*>(d->activeView.data());
+    if (!view) {
+        return;
+    }
+    view->setRenderMode(static_cast<Gui::ViewRenderMode>(index));
+}
+
+void MainWindow::onWireframeToggled(bool checked)
+{
+    View3DInventor* view = dynamic_cast<View3DInventor*>(d->activeView.data());
+    if (!view) {
+        return;
+    }
+    view->setWireframe(checked);
+}
+
+void MainWindow::syncWireframeButton()
+{
+    if (!d->wireframeButton) {
+        return;
+    }
+    // Checked state mirrors the active view's wireframe-overlay visibility.
+    View3DInventor* vecView = dynamic_cast<View3DInventor*>(d->activeView.data());
+    const bool wireframe = vecView ? vecView->getWireframe() : false;
+    QSignalBlocker blocker(d->wireframeButton);
+    d->wireframeButton->setChecked(wireframe);
+}
+#endif // FREECAD_USE_VULKAN
 
 void MainWindow::onWindowsMenuAboutToShow()
 {
@@ -2747,6 +2886,35 @@ void applyStatusBarItemEnabled(QWidget* widget, bool enabled)
         widget->setVisible(enabled);
     }
 }
+
+// Applies a registry item's intended visibility to its widget, but only touches
+// the widget when the state actually changes.  Showing/hiding a status-bar
+// widget makes Qt relayout the whole main window; with a Vulkan 3D view open
+// that forces a swapchain reconfiguration (hundreds of ms) even when nothing
+// visible changed.  \a priorVisible is the state the widget had before a
+// placement rebuild (addWidget()/addPermanentWidget() force-show).
+void applyStatusBarItemVisibility(StatusBarItem& item, bool priorVisible)
+{
+    QWidget* widget = item.widget;
+    if (!widget) {
+        return;
+    }
+    if (ownsVisibility(widget)) {
+        // Progress bar: registry drives userEnabled; actual visibility stays
+        // owned by the widget/sequencer. Preserve its prior shown state, gated
+        // by enabled (so a disabled bar never shows).
+        widget->setProperty("userEnabled", item.enabled);
+        const bool wanted = item.enabled && priorVisible;
+        if (widget->isVisible() != wanted) {
+            widget->setVisible(wanted);
+        }
+    }
+    else if (widget->isVisible() != item.enabled) {
+        // Use the registry's intent, not isVisible(): during construction the
+        // window is not shown yet, so isVisible() would report false for all.
+        widget->setVisible(item.enabled);
+    }
+}
 }  // namespace
 
 void MainWindow::addStatusBarItem(QWidget* widget, const StatusBarItemSpec& spec)
@@ -2799,20 +2967,6 @@ void MainWindow::relayoutStatusBar()
 {
     QStatusBar* sb = statusBar();
 
-    // For widgets that own their visibility (progress bar), remember the actual
-    // shown state so a relayout that happens mid-operation doesn't hide a running
-    // bar. addWidget()/addPermanentWidget() force-show, so we re-apply afterwards.
-    QHash<QWidget*, bool> wasVisible;
-    for (auto& item : d->statusBarItems) {
-        if (item.widget) {
-            wasVisible.insert(item.widget, item.widget->isVisible());
-            if (item.placed) {
-                sb->removeWidget(item.widget);
-                item.placed = false;
-            }
-        }
-    }
-
     // Left slot before Right slot; within a slot, ascending order.
     std::stable_sort(
         d->statusBarItems.begin(),
@@ -2825,31 +2979,75 @@ void MainWindow::relayoutStatusBar()
         }
     );
 
-    for (auto& item : d->statusBarItems) {
-        if (!item.widget) {
-            continue;
+    // Relayout each slot independently, and leave a slot completely untouched
+    // when its widget sequence/order did not change. Re-showing a status-bar
+    // label makes Qt relayout the whole main window; with a Vulkan 3D view open
+    // that reconfigures the swapchain (hundreds of ms) even though nothing
+    // visible moved. So registering a new item must only cost the slot it lands
+    // in, not every already-shown item on the bar.
+    auto relayoutSlot = [&](StatusBarSlot slot) {
+        std::vector<StatusBarItem*> desired;
+        for (auto& item : d->statusBarItems) {
+            if (item.widget && item.spec.slot == slot) {
+                desired.push_back(&item);
+            }
         }
-        if (item.spec.slot == StatusBarSlot::Left) {
-            sb->addWidget(item.widget, item.spec.stretch);
+        std::vector<StatusBarItem*> current;
+        for (auto* item : desired) {
+            if (item->placed) {
+                current.push_back(item);
+            }
         }
-        else {
-            sb->addPermanentWidget(item.widget, item.spec.stretch);
+        // QStatusBar preserves insertion order, so the current placement order
+        // is the ascending seq order.
+        std::stable_sort(
+            current.begin(),
+            current.end(),
+            [](StatusBarItem* a, StatusBarItem* b) { return a->seq < b->seq; }
+        );
+        // Longest common prefix: items already placed in their desired position
+        // are left completely untouched.  Only the differing suffix is rebuilt,
+        // so adding an item never re-shows the widgets before it.  Re-showing a
+        // status-bar label forces a full main-window relayout (and, with the
+        // Vulkan 3D view, a swapchain reconfiguration), so this keeps the cost
+        // of a registration proportional to what actually moved.
+        size_t firstDiff = 0;
+        while (firstDiff < current.size() && firstDiff < desired.size()
+               && current[firstDiff]->widget == desired[firstDiff]->widget) {
+            ++firstDiff;
         }
-        item.placed = true;
 
-        if (ownsVisibility(item.widget)) {
-            // Progress bar: registry drives userEnabled; actual visibility stays
-            // owned by the widget/sequencer. Preserve its prior shown state, gated
-            // by enabled (so a disabled bar never shows).
-            item.widget->setProperty("userEnabled", item.enabled);
-            item.widget->setVisible(item.enabled && wasVisible.value(item.widget, false));
+        // Refresh the intent of the untouched prefix (normally a no-op; only
+        // touches a widget whose visibility actually changed).
+        for (size_t i = 0; i < firstDiff; ++i) {
+            applyStatusBarItemVisibility(*desired[i], desired[i]->widget->isVisible());
         }
-        else {
-            // Use the registry's intent, not isVisible(): during construction the
-            // window is not shown yet, so isVisible() would report false for all.
-            item.widget->setVisible(item.enabled);
+
+        // Drop the widgets after the common prefix, then place the desired
+        // suffix in order (appending keeps the prefix's positions).
+        QHash<QWidget*, bool> wasVisible;
+        for (size_t i = firstDiff; i < current.size(); ++i) {
+            wasVisible.insert(current[i]->widget, current[i]->widget->isVisible());
+            sb->removeWidget(current[i]->widget);
+            current[i]->placed = false;
         }
-    }
+        for (size_t i = firstDiff; i < desired.size(); ++i) {
+            if (slot == StatusBarSlot::Left) {
+                sb->addWidget(desired[i]->widget, desired[i]->spec.stretch);
+            }
+            else {
+                sb->addPermanentWidget(desired[i]->widget, desired[i]->spec.stretch);
+            }
+            desired[i]->placed = true;
+            // Seqs stay monotonic, so the prefix (older, lower seqs) always sorts
+            // before the re-placed suffix.
+            desired[i]->seq = ++d->statusBarNextSeq;
+            applyStatusBarItemVisibility(*desired[i], wasVisible.value(desired[i]->widget, false));
+        }
+    };
+
+    relayoutSlot(StatusBarSlot::Left);
+    relayoutSlot(StatusBarSlot::Right);
 }
 
 void MainWindow::buildStatusBarContextMenu(QMenu& menu)

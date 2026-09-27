@@ -22,6 +22,9 @@
 
 
 #include <string>
+#include <cstring>
+
+#include <Base/VulkanBreadcrumbs.h>
 #include <QApplication>
 #include <QKeyEvent>
 #include <QEvent>
@@ -72,6 +75,7 @@
 #include "SoFCSelectionAction.h"
 #include "SoFCVectorizeSVGAction.h"
 #include "View3DInventorViewer.h"
+#include "VulkanViewportAdapter.h"
 #include "View3DPy.h"
 #include "ViewParams.h"
 #include "ViewProvider.h"
@@ -147,6 +151,103 @@ View3DInventor::View3DInventor(
     // apply the user settings
     applySettings();
 
+#ifdef FREECAD_USE_VULKAN
+    VK_BREADCRUMB("[VK-TRACE] View3DInventor: UseVulkanRenderer=%d\n",
+                  App::GetApplication()
+                          .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
+                          ->GetBool("UseVulkanRenderer", false) ? 1 : 0);
+    if (_viewer && App::GetApplication()
+                           .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
+                           ->GetBool("UseVulkanRenderer", false)) {
+        // The adapter owns the Vulkan widget and all GL<->Vulkan sync
+        // wiring (scene/camera state, input forwarding, cursor mirroring,
+        // viewport sizing).
+        _vulkanAdapter = new VulkanViewportAdapter(stack, _viewer, this);
+        // Reopen consistency: restore the persisted render mode so the status-
+        // bar selector (and the backend) reflect whatever the user last chose.
+        // VulkanRenderMode (int) is the single source of the render mode.  When
+        // nothing is persisted a Vulkan-enabled view opens on the Vulkan raster
+        // viewport (the adapter already brought it up); the classic Coin/GL
+        // renderer is the opt-in raster mode.
+        auto viewGrp = App::GetApplication().GetParameterGroupByPath(
+            "User parameter:BaseApp/Preferences/View");
+        const int persistedRenderMode = viewGrp->GetInt("VulkanRenderMode", -1);
+        ViewRenderMode initialMode = ViewRenderMode::RasterVulkan;
+        if (persistedRenderMode >= 0
+            && persistedRenderMode <= static_cast<int>(ViewRenderMode::Wireframe)) {
+            initialMode = static_cast<ViewRenderMode>(persistedRenderMode);
+        }
+        // setRenderMode applies the visible viewport backend too, so even a
+        // no-op-feeling restore correctly picks the Coin/GL vs Vulkan surface.
+        setRenderMode(initialMode);
+        // A selection/preselection change mutates the shared scene graph but
+        // never reaches the display-only Vulkan widget on its own (it owns no
+        // Coin sensors).  Ask the adapter to redraw so the highlight shows up.
+        connect(_viewer, &View3DInventorViewer::selectionChanged,
+                _vulkanAdapter, [this] {
+                    if (_vulkanAdapter) {
+                        _vulkanAdapter->redraw();
+                    }
+                });
+        // A navigation camera move (rotate/pan/zoom) mutates the shared camera
+        // node but the display-only Vulkan widget owns no per-frame sensors.
+        // cameraMoved() is emitted by processSoEvent() for *every* interactive
+        // navigation path (mouse, navcube, keyboard and the spacemouse), so
+        // route it through requestVulkanFrame() rather than redraw(): the scene
+        // lights are camera-anchored and must be re-derived here as well.
+        connect(_viewer, &View3DInventorViewer::cameraMoved,
+                _vulkanAdapter, [this] {
+                    if (_vulkanAdapter) {
+                        // The camera is now user-controlled; never let the
+                        // one-time initial re-fit snap it back.
+                        _vulkanAdapter->noteUserCameraMoved();
+                        _vulkanAdapter->requestVulkanFrame();
+                    }
+                });
+        // The NaviCube overlay changes (hover highlight, click-to-reorient)
+        // are consumed inside processSoEvent(), so they never raise the GL
+        // render manager's redraw or cameraMoved() that would wake the
+        // display-only Vulkan widget.  Ask the adapter for a frame so the
+        // highlight and rotation appear.
+        connect(_viewer, &View3DInventorViewer::naviCubeChanged,
+                _vulkanAdapter, [this] {
+                    if (_vulkanAdapter) {
+                        _vulkanAdapter->redraw();
+                    }
+                });
+        // The Sketcher (and any scene component that refreshes the shared
+        // scene graph and requests only the GL viewer's redraw) mutates the
+        // coin nodes but never wakes the display-only Vulkan surface.  Ask
+        // the adapter for a frame so sketch geometry, constraints and
+        // dimensions update with every mouse-move / binding edit.
+        connect(_viewer, &View3DInventorViewer::sceneRefreshed,
+                _vulkanAdapter, [this] {
+                    if (_vulkanAdapter) {
+                        _vulkanAdapter->redraw();
+                    }
+                });
+        // A VulkanRenderMode change made in the preferences dialog reaches the
+        // backend through applyVulkanSettings()/pushSettings(), but never calls
+        // setRenderMode(), so this view's _renderMode and the status-bar
+        // selector would keep showing the old mode.  Re-apply the persisted mode
+        // so the label and backend stay in step.  The equality guard also stops
+        // the re-entrant emit from setRenderMode's own applyVulkanSettings().
+        connect(_viewer, &View3DInventorViewer::vulkanSettingsChanged, this, [this] {
+            const int persisted = App::GetApplication()
+                                      .GetParameterGroupByPath(
+                                          "User parameter:BaseApp/Preferences/View"
+                                      )
+                                      ->GetInt("VulkanRenderMode", -1);
+            if (persisted < 0 || persisted > static_cast<int>(ViewRenderMode::Wireframe)) {
+                return;
+            }
+            if (static_cast<ViewRenderMode>(persisted) != _renderMode) {
+                setRenderMode(static_cast<ViewRenderMode>(persisted));
+            }
+        });
+    }
+#endif
+
     stopSpinTimer = new QTimer(this);
     connect(stopSpinTimer, &QTimer::timeout, this, &View3DInventor::stopAnimating);
 
@@ -183,6 +284,19 @@ View3DInventor::~View3DInventor()
         }
     }
 
+    // Tear down the Vulkan viewport adapter BEFORE the hidden OpenGL viewer.
+    // The adapter is a QObject child of this view, so Qt would destroy it
+    // only when `this` itself is destroyed -- after _viewer is already gone.
+    // Its QuarterVulkanWidget wires signals to _viewer (cameraChanged,
+    // vulkanSettingsChanged, surfaceSizeChanged) and to the document's
+    // scene graph; leaving it alive past `delete _viewer` lets deferred
+    // syncViewer()/pushSettings() re-fire against a freed _viewer and scene,
+    // which tears down the same separator twice (SoGroup::removeChild errors)
+    // and SIGSEGVs in QVulkanInstance::functions() during the document-tab
+    // close (the 'shutdown'/'initialized' backend cycling).
+    delete _vulkanAdapter;
+    _vulkanAdapter = nullptr;
+
     if (_viewerPy) {
         Base::PyGILStateLocker lock;
         Py_DECREF(_viewerPy);
@@ -196,6 +310,13 @@ void View3DInventor::deleteSelf()
 {
     _viewer->setSceneGraph(nullptr);
     _viewer->setDocument(nullptr);
+    // Drop the Vulkan viewport now, while _viewer and its scene graph are
+    // still valid.  The adapter is a QObject child destroyed only when `this`
+    // is, which is after _viewer; leaving it connected lets its Vulkan widget
+    // re-sync against the freed viewer/scene during this close (the backend
+    // shutdown/initialized cycling and the QVulkanInstance::functions() crash).
+    delete _vulkanAdapter;
+    _vulkanAdapter = nullptr;
     MDIViewWithCamera::deleteSelf();
 }
 
@@ -244,6 +365,107 @@ void View3DInventor::applySettings()
     naviSettings->applySettings();
 }
 
+uint32_t View3DInventor::getVulkanFrameCount() const
+{
+    return _vulkanAdapter ? _vulkanAdapter->getRenderFrameCount() : 0;
+}
+
+void View3DInventor::requestVulkanRender()
+{
+    if (_vulkanAdapter) {
+        _vulkanAdapter->requestVulkanRender();
+    }
+}
+
+// Declared (and moc-registered as a slot) unconditionally, so its definition
+// must also be unconditional: the adapter's resyncViewport() has a no-op body
+// without FREECAD_USE_VULKAN, exactly like requestVulkanRender() above.
+void View3DInventor::resyncVulkanViewport()
+{
+    if (_vulkanAdapter) {
+        _vulkanAdapter->resyncViewport();
+    }
+}
+
+#ifdef FREECAD_USE_VULKAN
+Gui::ViewRenderMode View3DInventor::getRenderMode() const
+{
+    return _renderMode;
+}
+
+void View3DInventor::setRenderMode(ViewRenderMode mode)
+{
+    // No early return: the initial mode must also select the visible viewport
+    // backend even when it equals the constructor default (a fresh Vulkan view
+    // opens on the Vulkan raster surface, but a RasterCoin view must flip back
+    // to the Coin/GL viewer).
+    _renderMode = mode;
+    if (_vulkanAdapter) {
+        // Pick the renderer backend: RasterCoin renders through the classic
+        // Coin/OpenGL viewer, the raster Vulkan modes through the Vulkan
+        // viewport.
+        _vulkanAdapter->useVulkanViewport(mode != ViewRenderMode::RasterCoin);
+    }
+    // Raster draw-style override for the Interactive vs Wireframe modes.
+    if (_viewer) {
+        switch (mode) {
+            case ViewRenderMode::RasterCoin:
+            case ViewRenderMode::RasterVulkan:
+                _viewer->setOverrideMode("As Is");
+                break;
+            case ViewRenderMode::Wireframe:
+                _viewer->setOverrideMode("Wireframe");
+                break;
+        }
+    }
+    // Persist the mode so the view reopens in the same state and the
+    // pref-driven pushSettings() stays consistent with the viewport.
+    if (auto grp = App::GetApplication().GetParameterGroupByPath(
+            "User parameter:BaseApp/Preferences/View")) {
+        grp->SetInt("VulkanRenderMode", static_cast<int>(mode));
+        // Refresh the in-memory Vulkan settings so getWireframe()/the status
+        // bar mirror the updated preferences; this seeds the canonical
+        // VulkanViewSettings (including renderMode) so pushSettings() derives
+        // the raster gate from the single source.
+        if (_viewer) {
+            _viewer->applyVulkanSettings();
+        }
+    }
+    if (_vulkanAdapter) {
+        _vulkanAdapter->redraw();
+    }
+    // Let the status-bar render-mode selector reflect the effective mode.
+    Q_EMIT renderModeChanged(static_cast<int>(_renderMode));
+}
+
+bool View3DInventor::getWireframe() const
+{
+    // The model feature-edge overlay is honoured in every raster Vulkan mode,
+    // so the status-bar button mirrors the stored preference directly.
+    if (!_viewer) {
+        return false;
+    }
+    return _viewer->getVulkanViewSettings().edgeOverlay;
+}
+
+void View3DInventor::setWireframe(bool enabled)
+{
+    if (getWireframe() == enabled) {
+        return;
+    }
+    // The wireframe overlay is driven by the VulkanWireframe preference; update
+    // the preference then reload the settings so the viewer emits
+    // vulkanSettingsChanged(), which the adapter re-pushes to the renderer.
+    if (auto grp = App::GetApplication().GetParameterGroupByPath(
+            "User parameter:BaseApp/Preferences/View")) {
+        grp->SetBool("VulkanWireframe", enabled);
+    }
+    if (_viewer) {
+        _viewer->applyVulkanSettings();
+    }
+}
+#endif // FREECAD_USE_VULKAN
+
 void View3DInventor::onRename(Gui::Document* pDoc)
 {
     SoSFString name;
@@ -259,6 +481,16 @@ void View3DInventor::onUpdate()
 #endif
     update();
     _viewer->redraw();
+    if (_vulkanAdapter) {
+        // The Vulkan viewport is display-only and owns no Coin sensors, so a
+        // scene edit never schedules a frame on its own (only selection and
+        // API-driven redraws do).  Ask it to redraw so the edited scene is
+        // reflected; otherwise updates are dropped until the user touches the
+        // view.  syncViewer() pushes the (possibly changed) scene graph and
+        // camera; the redraw() then requests exactly one frame.
+        _vulkanAdapter->syncViewer();
+        _vulkanAdapter->redraw();
+    }
 }
 
 void View3DInventor::viewAll()
@@ -415,10 +647,16 @@ bool View3DInventor::onMsg(const char* pMsg)
     }
     else if (strcmp("OrthographicCamera", pMsg) == 0) {
         _viewer->setCameraType(SoOrthographicCamera::getClassTypeId());
+        if (_vulkanAdapter) {
+            _vulkanAdapter->syncViewer();
+        }
         return true;
     }
     else if (strcmp("PerspectiveCamera", pMsg) == 0) {
         _viewer->setCameraType(SoPerspectiveCamera::getClassTypeId());
+        if (_vulkanAdapter) {
+            _vulkanAdapter->syncViewer();
+        }
         return true;
     }
     else if (strcmp("Undo", pMsg) == 0) {
@@ -843,6 +1081,13 @@ void View3DInventor::keyReleaseEvent(QKeyEvent* e)
 void View3DInventor::focusInEvent(QFocusEvent*)
 {
     _viewer->getGLWidget()->setFocus();
+}
+
+bool View3DInventor::eventFilter(QObject* watched, QEvent* event)
+{
+    Q_UNUSED(watched);
+    Q_UNUSED(event);
+    return MDIView::eventFilter(watched, event);
 }
 
 void View3DInventor::contextMenuEvent(QContextMenuEvent* e)

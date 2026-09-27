@@ -35,6 +35,9 @@
 
 #include <Inventor/SbRotation.h>
 #include <Inventor/SbTime.h>
+#include <Inventor/SbColor4f.h>
+
+#include "VulkanViewSettings.h"
 #include <Inventor/nodes/SoEnvironment.h>
 #include <Inventor/nodes/SoEventCallback.h>
 #include <Inventor/nodes/SoRotation.h>
@@ -58,6 +61,7 @@
 #include "Selection/Selection.h"
 
 #include "CornerCrossLetters.h"
+#include "InteractionSurface.h"
 #include "View3DInventorSelection.h"
 #include "Quarter/SoQTQuarterAdaptor.h"
 
@@ -99,6 +103,7 @@ class BoundBox2d;
 namespace Gui
 {
 class NavigationAnimation;
+class InteractionController;
 class View3DInventor;
 class ViewProvider;
 class SoFCBackgroundGradient;
@@ -110,10 +115,19 @@ class RubberbandOverlay;
 class SoShapeScale;
 class ViewerEventFilter;
 
+// Age in milliseconds since the active view's camera pose last changed (Space-Mouse
+// rotation or navigation).  The hover-pick path (SoFCUnifiedSelection /
+// SoFCSelection) reads this to skip the full-scene SoRayPickAction while the
+// camera is actively rotating, cutting the pick storm from hovering during a
+// Space-Mouse rotation.
+double navigationCameraMoveAgeMs();
+
 /** GUI view into a 3D scene provided by View3DInventor
  *
  */
-class GuiExport View3DInventorViewer: public Quarter::SoQTQuarterAdaptor, public SelectionObserver
+class GuiExport View3DInventorViewer: public Quarter::SoQTQuarterAdaptor,
+                                      public InteractionSurface,
+                                      public SelectionObserver
 {
     using inherited = Quarter::SoQTQuarterAdaptor;
     Q_OBJECT
@@ -226,8 +240,8 @@ public:
         const SbVec3f& translation,
         int duration = -1,
         bool wait = false
-    ) const;
-    void startSpinningAnimation(const SbVec3f& axis, float velocity);
+    ) const override;
+    void startSpinningAnimation(const SbVec3f& axis, float velocity) override;
     void stopAnimating();
 
     void setPopupMenuEnabled(bool on);
@@ -296,7 +310,7 @@ public:
     /// set the ViewProvider in special edit mode
     void setEditingViewProvider(Gui::ViewProvider* vp, int ModNum);
     /// return whether a view provider is edited
-    bool isEditingViewProvider() const;
+    bool isEditingViewProvider() const override;
     /// return currently editing view provider
     ViewProvider* getEditingViewProvider() const;
     /// reset from edit mode
@@ -358,7 +372,7 @@ public:
     std::vector<SbVec2f> getGLPolygon(const std::vector<SbVec2s>&) const;
     const std::vector<SbVec2s>& getPolygon(SelectionRole* role = nullptr) const;
     void setSelectionEnabled(bool enable);
-    bool isSelectionEnabled() const;
+    bool isSelectionEnabled() const override;
     //@}
 
     /// Returns the screen coordinates of the origin of the path's tail object
@@ -368,7 +382,7 @@ public:
     /** @name Edit methods */
     //@{
     void setEditing(bool edit);
-    bool isEditing() const
+    bool isEditing() const override
     {
         return this->editing;
     }
@@ -439,7 +453,14 @@ public:
     Base::BoundBox2d getViewportOnXYPlaneOfPlacement(Base::Placement plc) const;
 
     /** Returns the 2d coordinates on the viewport to the given 3d point. */
-    SbVec2s getPointOnViewport(const SbVec3f&) const;
+    SbVec2s getPointOnViewport(const SbVec3f&) const override;
+
+    /** Returns the per-axis scale between viewport-region pixels and widget
+     * pixels (region size / widget size).  The hidden GL viewer's viewport
+     * region may be sized in device pixels (Vulkan mode) or logical pixels
+     * (classic GL mode); dividing region-space coordinates by this scale
+     * yields widget-space coordinates in both cases. */
+    SbVec2f viewportPixelScale() const;
 
     /** Converts Inventor coordinates into Qt coordinates.
      * The conversion takes the device pixel ratio into account.
@@ -506,7 +527,7 @@ public:
     std::shared_ptr<NavigationAnimation> setCameraOrientation(
         const SbRotation& orientation,
         bool moveToCenter = false
-    ) const;
+    ) const override;
     void setCameraType(SoType type) override;
     bool setCamera(const char* pCamera);
     void moveCameraTo(const SbRotation& orientation, const SbVec3f& position, int duration = -1);
@@ -558,6 +579,7 @@ public:
 
     void setGradientBackground(Background);
     Background getGradientBackground() const;
+    void getGradientBackgroundColor(SbColor& fromColor, SbColor& toColor) const;
     void setGradientBackgroundColor(const SbColor& fromColor, const SbColor& toColor);
     void setGradientBackgroundColor(
         const SbColor& fromColor,
@@ -570,14 +592,39 @@ public:
     void setAxisCross(bool on);
     bool hasAxisCross();
 
-    void showRotationCenter(bool show);
-    void changeRotationCenterPosition(const SbVec3f& newCenter);
+    void showRotationCenter(bool show) override;
+    void changeRotationCenterPosition(const SbVec3f& newCenter) override;
 
     void setEnabledFPSCounter(bool on);
     void setEnabledNaviCube(bool on);
     bool isEnabledNaviCube() const;
     void setNaviCubeCorner(int);
     NaviCube* getNaviCube() const;
+    //! The annotation group holding the nav cube coin node (empty when hidden).
+    SoAnnotation* getNaviCubeAnnotation() const;
+    //! Request a Vulkan-surface redraw after a NaviCube overlay state change
+    //! (hover highlight / click-to-reorient).  The display-only Vulkan widget
+    //! owns no Coin sensors, so the navcube event would otherwise never render.
+    void requestNaviCubeRedraw();
+    //! Request a Vulkan-surface redraw after a scene-graph change that is not
+    //! routed through a document change (e.g. the Sketcher updates its edit
+    //! geometry and requests only the GL viewer's redraw).  The display-only
+    //! Vulkan widget owns no Coin sensors, so the geometry edit would otherwise
+    //! stay invisible until the view is zoomed/rotated.
+    void requestSceneRedraw();
+    //! The per-frame decoration scene for the IR (Vulkan) render path.  The
+    //! Vulkan manager re-records this every frame, unlike the retained main
+    //! scene, so camera-coupled decoration geometry anchored here tracks the
+    //! view volume live.
+    SoSeparator* getDecorationRoot();
+    //! Kept for the Vulkan adapter's viewport create/destroy hook.  The raster
+    //! port renders no ground grid, so this only re-points the decoration scene.
+    void setGroundPlaneDecorationScene(bool on);
+    //! Refresh the axis cross overlay nodes (transforms, colors, letters)
+    //! without issuing any GL rendering; called by drawAxisCross() and by
+    //! the Vulkan viewport sync so the hidden GL viewer's frame loop is not
+    //! required for the IR render path.
+    void updateAxisCrossNodes();
     void setEnabledVBO(bool on);
     bool isEnabledVBO() const;
     void setRenderCache(int);
@@ -587,9 +634,21 @@ public:
 
     void getDimensions(float& fHeight, float& fWidth) const;
     float getMaxDimension() const;
-    SbVec3f getFocalPoint() const;
+    SbVec3f getFocalPoint() const override;
 
     NavigationStyle* navigationStyle() const;
+    //! The interaction controller that owns navigation + the Coin event
+    //! pipeline for this surface (see InteractionController).
+    InteractionController* getInteractionController() const;
+
+    /** Route navigation's cursor shapes to \a target instead of the GL widget.
+     *
+     *  When the Vulkan page is current the visible surface is the Vulkan
+     *  container, so the adapter points this at it; navigation then sets the
+     *  cursor directly on the visible surface instead of the adapter mirroring
+     *  the hidden GL widget's cursor.  Pass nullptr to restore the GL widget.
+     */
+    void setCursorTarget(QWidget* target);
 
     void setDocument(Gui::Document* pcDocument);
     Gui::Document* getDocument();
@@ -599,8 +658,93 @@ public:
     bool getSceneBoundBox(SbBox3f& box) const;
     bool getSceneBoundBox(Base::BoundBox3d& box) const;
 
+    //! Vulkan-only display options owned by the viewer.  They mirror the
+    //! OpenGL equivalents (draw style, vertex visibility) but only the
+    //! Vulkan backend honors them.  Read them with getVulkanViewSettings();
+    //! applyVulkanSettings() reloads them from the preferences and emits
+    //! vulkanSettingsChanged().
+    const VulkanViewSettings& getVulkanViewSettings() const
+    {
+        return vulkanSettings_;
+    }
+    void applyVulkanSettings();
+
+    //! @name InteractionHost implementation
+    //!
+    //! These forward to the Quarter/QOpenGLWidget base or to the viewer's own
+    //! state.  The explicit overrides are required because `View3DInventorViewer`
+    //! inherits the same-named accessors from the Quarter base classes as well as
+    //! the `InteractionHost` interface; without an override the lookup would be
+    //! ambiguous.
+    //@{
+    SoCamera* getCamera() const override;
+    SoNode* getSceneGraph() const override;
+    const SbViewportRegion& getViewportRegion() const override;
+    SoRenderManager* getSoRenderManager() const override;
+    SoEventManager* getSoEventManager() const override;
+    float getPickRadius() const override;
+    QWidget* getGLWidget() const override;
+    QWidget* getGLWidget();
+    bool isViewing() const override;
+    bool isSeekMode() const override;
+    bool seekToPoint(const SbVec2s& screenpos) override;
+    void seekToPoint(const SbVec3f& scenepos) override;
+    void interactiveCountInc() override;
+    void interactiveCountDec() override;
+    int getInteractiveCount() const override;
+    void scheduleRedraw() override;
+    SoGroup* getObjectGroup() const override
+    {
+        return objectGroup;
+    }
+    SoSeparator* getForegroundRoot() const override
+    {
+        return foregroundroot;
+    }
+    void bindMouseSelection(AbstractMouseSelection* selection) override;
+    //@}
+
+    //! @name InteractionSurface hooks
+    //@{
+    bool surfaceNaviCubeEnabled() const override;
+    bool surfaceProcessNaviCubeEvent(const SoEvent* ev) override;
+    bool surfaceIsRedirectedToSceneGraph() const override;
+    void surfaceNotifyCameraMoved() override;
+    void surfaceSetEventManager(SoEventManager* manager) override;
+    //@}
+
 Q_SIGNALS:
     void cameraChanged();
+    //! Emitted when navigation mutated the active camera pose (rotate/pan/
+    //! zoom) in place, i.e. without replacing the camera node.  The
+    //! display-only Vulkan viewport owns no Coin sensors, so it would not
+    //! otherwise re-render on a camera move; this lets the adapter request a
+    //! frame so the moved camera is shown.
+    void cameraMoved();
+    //! Emitted after applyVulkanSettings() reloaded the Vulkan options from
+    //! the preferences.
+    void vulkanSettingsChanged();
+    //! Emitted after the document selection/preselection context changed
+    //! (a face was selected/preselected/cleared).  The Vulkan viewport is
+    //! display-only and owns no Coin sensors, so a pure scene-graph colour
+    //! mutation is not enough to schedule a frame; this lets the adapter
+    //! request a redraw so the highlight appears.
+    void selectionChanged();
+    //! Emitted when the NaviCube overlay changed (a face was highlighted or
+    //! clicked to reorient the camera).  The NaviCube is part of the overlay
+    //! scene graph and its events are consumed inside processSoEvent(), so
+    //! neither the GL render-manager scheduleRedraw() nor cameraMoved() reach
+    //! the display-only Vulkan widget.  This lets the adapter request a frame
+    //! so the hover highlight and click-to-rotate appear.
+    void naviCubeChanged();
+    //! Emitted when some caller updated the shared scene graph and asked for a
+    //! redraw that only touched the GL viewer (e.g. the Sketcher edit-mode
+    //! geometry, constraints and dimensions are refreshed and the GL render
+    //! manager's redraw() is requested on every solver update).  The Vulkan
+    //! surface is display-only and owns no Coin sensors, so it would not wake
+    //! on such a request; this lets the adapter request a frame so sketched
+    //! geometry follows the mouse/binding edits.
+    void sceneRefreshed();
 
 protected:
     static GLenum getInternalTextureFormat();
@@ -617,7 +761,7 @@ protected:
     void dragEnterEvent(QDragEnterEvent* ev) override;
     void dragMoveEvent(QDragMoveEvent* ev) override;
     void dragLeaveEvent(QDragLeaveEvent* ev) override;
-    bool processSoEventBase(const SoEvent* const ev);
+    bool processSoEventBase(const SoEvent* const ev) override;
     void printDimension() const;
     void selectAll();
 
@@ -656,7 +800,7 @@ private:
     /// Assemble a scene root that renders the options' camera over the geometry alone.
     /// The returned node is unreferenced; the caller owns it.
     SoSeparator* buildCaptureRoot(const RenderImageOptions& options) const;
-    void setCursorRepresentation(int mode);
+    void setCursorRepresentation(int mode) override;
     void aboutToDestroyGLContext();
     void createStandardCursors();
     bool applyCameraState(const SoCamera& camera);
@@ -669,6 +813,7 @@ private:
     std::list<GLGraphicsItem*> graphicsItems;
     std::unique_ptr<RubberbandOverlay> rubberbandOverlayRenderer;
     ViewProvider* editViewProvider;
+    VulkanViewSettings vulkanSettings_;
     SoFCBackgroundGradient* pcBackGround;
     SoSeparator* backgroundroot;
     SoSeparator* foregroundroot;
@@ -695,7 +840,7 @@ private:
     SoTransform* pcEditingTransform;
     bool restoreEditingRoot;
     SoEventCallback* pEventCallback;
-    NavigationStyle* navigation;
+    std::unique_ptr<InteractionController> interactionController;
     SoFCUnifiedSelection* selectionRoot;
 
     SoClipPlane* pcClipPlane;
@@ -712,6 +857,10 @@ private:
     // big one in the middle
     SoShapeScale* axisCross;
     SoGroup* axisGroup;
+
+    //! Per-frame IR decoration scene (axis cross), consumed by the Vulkan
+    //! adapter's setDecorationSceneGraph().
+    SoSeparator* decorationSceneRoot = nullptr;
 
     SoGroup* rotationCenterGroup;
 
@@ -733,6 +882,8 @@ private:
 
     bool editing;
     QCursor editCursor, zoomCursor, panCursor, spinCursor;
+    //! Where setCursorRepresentation() applies the cursor; null = GL widget.
+    QWidget* cursorTarget {nullptr};
     bool redirected;
     bool allowredir;
 
@@ -753,6 +904,9 @@ private:
 
 private Q_SLOTS:
     void updateFPSLabel();
+    //! Recompute the effective pick radius (resolution + zoom) and push it into
+    //! the Coin event manager so hover/preselection stays zoom-compensated.
+    void updatePickRadius();
 
     // friends
     friend class NavigationStyle;

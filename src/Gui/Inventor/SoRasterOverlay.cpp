@@ -67,8 +67,8 @@ void SoRasterOverlay::IRRender(SoIRRenderAction* action)
 
     // The overlay backend ignores unscissored overlays, so scope the promoted
     // commands to the full viewport (mirroring SoFCSelection's highlight
-    // promotion). The path tracer skips OVERLAY commands, so the subtree is
-    // rastered on top of the traced image rather than traced itself.
+    // promotion). The command's pass is switched to OVERLAY so the subtree is
+    // rasterized in the overlay pass on top of the main scene.
     SoState* state = action->getState();
     const SbViewportRegion vp = SoViewportRegionElement::get(state);
     const short vx = std::max(0, static_cast<int>(vp.getViewportOriginPixels()[0]));

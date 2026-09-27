@@ -32,6 +32,8 @@
 #include <Mod/Part/PartGlobal.h>
 
 
+class SoIRRenderAction;
+
 namespace PartGui
 {
 
@@ -101,6 +103,9 @@ public:
 protected:
     ~SoBrepFaceSet() override;
     void GLRender(SoGLRenderAction* action) override;
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    void IRRender(SoIRRenderAction* action) override;
+#endif
     void GLRenderBelowPath(SoGLRenderAction* action) override;
     void doAction(SoAction* action) override;
     SoDetail* createTriangleDetail(
@@ -132,8 +137,21 @@ private:
 
     void renderHighlight(SoGLRenderAction* action, SelContextPtr);
     void renderSelection(SoGLRenderAction* action, SelContextPtr, bool push = true);
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    void renderHighlightIR(SoIRRenderAction* action, SelContextPtr);
+    void renderSelectionIR(SoIRRenderAction* action, SelContextPtr);
+#endif
+
+    // Shared GL/IR implementations.  renderHighlightCommon takes `onTop` as a
+    // parameter because GL and IR detect the clarify-selection on-top pass
+    // differently (delayed-annotations flag vs depth-test-disabled).
+    template <typename Action>
+    void renderHighlightCommon(Action* action, SelContextPtr ctx, bool onTop);
+    template <typename Action>
+    void renderSelectionCommon(Action* action, SelContextPtr ctx);
 
     bool overrideMaterialBinding(SoGLRenderAction* action, SelContextPtr ctx, SelContextPtr ctx2);
+    bool overrideMaterialBindingCommon(SoState* state, SelContextPtr ctx, SelContextPtr ctx2);
 
 #ifdef RENDER_GLARRAYS
     void renderSimpleArray();

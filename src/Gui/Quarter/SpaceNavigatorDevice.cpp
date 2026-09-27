@@ -81,8 +81,8 @@ public:
 #define PRIVATE(obj) obj->pimpl
 using namespace SIM::Coin3D::Quarter;
 
-SpaceNavigatorDevice::SpaceNavigatorDevice(QuarterWidget* quarter) :
-  InputDevice(quarter)
+SpaceNavigatorDevice::SpaceNavigatorDevice(InputDeviceHost* host) :
+  InputDevice(host)
 {
   PRIVATE(this) = new SpaceNavigatorDeviceP(this);
 

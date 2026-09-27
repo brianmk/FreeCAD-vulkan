@@ -73,7 +73,7 @@ SbBool SolidWorksNavigationStyle::processSoEvent(const SoEvent* const ev)
 
     const SoType type(ev->getTypeId());
 
-    const SbViewportRegion& vp = viewer->getSoRenderManager()->getViewportRegion();
+    const SbViewportRegion& vp = viewer->getViewportRegion();
     const SbVec2s pos(ev->getPosition());
     const SbVec2f posn = normalizePixelPos(pos);
 

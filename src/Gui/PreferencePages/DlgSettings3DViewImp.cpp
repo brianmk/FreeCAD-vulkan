@@ -75,6 +75,11 @@ void DlgSettings3DViewImp::saveSettings()
     ui->xAxisColor->onSave();
     ui->yAxisColor->onSave();
     ui->zAxisColor->onSave();
+    ui->CheckBox_UseVulkanRenderer->onSave();
+    ui->CheckBox_VulkanWireframe->onSave();
+    ui->CheckBox_VulkanShowPoints->onSave();
+    ui->CheckBox_VulkanInteractionLod->onSave();
+    ui->VulkanEdgeColor->onSave();
 }
 
 void DlgSettings3DViewImp::loadSettings()
@@ -95,6 +100,11 @@ void DlgSettings3DViewImp::loadSettings()
     ui->xAxisColor->onRestore();
     ui->yAxisColor->onRestore();
     ui->zAxisColor->onRestore();
+    ui->CheckBox_UseVulkanRenderer->onRestore();
+    ui->CheckBox_VulkanWireframe->onRestore();
+    ui->CheckBox_VulkanShowPoints->onRestore();
+    ui->CheckBox_VulkanInteractionLod->onRestore();
+    ui->VulkanEdgeColor->onRestore();
 
     loadAntiAliasing();
     loadRenderCache();

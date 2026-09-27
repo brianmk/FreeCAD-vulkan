@@ -41,6 +41,8 @@
 #pragma warning(disable : 4267)
 #endif
 
+#include <cstdlib>
+
 #include <QEvent>
 #include <QMouseEvent>
 #include <QWheelEvent>
@@ -50,7 +52,7 @@
 #include <Inventor/errors/SoDebugError.h>
 #include <Inventor/events/SoEvents.h>
 
-#include "QuarterWidget.h"
+#include <Base/VulkanBreadcrumbs.h>
 #include "devices/Mouse.h"
 
 
@@ -76,6 +78,19 @@ public:
   const SoEvent * mouseButtonEvent(QMouseEvent * event);
 
   void resizeEvent(QResizeEvent * event);
+
+  // The logical window size the cursor positions are normalized against.  The
+  // Vulkan-driven widget keeps a device-pixel viewport region (pinned to the
+  // Vulkan surface) with an unreliable hidden-widget own size, so the region
+  // must be reduced back to logical (effectiveWindowSize).  Classic GL keeps a
+  // logical region sized by the visible widget, so use the widget's own size
+  // and the cached DPR (upstream behavior) -- applying the live ratio to a
+  // logical region is what shifted hover/select picking by 1/dpr.
+  SbVec2s logicalWindowSize() const {
+    return publ->host->vulkanDevicePixels()
+      ? publ->host->inputWindowSize()
+      : this->windowsize;
+  }
 
   class SoLocation2Event * location2;
   class SoMouseButtonEvent * mousebutton;
@@ -105,8 +120,8 @@ QPointF getLocalPosition(const QWheelEvent* event)
 
 }
 
-Mouse::Mouse(QuarterWidget* quarter) :
-  InputDevice(quarter)
+Mouse::Mouse(InputDeviceHost* host) :
+  InputDevice(host)
 {
   PRIVATE(this) = new MouseP(this);
 }
@@ -147,6 +162,11 @@ MouseP::resizeEvent(QResizeEvent * event)
 {
   this->windowsize = SbVec2s(event->size().width(),
                              event->size().height());
+  VK_BREADCRUMB(
+          "[VK-TRACE] MouseP::resizeEvent widget=%dx%d event=%dx%d -> windowsize=%d,%d\n",
+          publ->host->inputSize().width(), publ->host->inputSize().height(),
+          event->size().width(), event->size().height(),
+          this->windowsize[0], this->windowsize[1]);
 }
 
 const SoEvent *
@@ -157,8 +177,8 @@ MouseP::mouseMoveEvent(QMouseEvent * event)
   assert(this->windowsize[1] != -1);
   SbVec2s pos = InputDevice::toDevicePixelPosition(
       getLocalPosition(event),
-      this->windowsize,
-      publ->quarter->devicePixelRatio());
+      logicalWindowSize(),
+      publ->host->devicePixelRatio());
   this->location2->setPosition(pos);
   this->mousebutton->setPosition(pos);
   return this->location2;
@@ -170,8 +190,8 @@ MouseP::mouseWheelEvent(QWheelEvent * event)
   PUBLIC(this)->setModifiers(this->wheel, event);
   SbVec2s pos = InputDevice::toDevicePixelPosition(
       getLocalPosition(event),
-      PUBLIC(this)->windowsize,
-      publ->quarter->devicePixelRatio());
+      logicalWindowSize(),
+      publ->host->devicePixelRatio());
   this->location2->setPosition(pos); //I don't know why location2 is assigned here, I assumed it important  --DeepSOIC
   this->wheel->setPosition(pos);
 
@@ -187,7 +207,7 @@ MouseP::mouseWheelEvent(QWheelEvent * event)
   const SbVec2f widgetDelta(static_cast<float>(pixels.x()), static_cast<float>(pixels.y()));
   this->wheel->setPixelDelta(
     SoMouseWheelEvent::toGlPixelDelta(widgetDelta,
-                                      static_cast<float>(publ->quarter->devicePixelRatio())),
+                                      static_cast<float>(publ->host->devicePixelRatio())),
     SoMouseWheelEvent::isPreciseScroll(!pixels.isNull(), event->phase() != Qt::NoScrollPhase));
   this->wheel->setScrollBegin(event->phase() == Qt::ScrollBegin);
 
@@ -200,8 +220,8 @@ MouseP::mouseButtonEvent(QMouseEvent * event)
   PUBLIC(this)->setModifiers(this->mousebutton, event);
   SbVec2s pos = InputDevice::toDevicePixelPosition(
       getLocalPosition(event),
-      PUBLIC(this)->windowsize,
-      publ->quarter->devicePixelRatio());
+      logicalWindowSize(),
+      publ->host->devicePixelRatio());
   this->location2->setPosition(pos);
   this->mousebutton->setPosition(pos);
 

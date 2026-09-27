@@ -589,6 +589,110 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
     </widget>
    </item>
    <item>
+    <widget class="QGroupBox" name="groupBoxVulkan">
+     <property name="title">
+      <string>Vulkan rendering (experimental)</string>
+     </property>
+     <property name="toolTip">
+      <string>These options affect only the Vulkan viewport renderer and are ignored by the standard OpenGL renderer.  Requires a FreeCAD build with FREECAD_USE_VULKAN and the UseVulkanRenderer preference enabled.</string>
+     </property>
+     <layout class="QVBoxLayout" name="verticalLayoutVulkan">
+      <item>
+       <widget class="Gui::PrefCheckBox" name="CheckBox_UseVulkanRenderer">
+        <property name="text">
+         <string>Render 3D views with Vulkan</string>
+        </property>
+        <property name="toolTip">
+         <string>Use the experimental Coin Vulkan render backend for new 3D views instead of the standard OpenGL renderer.  Requires a FreeCAD build with FREECAD_USE_VULKAN and a Vulkan-capable GPU.  Existing 3D views are not affected until the document is reopened.</string>
+        </property>
+        <property name="prefEntry" stdset="0">
+         <cstring>UseVulkanRenderer</cstring>
+        </property>
+        <property name="prefPath" stdset="0">
+         <cstring>View</cstring>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="Gui::PrefCheckBox" name="CheckBox_VulkanWireframe">
+        <property name="text">
+         <string>Show wireframe (edge overlay)</string>
+        </property>
+        <property name="checked">
+         <bool>true</bool>
+        </property>
+        <property name="prefEntry" stdset="0">
+         <cstring>VulkanWireframe</cstring>
+        </property>
+        <property name="prefPath" stdset="0">
+         <cstring>View</cstring>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="Gui::PrefCheckBox" name="CheckBox_VulkanShowPoints">
+        <property name="text">
+         <string>Show vertices (point overlay)</string>
+        </property>
+        <property name="prefEntry" stdset="0">
+         <cstring>VulkanShowPoints</cstring>
+        </property>
+        <property name="prefPath" stdset="0">
+         <cstring>View</cstring>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="Gui::PrefCheckBox" name="CheckBox_VulkanInteractionLod">
+        <property name="text">
+         <string>Reduce detail while navigating</string>
+        </property>
+        <property name="toolTip">
+         <string>While the camera is moving (navigating, orbiting or zooming), render simplified geometry to keep the viewport interactive, then restore full detail once the motion stops.  Only affects the Vulkan viewport.</string>
+        </property>
+        <property name="checked">
+         <bool>true</bool>
+        </property>
+        <property name="prefEntry" stdset="0">
+         <cstring>VulkanInteractionLod</cstring>
+        </property>
+        <property name="prefPath" stdset="0">
+         <cstring>View</cstring>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="horizontalLayoutVulkanEdge">
+        <item>
+         <widget class="QLabel" name="labelVulkanEdgeColor">
+          <property name="text">
+           <string>Edge color</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="Gui::PrefColorButton" name="VulkanEdgeColor">
+          <property name="color">
+           <color>
+            <red>5</red>
+            <green>5</green>
+            <blue>5</blue>
+           </color>
+          </property>
+          <property name="prefEntry" stdset="0">
+           <cstring>VulkanEdgeColor</cstring>
+          </property>
+          <property name="prefPath" stdset="0">
+           <cstring>View</cstring>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
     <widget class="QGroupBox" name="groupBoxCamera">
      <property name="title">
       <string>Camera Type</string>

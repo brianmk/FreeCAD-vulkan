@@ -93,6 +93,9 @@
 #include "LinkViewPy.h"
 #include "MainWindow.h"
 #include "Macro.h"
+#ifdef FREECAD_USE_VULKAN
+# include "Quarter/QuarterVulkanWidget.h"
+#endif
 #include "FreeCADGuiModulePy.h"
 #include "PreferencePackManager.h"
 #include "PythonConsolePy.h"
@@ -547,6 +550,18 @@ Application::Application(bool GUIenabled)
             "User parameter:BaseApp/Preferences/View");
         if (hViewGrp->GetBool("UseVBO", false)) {
             (void)coin_setenv("COIN_VBO", "1", true);
+        }
+
+        // Honor the --enable-vulkan command-line flag: persist it into the
+        // view preferences before any 3D view is constructed, so the
+        // View3DInventor path picks the Vulkan renderer for this run.
+        // Only an explicit truthy value enables it: an explicit
+        // "--set-config UseVulkanRenderer=0" must be able to override the
+        // flag (count() alone would treat the key's mere presence as on).
+        auto configIt = App::Application::Config().find("UseVulkanRenderer");
+        if (configIt != App::Application::Config().end()
+            && configIt->second == "1") {
+            hViewGrp->SetBool("UseVulkanRenderer", true);
         }
 
         // Check for the symbols for group separator and decimal point. They must be different
@@ -2697,6 +2712,19 @@ void Application::runApplication()
     init3DMouse(&mw, &mainApp);
 
     Instance->d->startingUp = false;
+
+#ifdef FREECAD_USE_VULKAN
+    // Warm the shared QVulkanInstance on the first event-loop turn, before the
+    // deferred document open (delayedStartup below), so the first document does
+    // not pay the one-time Vulkan loader/GPU-driver initialization.
+    if (App::GetApplication()
+            .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
+            ->GetBool("UseVulkanRenderer", false)) {
+        QTimer::singleShot(0, &mw, [] {
+            SIM::Coin3D::Quarter::QuarterVulkanWidget::prewarmSharedInstance();
+        });
+    }
+#endif
 
     // gets called once we start the event loop
     QTimer::singleShot(0, &mw, SLOT(delayedStartup()));

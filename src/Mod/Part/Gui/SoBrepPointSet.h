@@ -34,6 +34,7 @@
 
 class SoCoordinateElement;
 class SoIndexedPointSet;
+class SoIRRenderAction;
 
 namespace PartGui
 {
@@ -63,6 +64,9 @@ public:
 protected:
     ~SoBrepPointSet() override;
     void GLRender(SoGLRenderAction* action) override;
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    void IRRender(SoIRRenderAction* action) override;
+#endif
     void GLRenderBelowPath(SoGLRenderAction* action) override;
     void doAction(SoAction* action) override;
 
@@ -73,6 +77,19 @@ private:
     using SelContextPtr = Gui::SoFCSelectionContextPtr;
     void renderHighlight(SoGLRenderAction* action, SelContextPtr);
     void renderSelection(SoGLRenderAction* action, SelContextPtr, bool push = true);
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    void renderHighlightIR(SoIRRenderAction* action, SelContextPtr);
+    void renderSelectionIR(SoIRRenderAction* action, SelContextPtr);
+#endif
+
+    // Shared GL/IR implementations: the GL and IR render paths are identical
+    // apart from the action type, so they funnel through these templates.
+    template <typename Action>
+    void renderHighlightCommon(Action* action, SelContextPtr ctx);
+    template <typename Action>
+    void renderSelectionCommon(Action* action, SelContextPtr ctx);
+    template <typename Action>
+    void renderTestOverlay(Action* action);
 
 private:
     SelContextPtr selContext;

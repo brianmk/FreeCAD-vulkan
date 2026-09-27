@@ -31,17 +31,15 @@ namespace Gui
 {
 
 /**
- * Marks its subtree as raster-only in the Vulkan retained renderer.
+ * Marks its subtree as an overlay in the Vulkan retained renderer.
  *
  * Children are traversed normally, then every render command they recorded is
- * promoted to the screen-space OVERLAY pass. The path tracer never builds TLAS
- * geometry for overlay commands and skips them when tracing, so the subtree is
- * drawn by the raster backend on top of the traced image instead of being
- * path-traced.
+ * promoted to the screen-space OVERLAY pass, so the subtree is drawn by the
+ * raster backend on top of the main scene rather than blended into it.
  *
  * Used for annotation-style geometry such as the origin datum planes: they are
- * crisp, free of denoiser noise, and - because they follow the same view
- * transform as picking - their pickable area stays aligned with what is drawn.
+ * crisp and - because they follow the same view transform as picking - their
+ * pickable area stays aligned with what is drawn.
  *
  * Has no effect on the OpenGL path (which renders through GLRender, not
  * IRRender).
@@ -56,8 +54,8 @@ public:
     static void initClass();
     SoRasterOverlay();
 
-    //! Master switch; when off the subtree renders through the normal (traced)
-    //! path so a caller can opt out without rebuilding the scene graph.
+    //! Master switch; when off the subtree renders through the normal pass so
+    //! a caller can opt out without rebuilding the scene graph.
     SoSFBool enabled;
 
 protected:

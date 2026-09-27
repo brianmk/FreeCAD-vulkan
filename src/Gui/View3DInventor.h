@@ -31,6 +31,7 @@
 #include "MDIViewWithCamera.h"
 
 #include "Base/Vector3D.h"
+#include "VulkanViewSettings.h"
 
 class QPrinter;
 class QOpenGLWidget;
@@ -44,6 +45,8 @@ class View3DInventorViewer;
 class View3DPy;
 class View3DSettings;
 class NaviCubeSettings;
+
+class VulkanViewportAdapter;
 
 struct RayPickInfo
 {
@@ -135,12 +138,53 @@ public:
     }
     bool containsViewProvider(const ViewProvider*) const override;
 
+Q_SIGNALS:
+#ifdef FREECAD_USE_VULKAN
+    /// Emitted whenever the effective render mode changes.  The status bar
+    /// re-synchronises the render-mode selector.
+    void renderModeChanged(int mode);
+#endif
+
 public Q_SLOTS:
     /// override the cursor in this view
     void setOverrideCursor(const QCursor&) override;
     void restoreOverrideCursor() override;
 
     void dump(const char* filename, bool onlyVisible = false);
+
+#ifdef FREECAD_USE_VULKAN
+    /// View render mode (see Gui::ViewRenderMode).  Mirrored by the
+    /// status-bar selector in the main window; each view keeps its own.
+    ViewRenderMode getRenderMode() const;
+    void setRenderMode(ViewRenderMode mode);
+#endif
+
+    /// Re-impose the visible surface size on the Vulkan viewport's pick /
+    /// navigation region and re-push the scene.  A view created for a
+    /// brand-new document can otherwise keep a stale region (so hover
+    /// preselection misses) until the render mode is re-applied -- the effect
+    /// a manual renderer switch has.  No-op without a Vulkan viewport.
+    void resyncVulkanViewport();
+
+#ifdef FREECAD_USE_VULKAN
+    /// Whether the model's feature-edge lines are drawn in the Vulkan
+    /// viewport.  Backed by the VulkanWireframe preference and mirrored by the
+    /// status-bar button.
+    bool getWireframe() const;
+    void setWireframe(bool enabled);
+#endif
+
+    /// Ordinal of the Vulkan viewport's last presented frame (see
+    /// QuarterVulkanWidget::getRenderFrameCount).  0 when this view has no
+    /// Vulkan viewport.  Probe phase markers and frame dumps key off it so
+    /// the checker can correlate records independent of stream ordering.
+    uint32_t getVulkanFrameCount() const;
+
+    /// Force a single Vulkan frame even when the viewport is converged-idle.
+    /// Scripted probes call this after a scene/camera edit so the harness's
+    /// doc.recompute()/updateGui() (which bypasses Application::onUpdate)
+    /// still produces a render.  No-op without a Vulkan viewport.
+    void requestVulkanRender();
 
 protected Q_SLOTS:
     void stopAnimating();
@@ -157,14 +201,19 @@ protected:
     void focusInEvent(QFocusEvent* e) override;
     void customEvent(QEvent* e) override;
     void contextMenuEvent(QContextMenuEvent* e) override;
+    bool eventFilter(QObject* watched, QEvent* e) override;
 
 private:
     View3DInventorViewer* _viewer;
     PyObject* _viewerPy;
     QTimer* stopSpinTimer;
     QStackedWidget* stack;
+    VulkanViewportAdapter* _vulkanAdapter = nullptr;
     std::unique_ptr<View3DSettings> viewSettings;
     std::unique_ptr<NaviCubeSettings> naviSettings;
+#ifdef FREECAD_USE_VULKAN
+    ViewRenderMode _renderMode = ViewRenderMode::RasterCoin;
+#endif
 
     // friends
     friend class View3DPy;
