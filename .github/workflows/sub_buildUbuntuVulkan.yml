@@ -104,7 +104,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: brianmk/FreeCAD-DevTools
-          ref: ef54c29f8c853f261d0b116ca5920fb34bad2da1
+          ref: f24648c6f0dcda377759f9fd35033326a9705659
           path: devtools
 
       - name: Check committed Vulkan SPIR-V header stamps
