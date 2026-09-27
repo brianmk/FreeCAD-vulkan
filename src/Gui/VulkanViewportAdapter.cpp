@@ -881,6 +881,26 @@ void VulkanViewportAdapter::updateViewportAuthority(const QSize& surfaceSize)
     if (auto* controller = _viewer->getInteractionController()) {
         controller->setViewportRegion(vp, static_cast<float>(dpr));
     }
+
+    // A QStackedLayout's sizeHint is the maximum over its pages, so the hidden
+    // GL page still influences the stack (and, through it, the MDI sub-window
+    // and the Vulkan surface).  Once the Vulkan page is current the hidden GL
+    // page's small default sizeHint shrinks the stack to a stale size, so the
+    // surface reports (and renders into) that shrunken region while the window
+    // stays large: event positions and the pick region then disagree and hover
+    // picking silently misses (the CPU pick via getObjectInfo still hits).  Take
+    // the hidden page out of the layout and keep its own size pinned to the
+    // visible container so a GL fallback still sees the right region.  The
+    // visible Vulkan surface remains the single viewport authority.
+    if (QWidget* glWidget = _viewer->getWidget()) {
+        if (glWidget->sizePolicy()
+            != QSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored)) {
+            glWidget->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+        }
+        if (glWidget->size() != logical) {
+            glWidget->resize(logical);
+        }
+    }
 #endif
 }
 
