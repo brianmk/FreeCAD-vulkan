@@ -50,10 +50,11 @@ namespace Gui
  *
  * The base SoNaviCube is kept byte-for-byte upstream (a pure OpenGL node) so
  * the fork stays portable: the GL renderer draws it exactly as upstream does.
- * This class is a fully self-contained re-implementation of the navcube for the
- * Vulkan/IR (retained-render) pipeline.  It builds its OWN scene graph (cube,
- * edges, three coloured axis arrows), drives it from the inherited public state
- * fields, and records it into the overlay draw list scoped to the navcube rect.
+ * This class reuses the base node's geometry for the Vulkan/IR (retained-render)
+ * pipeline: the chamfered cube + edge geometry (via getCubeGeometry), the label
+ * quads (getLabelQuad) and the button geometry (getButtonGeom) are recorded into
+ * the overlay draw list scoped to the navcube rect, so the Vulkan navcube
+ * matches the Coin rendering.
  */
 class GuiExport SoNaviCubeVulkan: public SoNaviCube
 {
@@ -74,7 +75,8 @@ protected:
     ~SoNaviCubeVulkan() override;
 
 private:
-    //! Lazily build the navcube scene graph (once).
+    //! Build the navcube scene graph on first use, and rebuild it whenever
+    //! geometryRevision() changes (chamfer / label geometry).
     void ensureScene() const;
     //! Refresh camera, transform, materials and highlight from the inherited
     //! public state fields, and touch the retained geometry so the axes (and the
@@ -83,8 +85,6 @@ private:
     //! Scope the scene to the corner viewport, force BASE_COLOR lighting, record
     //! sceneRoot, and promote the recorded commands to the overlay pass.
     void recordOverlay(SoIRRenderAction* action);
-    //! Map a PickId (as int) to the cube's 6-face material index, or -1.
-    static int faceIndex(int pickId);
 
     // AxisNodes / LabelNodes / ButtonNodes are inherited from the base
     // SoNaviCube (protected) to avoid duplicating the node-group structs.
@@ -125,6 +125,8 @@ private:
         SoNaviCube::PickId::ViewMenu) + 1> buttonNodes;
 
     mutable bool sceneBuilt {false};
+    mutable SoSwitch* axisSwitch {nullptr};
+    mutable unsigned int builtRevision {0};
 };
 
 }  // namespace Gui

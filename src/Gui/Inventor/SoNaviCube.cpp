@@ -440,6 +440,7 @@ void SoNaviCube::setLabelImage(PickId id, const SbVec2s& size, int numComponents
             }
         }
         sceneDirty = true;
+        ++geometryRev;
         return;
     }
 
@@ -461,6 +462,7 @@ void SoNaviCube::setLabelImage(PickId id, const SbVec2s& size, int numComponents
 
     slot.texture->image.setValue(size, numComponents, pixels, SoSFImage::COPY);
     sceneDirty = true;
+    ++geometryRev;
 }
 
 void SoNaviCube::clearLabelTextures()
@@ -473,6 +475,7 @@ void SoNaviCube::clearLabelTextures()
     }
     labelTextureCount = 0;
     sceneDirty = true;
+    ++geometryRev;
 }
 
 bool SoNaviCube::getLabelQuad(
@@ -512,6 +515,22 @@ bool SoNaviCube::getButtonGeom(
     triangles = this->buttonTriangleIndices[index];
     outline = this->buttonOutlineIndices[index];
     return true;
+}
+
+bool SoNaviCube::getCubeGeometry(CubeGeometry& out) const
+{
+    this->ensureGeometry();
+    out.cubeCoords = &cubeCoordsData;
+    out.cubeIndices = &cubeCoordIndexData;
+    out.edgeCoords = &edgeCoordsData;
+    out.edgeIndices = &edgeCoordIndexData;
+    out.faceCount = static_cast<int>(kCubeFacePickOrder.size());
+    return !cubeCoordsData.empty() && !cubeCoordIndexData.empty();
+}
+
+int SoNaviCube::cubeFaceSlot(PickId id)
+{
+    return cubeFaceIndex(id);
 }
 
 void SoNaviCube::ensureSceneGraph() const
@@ -1698,6 +1717,7 @@ void SoNaviCube::rebuildGeometry() const
 
     geometryDirty = false;
     sceneDirty = true;
+    ++geometryRev;
 }
 
 void SoNaviCube::addCubeFace(const SbVec3f& x, const SbVec3f& z, CubeFaceKind kind, PickId pickId) const
