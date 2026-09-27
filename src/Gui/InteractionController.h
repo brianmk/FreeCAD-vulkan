@@ -66,6 +66,16 @@ public:
     //! event was accepted.
     bool processRawEvent(QEvent* ev);
 
+    //! Run a native Qt event through the current surface's input devices.
+    //! FreeCAD's native 3D-mouse handler posts `Spaceball::*` events to the
+    //! focus widget and, as a fallback, the main window re-sends them to the
+    //! active `View3DInventorViewer`.  Because the gesture/SpaceNavigator
+    //! devices now live on the *current* surface's event filter, that fallback
+    //! reached the hidden GL viewer's devices before the decoupling and no
+    //! longer does while the Vulkan surface is current.  Routing the event
+    //! through the controller translates it on whichever surface is active.
+    bool processNativeEvent(QEvent* ev);
+
     //! Take ownership of a native input device (gesture/SpaceNavigator) and
     //! register it on the current surface's event filter.  The controller moves
     //! the device between surface filters when `setSurface()` swaps surfaces so

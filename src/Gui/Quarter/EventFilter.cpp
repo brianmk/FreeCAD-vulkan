@@ -163,7 +163,20 @@ EventFilter::unregisterInputDevice(InputDevice * device)
 bool
 EventFilter::eventFilter(QObject * obj, QEvent * qevent)
 {
-  Q_UNUSED(obj); 
+  Q_UNUSED(obj);
+  return this->processEvent(qevent);
+}
+
+/*!
+  Translate a native Qt event against the registered devices and deliver the
+  resulting Coin event through the host.  Same behaviour as the Qt event-filter
+  entry point, but callable directly so a caller that owns the devices can route
+  an event that Qt delivered to a widget outside this filter (see
+  InteractionController::processNativeEvent()).
+ */
+bool
+EventFilter::processEvent(QEvent * qevent)
+{
   // make sure every device has updated screen size and mouse position
   // before translating events
   switch (qevent->type()) {
