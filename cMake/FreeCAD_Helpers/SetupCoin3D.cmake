@@ -33,6 +33,15 @@ macro(SetupCoin3D)
         set(COIN3D_MICRO_VERSION "${CMAKE_MATCH_1}")
         set(COIN3D_VERSION "${COIN3D_MAJOR_VERSION}.${COIN3D_MINOR_VERSION}.${COIN3D_MICRO_VERSION}")
     ENDIF ()
+
+    # The retained (immediate-render) API used by the Vulkan viewport only
+    # exists in the bundled Coin.  Guard every SoIRRenderAction consumer with
+    # HAVE_COIN_IR_RENDER_ACTION so external/system Coin builds (which lack
+    # SoNode::IRRender) still compile; the IR overrides simply compile out.
+    if (EXISTS "${COIN3D_INCLUDE_DIRS}/Inventor/actions/SoIRRenderAction.h")
+        add_definitions(-DHAVE_COIN_IR_RENDER_ACTION)
+        message(STATUS "Coin3D provides the IR render API (SoIRRenderAction)")
+    endif ()
 endmacro(SetupCoin3D)
 
 macro(SetupPivy)
@@ -115,10 +124,19 @@ macro(SetupBundledCoinPivy)
     set(FREETYPE_RUNTIME_LINKING OFF CACHE BOOL "Disable FreeType runtime linking for bundled Coin" FORCE)
     set(COIN_BUILD_TESTS OFF CACHE BOOL "Build bundled Coin tests" FORCE)
     set(COIN_INSTALL OFF CACHE BOOL "Disable standalone install rules for bundled Coin" FORCE)
+    # Enable the Vulkan render backend when FreeCAD requests the experimental
+    # Vulkan viewport.  The OpenGL backend remains built and the default.
+    set(COIN_BUILD_VULKAN_RENDERER ${FREECAD_USE_VULKAN} CACHE BOOL
+        "Build the bundled Coin Vulkan render backend" FORCE)
     add_subdirectory("${CMAKE_SOURCE_DIR}/src/3rdParty/coin" "${CMAKE_BINARY_DIR}/src/3rdParty/coin")
     if (NOT DEFINED COIN_VERSION OR COIN_VERSION STREQUAL "")
         message(FATAL_ERROR "Bundled Coin did not define COIN_VERSION")
     endif ()
+    # The bundled Coin always provides the retained IR render API used by
+    # the Vulkan viewport.  The matching probe for external Coin lives in
+    # SetupCoin3D() above; both gate FreeCAD's SoIRRenderAction consumers on
+    # HAVE_COIN_IR_RENDER_ACTION.
+    add_definitions(-DHAVE_COIN_IR_RENDER_ACTION)
     set(COIN3D_VERSION "${COIN_VERSION}")
     # Match external Coin usage: FreeCAD targets should treat Coin headers as third-party headers.
     target_include_directories(Coin

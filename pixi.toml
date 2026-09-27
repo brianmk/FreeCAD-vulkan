@@ -114,6 +114,11 @@ xcb-util-cursor = "*"
 xorg-x11-server-common-cos7-x86_64 = "*"
 xorg-x11-server-xvfb-cos7-x86_64 = "*"
 xorg-xproto = "*"
+# The pixi/conda clang is isolated and does not search /usr/include, so the
+# apt-provided Vulkan headers are invisible to the bundled Coin build.  Ship
+# libvulkan-headers so <vulkan/vulkan.h> resolves for the experimental Vulkan
+# viewport (win-64 installs the LunarG SDK in the workflow instead).
+libvulkan-headers = "*"
 
 ## Linux Dependencies (aarch64)
 [target.linux-aarch64.dependencies]

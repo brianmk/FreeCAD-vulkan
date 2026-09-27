@@ -121,6 +121,41 @@ if(BUILD_TRACY_FRAME_PROFILER)
     list(APPEND FreeCADGui_LIBS TracyClient)
 endif()
 
+if(FREECAD_USE_VULKAN)
+    if(FREECAD_USE_EXTERNAL_COIN_PIVY)
+        message(FATAL_ERROR "FREECAD_USE_VULKAN requires the bundled Coin/Pivy")
+    endif()
+    find_package(Vulkan REQUIRED)
+    list(APPEND FreeCADGui_LIBS Vulkan::Vulkan)
+    target_compile_definitions(FreeCADGui PRIVATE FREECAD_USE_VULKAN=1)
+    # The bundled Coin is built with COIN_BUILD_VULKAN_RENDERER=ON (see
+    # SetupCoin3D.cmake).  Coin's public Vulkan headers are compiled only
+    # when this macro is set, so FreeCAD must define it for its own
+    # compilation of those headers (e.g. QuarterVulkanWidget.cpp).
+    target_compile_definitions(FreeCADGui PRIVATE COIN_BUILD_VULKAN_RENDERER=1)
+    # Debug/test hooks (synthetic mouse injector + frame dumper).  Auto-on for
+    # Debug builds; a release build only gets them with an explicit
+    # -DFREECAD_USE_VULKAN_DEBUG_HOOKS=ON.  $<CONFIG:Debug> (not
+    # CMAKE_BUILD_TYPE) so multi-config generators still define them.
+    target_compile_definitions(FreeCADGui PRIVATE
+        "$<$<OR:$<BOOL:${FREECAD_USE_VULKAN_DEBUG_HOOKS}>,$<CONFIG:Debug>>:FREECAD_VULKAN_DEBUG_HOOKS=1>")
+    target_include_directories(FreeCADGui SYSTEM PRIVATE
+        ${QtGui_INCLUDE_DIRS}
+    )
+    # QuarterVulkanWidget.cpp includes the Qt QPA header
+    # <QtGui/qpa/qwindowsysteminterface.h> (Qt 6 MouseEvent/Expose sync helpers).
+    # qpa/ headers live in the QT_VERSION-specific private include dir exposed
+    # by Qt6::GuiPrivate, which is present on a normal Qt6 dev install but NOT
+    # on conda/pixi qt6-main, so probe for it and make it optional.
+    if(FREECAD_QT_MAJOR_VERSION EQUAL 6)
+        find_package(Qt6 QUIET COMPONENTS GuiPrivate)
+        if(Qt6GuiPrivate_FOUND)
+            list(APPEND FreeCADGui_LIBS Qt6::GuiPrivate)
+            target_compile_definitions(FreeCADGui PRIVATE HAVE_QT6_GUI_PRIVATE=1)
+        endif()
+    endif()
+endif()
+
 if (TARGET Coin::Coin)
     list(APPEND FreeCADGui_LIBS Coin::Coin)
 else()
@@ -867,10 +902,13 @@ SET(View3D_CPP_SRCS
     View3DInventor.cpp
     View3DInventorSelection.cpp
     View3DInventorViewer.cpp
+    InteractionController.cpp
     View3DSettings.cpp
     View3DPy.cpp
     View3DViewerPy.cpp
     NaviCube.cpp
+    VulkanViewportAdapter.cpp
+    VulkanViewSettings.cpp
 )
 SET(View3D_SRCS
     ${View3D_CPP_SRCS}
@@ -886,10 +924,15 @@ SET(View3D_SRCS
     View3DInventor.h
     View3DInventorSelection.h
     View3DInventorViewer.h
+    InteractionHost.h
+    InteractionSurface.h
+    InteractionController.h
     View3DPy.h
     View3DSettings.h
     View3DViewerPy.h
     NaviCube.h
+    VulkanViewportAdapter.h
+    VulkanViewSettings.h
 )
 SOURCE_GROUP("View3D" FILES ${View3D_SRCS})
 
@@ -925,8 +968,16 @@ SET(Navigation_SRCS
 SOURCE_GROUP("Navigation" FILES ${Navigation_SRCS})
 
 #quarter sources
+# QuarterVulkanWidget (and VulkanFrameDumper) only compile with the Vulkan
+# viewport; their sources include Qt/Vulkan headers that do not exist when
+# FREECAD_USE_VULKAN is OFF (e.g. QVulkanDeviceFunctions), so exclude them from
+# the unconditional Quarter glob unless the Vulkan renderer is enabled.
 FILE(GLOB_RECURSE Quarter_CPP_SRC RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} Quarter/*.cpp)
 FILE(GLOB_RECURSE Quarter_H_SRC RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} Quarter/*.h)
+if(NOT FREECAD_USE_VULKAN)
+    list(FILTER Quarter_CPP_SRC EXCLUDE REGEX "QuarterVulkanWidget\\.cpp$|VulkanFrameDumper\\.cpp$")
+    list(FILTER Quarter_H_SRC EXCLUDE REGEX "QuarterVulkanWidget\\.h$|VulkanFrameDumper\\.h$")
+endif()
 
 SET(Quarter_MOC_HDR
     Quarter/SignalThread.h
@@ -938,6 +989,9 @@ SET(Quarter_MOC_HDR
     Quarter/eventhandlers/EventFilter.h
     Quarter/QuarterWidget.h
 )
+if(FREECAD_USE_VULKAN)
+    list(APPEND Quarter_MOC_HDR Quarter/QuarterVulkanWidget.h)
+endif()
 
 qt_wrap_cpp(Quarter_MOC_SRCS ${Quarter_MOC_HDR})
 
@@ -1041,6 +1095,7 @@ SET(Inventor_CPP_SRCS
     Inventor/SoFCBackgroundGradient.cpp
     Inventor/SoFCBoundingBox.cpp
     Inventor/SoNaviCube.cpp
+    Inventor/SoRasterOverlay.cpp
     Inventor/SoMouseWheelEvent.cpp
     Inventor/SoFCTransform.cpp
     Inventor/SoToggleSwitch.cpp
@@ -1083,6 +1138,7 @@ SET(Inventor_SRCS
     Inventor/SoFCBackgroundGradient.h
     Inventor/SoFCBoundingBox.h
     Inventor/SoNaviCube.h
+    Inventor/SoRasterOverlay.h
     Inventor/SoMouseWheelEvent.h
     Inventor/SoFCTransform.h
     Inventor/SoToggleSwitch.h
