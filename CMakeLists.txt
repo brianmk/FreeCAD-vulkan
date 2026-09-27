@@ -44,6 +44,19 @@ option(FREECAD_USE_VULKAN "Enable the experimental Vulkan viewport" OFF)
 # builds carry neither; auto-enabled for Debug builds (see src/Gui/CMakeLists).
 option(FREECAD_USE_VULKAN_DEBUG_HOOKS "Build the Vulkan debug/test hooks" OFF)
 
+# Small renderer-name label ("OpenGL"/"Vulkan") in the bottom-right corner of
+# the 3D viewport.  A development/QA aid: on by default for working builds,
+# official/release packaging passes -DFREECAD_VIEWPORT_RENDERER_LABEL=OFF to
+# drop it.
+option(
+    FREECAD_VIEWPORT_RENDERER_LABEL
+    "Show the renderer-name label in the 3D viewport (dev aid; OFF for official builds)"
+    ON
+)
+if(FREECAD_VIEWPORT_RENDERER_LABEL)
+    add_definitions(-DFREECAD_VIEWPORT_RENDERER_LABEL)
+endif()
+
 # FreeCAD does not use C++20 modules. Keep CMake 3.28+ from enabling module
 # dependency scanning on C++20 targets, especially with toolchains that do not
 # provide a scanner such as clang-scan-deps.

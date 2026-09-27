@@ -431,12 +431,10 @@ void NaviCubeImplementation::syncNodeState(SoAction* action)
     const SoType type = action->getTypeId();
     const bool isGLRender = type.isDerivedFrom(SoGLRenderAction::getClassTypeId());
 
-    if (isGLRender) {
-        if (!readyToRender()) {
-            return;
-        }
-    }
-    else if (!prepared) {
+    // Both the legacy GL render path and the Vulkan/IR overlay path must run
+    // prepare() (label textures, chamfer geometry) before they can render; the
+    // hidden GL viewer may never paint, so the IR traversal has to trigger it.
+    if (!readyToRender()) {
         return;
     }
 
@@ -485,6 +483,9 @@ void NaviCubeImplementation::requestRedraw(bool touchNode)
         if (auto* rm = viewer->getSoRenderManager()) {
             rm->scheduleRedraw();
         }
+        // The GL render-manager redraw never reaches the display-only Vulkan
+        // widget, so ask the viewer to request a frame for the overlay change.
+        viewer->requestNaviCubeRedraw();
     }
 }
 

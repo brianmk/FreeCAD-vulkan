@@ -72,6 +72,11 @@
 #include <Inventor/SbViewVolume.h>
 #include <Inventor/system/gl.h>
 
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+# include <Inventor/actions/SoIRRenderAction.h>
+# include <Inventor/rendering/SoRenderIR.h>
+#endif
+
 #include "SoNaviCube.h"
 
 using namespace Gui;
@@ -518,6 +523,7 @@ void SoNaviCube::resetSceneGraph() const
         nodes = {};
     }
     cubeSep = nullptr;
+    cubeHints = nullptr;
     cubeMaterial = nullptr;
     cubeVertexProperty = nullptr;
     cubeFaces = nullptr;
@@ -637,11 +643,11 @@ void SoNaviCube::buildCubeSection() const
         cubeSep->addChild(offset);
 
         // Ensure consistent front-face orientation and enable solid face culling for the cube.
-        auto* hints = new SoShapeHints;
-        hints->vertexOrdering = SoShapeHints::COUNTERCLOCKWISE;
-        hints->shapeType = SoShapeHints::SOLID;
-        hints->faceType = SoShapeHints::CONVEX;
-        cubeSep->addChild(hints);
+        cubeHints = new SoShapeHints;
+        cubeHints->vertexOrdering = SoShapeHints::COUNTERCLOCKWISE;
+        cubeHints->shapeType = SoShapeHints::SOLID;
+        cubeHints->faceType = SoShapeHints::CONVEX;
+        cubeSep->addChild(cubeHints);
     }
 
     cubeFaces = new SoIndexedFaceSet;
@@ -1353,6 +1359,99 @@ void SoNaviCube::renderCoin(SoGLRenderAction* action)
     renderOverlayScene(action);
     state->pop();
 }
+
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+void SoNaviCube::IRRender(SoIRRenderAction* action)
+{
+    if (!action) {
+        return;
+    }
+
+    const SbVec4f& rect = viewportRect.getValue();
+    const int viewportX = static_cast<int>(std::lround(rect[0]));
+    const int viewportY = static_cast<int>(std::lround(rect[1]));
+    const int viewportWidth = static_cast<int>(std::lround(rect[2]));
+    const int viewportHeight = static_cast<int>(std::lround(rect[3]));
+
+    if (viewportWidth <= 0 || viewportHeight <= 0) {
+        return;
+    }
+
+    SoState* state = action->getState();
+    if (!state) {
+        return;
+    }
+
+    ensureGeometry();
+    ensureSceneGraph();
+    const RenderParams params = makeRenderParams();
+    updateSceneGraph(params);
+
+    SoDrawList& list = action->getMutableDrawList();
+    const int firstCommand = list.getNumCommands();
+
+    state->push();
+
+    // Scope the retained scene to the navcube corner, exactly like the GL
+    // overlay viewport in beginOverlayPass(), so the node's own cameras and the
+    // backend's per-rect overlay depth clear apply within that rect only.
+    SbViewportRegion vp = SoViewportRegionElement::get(state);
+    vp.setViewportPixels(viewportX, viewportY, viewportWidth, viewportHeight);
+    SoViewportRegionElement::set(state, vp);
+
+    // Ignore any colour/material/draw-style override inherited from the main
+    // scene (selection highlight, wireframe view mode), matching beginOverlayPass().
+    SoOverrideElement::setDiffuseColorOverride(state, this, FALSE);
+    SoOverrideElement::setTransparencyOverride(state, this, FALSE);
+    SoOverrideElement::setLightModelOverride(state, this, FALSE);
+    SoOverrideElement::setMaterialBindingOverride(state, this, FALSE);
+    SoOverrideElement::setColorIndexOverride(state, this, FALSE);
+    SoOverrideElement::setDrawStyleOverride(state, this, FALSE);
+    SoLazyElement::setColorMaterial(state, FALSE);
+
+    // The navcube is unlit (BASE_COLOR) on the GL path; force the same model
+    // here so the materials render as flat colours.
+    SoLightModelElement::set(state, this, SoLightModelElement::BASE_COLOR);
+    SoShapeStyleElement::setLightModel(state, SoLazyElement::BASE_COLOR);
+    SoLazyElement::setLightModel(state, SoLazyElement::BASE_COLOR);
+
+    // The retained IR view volume has the opposite handedness to the Coin/GL
+    // one, so the cube's outward-CCW faces would cull the wrong side and let the
+    // hidden faces (and their labels) bleed through the translucent shell.
+    // Declare CLOCKWISE for the IR traversal only; the GL path keeps
+    // COUNTERCLOCKWISE.
+    if (cubeHints) {
+        cubeHints->vertexOrdering = SoShapeHints::CLOCKWISE;
+    }
+
+    sceneRoot->IRRender(action);
+
+    if (cubeHints) {
+        cubeHints->vertexOrdering = SoShapeHints::COUNTERCLOCKWISE;
+    }
+
+    state->pop();
+
+    // Promote the freshly recorded commands to the screen-space overlay pass
+    // and pin them to the navcube rect, so the backend draws them on top of the
+    // main scene with their own per-rect viewport.
+    const int count = list.getNumCommands();
+    for (int i = firstCommand; i < count; ++i) {
+        SoRenderCommand& cmd = list.getCommand(i);
+        cmd.pass = SO_RENDERPASS_OVERLAY;
+        cmd.state.raster.viewportEnabled = TRUE;
+        cmd.state.raster.viewportX = viewportX;
+        cmd.state.raster.viewportY = viewportY;
+        cmd.state.raster.viewportWidth = viewportWidth;
+        cmd.state.raster.viewportHeight = viewportHeight;
+        cmd.state.raster.scissorEnabled = TRUE;
+        cmd.state.raster.scissorX = viewportX;
+        cmd.state.raster.scissorY = viewportY;
+        cmd.state.raster.scissorWidth = viewportWidth;
+        cmd.state.raster.scissorHeight = viewportHeight;
+    }
+}
+#endif
 
 void SoNaviCube::GLRender(SoGLRenderAction* action)
 {
