@@ -27,7 +27,7 @@ export VK_LAYER_SETTINGS_PATH=$PWD/tools/rendering/vk_layer_settings/sync.txt
 Through fcprobe (sets `VK_LAYER_SETTINGS_PATH` and implies `--validation`):
 
 ```sh
-python3 tools/fcprobe/freecad_probe.py run tools/fcprobe/vk_live_probe.py \
+python3 ../FreeCAD-DevTools/fcprobe/freecad_probe.py run ../FreeCAD-DevTools/fcprobe/vk_live_probe.py \
     --validation-profile sync
 ```
 

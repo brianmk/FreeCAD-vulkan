@@ -6,7 +6,8 @@
 
 #include <QObject>
 
-#include <Inventor/rendering/SoVulkanViewMode.h>
+#include <Inventor/SbViewportRegion.h>
+#include <Inventor/rendering/vulkan/SoVulkanViewMode.h>
 
 #include "InteractionSurface.h"
 
@@ -18,7 +19,7 @@ class QTimer;
 class SoNodeSensor;
 class SoSensor;
 
-namespace SIM::Coin3D::Quarter { class QuarterVulkanWidget; }
+namespace SIM::Coin3D::Quarter { class QuarterVulkanWidget; class EventFilter; }
 
 namespace Gui
 {
@@ -27,14 +28,23 @@ class View3DInventorViewer;
 
 /** Owns the Vulkan viewport integration of a 3D view.
  *
- *  The Vulkan widget is display-only: navigation, picking and preference
- *  handling stay on the (hidden) OpenGL viewer.  This adapter keeps the two
- *  sides in sync: it pushes scene-graph/camera/background state into the
- *  Vulkan widget, forwards its input events to the GL viewer, mirrors the
- *  GL viewer's cursor shape onto the visible Vulkan surface and keeps the
- *  GL viewport region in sync with the Vulkan swapchain size.  All wiring
- *  is done in the constructor; the connections use this object as context,
- *  so they are torn down automatically when the view is destroyed.
+ *  The Vulkan widget is the visible display surface and, while its page is
+ *  current, this adapter is the `InteractionController`'s active
+ *  `InteractionSurface`: it answers the camera/scene/viewport queries and the
+ *  presentation hooks (redraw, cursor target, native widget) from the Vulkan
+ *  side, so navigation and picking no longer need the hidden OpenGL viewer's
+ *  render manager.  The controller's event manager stays installed on the GL
+ *  viewer (the base dispatch authority), so input delivered by the Vulkan
+ *  widget runs through the same controller; preference handling and the
+ *  view/document state that is not surface presentation (editing/selection
+ *  state, seek/viewing mode, object/foreground roots, NaviCube) still live on
+ *  the GL viewer.  The adapter keeps the two sides in sync: it pushes scene-
+ *  graph/camera/background state into the Vulkan widget and keeps the surface
+ *  viewport region calibrated -- the visible Vulkan surface is the single
+ *  viewport authority, its size is written into the viewer's neutral
+ *  ViewState, never back into the hidden GL render manager.  All wiring is
+ *  done in the constructor; the connections use this object as context, so
+ *  they are torn down automatically when the view is destroyed.
  *
  *  Like Coin's SoRenderManager (which watches the scene with a root
  *  SoNodeSensor whose callback calls scheduleRedraw()), the adapter installs
@@ -101,14 +111,12 @@ public:
     /// (scene/camera/background) before it is brought back on top.
     void useVulkanViewport(bool vulkan);
 
-    /// Re-impose the visible surface size on the hidden GL viewer's pick /
-    /// navigation region and re-push scene, camera and background.  A view
-    /// created for a brand-new document can hold a stale viewport region, a
-    /// stale camera clipping range (the pick ray's near/far, which only a GL
-    /// render would otherwise fit) or a stale scene binding until the render
-    /// mode is re-applied -- the same effect a manual renderer switch has --
-    /// which leaves hover preselection dead until then.  Idempotent; safe to
-    /// call whenever the layout or scene may have changed.
+    /// Re-impose the visible surface size as the neutral view state's viewport
+    /// authority and re-push scene, camera and background.  A view created for
+    /// a brand-new document can hold a stale viewport region or a stale scene
+    /// binding until the render mode is re-applied -- the same effect a manual
+    /// renderer switch has -- which leaves hover preselection dead until then.
+    /// Idempotent; safe to call whenever the layout or scene may have changed.
     void resyncViewport();
 
 Q_SIGNALS:
@@ -147,17 +155,20 @@ public:
 
     //! @name InteractionSurface (active only while the Vulkan page is current)
     //!
-    //! The controller keeps the GL viewer as its base surface for everything
-    //! surface-independent (camera/scene/event manager/base dispatch); the
-    //! adapter is swapped in only to own the surface-presentation bits.  Every
-    //! method therefore forwards to the GL viewer except `getGLWidget()` and
-    //! `scheduleRedraw()`, which target the visible Vulkan surface, and
-    //! `surfaceSetEventManager()`, which must stay on the GL viewer.
+    //! The adapter is the genuine surface for navigation: camera, scene graph
+    //! and viewport region are answered from the Vulkan widget (which shares
+    //! the same camera/scene nodes as the view) and from this surface's own
+    //! region, so navigation and picking no longer need a GL render manager.
+    //! Only view-state queries that are not surface presentation -- editing and
+    //! selection state, seek/viewing mode, object/foreground roots, NaviCube
+    //! and mouse-selection binding -- still forward to the GL viewer, which owns
+    //! that document/view state.  `getGLWidget()`/`scheduleRedraw()` wake the
+    //! visible Vulkan surface, and `surfaceSetEventManager()` stays on the GL
+    //! viewer, where the controller's event manager is installed.
     //@{
     SoCamera* getCamera() const override;
     SoNode* getSceneGraph() const override;
     const SbViewportRegion& getViewportRegion() const override;
-    SoRenderManager* getSoRenderManager() const override;
     SoEventManager* getSoEventManager() const override;
     SbVec3f getFocalPoint() const override;
     float getPickRadius() const override;
@@ -204,29 +215,25 @@ public:
     bool surfaceNaviCubeEnabled() const override;
     bool surfaceProcessNaviCubeEvent(const SoEvent* ev) override;
     bool surfaceIsRedirectedToSceneGraph() const override;
+    SIM::Coin3D::Quarter::EventFilter* surfaceEventFilter() const override;
+    QWidget* surfaceRawEventTarget() const override;
     void surfaceNotifyCameraMoved() override;
     void surfaceSetEventManager(SoEventManager* manager) override;
     //@}
 
 private:
     void onSurfaceSizeChanged(const QSize& surfaceSize);
-    bool eventFilter(QObject* watched, QEvent* event) override;
 
-    /// Re-impose the Vulkan surface size as the hidden GL viewer's
-    /// render/event-manager viewport region (device pixels) and its DPR.
-    ///
-    /// The display-only GL viewer is hidden, so QuarterWidget::resizeEvent()
-    /// otherwise resets its render-manager region to the GL widget's own
-    /// (typically default 400x400) size whenever the widget is re-laid-out
-    /// (e.g. a document is created/opened).  That leaves SoRayPickAction
-    /// normalized coordinates mismatched against the surface, so picking
-    /// misses.  The surface is the single source of truth, so this is
-    /// re-applied on every size change and on any GL-widget resize.
-    void applySurfaceViewportToGL(const QSize& surfaceSize);
+    /// Re-impose the visible Vulkan surface size as the neutral view state's
+    /// viewport region and device pixel ratio (device pixels) and hand the same
+    /// region to the interaction controller so picking/navigation normalize
+    /// against the visible surface.  The Vulkan surface is the single viewport
+    /// authority; nothing is written back into the hidden GL render manager.
+    void updateViewportAuthority(const QSize& surfaceSize);
 
-    /// (Re)attach the scene-graph and camera change sensors to the viewer's
-    /// current render manager.  Safe to call repeatedly; re-attaches only when
-    /// the tracked nodes changed.
+    /// (Re)attach the scene-graph and camera change sensors to the view
+    /// state's scene root and camera.  Safe to call repeatedly; re-attaches
+    /// only when the tracked nodes changed.
     void attachSensors();
 
     /// Re-point the Vulkan widget at the viewer's current camera and axis-cross
@@ -268,6 +275,11 @@ private:
     //! active surface it forwards every non-presentation call here.
     InteractionSurface* _glSurface = nullptr;
     SIM::Coin3D::Quarter::QuarterVulkanWidget* _vulkanViewer = nullptr;
+    //! Canonical surface viewport region (device pixels), reported by
+    //! applySurfaceViewportToGL() from the visible Vulkan surface size.  This
+    //! is the region the InteractionHost contract exposes, so navigation reads
+    //! it without reaching through the hidden GL viewer's render manager.
+    SbViewportRegion _surfaceViewport;
     //! True once the Vulkan page has been made current at least once.  The
     //! first activation is deferred one event-loop turn so the one-time Vulkan
     //! device creation it triggers is not paid on the document-open critical

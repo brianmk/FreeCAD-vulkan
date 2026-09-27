@@ -12,8 +12,8 @@
 #include <Inventor/SbColor4f.h>
 #include <Inventor/SbVec3f.h>
 #include <Inventor/rendering/SoRenderIR.h>
-#include <Inventor/rendering/SoVulkanViewMode.h>
-#include <Inventor/rendering/SoVulkanViewSettings.h>
+#include <Inventor/rendering/vulkan/SoVulkanViewMode.h>
+#include <Inventor/rendering/vulkan/SoVulkanViewSettings.h>
 #include <vector>
 
 #include <Quarter/InputDeviceHost.h>
@@ -25,6 +25,7 @@
 class QVulkanInstance;
 class QVulkanWindow;
 class QImage;
+class QEvent;
 
 class SoCamera;
 class SoNode;
@@ -35,6 +36,7 @@ namespace Coin3D {
 namespace Quarter {
 
 class QuarterVulkanWidgetPrivate;
+class EventFilter;
 
 /*!
   \brief Self-contained Vulkan viewport widget for FreeCAD's Quarter layer.
@@ -142,15 +144,26 @@ public:
     void setEdgeColor(const SbColor4f & color);
 
     /*!
-      \brief Forward non-translated input events to another widget.
+      \brief Forward non-translated input events to a sink.
 
       Tablet, touch and context-menu events are not translated by the Coin
-      input devices, so they are still relayed to \a target (the hidden OpenGL
-      viewer that owns FreeCAD's gesture/tablet devices).  Mouse, wheel and
-      keyboard events are translated by this widget's own InputDeviceHost and
-      delivered through setEventSink().
+      input devices, so they are handed to \a sink (the InteractionController,
+      which relays them to the surface that owns FreeCAD's gesture/tablet
+      devices).  Returning true from the sink marks the event accepted.  Mouse,
+      wheel and keyboard events are translated by this widget's own
+      InputDeviceHost and delivered through setEventSink().
     */
-    void setRawEventTarget(QWidget * target);
+    void setRawEventSink(std::function<bool(QEvent *)> sink);
+
+    /*!
+      \brief The widget's Coin input-device event filter.
+
+      Quarter's `EventFilter` is installed on the embedded window/container and
+      owns this widget's mouse/keyboard devices; the InteractionController
+      also registers FreeCAD's gesture/SpaceNavigator devices on it while this
+      surface is current.  Returns nullptr before construction completes.
+    */
+    EventFilter * getEventFilter() const;
 
     /*!
       \brief Set the sink that receives translated Coin events.
@@ -199,6 +212,20 @@ public:
       VK_FORMAT_B8G8R8A8_UNORM explicitly.
     */
     void setPreferredColorFormat(int vkFormat);
+
+    /*!
+      \brief Request the swapchain present mode (V-Sync behaviour).
+
+      \a mode: 0 = FIFO (V-Sync, the default, always supported), 1 = Mailbox
+      (V-Sync, no tearing, lower latency; frames may be dropped under load),
+      2 = Immediate (no V-Sync, may tear, uncapped frame rate).  Must be called
+      before the window is first shown.  QVulkanWindow normally hardcodes FIFO;
+      this writes its present mode and falls back to FIFO when the requested
+      mode is not advertised by the surface (queried once the surface exists).
+      A window/swapchain property, so an already-open view keeps its mode until
+      it is reopened.
+    */
+    void setPresentMode(int mode);
 
     /*!
       \brief Request HDR output for the viewport, presented as scRGB.
@@ -425,7 +452,7 @@ public:
     void setPathTracingSettleFrames(int frames);
 
     /*!
-      \brief Select the denoiser backend by name ("rtx", "oidn", "fsr",
+      \brief Select the denoiser backend by name ("rtx", "oidn", "dnsr",
       "none"); an empty string uses the default (backend env / built-in)
       choice.  Forwarded to the ray-tracing backend.  Denoising itself is
       required for path tracing and is enabled automatically by the renderer.

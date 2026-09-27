@@ -95,6 +95,8 @@ const QString ModelUUIDs::ModelUUID_Rendering_Basic =
     QStringLiteral("f006c7e4-35b7-43d5-bbf9-c5d572309e6e");
 const QString ModelUUIDs::ModelUUID_Rendering_Texture =
     QStringLiteral("bbdcc65b-67ca-489c-bd5c-a36e33d1c160");
+const QString ModelUUIDs::ModelUUID_Rendering_Physical =
+    QStringLiteral("cb5fdb3f-9145-484f-8889-f73d6d4d1912");
 const QString ModelUUIDs::ModelUUID_Rendering_Advanced =
     QStringLiteral("c880f092-cdae-43d6-a24b-55e884aacbbf");
 const QString ModelUUIDs::ModelUUID_Rendering_Vector =

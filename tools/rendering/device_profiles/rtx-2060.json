@@ -1,0 +1,9 @@
+{
+  "description": "NVIDIA GeForce RTX 2060 (Turing TU106, 6 GB), strict simulation. Ray tracing IS supported (acceleration structure / ray tracing pipeline / ray query), but the Ada- and Blackwell-era optional extensions and the position-fetch extension are not: VK_KHR_ray_tracing_position_fetch, VK_EXT_opacity_micromap (Ada+), VK_NV_cluster_acceleration_structure, VK_NV_partitioned_acceleration_structure and VK_NV_ray_tracing_linear_swept_spheres (Blackwell). Applies the VP_NVIDIA_rtx_2060 Vulkan Profiles document (SIMULATE_PROPERTIES_BIT only) to also constrain device limits (a finite maxMemoryAllocationCount). The RTX backend must still initialize and path-trace with the five caps reported 0. LIMITATION: the profiles layer cannot override deviceName/deviceID/deviceType or memory heaps, so VRAM (6 GB) and the device name are not simulated.",
+  "profile_file": "VP_NVIDIA_rtx_2060.json",
+  "profile_name": "VP_NVIDIA_rtx_2060",
+  "env": {
+    "VK_KHRONOS_PROFILES_SIMULATE_CAPABILITIES": "SIMULATE_PROPERTIES_BIT",
+    "VK_KHRONOS_PROFILES_EXCLUDE_DEVICE_EXTENSIONS": "VK_KHR_ray_tracing_position_fetch,VK_EXT_opacity_micromap,VK_NV_cluster_acceleration_structure,VK_NV_partitioned_acceleration_structure,VK_NV_ray_tracing_linear_swept_spheres"
+  }
+}

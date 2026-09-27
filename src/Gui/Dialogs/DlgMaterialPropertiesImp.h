@@ -68,6 +68,13 @@ private:
     void onSpecularColorChanged();
     void onShininessValueChanged(int);
     void onTransparencyValueChanged(int);
+    void onPhysicalMaterialToggled(bool);
+    void onMetallicChanged(double);
+    void onRoughnessChanged(double);
+    void onTransmissionIorChanged(double);
+    void onTransmissionAbsorptionChanged(double);
+    void onTextureSizeChanged(double);
+    void onTextureMappingChanged(int);
     void onButtonReset();
     void onButtonDefault();
     void setButtonColors(const App::Material& mat);

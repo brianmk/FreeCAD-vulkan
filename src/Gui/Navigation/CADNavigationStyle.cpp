@@ -221,7 +221,7 @@ SbBool CADNavigationStyle::processSoEvent(const SoEvent* const ev)
         else if (this->currentmode == NavigationStyle::PANNING) {
             float ratio = vp.getViewportAspectRatio();
             panCamera(
-                viewer->getSoRenderManager()->getCamera(),
+                viewer->getCamera(),
                 ratio,
                 this->panningplane,
                 posn,

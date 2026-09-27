@@ -23,6 +23,10 @@
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# The fcprobe harness moved to its own repo (FreeCAD-DevTools); point this at a
+# sibling checkout or set DEVTOOLS explicitly.
+DEVTOOLS="${DEVTOOLS:-$(cd "$REPO/.." && pwd)/FreeCAD-DevTools}"
+FCPROBE_DIR="${FREECAD_DEVTOOLS_FCPROBE:-$DEVTOOLS/fcprobe}"
 BUILD_DIR="${BUILD_DIR:-build/debug}"
 JOBS="${JOBS:-$(nproc)}"
 LOG_DIR="${LOG_DIR:-/tmp/opencode/verify}"
@@ -47,7 +51,7 @@ Stages (default: abi ctest):
   --abi     ABI/symbol sentinel against tools/rendering/abi_baseline.json
   --ctest   tests registered in the main build (Vulkan/DrawList/Retained/CoinTests)
   --preci   pre-CI clang -Werror gate (pixi + Windows when configured)
-  --suite   GUI fcprobe Vulkan suite (tools/fcprobe/vk_suite.json)
+  --suite   GUI fcprobe Vulkan suite (FreeCAD-DevTools/fcprobe/vk_suite.json)
   --all     abi ctest preci suite
 
 Environment:
@@ -108,7 +112,8 @@ stage_ctest() {
         echo "NOTE: Coin testsuite is not built in $BUILD_DIR (COIN_BUILD_TESTS=OFF);"
         echo "      running only the main-build subset below."
         echo "      Enable the full suite with: cmake -S $REPO -B $REPO/$BUILD_DIR -DCOIN_BUILD_TESTS=ON"
-        echo "      The 23 Vulkan backend tests + GL drawlist tests live there."
+        echo "      The reorganized suite lives under src/3rdParty/coin/testsuite/tests/"
+        echo "      (core/ retained/ gl/ model/ vulkan/ scripts/): 24 Vulkan + GL/retained tests."
         SKIPPED+=("ctest:coin-testsuite (subset still runs)")
         # A minimal build (e.g. Vulkan off) can legitimately register none of
         # the subset, so an empty match is not a failure of this gate.
@@ -141,8 +146,13 @@ stage_suite() {
         SKIPPED+=("suite")
         return 0
     fi
-    python3 "$REPO/tools/fcprobe/freecad_probe.py" suite \
-        --manifest "$REPO/tools/fcprobe/vk_suite.json" \
+    if [ ! -f "$FCPROBE_DIR/freecad_probe.py" ]; then
+        echo "SKIP: fcprobe not found at $FCPROBE_DIR (set DEVTOOLS/FREECAD_DEVTOOLS_FCPROBE)."
+        SKIPPED+=("suite")
+        return 0
+    fi
+    python3 "$FCPROBE_DIR/freecad_probe.py" suite \
+        --manifest "$FCPROBE_DIR/vk_suite.json" \
         --out "$LOG_DIR/runs"
 }
 

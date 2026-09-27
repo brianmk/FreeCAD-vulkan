@@ -192,7 +192,7 @@ public Q_SLOTS:
 
     /// Whether the model's feature-edge lines are drawn in the Vulkan
     /// viewport (every render mode: raster and ray-traced).  Backed by the
-    /// VulkanWireframe preference and mirrored by the status-bar button.
+    /// VulkanEdgeOverlay preference and mirrored by the status-bar button.
     bool getWireframe() const;
     void setWireframe(bool enabled);
 #endif

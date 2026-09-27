@@ -139,12 +139,17 @@ void View3DSettings::migratePreferences()
         && viewGrp->GetBool("UseVulkanRayTracing", false)) {
         viewGrp->SetInt("VulkanRenderMode", static_cast<int>(ViewRenderMode::PathTracing));
     }
-    // Fold the old edge-overlay pref name into the wireframe key (the key is
-    // retained for compatibility; it now controls the model feature-edge
-    // overlay in every Vulkan mode) before dropping the old key.
-    if (!viewPrefHasEntry(viewGrp, "VulkanWireframe", ParameterGrp::ParamType::FCBool)
-        && viewPrefHasEntry(viewGrp, "VulkanShowEdges", ParameterGrp::ParamType::FCBool)) {
-        viewGrp->SetBool("VulkanWireframe", viewGrp->GetBool("VulkanShowEdges", false));
+    // Fold the previous edge-overlay key (VulkanWireframe) and the older
+    // VulkanShowEdges into the canonical VulkanEdgeOverlay.  The key was
+    // renamed because it has always controlled the model feature-edge overlay
+    // in every Vulkan mode, not a wireframe draw style.
+    if (!viewPrefHasEntry(viewGrp, "VulkanEdgeOverlay", ParameterGrp::ParamType::FCBool)) {
+        if (viewPrefHasEntry(viewGrp, "VulkanWireframe", ParameterGrp::ParamType::FCBool)) {
+            viewGrp->SetBool("VulkanEdgeOverlay", viewGrp->GetBool("VulkanWireframe", false));
+        }
+        else if (viewPrefHasEntry(viewGrp, "VulkanShowEdges", ParameterGrp::ParamType::FCBool)) {
+            viewGrp->SetBool("VulkanEdgeOverlay", viewGrp->GetBool("VulkanShowEdges", false));
+        }
     }
     // The scRGB output replaced the old HDR10/PQ path.  There the exposure was a
     // PQ peak fraction whose "auto" sentinel was 0.02 (0.0203 quantized), which
@@ -162,9 +167,11 @@ void View3DSettings::migratePreferences()
     viewGrp->RemoveBool("VulkanPathTracing");
     viewGrp->RemoveBool("UseVulkanRayTracing");         // superseded: VulkanRenderMode
     viewGrp->RemoveBool("VulkanRenderMode");            // canonical: int
-    viewGrp->RemoveBool("VulkanShowEdges");             // renamed: VulkanWireframe
-    viewGrp->RemoveInt("VulkanShowEdges");              // renamed: VulkanWireframe
-    viewGrp->RemoveInt("VulkanWireframe");              // canonical: bool
+    viewGrp->RemoveBool("VulkanShowEdges");             // renamed: VulkanEdgeOverlay
+    viewGrp->RemoveInt("VulkanShowEdges");              // renamed: VulkanEdgeOverlay
+    viewGrp->RemoveBool("VulkanWireframe");             // renamed: VulkanEdgeOverlay
+    viewGrp->RemoveInt("VulkanWireframe");              // renamed: VulkanEdgeOverlay
+    viewGrp->RemoveInt("VulkanEdgeOverlay");            // canonical: bool
     viewGrp->RemoveInt("VulkanShowPoints");             // canonical: bool
     viewGrp->RemoveInt("VulkanHDR");                    // canonical: bool
     viewGrp->RemoveASCII("VulkanPathTracingDenoiser");  // canonical: int

@@ -1,0 +1,71 @@
+---
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+# ***************************************************************************
+# *                                                                         *
+# *   Copyright (c) 2023 David Carter <dcarter@davidcarter.ca>              *
+# *                                                                         *
+# *   This program is free software; you can redistribute it and/or modify  *
+# *   it under the terms of the GNU Lesser General Public License (LGPL)    *
+# *   as published by the Free Software Foundation; either version 2 of     *
+# *   the License, or (at your option) any later version.                   *
+# *   for detail see the LICENCE text file.                                 *
+# *                                                                         *
+# *   This program is distributed in the hope that it will be useful,       *
+# *   but WITHOUT ANY WARRANTY; without even the implied warranty of        *
+# *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the         *
+# *   GNU Library General Public License for more details.                  *
+# *                                                                         *
+# *   You should have received a copy of the GNU Library General Public     *
+# *   License along with this library; if not, write to the Free Software   *
+# *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  *
+# *   USA                                                                   *
+# *                                                                         *
+# ***************************************************************************
+
+AppearanceModel:
+  Name: "Physical Rendering"
+  UUID: 'cb5fdb3f-9145-484f-8889-f73d6d4d1912'
+  URL: ''
+  Description: "physically based metallic-roughness rendering model"
+  DOI: ""
+  Inherits:
+    - BasicRendering:
+      UUID: 'f006c7e4-35b7-43d5-bbf9-c5d572309e6e'
+  Metallic:
+    DisplayName: "Metallic"
+    Type: 'Float'
+    Units: ''
+    URL: ''
+    Description: >
+      Metallic amount of the physically based metallic-roughness model.
+      0 is a dielectric (plastic, concrete, wood), 1 is a conductor (metal).
+      Only used when the appearance is rendered with the physical material
+      path.
+  Roughness:
+    DisplayName: "Roughness"
+    Type: 'Float'
+    Units: ''
+    URL: ''
+    Description: >
+      Perceptual roughness of the physically based metallic-roughness model.
+      0 is a mirror-like surface and 1 is fully diffuse.
+  TransmissionIor:
+    DisplayName: "Transmission IOR"
+    Type: 'Float'
+    Units: ''
+    URL: ''
+    Description: >
+      Index of refraction of the transmissive (glass) response. 1.5 is window
+      glass; 1.0 is air (no bending). Only used when the appearance is rendered
+      with the physical material path and the material is transparent.
+  TransmissionAbsorption:
+    DisplayName: "Transmission Absorption"
+    Type: 'Float'
+    Units: ''
+    URL: ''
+    Description: >
+      Beer-Lambert absorption strength of the transmissive (glass) response.
+      0 is a perfectly clear glass; higher values tint the transmission with
+      distance through the medium. Only used when the appearance is rendered
+      with the physical material path and the material is transparent.

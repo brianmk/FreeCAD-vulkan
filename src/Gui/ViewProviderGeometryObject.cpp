@@ -30,6 +30,7 @@
 #include <Inventor/nodes/SoDrawStyle.h>
 #include <Inventor/nodes/SoFont.h>
 #include <Inventor/nodes/SoMaterial.h>
+#include <Inventor/nodes/SoPhysicalMaterial.h>
 #include <Inventor/nodes/SoPickStyle.h>
 #include <Inventor/nodes/SoResetTransform.h>
 #include <Inventor/nodes/SoSeparator.h>
@@ -96,6 +97,15 @@ ViewProviderGeometryObject::ViewProviderGeometryObject()
     pcShapeMaterial->setName("ShapeMaterial");
     materialAppearance = mat;
 
+    pcShapePhysical = new SoPhysicalMaterial;
+    pcShapePhysical->ref();
+    pcShapePhysical->setName("ShapePhysicalMaterial");
+    pcShapePhysical->enabled.setValue(mat.usePhysicalMaterial);
+    pcShapePhysical->metalness.setValue(mat.metallic);
+    pcShapePhysical->roughness.setValue(mat.roughness);
+    pcShapePhysical->transmissionIor.setValue(mat.transmissionIor);
+    pcShapePhysical->transmissionAbsorption.setValue(mat.transmissionAbsorption);
+
     sPixmap = "Feature";
 }
 
@@ -103,6 +113,9 @@ ViewProviderGeometryObject::~ViewProviderGeometryObject()
 {
     if (pcShapeMaterial) {
         pcShapeMaterial->unref();
+    }
+    if (pcShapePhysical) {
+        pcShapePhysical->unref();
     }
     if (pcBoundingBox) {
         pcBoundingBox->unref();
@@ -217,10 +230,10 @@ SoPickedPointList ViewProviderGeometryObject::getPickedPoints(
     auto root = new SoSeparator;
     root->ref();
     root->addChild(viewer.getHeadlight());
-    root->addChild(viewer.getSoRenderManager()->getCamera());
+    root->addChild(viewer.getViewState()->camera());
     root->addChild(getRoot());
 
-    SoRayPickAction rp(viewer.getSoRenderManager()->getViewportRegion());
+    SoRayPickAction rp(viewer.getViewState()->viewportRegion());
     rp.setPickAll(pickAll);
     rp.setRadius(viewer.getPickRadius());
     rp.setPoint(pos);
@@ -239,10 +252,10 @@ SoPickedPoint* ViewProviderGeometryObject::getPickedPoint(
     auto root = new SoSeparator;
     root->ref();
     root->addChild(viewer.getHeadlight());
-    root->addChild(viewer.getSoRenderManager()->getCamera());
+    root->addChild(viewer.getViewState()->camera());
     root->addChild(getRoot());
 
-    SoRayPickAction rp(viewer.getSoRenderManager()->getViewportRegion());
+    SoRayPickAction rp(viewer.getViewState()->viewportRegion());
     rp.setPoint(pos);
     rp.setRadius(viewer.getPickRadius());
     rp.apply(root);
@@ -276,6 +289,17 @@ void ViewProviderGeometryObject::setCoinAppearance(const App::Material& source)
         .setValue(source.emissiveColor.r, source.emissiveColor.g, source.emissiveColor.b);
     pcShapeMaterial->shininess.setValue(source.shininess);
     pcShapeMaterial->transparency.setValue(source.transparency);
+
+    if (pcShapePhysical) {
+        pcShapePhysical->enabled.setValue(source.usePhysicalMaterial);
+        pcShapePhysical->metalness.setValue(source.metallic);
+        pcShapePhysical->roughness.setValue(source.roughness);
+        pcShapePhysical->roughnessStrength.setValue(source.roughnessStrength);
+        pcShapePhysical->normalStrength.setValue(source.normalStrength);
+        pcShapePhysical->emissiveIntensity.setValue(source.emissiveIntensity);
+        pcShapePhysical->transmissionIor.setValue(source.transmissionIor);
+        pcShapePhysical->transmissionAbsorption.setValue(source.transmissionAbsorption);
+    }
 }
 
 void ViewProviderGeometryObject::addBoundSwitch()

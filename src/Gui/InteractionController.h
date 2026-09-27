@@ -13,10 +13,18 @@
 #include "InteractionHost.h"
 
 #include <memory>
+#include <vector>
 
+class QEvent;
 class SoCamera;
 class SoEvent;
 class SoEventManager;
+
+namespace SIM::Coin3D::Quarter
+{
+class EventFilter;
+class InputDevice;
+}
 
 namespace Gui
 {
@@ -33,9 +41,10 @@ class NavigationAnimation;
  *  and keyboard filtering), and forwards the surface-independent camera/scene/
  *  viewport/cursor/redraw queries to the `InteractionSurface` it was built for.
  *
- *  Today the GL `View3DInventorViewer` is the only surface; the Vulkan widget
- *  can implement `InteractionSurface` and instantiate the same controller, so
- *  navigation and picking stop depending on the hidden GL viewer.
+ *  Both the GL `View3DInventorViewer` and `VulkanViewportAdapter` implement
+ *  `InteractionSurface`, so the controller (and therefore navigation and
+ *  picking) runs against whichever surface is current without depending on the
+ *  hidden GL viewer.
  */
 class GuiExport InteractionController: public InteractionHost
 {
@@ -49,6 +58,20 @@ public:
     //! Dispatch one event through the NaviCube/navigation/base pipeline.
     //! Moved out of `View3DInventorViewer::processSoEvent()`.
     bool processSoEvent(const SoEvent* ev);
+
+    //! Relay an untranslated native event (tablet/touch/context-menu) to the
+    //! surface that owns FreeCAD's gesture/tablet devices.  The surface reports
+    //! that target via `surfaceRawEventTarget()`, so the Vulkan adapter no
+    //! longer reaches for the hidden GL widget itself; returns true when the
+    //! event was accepted.
+    bool processRawEvent(QEvent* ev);
+
+    //! Take ownership of a native input device (gesture/SpaceNavigator) and
+    //! register it on the current surface's event filter.  The controller moves
+    //! the device between surface filters when `setSurface()` swaps surfaces so
+    //! it translates events on the visible surface; it is deleted with the
+    //! controller.
+    void registerInputDevice(SIM::Coin3D::Quarter::InputDevice* device);
 
     //! Replace the active navigation style.  Moved out of the viewer.
     void setNavigationType(Base::Type type);
@@ -64,12 +87,11 @@ public:
     /** Swap the active render surface.
      *
      *  Used by the Vulkan adapter to make itself the surface while its page is
-     *  current, so surface-presentation calls (`getGLWidget()`,
-     *  `scheduleRedraw()`, cursor) reach the visible surface while everything
-     *  else is delegated back to the GL viewer.  The `SoEventManager` is *not*
-     *  re-injected: it stays installed on the GL viewer (the base event-dispatch
-     *  authority), and a delegating surface forwards `surfaceSetEventManager()`
-     *  there.  Pass nullptr to detach (used on teardown).
+     *  current, so camera/scene/viewport and surface-presentation calls
+     *  (`getGLWidget()`, `scheduleRedraw()`, cursor) reach the visible Vulkan
+     *  surface.  The `SoEventManager` is *not* re-injected: it stays installed
+     *  on the GL viewer (the base event-dispatch authority) and is answered by
+     *  the controller itself.  Pass nullptr to detach (used on teardown).
      */
     void setSurface(InteractionSurface* surface);
 
@@ -98,7 +120,6 @@ public:
     SoCamera* getCamera() const override;
     SoNode* getSceneGraph() const override;
     const SbViewportRegion& getViewportRegion() const override;
-    SoRenderManager* getSoRenderManager() const override;
     SoEventManager* getSoEventManager() const override;
     SbVec3f getFocalPoint() const override;
     float getPickRadius() const override;
@@ -144,12 +165,22 @@ public:
     //@}
 
 private:
+    //! Move FreeCAD's registered devices from the old surface's event filter to
+    //! \a surface's (unregister before register: an `EventFilter` deletes every
+    //! device it still owns in its destructor, so a device left registered
+    //! would be freed twice).
+    void bindInputDevicesToSurface(InteractionSurface* surface);
+
     InteractionSurface* _surface {nullptr};
     //! The Coin interaction authority: owns the event pipeline (scene-graph
     //! event dispatch + picking).  Moved out of QuarterWidget; the surface
     //! borrows it via surfaceSetEventManager().
     SoEventManager* _eventManager {nullptr};
     NavigationStyle* _navigation {nullptr};
+    //! FreeCAD's native input devices (gesture/SpaceNavigator), owned here and
+    //! (un)registered on the current surface's event filter.
+    std::vector<SIM::Coin3D::Quarter::InputDevice*> _inputDevices;
+    SIM::Coin3D::Quarter::EventFilter* _eventFilter {nullptr};
     //! Canonical viewport region/DPR reported by a non-GL surface (Vulkan).
     SbViewportRegion _viewportRegion;
     float _devicePixelRatio {1.0F};

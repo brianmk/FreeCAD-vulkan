@@ -325,6 +325,7 @@ jobs:
         builddir: ${{ env.builddir }}
         reportFile: ${{ env.reportdir }}${{ env.reportfilename }}
         shellCmd: ${{ env.shellCmd }}
+        includeVulkanPartGui: true
 
     - name: CMake Install
       if: "!inputs.skipBuild"

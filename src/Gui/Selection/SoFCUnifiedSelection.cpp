@@ -103,6 +103,7 @@
 #include "SoFCInteractiveElement.h"
 #include "SoFCSelectionAction.h"
 #include "ViewParams.h"
+#include "VkRuntimePrefs.h"
 #include "View3DInventorViewer.h"
 #include "ViewProvider.h"
 #include "ViewProviderDocumentObject.h"
@@ -122,7 +123,8 @@ namespace Gui
 // settle, so re-running this pick on every mouse move hammers a dense mesh.
 // We skip the pick when the cursor has moved < delta px since the last one or
 // moves are arriving faster than a rate cap, keeping the previous highlight.
-// Disable with FC_VULKAN_PICK_THROTTLE_PX=0 and FC_VULKAN_PICK_THROTTLE_MS=0.
+// Tune or disable with the View preferences VulkanPickThrottlePx /
+// VulkanPickThrottleMs (0 disables).  See Gui::VkRuntimePrefs.
 namespace
 {
 struct UnifiedPickThrottle
@@ -139,20 +141,12 @@ constexpr int kPickCameraMotionSkipMs = 50;
 
 int pickThrottleDeltaPx()
 {
-    static const int v = []() {
-        const char* e = std::getenv("FC_VULKAN_PICK_THROTTLE_PX");
-        return e ? std::atoi(e) : 3;
-    }();
-    return v;
+    return VkRuntimePrefs::pickThrottleDeltaPx();
 }
 
 int pickThrottleIntervalMs()
 {
-    static const int v = []() {
-        const char* e = std::getenv("FC_VULKAN_PICK_THROTTLE_MS");
-        return e ? std::atoi(e) : 12;
-    }();
-    return v;
+    return VkRuntimePrefs::pickThrottleIntervalMs();
 }
 }  // namespace
 
@@ -1075,6 +1069,7 @@ namespace {
 
 bool pickProbeEnabled()
 {
+#ifdef FREECAD_VULKAN_DEBUG_HOOKS
     static const bool enabled = []() {
         const char* v = std::getenv("FC_PICK_PROBE");
         if (v && *v) {
@@ -1087,6 +1082,11 @@ bool pickProbeEnabled()
         return hGrp && hGrp->GetBool("PickProbe", false);
     }();
     return enabled;
+#else
+    // The pick probe is diagnostic scaffolding, built only with the Vulkan
+    // debug hooks (Debug or -DFREECAD_USE_VULKAN_DEBUG_HOOKS=ON).
+    return false;
+#endif
 }
 
 void logPickProbeEvent(const char* kind,

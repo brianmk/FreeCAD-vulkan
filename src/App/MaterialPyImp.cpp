@@ -187,12 +187,22 @@ bool equalMaterialValues(const Material& lhs, const Material& rhs)
 {
     return lhs.shininess == rhs.shininess
         && lhs.transparency == rhs.transparency
+        && lhs.metallic == rhs.metallic
+        && lhs.roughness == rhs.roughness
+        && lhs.usePhysicalMaterial == rhs.usePhysicalMaterial
+        && lhs.textureSize == rhs.textureSize
+        && lhs.textureMapping == rhs.textureMapping
         && lhs.ambientColor == rhs.ambientColor
         && lhs.diffuseColor == rhs.diffuseColor
         && lhs.specularColor == rhs.specularColor
         && lhs.emissiveColor == rhs.emissiveColor
         && lhs.image == rhs.image
-        && lhs.imagePath == rhs.imagePath;
+        && lhs.imagePath == rhs.imagePath
+        && lhs.roughnessStrength == rhs.roughnessStrength
+        && lhs.normalStrength == rhs.normalStrength
+        && lhs.emissiveIntensity == rhs.emissiveIntensity
+        && lhs.transmissionIor == rhs.transmissionIor
+        && lhs.transmissionAbsorption == rhs.transmissionAbsorption;
 }
 }  // namespace
 
@@ -330,6 +340,218 @@ Py::Float MaterialPy::getTransparency() const
 void MaterialPy::setTransparency(Py::Float arg)
 {
     getMaterialPtr()->transparency = arg;
+}
+
+Py::Float MaterialPy::getMetallic() const
+{
+    return Py::Float(getMaterialPtr()->metallic);
+}
+
+void MaterialPy::setMetallic(Py::Float arg)
+{
+    getMaterialPtr()->metallic = arg;
+}
+
+Py::Float MaterialPy::getRoughness() const
+{
+    return Py::Float(getMaterialPtr()->roughness);
+}
+
+void MaterialPy::setRoughness(Py::Float arg)
+{
+    getMaterialPtr()->roughness = arg;
+}
+
+Py::Boolean MaterialPy::getUsePhysicalMaterial() const
+{
+    return Py::Boolean(getMaterialPtr()->usePhysicalMaterial);
+}
+
+void MaterialPy::setUsePhysicalMaterial(Py::Boolean arg)
+{
+    getMaterialPtr()->usePhysicalMaterial = arg;
+}
+
+Py::String MaterialPy::getImage() const
+{
+    return Py::String(getMaterialPtr()->image);
+}
+
+void MaterialPy::setImage(Py::String arg)
+{
+    getMaterialPtr()->image = static_cast<std::string>(arg);
+}
+
+Py::Float MaterialPy::getTextureSize() const
+{
+    return Py::Float(getMaterialPtr()->textureSize);
+}
+
+void MaterialPy::setTextureSize(Py::Float arg)
+{
+    getMaterialPtr()->textureSize = arg;
+}
+
+namespace
+{
+std::string textureMappingToString(Material::TextureMapping mapping)
+{
+    switch (mapping) {
+        case Material::MappingBox:
+            return "Box";
+        case Material::MappingSpherical:
+            return "Spherical";
+        case Material::MappingCylindrical:
+            return "Cylindrical";
+        case Material::MappingPlanar:
+        default:
+            return "Planar";
+    }
+}
+
+Material::TextureMapping textureMappingFromString(const std::string& value)
+{
+    if (value == "Box" || value == "box") {
+        return Material::MappingBox;
+    }
+    if (value == "Spherical" || value == "spherical") {
+        return Material::MappingSpherical;
+    }
+    if (value == "Cylindrical" || value == "cylindrical") {
+        return Material::MappingCylindrical;
+    }
+    return Material::MappingPlanar;
+}
+}  // namespace
+
+Py::String MaterialPy::getTextureMapping() const
+{
+    return Py::String(textureMappingToString(getMaterialPtr()->textureMapping));
+}
+
+void MaterialPy::setTextureMapping(Py::String arg)
+{
+    getMaterialPtr()->textureMapping = textureMappingFromString(static_cast<std::string>(arg));
+}
+
+Py::String MaterialPy::getImagePath() const
+{
+    return Py::String(getMaterialPtr()->imagePath);
+}
+
+void MaterialPy::setImagePath(Py::String arg)
+{
+    getMaterialPtr()->imagePath = static_cast<std::string>(arg);
+}
+
+Py::String MaterialPy::getRoughnessImage() const
+{
+    return Py::String(getMaterialPtr()->roughnessImage);
+}
+
+void MaterialPy::setRoughnessImage(Py::String arg)
+{
+    getMaterialPtr()->roughnessImage = static_cast<std::string>(arg);
+}
+
+Py::String MaterialPy::getRoughnessImagePath() const
+{
+    return Py::String(getMaterialPtr()->roughnessImagePath);
+}
+
+void MaterialPy::setRoughnessImagePath(Py::String arg)
+{
+    getMaterialPtr()->roughnessImagePath = static_cast<std::string>(arg);
+}
+
+Py::String MaterialPy::getNormalImage() const
+{
+    return Py::String(getMaterialPtr()->normalImage);
+}
+
+void MaterialPy::setNormalImage(Py::String arg)
+{
+    getMaterialPtr()->normalImage = static_cast<std::string>(arg);
+}
+
+Py::String MaterialPy::getNormalImagePath() const
+{
+    return Py::String(getMaterialPtr()->normalImagePath);
+}
+
+void MaterialPy::setNormalImagePath(Py::String arg)
+{
+    getMaterialPtr()->normalImagePath = static_cast<std::string>(arg);
+}
+
+Py::String MaterialPy::getEmissiveImage() const
+{
+    return Py::String(getMaterialPtr()->emissiveImage);
+}
+
+void MaterialPy::setEmissiveImage(Py::String arg)
+{
+    getMaterialPtr()->emissiveImage = static_cast<std::string>(arg);
+}
+
+Py::String MaterialPy::getEmissiveImagePath() const
+{
+    return Py::String(getMaterialPtr()->emissiveImagePath);
+}
+
+void MaterialPy::setEmissiveImagePath(Py::String arg)
+{
+    getMaterialPtr()->emissiveImagePath = static_cast<std::string>(arg);
+}
+
+Py::Float MaterialPy::getRoughnessStrength() const
+{
+    return Py::Float(getMaterialPtr()->roughnessStrength);
+}
+
+void MaterialPy::setRoughnessStrength(Py::Float arg)
+{
+    getMaterialPtr()->roughnessStrength = arg;
+}
+
+Py::Float MaterialPy::getNormalStrength() const
+{
+    return Py::Float(getMaterialPtr()->normalStrength);
+}
+
+void MaterialPy::setNormalStrength(Py::Float arg)
+{
+    getMaterialPtr()->normalStrength = arg;
+}
+
+Py::Float MaterialPy::getEmissiveIntensity() const
+{
+    return Py::Float(getMaterialPtr()->emissiveIntensity);
+}
+
+void MaterialPy::setEmissiveIntensity(Py::Float arg)
+{
+    getMaterialPtr()->emissiveIntensity = arg;
+}
+
+Py::Float MaterialPy::getTransmissionIor() const
+{
+    return Py::Float(getMaterialPtr()->transmissionIor);
+}
+
+void MaterialPy::setTransmissionIor(Py::Float arg)
+{
+    getMaterialPtr()->transmissionIor = arg;
+}
+
+Py::Float MaterialPy::getTransmissionAbsorption() const
+{
+    return Py::Float(getMaterialPtr()->transmissionAbsorption);
+}
+
+void MaterialPy::setTransmissionAbsorption(Py::Float arg)
+{
+    getMaterialPtr()->transmissionAbsorption = arg;
 }
 
 PyObject* MaterialPy::getCustomAttributes(const char* /*attr*/) const

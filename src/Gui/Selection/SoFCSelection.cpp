@@ -58,6 +58,7 @@
 #include "SoFCSelectionAction.h"
 #include "SoFCUnifiedSelection.h"
 #include "ViewParams.h"
+#include "VkRuntimePrefs.h"
 
 
 using namespace Gui;
@@ -84,8 +85,9 @@ SoFullPath* Gui::SoFCSelection::currenthighlight = nullptr;
 // cursor, hops across a dense mesh (e.g. a high-tessellation sphere) re-run this
 // pick on every mouse move at full cost and never settle.  We rate-limit the
 // re-pick (min cursor delta + min interval) and reuse the last result, so the
-// SoRayPickAction is skipped entirely on throttled events.  Disable with
-// FC_VULKAN_PICK_THROTTLE_PX=0 and FC_VULKAN_PICK_THROTTLE_MS=0.
+// SoRayPickAction is skipped entirely on throttled events.  Tune or disable
+// with the View preferences VulkanPickThrottlePx / VulkanPickThrottleMs
+// (0 disables).  See Gui::VkRuntimePrefs.
 namespace
 {
 struct PickThrottle
@@ -100,20 +102,12 @@ PickThrottle g_pickThrottle;
 
 int pickThrottleDeltaPx()
 {
-    static const int v = []() {
-        const char* e = std::getenv("FC_VULKAN_PICK_THROTTLE_PX");
-        return e ? std::atoi(e) : 3;
-    }();
-    return v;
+    return VkRuntimePrefs::pickThrottleDeltaPx();
 }
 
 int pickThrottleIntervalMs()
 {
-    static const int v = []() {
-        const char* e = std::getenv("FC_VULKAN_PICK_THROTTLE_MS");
-        return e ? std::atoi(e) : 12;
-    }();
-    return v;
+    return VkRuntimePrefs::pickThrottleIntervalMs();
 }
 }  // namespace
 

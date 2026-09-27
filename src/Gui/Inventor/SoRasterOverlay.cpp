@@ -45,9 +45,11 @@ SoRasterOverlay::SoRasterOverlay()
 {
     SO_NODE_CONSTRUCTOR(SoRasterOverlay);
     SO_NODE_ADD_FIELD(enabled, (TRUE));
+#ifdef FREECAD_VULKAN_DEBUG_HOOKS
     if (getenv("FC_RASTER_OVERLAY_OFF")) {
         this->enabled.setValue(FALSE);
     }
+#endif
 }
 
 SoRasterOverlay::~SoRasterOverlay() = default;

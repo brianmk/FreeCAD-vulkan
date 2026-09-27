@@ -294,7 +294,7 @@ struct NS::PanState: public sc::state<NS::PanState, NS::NaviMachine>
             SbVec2s pos = ev.inventor_event->getPosition();
             auto& ns = this->outermost_context().ns;
             ns.panCamera(
-                ns.viewer->getSoRenderManager()->getCamera(),
+                ns.viewer->getCamera(),
                 this->ratio,
                 ns.panningplane,
                 ns.normalizePixelPos(pos),

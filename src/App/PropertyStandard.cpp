@@ -3009,8 +3009,24 @@ void PropertyMaterial::Save(Base::Writer& writer) const
                     << "\" emissiveColor=\"" << _cMat.emissiveColor.getPackedValue()
                     << "\" shininess=\"" << _cMat.shininess
                     << "\" transparency=\"" << _cMat.transparency
+                    << "\" metallic=\"" << _cMat.metallic
+                    << "\" roughness=\"" << _cMat.roughness
+                    << "\" usePhysicalMaterial=\"" << (_cMat.usePhysicalMaterial ? 1 : 0)
+                    << "\" transmissionIor=\"" << _cMat.transmissionIor
+                    << "\" transmissionAbsorption=\"" << _cMat.transmissionAbsorption
+                    << "\" textureSize=\"" << _cMat.textureSize
+                    << "\" textureMapping=\"" << static_cast<int>(_cMat.textureMapping)
                     << "\" image=\"" << _cMat.image
                     << "\" imagePath=\"" << _cMat.imagePath
+                    << "\" roughnessImage=\"" << _cMat.roughnessImage
+                    << "\" roughnessImagePath=\"" << _cMat.roughnessImagePath
+                    << "\" normalImage=\"" << _cMat.normalImage
+                    << "\" normalImagePath=\"" << _cMat.normalImagePath
+                    << "\" emissiveImage=\"" << _cMat.emissiveImage
+                    << "\" emissiveImagePath=\"" << _cMat.emissiveImagePath
+                    << "\" roughnessStrength=\"" << _cMat.roughnessStrength
+                    << "\" normalStrength=\"" << _cMat.normalStrength
+                    << "\" emissiveIntensity=\"" << _cMat.emissiveIntensity
                     << "\" uuid=\"" << _cMat.uuid
                     << "\"/>" << std::endl;
     // clang-format on
@@ -3031,11 +3047,60 @@ void PropertyMaterial::Restore(Base::XMLReader& reader)
     if (readerRequiresAlphaConversion(reader)) {
         convertAlphaInMaterial(_cMat);
     }
+    if (reader.hasAttribute("metallic")) {
+        _cMat.metallic = (float)reader.getAttribute<double>("metallic");
+    }
+    if (reader.hasAttribute("roughness")) {
+        _cMat.roughness = (float)reader.getAttribute<double>("roughness");
+    }
+    if (reader.hasAttribute("usePhysicalMaterial")) {
+        _cMat.usePhysicalMaterial = reader.getAttribute<int>("usePhysicalMaterial") != 0;
+    }
+    if (reader.hasAttribute("transmissionIor")) {
+        _cMat.transmissionIor = (float)reader.getAttribute<double>("transmissionIor");
+    }
+    if (reader.hasAttribute("transmissionAbsorption")) {
+        _cMat.transmissionAbsorption = (float)reader.getAttribute<double>("transmissionAbsorption");
+    }
+    if (reader.hasAttribute("textureSize")) {
+        _cMat.textureSize = (float)reader.getAttribute<double>("textureSize");
+    }
+    if (reader.hasAttribute("textureMapping")) {
+        _cMat.textureMapping = static_cast<App::Material::TextureMapping>(
+            reader.getAttribute<int>("textureMapping"));
+    }
     if (reader.hasAttribute("image")) {
         _cMat.image = reader.getAttribute<const char*>("image");
     }
     if (reader.hasAttribute("imagePath")) {
         _cMat.imagePath = reader.getAttribute<const char*>("imagePath");
+    }
+    if (reader.hasAttribute("roughnessImage")) {
+        _cMat.roughnessImage = reader.getAttribute<const char*>("roughnessImage");
+    }
+    if (reader.hasAttribute("roughnessImagePath")) {
+        _cMat.roughnessImagePath = reader.getAttribute<const char*>("roughnessImagePath");
+    }
+    if (reader.hasAttribute("normalImage")) {
+        _cMat.normalImage = reader.getAttribute<const char*>("normalImage");
+    }
+    if (reader.hasAttribute("normalImagePath")) {
+        _cMat.normalImagePath = reader.getAttribute<const char*>("normalImagePath");
+    }
+    if (reader.hasAttribute("emissiveImage")) {
+        _cMat.emissiveImage = reader.getAttribute<const char*>("emissiveImage");
+    }
+    if (reader.hasAttribute("emissiveImagePath")) {
+        _cMat.emissiveImagePath = reader.getAttribute<const char*>("emissiveImagePath");
+    }
+    if (reader.hasAttribute("roughnessStrength")) {
+        _cMat.roughnessStrength = (float)reader.getAttribute<double>("roughnessStrength");
+    }
+    if (reader.hasAttribute("normalStrength")) {
+        _cMat.normalStrength = (float)reader.getAttribute<double>("normalStrength");
+    }
+    if (reader.hasAttribute("emissiveIntensity")) {
+        _cMat.emissiveIntensity = (float)reader.getAttribute<double>("emissiveIntensity");
     }
     if (reader.hasAttribute("uuid")) {
         _cMat.uuid = reader.getAttribute<const char*>("uuid");
@@ -3559,7 +3624,7 @@ void PropertyMaterialList::Save(Base::Writer& writer) const
     if (!writer.isForceXML()) {
         writer.Stream() << writer.ind() << "<MaterialList file=\""
                         << (getSize() ? writer.addFile(getName(), this) : "") << "\""
-                        << " version=\"3\"/>" << std::endl;
+                        << " version=\"7\"/>" << std::endl;
     }
 }
 
@@ -3601,6 +3666,41 @@ void PropertyMaterialList::SaveDocFile(Base::Writer& writer) const
         writeString(str, it.imagePath);
         writeString(str, it.uuid);
     }
+
+    // Physical (metallic-roughness) material fields, V4 and later.
+    for (const auto& it : _lValueList) {
+        str << it.metallic;
+        str << it.roughness;
+        str << (it.usePhysicalMaterial ? 1 : 0);
+        str << it.textureSize;
+    }
+
+    // Texture mapping mode, V5 and later.
+    for (const auto& it : _lValueList) {
+        int32_t mapping = static_cast<int32_t>(it.textureMapping);
+        str << mapping;
+    }
+
+    // Secondary PBR texture maps, V6 and later.
+    for (const auto& it : _lValueList) {
+        writeString(str, it.roughnessImage);
+        writeString(str, it.roughnessImagePath);
+        writeString(str, it.normalImage);
+        writeString(str, it.normalImagePath);
+        writeString(str, it.emissiveImage);
+        writeString(str, it.emissiveImagePath);
+    }
+    for (const auto& it : _lValueList) {
+        str << it.roughnessStrength;
+        str << it.normalStrength;
+        str << it.emissiveIntensity;
+    }
+
+    // Dielectric optics, V7 and later.
+    for (const auto& it : _lValueList) {
+        str << it.transmissionIor;
+        str << it.transmissionAbsorption;
+    }
 }
 
 void PropertyMaterialList::writeString(Base::OutputStream& str, const std::string& value) const
@@ -3622,6 +3722,18 @@ void PropertyMaterialList::RestoreDocFile(Base::Reader& reader)
     else if (formatVersion == Version_3) {
         // Default to the latest
         RestoreDocFileV3(reader);
+    }
+    else if (formatVersion == Version_4) {
+        RestoreDocFileV4(reader);
+    }
+    else if (formatVersion == Version_5) {
+        RestoreDocFileV5(reader);
+    }
+    else if (formatVersion == Version_6) {
+        RestoreDocFileV6(reader);
+    }
+    else if (formatVersion == Version_7) {
+        RestoreDocFileV7(reader);
     }
     else {
         int32_t version;
@@ -3691,6 +3803,228 @@ void PropertyMaterialList::RestoreDocFileV3(Base::Reader& reader)
         readString(str, it.image);
         readString(str, it.imagePath);
         readString(str, it.uuid);
+    }
+    convertAlpha(values);
+    setValues(values);
+}
+
+void PropertyMaterialList::RestoreDocFileV4(Base::Reader& reader)
+{
+    Base::InputStream str(reader);
+    uint32_t count = 0;
+    str >> count;
+    std::vector<Material> values(count);
+    uint32_t value {};  // must be 32 bit long
+    float valueF {};
+    for (auto& it : values) {
+        str >> value;
+        it.ambientColor.setPackedValue(value);
+        str >> value;
+        it.diffuseColor.setPackedValue(value);
+        str >> value;
+        it.specularColor.setPackedValue(value);
+        str >> value;
+        it.emissiveColor.setPackedValue(value);
+        str >> valueF;
+        it.shininess = valueF;
+        str >> valueF;
+        it.transparency = valueF;
+    }
+    for (auto& it : values) {
+        readString(str, it.image);
+        readString(str, it.imagePath);
+        readString(str, it.uuid);
+    }
+    int physical = 0;
+    for (auto& it : values) {
+        str >> valueF;
+        it.metallic = valueF;
+        str >> valueF;
+        it.roughness = valueF;
+        str >> physical;
+        it.usePhysicalMaterial = physical != 0;
+        str >> valueF;
+        it.textureSize = valueF;
+    }
+    convertAlpha(values);
+    setValues(values);
+}
+
+void PropertyMaterialList::RestoreDocFileV5(Base::Reader& reader)
+{
+    Base::InputStream str(reader);
+    uint32_t count = 0;
+    str >> count;
+    std::vector<Material> values(count);
+    uint32_t value {};  // must be 32 bit long
+    float valueF {};
+    for (auto& it : values) {
+        str >> value;
+        it.ambientColor.setPackedValue(value);
+        str >> value;
+        it.diffuseColor.setPackedValue(value);
+        str >> value;
+        it.specularColor.setPackedValue(value);
+        str >> value;
+        it.emissiveColor.setPackedValue(value);
+        str >> valueF;
+        it.shininess = valueF;
+        str >> valueF;
+        it.transparency = valueF;
+    }
+    for (auto& it : values) {
+        readString(str, it.image);
+        readString(str, it.imagePath);
+        readString(str, it.uuid);
+    }
+    int physical = 0;
+    for (auto& it : values) {
+        str >> valueF;
+        it.metallic = valueF;
+        str >> valueF;
+        it.roughness = valueF;
+        str >> physical;
+        it.usePhysicalMaterial = physical != 0;
+        str >> valueF;
+        it.textureSize = valueF;
+    }
+    for (auto& it : values) {
+        int32_t mapping = 0;
+        str >> mapping;
+        it.textureMapping = static_cast<Material::TextureMapping>(mapping);
+    }
+    convertAlpha(values);
+    setValues(values);
+}
+
+void PropertyMaterialList::RestoreDocFileV6(Base::Reader& reader)
+{
+    Base::InputStream str(reader);
+    uint32_t count = 0;
+    str >> count;
+    std::vector<Material> values(count);
+    uint32_t value {};  // must be 32 bit long
+    float valueF {};
+    for (auto& it : values) {
+        str >> value;
+        it.ambientColor.setPackedValue(value);
+        str >> value;
+        it.diffuseColor.setPackedValue(value);
+        str >> value;
+        it.specularColor.setPackedValue(value);
+        str >> value;
+        it.emissiveColor.setPackedValue(value);
+        str >> valueF;
+        it.shininess = valueF;
+        str >> valueF;
+        it.transparency = valueF;
+    }
+    for (auto& it : values) {
+        readString(str, it.image);
+        readString(str, it.imagePath);
+        readString(str, it.uuid);
+    }
+    int physical = 0;
+    for (auto& it : values) {
+        str >> valueF;
+        it.metallic = valueF;
+        str >> valueF;
+        it.roughness = valueF;
+        str >> physical;
+        it.usePhysicalMaterial = physical != 0;
+        str >> valueF;
+        it.textureSize = valueF;
+    }
+    for (auto& it : values) {
+        int32_t mapping = 0;
+        str >> mapping;
+        it.textureMapping = static_cast<Material::TextureMapping>(mapping);
+    }
+    for (auto& it : values) {
+        readString(str, it.roughnessImage);
+        readString(str, it.roughnessImagePath);
+        readString(str, it.normalImage);
+        readString(str, it.normalImagePath);
+        readString(str, it.emissiveImage);
+        readString(str, it.emissiveImagePath);
+    }
+    for (auto& it : values) {
+        str >> valueF;
+        it.roughnessStrength = valueF;
+        str >> valueF;
+        it.normalStrength = valueF;
+        str >> valueF;
+        it.emissiveIntensity = valueF;
+    }
+    convertAlpha(values);
+    setValues(values);
+}
+
+void PropertyMaterialList::RestoreDocFileV7(Base::Reader& reader)
+{
+    Base::InputStream str(reader);
+    uint32_t count = 0;
+    str >> count;
+    std::vector<Material> values(count);
+    uint32_t value {};  // must be 32 bit long
+    float valueF {};
+    for (auto& it : values) {
+        str >> value;
+        it.ambientColor.setPackedValue(value);
+        str >> value;
+        it.diffuseColor.setPackedValue(value);
+        str >> value;
+        it.specularColor.setPackedValue(value);
+        str >> value;
+        it.emissiveColor.setPackedValue(value);
+        str >> valueF;
+        it.shininess = valueF;
+        str >> valueF;
+        it.transparency = valueF;
+    }
+    for (auto& it : values) {
+        readString(str, it.image);
+        readString(str, it.imagePath);
+        readString(str, it.uuid);
+    }
+    int physical = 0;
+    for (auto& it : values) {
+        str >> valueF;
+        it.metallic = valueF;
+        str >> valueF;
+        it.roughness = valueF;
+        str >> physical;
+        it.usePhysicalMaterial = physical != 0;
+        str >> valueF;
+        it.textureSize = valueF;
+    }
+    for (auto& it : values) {
+        int32_t mapping = 0;
+        str >> mapping;
+        it.textureMapping = static_cast<Material::TextureMapping>(mapping);
+    }
+    for (auto& it : values) {
+        readString(str, it.roughnessImage);
+        readString(str, it.roughnessImagePath);
+        readString(str, it.normalImage);
+        readString(str, it.normalImagePath);
+        readString(str, it.emissiveImage);
+        readString(str, it.emissiveImagePath);
+    }
+    for (auto& it : values) {
+        str >> valueF;
+        it.roughnessStrength = valueF;
+        str >> valueF;
+        it.normalStrength = valueF;
+        str >> valueF;
+        it.emissiveIntensity = valueF;
+    }
+    // Dielectric optics, V7 and later.
+    for (auto& it : values) {
+        str >> valueF;
+        it.transmissionIor = valueF;
+        str >> valueF;
+        it.transmissionAbsorption = valueF;
     }
     convertAlpha(values);
     setValues(values);

@@ -69,7 +69,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    header_root = args.coin_root / "src" / "rendering" / "vulkan"
+    header_root = args.coin_root / "src" / "rendering" / "vulkan" / "generated" / "shaders"
     shader_root = args.coin_root / "data" / "shaders" / "vulkan"
     if not header_root.is_dir():
         print(f"error: header root not found: {header_root}", file=sys.stderr)

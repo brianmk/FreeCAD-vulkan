@@ -40,6 +40,16 @@ using namespace App;
 Material::Material()
     : shininess {0.9000F}
     , transparency {}
+    , metallic {}
+    , roughness {0.5F}
+    , usePhysicalMaterial {false}
+    , textureSize {100.0F}
+    , textureMapping {MappingPlanar}
+    , roughnessStrength {1.0F}
+    , normalStrength {1.0F}
+    , emissiveIntensity {1.0F}
+    , transmissionIor {1.5F}
+    , transmissionAbsorption {0.0F}
     , _matType {}
 {
     setType(DEFAULT);
@@ -48,6 +58,16 @@ Material::Material()
 Material::Material(const char* MatName)
     : shininess {0.9000F}
     , transparency {}
+    , metallic {}
+    , roughness {0.5F}
+    , usePhysicalMaterial {false}
+    , textureSize {100.0F}
+    , textureMapping {MappingPlanar}
+    , roughnessStrength {1.0F}
+    , normalStrength {1.0F}
+    , emissiveIntensity {1.0F}
+    , transmissionIor {1.5F}
+    , transmissionAbsorption {0.0F}
     , _matType {}
 {
     set(MatName);
@@ -56,6 +76,16 @@ Material::Material(const char* MatName)
 Material::Material(MaterialType MatType)
     : shininess {0.9000F}
     , transparency {}
+    , metallic {}
+    , roughness {0.5F}
+    , usePhysicalMaterial {false}
+    , textureSize {100.0F}
+    , textureMapping {MappingPlanar}
+    , roughnessStrength {1.0F}
+    , normalStrength {1.0F}
+    , emissiveIntensity {1.0F}
+    , transmissionIor {1.5F}
+    , transmissionAbsorption {0.0F}
     , _matType {}
 {
     setType(MatType);

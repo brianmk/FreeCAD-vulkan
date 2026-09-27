@@ -30,6 +30,9 @@
 
 #include <Base/Tools.h>
 
+#include <QCheckBox>
+#include <QDoubleSpinBox>
+
 
 using namespace Gui::Dialog;
 
@@ -66,6 +69,20 @@ void DlgMaterialPropertiesImp::setupConnections()
             this, &DlgMaterialPropertiesImp::onShininessValueChanged);
     connect(ui->transparency, qOverload<int>(&QSpinBox::valueChanged),
             this, &DlgMaterialPropertiesImp::onTransparencyValueChanged);
+    connect(ui->usePhysicalMaterial, &QCheckBox::toggled,
+            this, &DlgMaterialPropertiesImp::onPhysicalMaterialToggled);
+    connect(ui->metallic, qOverload<double>(&QDoubleSpinBox::valueChanged),
+            this, &DlgMaterialPropertiesImp::onMetallicChanged);
+    connect(ui->roughness, qOverload<double>(&QDoubleSpinBox::valueChanged),
+            this, &DlgMaterialPropertiesImp::onRoughnessChanged);
+    connect(ui->transmissionIor, qOverload<double>(&QDoubleSpinBox::valueChanged),
+            this, &DlgMaterialPropertiesImp::onTransmissionIorChanged);
+    connect(ui->transmissionAbsorption, qOverload<double>(&QDoubleSpinBox::valueChanged),
+            this, &DlgMaterialPropertiesImp::onTransmissionAbsorptionChanged);
+    connect(ui->textureSize, qOverload<double>(&QDoubleSpinBox::valueChanged),
+            this, &DlgMaterialPropertiesImp::onTextureSizeChanged);
+    connect(ui->textureMapping, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, &DlgMaterialPropertiesImp::onTextureMappingChanged);
     connect(ui->buttonReset, &QPushButton::clicked,
             this, &DlgMaterialPropertiesImp::onButtonReset);
     connect(ui->buttonDefault, &QPushButton::clicked,
@@ -143,6 +160,66 @@ void DlgMaterialPropertiesImp::onTransparencyValueChanged(int sh)
 }
 
 /**
+ * Enables or disables the physical (metallic-roughness) appearance path.
+ */
+void DlgMaterialPropertiesImp::onPhysicalMaterialToggled(bool on)
+{
+    customMaterial.usePhysicalMaterial = on;
+    ui->metallic->setEnabled(on);
+    ui->roughness->setEnabled(on);
+    ui->transmissionIor->setEnabled(on);
+    ui->transmissionAbsorption->setEnabled(on);
+}
+
+/**
+ * Sets the metallic amount of the physical material.
+ */
+void DlgMaterialPropertiesImp::onMetallicChanged(double value)
+{
+    customMaterial.metallic = static_cast<float>(value);
+}
+
+/**
+ * Sets the roughness (surface finish) of the physical material.
+ */
+void DlgMaterialPropertiesImp::onRoughnessChanged(double value)
+{
+    customMaterial.roughness = static_cast<float>(value);
+}
+
+/**
+ * Sets the index of refraction of the dielectric (glass) response.
+ */
+void DlgMaterialPropertiesImp::onTransmissionIorChanged(double value)
+{
+    customMaterial.transmissionIor = static_cast<float>(value);
+}
+
+/**
+ * Sets the Beer-Lambert absorption strength of the dielectric response.
+ */
+void DlgMaterialPropertiesImp::onTransmissionAbsorptionChanged(double value)
+{
+    customMaterial.transmissionAbsorption = static_cast<float>(value);
+}
+
+/**
+ * Sets the real-world size spanned by one tile of the texture image.
+ */
+void DlgMaterialPropertiesImp::onTextureSizeChanged(double value)
+{
+    customMaterial.textureSize = static_cast<float>(value);
+}
+
+/**
+ * Sets the projection used to map the texture image onto the shape.
+ */
+void DlgMaterialPropertiesImp::onTextureMappingChanged(int index)
+{
+    customMaterial.textureMapping = static_cast<App::Material::TextureMapping>(index);
+}
+
+/**
  * Reset the colors to the Coin3D defaults
  */
 void DlgMaterialPropertiesImp::onButtonReset()
@@ -174,6 +251,31 @@ void DlgMaterialPropertiesImp::setButtonColors(const App::Material& mat)
     ui->transparency->blockSignals(true);
     ui->transparency->setValue((int)(100.0F * (mat.transparency + 0.001F)));
     ui->transparency->blockSignals(false);
+    ui->usePhysicalMaterial->blockSignals(true);
+    ui->usePhysicalMaterial->setChecked(mat.usePhysicalMaterial);
+    ui->usePhysicalMaterial->blockSignals(false);
+    ui->metallic->blockSignals(true);
+    ui->metallic->setValue(static_cast<double>(mat.metallic));
+    ui->metallic->blockSignals(false);
+    ui->roughness->blockSignals(true);
+    ui->roughness->setValue(static_cast<double>(mat.roughness));
+    ui->roughness->blockSignals(false);
+    ui->transmissionIor->blockSignals(true);
+    ui->transmissionIor->setValue(static_cast<double>(mat.transmissionIor));
+    ui->transmissionIor->blockSignals(false);
+    ui->transmissionAbsorption->blockSignals(true);
+    ui->transmissionAbsorption->setValue(static_cast<double>(mat.transmissionAbsorption));
+    ui->transmissionAbsorption->blockSignals(false);
+    ui->metallic->setEnabled(mat.usePhysicalMaterial);
+    ui->roughness->setEnabled(mat.usePhysicalMaterial);
+    ui->transmissionIor->setEnabled(mat.usePhysicalMaterial);
+    ui->transmissionAbsorption->setEnabled(mat.usePhysicalMaterial);
+    ui->textureSize->blockSignals(true);
+    ui->textureSize->setValue(static_cast<double>(mat.textureSize));
+    ui->textureSize->blockSignals(false);
+    ui->textureMapping->blockSignals(true);
+    ui->textureMapping->setCurrentIndex(static_cast<int>(mat.textureMapping));
+    ui->textureMapping->blockSignals(false);
 }
 
 #include "moc_DlgMaterialPropertiesImp.cpp"

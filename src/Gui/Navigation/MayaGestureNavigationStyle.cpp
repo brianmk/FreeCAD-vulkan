@@ -139,7 +139,7 @@ void MayaGestureNavigationStyle::zoomByCursor(const SbVec2f& thispos, const SbVe
     if (this->invertZoom) {
         value = -value;
     }
-    zoom(viewer->getSoRenderManager()->getCamera(), value);
+    zoom(viewer->getCamera(), value);
 }
 
 SbBool MayaGestureNavigationStyle::processSoEvent(const SoEvent* const ev)
@@ -401,13 +401,13 @@ SbBool MayaGestureNavigationStyle::processSoEvent(const SoEvent* const ev)
                         break;
                     case SoKeyboardEvent::PAGE_UP:
                         if (press) {
-                            doZoom(viewer->getSoRenderManager()->getCamera(), getDelta(), posn);
+                            doZoom(viewer->getCamera(), getDelta(), posn);
                         }
                         processed = true;
                         break;
                     case SoKeyboardEvent::PAGE_DOWN:
                         if (press) {
-                            doZoom(viewer->getSoRenderManager()->getCamera(), -getDelta(), posn);
+                            doZoom(viewer->getCamera(), -getDelta(), posn);
                         }
                         processed = true;
                         break;
@@ -441,7 +441,7 @@ SbBool MayaGestureNavigationStyle::processSoEvent(const SoEvent* const ev)
                                 this->mousedownPos = pos;
                                 this->mouseMoveThresholdBroken = false;
                                 setupPanningPlane(
-                                    viewer->getSoRenderManager()->getCamera()
+                                    viewer->getCamera()
                                 );  // set up panningplane
                                 int& cnt = this->mousedownConsumedCount;
                                 this->mousedownConsumedEvents[cnt]
@@ -569,14 +569,14 @@ SbBool MayaGestureNavigationStyle::processSoEvent(const SoEvent* const ev)
                                                                         // update is a start
                                                                         // (sort-of fail-safe).
                     if (type.isDerivedFrom(SoGesturePanEvent::getClassTypeId())) {
-                        setupPanningPlane(viewer->getSoRenderManager()->getCamera());  // set up
+                        setupPanningPlane(viewer->getCamera());  // set up
                                                                                        // panning
                                                                                        // plane
                         setViewingMode(NavigationStyle::PANNING);
                         processed = true;
                     }
                     else if (type.isDerivedFrom(SoGesturePinchEvent::getClassTypeId())) {
-                        setupPanningPlane(viewer->getSoRenderManager()->getCamera());  // set up
+                        setupPanningPlane(viewer->getCamera());  // set up
                                                                                        // panning
                                                                                        // plane
                         saveCursorPosition(ev);
@@ -638,7 +638,7 @@ SbBool MayaGestureNavigationStyle::processSoEvent(const SoEvent* const ev)
                 }
                 else if (curmode == NavigationStyle::PANNING) {
                     panCamera(
-                        viewer->getSoRenderManager()->getCamera(),
+                        viewer->getCamera(),
                         ratio,
                         this->panningplane,
                         posn,
@@ -650,7 +650,7 @@ SbBool MayaGestureNavigationStyle::processSoEvent(const SoEvent* const ev)
                     if (comboAfter & BUTTON1DOWN && comboAfter & BUTTON2DOWN) {
                         // two mouse buttons down - tilting!
                         NavigationStyle::doRotate(
-                            viewer->getSoRenderManager()->getCamera(),
+                            viewer->getCamera(),
                             (posn - prevnormalized)[0] * (-2),
                             SbVec2f(0.5, 0.5)
                         );
@@ -682,7 +682,7 @@ SbBool MayaGestureNavigationStyle::processSoEvent(const SoEvent* const ev)
                             // of zooming to pos is done in doZoom.
                             SbVec2f panDist = this->normalizePixelPos(event->deltaCenter.getValue());
                             NavigationStyle::panCamera(
-                                viewer->getSoRenderManager()->getCamera(),
+                                viewer->getCamera(),
                                 ratio,
                                 this->panningplane,
                                 panDist,
@@ -690,13 +690,13 @@ SbBool MayaGestureNavigationStyle::processSoEvent(const SoEvent* const ev)
                             );
                         }
                         NavigationStyle::doZoom(
-                            viewer->getSoRenderManager()->getCamera(),
+                            viewer->getCamera(),
                             -logf(event->deltaZoom),
                             this->normalizePixelPos(event->curCenter)
                         );
                         if (event->deltaAngle != 0) {
                             NavigationStyle::doRotate(
-                                viewer->getSoRenderManager()->getCamera(),
+                                viewer->getCamera(),
                                 event->deltaAngle,
                                 this->normalizePixelPos(event->curCenter)
                             );
@@ -709,7 +709,7 @@ SbBool MayaGestureNavigationStyle::processSoEvent(const SoEvent* const ev)
                         // zooming to pos is done in doZoom.
                         SbVec2f panDist = this->normalizePixelPos(event->deltaOffset);
                         NavigationStyle::panCamera(
-                            viewer->getSoRenderManager()->getCamera(),
+                            viewer->getCamera(),
                             ratio,
                             this->panningplane,
                             panDist,

@@ -795,9 +795,19 @@ bool DrawGuiUtil::isStyleSheetDark(std::string curStyleSheet)
 QIcon DrawGuiUtil::maskBlackPixels(QIcon itemIcon, QSize iconSize, QColor textColor)
 {
     QPixmap originalPix = itemIcon.pixmap(iconSize, QIcon::Mode::Normal, QIcon::State::On);
-    QPixmap filler(iconSize);
-    filler.fill(QColor(textColor));
-    filler.setMask(originalPix.createMaskFromColor(Qt::black, Qt::MaskOutColor));
+
+    // QIcon::pixmap() honours the screen's device pixel ratio, so on a HiDPI
+    // display originalPix is iconSize * dpr device pixels. The filler and its
+    // mask must use that same device size (and pixel ratio) or QPixmap::setMask()
+    // rejects the mask and the icon is rendered as a solid block.
+    QPixmap filler = originalPix;
+    filler.fill(textColor);
+
+    QBitmap mask = originalPix.createMaskFromColor(Qt::black, Qt::MaskOutColor);
+    if (!mask.isNull()) {
+        filler.setMask(mask);
+    }
+
     return filler;
 }
 

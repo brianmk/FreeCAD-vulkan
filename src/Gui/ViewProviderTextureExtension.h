@@ -33,6 +33,7 @@ class SoMaterial;
 class SoSwitch;
 class SoTexture2;
 class SoTexture3;
+class SoTextureUnit;
 
 namespace App
 {
@@ -69,9 +70,17 @@ public:
     void activateMixed3D();
 
 private:
+    void setMapImage(SoTexture2* texture, const std::string& base64Image);
+
     SoSwitch* pcSwitchAppearance {nullptr};
     SoSwitch* pcSwitchTexture {nullptr};
+    SoGroup* pcTextureGroup2D {nullptr};
     SoTexture2* pcShapeTexture2D {nullptr};
+    // Optional PBR map textures (roughness, normal, emissive), each assigned a
+    // texture unit of 1, 2, 3 through the matching SoTextureUnit.
+    SoGroup* pcMapGroup {nullptr};
+    SoTextureUnit* pcMapUnits[3] {nullptr, nullptr, nullptr};
+    SoTexture2* pcMapTextures[3] {nullptr, nullptr, nullptr};
     SoGroup* pcTextureGroup3D {nullptr};
 };
 

@@ -9,18 +9,26 @@
 class SoEvent;
 class SoEventManager;
 
+namespace SIM::Coin3D::Quarter
+{
+class EventFilter;
+}
+
 namespace Gui
 {
 
 /** Surface hooks the `InteractionController` needs beyond the navigation
  *  contract in `InteractionHost`.
  *
- *  A *surface* is the thing that renders and receives native events: the GL
- *  `View3DInventorViewer` today, the Vulkan widget later.  `InteractionHost`
- *  already exposes the camera/scene/viewport/event-manager the navigation
- *  styles reach through; this adds the surface-owned overlay/redirect hooks the
- *  controller's `processSoEvent` dispatch needs, so the same controller can run
- *  on either surface.
+ *  A *surface* is the thing that renders and receives native events.  Both the
+ *  GL `View3DInventorViewer` and `VulkanViewportAdapter` implement this: the
+ *  controller owns the Coin event manager, lends it to the current surface via
+ *  `surfaceSetEventManager()`, and routes presentation-only calls
+ *  (`scheduleRedraw()`, cursor, `getGLWidget()`) to whichever surface is on
+ *  screen.  `InteractionHost` supplies the shared camera/scene/viewport; this
+ *  adds the surface-owned overlay/redirect hooks the controller's
+ *  `processSoEvent` dispatch needs, so the same controller runs on either
+ *  surface.
  */
 class GuiExport InteractionSurface: public InteractionHost
 {
@@ -33,6 +41,21 @@ public:
     virtual bool surfaceProcessNaviCubeEvent(const SoEvent* ev) = 0;
     //! Whether events should be redirected straight into the scene graph.
     virtual bool surfaceIsRedirectedToSceneGraph() const = 0;
+    //! The Quarter event filter that receives this surface's native events and
+    //! owns its Coin input devices, or nullptr when the surface has none.
+    //! FreeCAD's gesture/SpaceNavigator devices are registered on whichever
+    //! surface is current, so this lets the controller move them when the
+    //! active surface changes without naming the GL widget itself.
+    virtual SIM::Coin3D::Quarter::EventFilter* surfaceEventFilter() const
+    {
+        return nullptr;
+    }
+    //! The native widget that owns FreeCAD's gesture/tablet devices for this
+    //! surface.  Tablet/touch/context-menu events are not translated by the
+    //! Coin input devices, so the controller relays them here.  Keeping the
+    //! lookup on the surface lets the Vulkan adapter answer it without naming
+    //! the hidden GL widget itself.
+    virtual QWidget* surfaceRawEventTarget() const = 0;
     //! The active camera pose changed in place (navigation mutated the shared
     //! camera node); the surface wakes its renderer / emits cameraMoved().
     virtual void surfaceNotifyCameraMoved() = 0;

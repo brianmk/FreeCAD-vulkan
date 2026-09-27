@@ -1,5 +1,5 @@
 {
-  "_comment": "Expected std140 block layouts mirrored by the C++ structs with matching static_asserts: SoVulkanRenderBackend/SoVulkanRenderBackendP.h (PushConstants=VulkanPushConstants, BackgroundPush=VulkanBackgroundPush, LightingBlock=VulkanLightingUbo, DrawBlock=VulkanDrawUbo), SoRTXRenderBackend/SoRTXRenderBackendP.h (RTMaterial, RaygenPush, Push=DenoiseDownsamplePush), SoVulkanRenderBackend/SoVulkanRenderBackendGeometryLod.cpp (SubPixelCullPush=SubPixelPush) and SoRTXRenderBackend/SoRTXRenderBackendPick.cpp (PickPush). Consumed by spirv_layout_check.py; keep in sync with the struct static_asserts.",
+  "_comment": "Expected std140 block layouts mirrored by the C++ structs with matching static_asserts: vulkan/raster/SoVulkanRenderBackendP.h (PushConstants=VulkanPushConstants, BackgroundPush=VulkanBackgroundPush, LightingBlock=VulkanLightingUbo, DrawBlock=VulkanDrawUbo), vulkan/raytracing/rtx/SoRTXRenderBackendP.h (RTMaterial, RaygenPush, Push=DenoiseDownsamplePush), vulkan/raster/SoVulkanRenderBackendGeometryLod.cpp (SubPixelCullPush=SubPixelPush) and vulkan/raytracing/rtx/SoRTXRenderBackendPick.cpp (PickPush). Consumed by spirv_layout_check.py; keep in sync with the struct static_asserts.",
   "blocks": {
     "PushConstants": {
       "size": 112,
@@ -42,7 +42,7 @@
       }
     },
     "DrawBlock": {
-      "size": 256,
+      "size": 288,
       "members": {
         "u_view": 0,
         "u_model": 64,
@@ -50,11 +50,13 @@
         "u_materialAmbient": 144,
         "u_materialSpecular": 160,
         "u_materialParams": 176,
-        "u_proj": 192
+        "u_proj": 192,
+        "u_materialPbr": 256,
+        "u_materialMapParams": 272
       }
     },
     "RTMaterial": {
-      "size": 880,
+      "size": 928,
       "members": {
         "diffuse": 0,
         "ambient": 16,
@@ -68,7 +70,10 @@
         "lightAttenuation": 592,
         "lightSpot": 720,
         "triangleData": 848,
-        "pbr": 864
+        "pbr": 864,
+        "textureData": 880,
+        "textureLayers": 896,
+        "optical": 912
       }
     },
     "RaygenPush": {

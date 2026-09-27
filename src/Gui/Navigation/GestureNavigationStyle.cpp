@@ -375,12 +375,12 @@ public:
                     break;
                 case SoKeyboardEvent::PAGE_UP:
                     if (!press) {
-                        ns.doZoom(ns.viewer->getSoRenderManager()->getCamera(), ns.getDelta(), posn);
+                        ns.doZoom(ns.viewer->getCamera(), ns.getDelta(), posn);
                     }
                     break;
                 case SoKeyboardEvent::PAGE_DOWN:
                     if (!press) {
-                        ns.doZoom(ns.viewer->getSoRenderManager()->getCamera(), -ns.getDelta(), posn);
+                        ns.doZoom(ns.viewer->getCamera(), -ns.getDelta(), posn);
                     }
                     break;
                 default:
@@ -619,7 +619,7 @@ public:
             Base::Console().log(" -> PanState\n");
         }
         this->ratio = ns.viewer->getViewportRegion().getViewportAspectRatio();
-        ns.setupPanningPlane(ns.viewer->getSoRenderManager()->getCamera());  // set up panningplane
+        ns.setupPanningPlane(ns.viewer->getCamera());  // set up panningplane
     }
     virtual ~PanState() = default;
 
@@ -639,7 +639,7 @@ public:
             SbVec2s pos = ev.inventor_event->getPosition();
             auto& ns = this->outermost_context().ns;
             ns.panCamera(
-                ns.viewer->getSoRenderManager()->getCamera(),
+                ns.viewer->getCamera(),
                 this->ratio,
                 ns.panningplane,
                 ns.normalizePixelPos(pos),
@@ -672,7 +672,7 @@ public:
             Base::Console().log(" -> StickyPanState\n");
         }
         this->ratio = ns.viewer->getViewportRegion().getViewportAspectRatio();
-        ns.setupPanningPlane(ns.viewer->getSoRenderManager()->getCamera());  // set up panningplane
+        ns.setupPanningPlane(ns.viewer->getCamera());  // set up panningplane
     }
     virtual ~StickyPanState()
     {
@@ -694,7 +694,7 @@ public:
             SbVec2s pos = ev.inventor_event->getPosition();
             auto& ns = this->outermost_context().ns;
             ns.panCamera(
-                ns.viewer->getSoRenderManager()->getCamera(),
+                ns.viewer->getCamera(),
                 this->ratio,
                 ns.panningplane,
                 ns.normalizePixelPos(pos),
@@ -726,7 +726,7 @@ public:
         if (ns.logging) {
             Base::Console().log(" -> TiltState\n");
         }
-        ns.setupPanningPlane(ns.viewer->getSoRenderManager()->getCamera());  // set up panningplane
+        ns.setupPanningPlane(ns.viewer->getCamera());  // set up panningplane
     }
     virtual ~TiltState() = default;
 
@@ -749,7 +749,7 @@ public:
             auto& ns = this->outermost_context().ns;
             SbVec2s pos = ev.inventor_event->getPosition();
             float dx = (ns.normalizePixelPos(pos) - ns.normalizePixelPos(base_pos))[0];
-            ns.doRotate(ns.viewer->getSoRenderManager()->getCamera(), dx * (-2), SbVec2f(0.5, 0.5));
+            ns.doRotate(ns.viewer->getCamera(), dx * (-2), SbVec2f(0.5, 0.5));
             this->base_pos = pos;
         }
         return forward_event();
@@ -777,7 +777,7 @@ public:
         if (ns.logging) {
             Base::Console().log(" -> GestureState\n");
         }
-        ns.setupPanningPlane(ns.viewer->getSoRenderManager()->getCamera());  // set up panningplane
+        ns.setupPanningPlane(ns.viewer->getCamera());  // set up panningplane
         this->ratio = ns.viewer->getViewportRegion().getViewportAspectRatio();
     }
     virtual ~GestureState()
@@ -820,7 +820,7 @@ public:
                 auto const& pangesture = static_cast<const SoGesturePanEvent*>(ev.inventor_event);
                 SbVec2f panDist = ns.normalizePixelPos(pangesture->deltaOffset);
                 ns.panCamera(
-                    ns.viewer->getSoRenderManager()->getCamera(),
+                    ns.viewer->getCamera(),
                     ratio,
                     ns.panningplane,
                     panDist,

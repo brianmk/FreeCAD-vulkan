@@ -39,7 +39,9 @@ import FreeCADGui
 from PySide import QtCore
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-_FCPROBE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "fcprobe")
+_FCPROBE = os.environ.get("FREECAD_DEVTOOLS_FCPROBE") or os.path.normpath(
+    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), "..", "FreeCAD-DevTools", "fcprobe"))
 sys.path.insert(0, _FCPROBE)
 from freecad_probe import Session  # noqa: E402
 
