@@ -182,6 +182,13 @@ public:
     // compiled with COIN_ENABLE_DEBUG_PRINTF emit diagnostics
     // (FC_VULKAN_DEBUG_PRINTF).
     bool rtDebugPrintfAvailable = false;
+    // VK_EXT_nested_command_buffer: the Coin Vulkan backend can only record
+    // secondary command buffers from a subpass -- and therefore use its
+    // parallel recorder -- when the device was created with
+    // nestedCommandBufferRendering.  Probed unconditionally, but requested
+    // only when FC_VULKAN_PARALLEL_RECORD is set, so the default inline path
+    // is unchanged.
+    bool nestedCommandBufferAvailable = false;
     // Feature structs behind the optional extensions above.  They live on the
     // window object (not the modifier lambda) because QVulkanWindowPrivate::
     // init() reads the pNext chain after the callback returns.
@@ -191,6 +198,8 @@ public:
     // VK_KHR_synchronization2 / Vulkan 1.3 core: the renderer's barriers and
     // submits use the *2 entry points when this feature is enabled.
     VkPhysicalDeviceSynchronization2Features rtSynchronization2 {};
+    // VK_EXT_nested_command_buffer feature (see nestedCommandBufferAvailable).
+    VkPhysicalDeviceNestedCommandBufferFeaturesEXT nestedCommandBuffer {};
 
 private:
     QuarterVulkanRenderer * m_renderer;
@@ -234,9 +243,10 @@ public:
     //! HDR was refused because the GPU driver is on the known-unsafe list
     //! (see hdrDriverBlocked); the SDR swapchain is used instead.
     bool hdrDriverBlocked = false;
-    // Auto-nulled when the raw-event widget is destroyed, so the event
-    // filter below can never dereference a dangling pointer.
-    QPointer<QWidget> rawEventTarget;
+    //! Receives tablet/touch/context-menu events the Coin input devices do not
+    //! translate.  The InteractionController relays them to the surface that
+    //! owns FreeCAD's gesture/tablet devices.
+    std::function<bool(QEvent*)> rawEventSink;
     //! Translates mouse/wheel/keyboard events into Coin events (the widget is
     //! an InputDeviceHost) and delivers them through eventSink.
     EventFilter* eventFilter = nullptr;
@@ -496,6 +506,13 @@ void QuarterVulkanWidget::selectPhysicalDevice()
         VkPhysicalDeviceDescriptorIndexingFeatures di {};
         di.sType =
             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
+        // Chain the nested-command-buffer features so the same query reports
+        // whether a subpass may execute secondaries (needed by the backend's
+        // parallel recorder).
+        VkPhysicalDeviceNestedCommandBufferFeaturesEXT ncb {};
+        ncb.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_NESTED_COMMAND_BUFFER_FEATURES_EXT;
+        di.pNext = &ncb;
         VkPhysicalDeviceFeatures2 feats2 {};
         feats2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
         feats2.pNext = &di;
@@ -543,6 +560,13 @@ void QuarterVulkanWidget::selectPhysicalDevice()
         caps.rayTracing = hasExt("VK_KHR_acceleration_structure")
             && hasExt("VK_KHR_ray_tracing_pipeline")
             && hasExt("VK_KHR_ray_query");
+        // VK_EXT_nested_command_buffer lets a subpass begun with
+        // VK_SUBPASS_CONTENTS_INLINE_AND_SECONDARY_COMMAND_BUFFERS_EXT both
+        // record inline commands and execute secondaries; that is what the
+        // backend's parallel recorder requires.  It is only usable when the
+        // extension is advertised and both features are supported.
+        caps.nestedCommandBuffer = hasExt("VK_EXT_nested_command_buffer")
+            && ncb.nestedCommandBuffer && ncb.nestedCommandBufferRendering;
         return caps;
     };
 
@@ -610,6 +634,7 @@ void QuarterVulkanWidget::selectPhysicalDevice()
         best.synchronization2Extension;
     d->vulkanWindow->descriptorIndexingAvailable =
         best.descriptorIndexingUpdateAfterBind;
+    d->vulkanWindow->nestedCommandBufferAvailable = best.nestedCommandBuffer;
     // Report the optional-capability probe once per device selection.  These
     // caps gate which extensions/features are requested below, so a run that
     // reports them absent is the signal that the selected device is a fallback
@@ -619,10 +644,13 @@ void QuarterVulkanWidget::selectPhysicalDevice()
     if (Gui::VkDebug::rtDebug()) {
         std::fprintf(stderr,
                      "[RTDBG] caps positionFetch=%d opacityMicromap=%d "
-                     "nvCluster=%d nvPartitioned=%d nvLinearSweptSpheres=%d\n",
+                     "nvCluster=%d nvPartitioned=%d nvLinearSweptSpheres=%d "
+                     "nestedCommandBuffer=%d parallelRecord=%d\n",
                      best.positionFetch ? 1 : 0, best.opacityMicromap ? 1 : 0,
                      best.nvCluster ? 1 : 0, best.nvPartitioned ? 1 : 0,
-                     best.nvLinearSweptSpheres ? 1 : 0);
+                     best.nvLinearSweptSpheres ? 1 : 0,
+                     best.nestedCommandBuffer ? 1 : 0,
+                     Gui::VkDebug::parallelRecord() ? 1 : 0);
     }
     if (!best.externalMemoryFd) {
         vkWarn("QuarterVulkanWidget: the selected device lacks "
@@ -651,7 +679,14 @@ void QuarterVulkanWidget::selectPhysicalDevice()
                          bestProps.limits.maxMemoryAllocationCount));
     }
     // Hand the probe result to the renderer so it can skip its own extension
-    // enumeration (see SoVulkanDeviceContext::caps).
+    // enumeration (see SoVulkanDeviceContext::caps).  The nested-command-
+    // buffer capability is only advertised when the widget will actually
+    // request it (parallel recording opted in): enabling it flips the frame
+    // path from fully inline to secondary command buffers, so it must stay off
+    // by default.
+    if (!Gui::VkDebug::parallelRecord()) {
+        best.nestedCommandBuffer = false;
+    }
     if (d->renderer) {
         d->renderer->setDeviceCaps(best);
     }
@@ -690,6 +725,11 @@ void QuarterVulkanWidget::configureDeviceFeatures()
               "path tracing is unavailable and the raster backend is used");
         // Still request fillModeNonSolid for the wireframe/points overlay
         // pipelines.
+        if (d->vulkanWindow->nestedCommandBufferAvailable
+            && Gui::VkDebug::parallelRecord()) {
+            d->window->setDeviceExtensions(
+                { QByteArrayLiteral("VK_EXT_nested_command_buffer") });
+        }
         d->window->setEnabledFeaturesModifier(
           [this](VkPhysicalDeviceFeatures2 & features) {
             this->applyBaseDeviceFeatures(features);
@@ -755,6 +795,14 @@ void QuarterVulkanWidget::configureDeviceFeatures()
     }
     if (d->vulkanWindow->rtNvLinearSweptSpheresAvailable) {
         deviceExt << QByteArrayLiteral("VK_NV_ray_tracing_linear_swept_spheres");
+    }
+    // VK_EXT_nested_command_buffer is opt-in (parallel command recording): it
+    // changes the subpass contents and enables secondary recording, so it is
+    // only requested when the flag is set.  Requesting an extension the device
+    // does not expose fails device creation, hence the availability gate.
+    if (d->vulkanWindow->nestedCommandBufferAvailable
+        && Gui::VkDebug::parallelRecord()) {
+        deviceExt << QByteArrayLiteral("VK_EXT_nested_command_buffer");
     }
     d->window->setDeviceExtensions(deviceExt);
     // Request a dedicated async-compute queue at device creation so the RT
@@ -957,6 +1005,21 @@ void QuarterVulkanWidget::applyBaseDeviceFeatures(
         d->vulkanWindow->rtSynchronization2.pNext = features.pNext;
         features.pNext = &d->vulkanWindow->rtSynchronization2;
     }
+    // VK_EXT_nested_command_buffer: requested only when parallel command
+    // recording is opted into (see Gui::VkDebug::parallelRecord).  Both
+    // features must be enabled: nestedCommandBuffer permits a subpass begun
+    // with INLINE_AND_SECONDARY contents, and nestedCommandBufferRendering
+    // permits executing secondaries inside it.  Chained here so both the
+    // raster and RT feature-modifier paths request them.
+    if (d->vulkanWindow->nestedCommandBufferAvailable
+        && Gui::VkDebug::parallelRecord()) {
+        d->vulkanWindow->nestedCommandBuffer.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_NESTED_COMMAND_BUFFER_FEATURES_EXT;
+        d->vulkanWindow->nestedCommandBuffer.nestedCommandBuffer = VK_TRUE;
+        d->vulkanWindow->nestedCommandBuffer.nestedCommandBufferRendering = VK_TRUE;
+        d->vulkanWindow->nestedCommandBuffer.pNext = features.pNext;
+        features.pNext = &d->vulkanWindow->nestedCommandBuffer;
+    }
 }
 
 void QuarterVulkanWidget::logSupportedSampleCounts()
@@ -1081,14 +1144,19 @@ void QuarterVulkanWidget::setEdgeColor(const SbColor4f & color)
     redraw();
 }
 
-void QuarterVulkanWidget::setRawEventTarget(QWidget * target)
+void QuarterVulkanWidget::setRawEventSink(std::function<bool(QEvent *)> sink)
 {
-    d->rawEventTarget = target;
+    d->rawEventSink = std::move(sink);
 }
 
 void QuarterVulkanWidget::setEventSink(std::function<bool(const SoEvent *)> sink)
 {
     d->eventSink = std::move(sink);
+}
+
+EventFilter * QuarterVulkanWidget::getEventFilter() const
+{
+    return d->eventFilter;
 }
 
 qreal QuarterVulkanWidget::devicePixelRatio() const
@@ -1188,9 +1256,10 @@ bool QuarterVulkanWidget::eventFilter(QObject * watched, QEvent * event)
     // Mouse, wheel and keyboard are translated by d->eventFilter (this widget
     // is an InputDeviceHost) and delivered to the InteractionController.  The
     // remaining events -- tablet, touch and context menu -- are not handled by
-    // the Coin input devices, so relay them to the raw-event target (the
-    // hidden GL viewer that owns FreeCAD's gesture/tablet devices).
-    if (!d->rawEventTarget) {
+    // the Coin input devices, so hand them to the raw-event sink (the
+    // InteractionController relays them to the surface owning FreeCAD's
+    // gesture/tablet devices).
+    if (!d->rawEventSink) {
         return QWidget::eventFilter(watched, event);
     }
 
@@ -1219,7 +1288,7 @@ bool QuarterVulkanWidget::eventFilter(QObject * watched, QEvent * event)
     case QEvent::TouchUpdate:
     case QEvent::TouchEnd:
     case QEvent::ContextMenu:
-        if (QCoreApplication::sendEvent(d->rawEventTarget, event)) {
+        if (d->rawEventSink(event)) {
             return true;
         }
         break;

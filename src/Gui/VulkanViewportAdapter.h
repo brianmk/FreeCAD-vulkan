@@ -19,7 +19,7 @@ class QTimer;
 class SoNodeSensor;
 class SoSensor;
 
-namespace SIM::Coin3D::Quarter { class QuarterVulkanWidget; }
+namespace SIM::Coin3D::Quarter { class QuarterVulkanWidget; class EventFilter; }
 
 namespace Gui
 {
@@ -40,9 +40,11 @@ class View3DInventorViewer;
  *  state, seek/viewing mode, object/foreground roots, NaviCube) still live on
  *  the GL viewer.  The adapter keeps the two sides in sync: it pushes scene-
  *  graph/camera/background state into the Vulkan widget and keeps the surface
- *  viewport region calibrated.  All wiring is done in the constructor; the
- *  connections use this object as context, so they are torn down automatically
- *  when the view is destroyed.
+ *  viewport region calibrated -- the visible Vulkan surface is the single
+ *  viewport authority, its size is written into the viewer's neutral
+ *  ViewState, never back into the hidden GL render manager.  All wiring is
+ *  done in the constructor; the connections use this object as context, so
+ *  they are torn down automatically when the view is destroyed.
  *
  *  Like Coin's SoRenderManager (which watches the scene with a root
  *  SoNodeSensor whose callback calls scheduleRedraw()), the adapter installs
@@ -109,14 +111,12 @@ public:
     /// (scene/camera/background) before it is brought back on top.
     void useVulkanViewport(bool vulkan);
 
-    /// Re-impose the visible surface size on the hidden GL viewer's pick /
-    /// navigation region and re-push scene, camera and background.  A view
-    /// created for a brand-new document can hold a stale viewport region, a
-    /// stale camera clipping range (the pick ray's near/far, which only a GL
-    /// render would otherwise fit) or a stale scene binding until the render
-    /// mode is re-applied -- the same effect a manual renderer switch has --
-    /// which leaves hover preselection dead until then.  Idempotent; safe to
-    /// call whenever the layout or scene may have changed.
+    /// Re-impose the visible surface size as the neutral view state's viewport
+    /// authority and re-push scene, camera and background.  A view created for
+    /// a brand-new document can hold a stale viewport region or a stale scene
+    /// binding until the render mode is re-applied -- the same effect a manual
+    /// renderer switch has -- which leaves hover preselection dead until then.
+    /// Idempotent; safe to call whenever the layout or scene may have changed.
     void resyncViewport();
 
 Q_SIGNALS:
@@ -215,29 +215,25 @@ public:
     bool surfaceNaviCubeEnabled() const override;
     bool surfaceProcessNaviCubeEvent(const SoEvent* ev) override;
     bool surfaceIsRedirectedToSceneGraph() const override;
+    SIM::Coin3D::Quarter::EventFilter* surfaceEventFilter() const override;
+    QWidget* surfaceRawEventTarget() const override;
     void surfaceNotifyCameraMoved() override;
     void surfaceSetEventManager(SoEventManager* manager) override;
     //@}
 
 private:
     void onSurfaceSizeChanged(const QSize& surfaceSize);
-    bool eventFilter(QObject* watched, QEvent* event) override;
 
-    /// Re-impose the Vulkan surface size as the hidden GL viewer's
-    /// render/event-manager viewport region (device pixels) and its DPR.
-    ///
-    /// The display-only GL viewer is hidden, so QuarterWidget::resizeEvent()
-    /// otherwise resets its render-manager region to the GL widget's own
-    /// (typically default 400x400) size whenever the widget is re-laid-out
-    /// (e.g. a document is created/opened).  That leaves SoRayPickAction
-    /// normalized coordinates mismatched against the surface, so picking
-    /// misses.  The surface is the single source of truth, so this is
-    /// re-applied on every size change and on any GL-widget resize.
-    void applySurfaceViewportToGL(const QSize& surfaceSize);
+    /// Re-impose the visible Vulkan surface size as the neutral view state's
+    /// viewport region and device pixel ratio (device pixels) and hand the same
+    /// region to the interaction controller so picking/navigation normalize
+    /// against the visible surface.  The Vulkan surface is the single viewport
+    /// authority; nothing is written back into the hidden GL render manager.
+    void updateViewportAuthority(const QSize& surfaceSize);
 
-    /// (Re)attach the scene-graph and camera change sensors to the viewer's
-    /// current render manager.  Safe to call repeatedly; re-attaches only when
-    /// the tracked nodes changed.
+    /// (Re)attach the scene-graph and camera change sensors to the view
+    /// state's scene root and camera.  Safe to call repeatedly; re-attaches
+    /// only when the tracked nodes changed.
     void attachSensors();
 
     /// Re-point the Vulkan widget at the viewer's current camera and axis-cross
