@@ -19,7 +19,9 @@
 
 #include <Base/Parameter.h>
 #include <Inventor/SbColor4f.h>
+#ifdef FREECAD_USE_VULKAN
 #include <Inventor/rendering/SoVulkanViewMode.h>
+#endif
 
 namespace Gui {
 
