@@ -4,7 +4,9 @@
 
 #include "VulkanViewportAdapter.h"
 
+#ifdef FREECAD_USE_VULKAN
 #include "Quarter/QuarterVulkanWidget.h"
+#endif
 #include "Quarter/QuarterWidget.h"
 #include "Application.h"
 #include "InteractionController.h"
@@ -24,8 +26,10 @@
 #include <Inventor/nodes/SoPointLight.h>
 #include <Inventor/nodes/SoSpotLight.h>
 #include <Inventor/SoRenderManager.h>
+#ifdef FREECAD_USE_VULKAN
 #include <Inventor/rendering/SoRenderIR.h>
 #include <Inventor/rendering/SoVulkanViewSettings.h>
+#endif
 #include <Inventor/sensors/SoNodeSensor.h>
 #include <Inventor/sensors/SoSensor.h>
 
