@@ -34,8 +34,9 @@ on:
   workflow_dispatch: ~
   push:
     branches:
-      - main
+      - dev
       - releases/**
+      - freecad-integrate
   pull_request:
     types: [opened, synchronize, reopened]
   merge_group: ~
