@@ -23,8 +23,6 @@
 
 #include <FCConfig.h>
 
-#include <Base/VulkanBreadcrumbs.h>
-
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -2082,11 +2080,6 @@ void View3DInventorViewer::applyVulkanSettings()
     // letting this method and the pref-change observer drift apart.
     vulkanSettings_.load(hGrp);
 
-    VK_BREADCRUMB("[VK-TRACE] View3DInventorViewer::applyVulkanSettings "
-                  "edgeOverlay=%d points=%d\n",
-                  vulkanSettings_.edgeOverlay ? 1 : 0,
-                  vulkanSettings_.showPoints ? 1 : 0);
-
     Q_EMIT vulkanSettingsChanged();
 }
 
@@ -3659,20 +3652,6 @@ void View3DInventorViewer::renderScene()
     SbVec2s origin = vp.getViewportOriginPixels();
     SbVec2s size = vp.getViewportSizePixels();
     glViewport(origin[0], origin[1], size[0], size[1]);
-
-    // The view-volume fields below are cheap to compute; the expensive part
-    // (file I/O) stays behind the macro's env check.
-    const SbViewVolume vv = this->getSoRenderManager()->getCamera()
-        ? this->getSoRenderManager()->getCamera()->getViewVolume()
-        : SbViewVolume();
-    VK_BREADCRUMB_ONCE("[VK-TRACE] renderScene glViewport=%dx%d glGLWidget=%dx%d "
-                       "aspect=%f near=%f far=%f depth=%f width=%f height=%f\n",
-                       size[0], size[1],
-                       this->getGLWidget() ? this->getGLWidget()->width() : -1,
-                       this->getGLWidget() ? this->getGLWidget()->height() : -1,
-                       vp.getViewportAspectRatio(), vv.getNearDist(),
-                       vv.getNearDist() + vv.getDepth(), vv.getDepth(),
-                       vv.getWidth(), vv.getHeight());
 
     const QColor col = this->backgroundColor();
     glClearColor(float(col.redF()), float(col.greenF()), float(col.blueF()), 0.0F);

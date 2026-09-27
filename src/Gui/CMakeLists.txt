@@ -968,15 +968,15 @@ SET(Navigation_SRCS
 SOURCE_GROUP("Navigation" FILES ${Navigation_SRCS})
 
 #quarter sources
-# QuarterVulkanWidget (and VulkanFrameDumper) only compile with the Vulkan
-# viewport; their sources include Qt/Vulkan headers that do not exist when
+# QuarterVulkanWidget only compiles with the Vulkan
+# viewport; its sources include Qt/Vulkan headers that do not exist when
 # FREECAD_USE_VULKAN is OFF (e.g. QVulkanDeviceFunctions), so exclude them from
 # the unconditional Quarter glob unless the Vulkan renderer is enabled.
 FILE(GLOB_RECURSE Quarter_CPP_SRC RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} Quarter/*.cpp)
 FILE(GLOB_RECURSE Quarter_H_SRC RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} Quarter/*.h)
 if(NOT FREECAD_USE_VULKAN)
-    list(FILTER Quarter_CPP_SRC EXCLUDE REGEX "QuarterVulkanWidget\\.cpp$|VulkanFrameDumper\\.cpp$")
-    list(FILTER Quarter_H_SRC EXCLUDE REGEX "QuarterVulkanWidget\\.h$|VulkanFrameDumper\\.h$")
+    list(FILTER Quarter_CPP_SRC EXCLUDE REGEX "QuarterVulkanWidget\\.cpp$")
+    list(FILTER Quarter_H_SRC EXCLUDE REGEX "QuarterVulkanWidget\\.h$")
 endif()
 
 SET(Quarter_MOC_HDR
