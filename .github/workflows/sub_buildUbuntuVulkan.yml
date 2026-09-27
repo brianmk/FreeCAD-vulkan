@@ -104,7 +104,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: brianmk/FreeCAD-DevTools
-          ref: 5e7f1bc6b1614e5023364679753e2c2d08f59ba4
+          ref: ef54c29f8c853f261d0b116ca5920fb34bad2da1
           path: devtools
 
       - name: Check committed Vulkan SPIR-V header stamps
@@ -195,7 +195,19 @@ jobs:
           # Bundled Coin/Pivy (no -DFREECAD_USE_EXTERNAL_COIN_PIVY) with the
           # Vulkan viewport on, so SoIRRenderAction and the Vulkan renderer
           # build and are exercised by the tests.
-          extraParameters: -G Ninja --preset ${{ env.config }} -DFREECAD_USE_VULKAN=ON -DFREECAD_USE_EXTERNAL_PYCXX=ON -DFREECAD_USE_EXTERNAL_JSON=ON
+          #
+          # -DFREECAD_USE_VULKAN_DEBUG_HOOKS=ON is required by the lavapipe
+          # raster gate below.  The hook macro is otherwise defined only for
+          # Debug builds, but this job builds Release, and the gate depends on
+          # two hooks that live behind it:
+          #   * FC_SKIP_UNSAVED_PROMPT (MainWindow::confirmSave) -- without it
+          #     every probe blocks on the unsaved-document dialog and only dies
+          #     at its per-case timeout (11 cases * 300 s), blowing the gate's
+          #     30-minute budget so CI reports a timeout on every PR;
+          #   * FC_VULKAN_DUMP_FRAME / FC_VULKAN_BREADCRUMBS -- the points,
+          #     prefs and physical-material checks assert on the dumped frames
+          #     and applyVulkanSettings breadcrumbs.
+          extraParameters: -G Ninja --preset ${{ env.config }} -DFREECAD_USE_VULKAN=ON -DFREECAD_USE_VULKAN_DEBUG_HOOKS=ON -DFREECAD_USE_EXTERNAL_PYCXX=ON -DFREECAD_USE_EXTERNAL_JSON=ON
           builddir: ${{ env.builddir }}
           logFile: ${{ env.logdir }}Cmake.log
           errorFile: ${{ env.logdir }}CmakeErrors.log
