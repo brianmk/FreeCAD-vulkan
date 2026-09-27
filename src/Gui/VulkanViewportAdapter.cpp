@@ -1074,16 +1074,16 @@ void VulkanViewportAdapter::bindMouseSelection(AbstractMouseSelection* selection
 
 bool VulkanViewportAdapter::surfaceNaviCubeEnabled() const
 {
-    // The raster Vulkan surface carries no NaviCube-Vulkan integration: report
-    // the overlay disabled so the controller never routes NaviCube events
-    // through the Vulkan page (navigation still runs via the GL base surface).
-    return false;
+    // The NaviCube is a scene-graph node (SoNaviCube) that renders natively
+    // through the Vulkan IR/overlay path, so its interaction is surface-
+    // agnostic: forward to the GL viewer, which owns the node and its
+    // pick/event logic.
+    return _glSurface && _glSurface->surfaceNaviCubeEnabled();
 }
 
 bool VulkanViewportAdapter::surfaceProcessNaviCubeEvent(const SoEvent* ev)
 {
-    Q_UNUSED(ev);
-    return false;
+    return _glSurface && _glSurface->surfaceProcessNaviCubeEvent(ev);
 }
 
 bool VulkanViewportAdapter::surfaceIsRedirectedToSceneGraph() const

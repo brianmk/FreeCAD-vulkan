@@ -58,6 +58,7 @@ class SoOrthographicCamera;
 class SoPerspectiveCamera;
 class SoTransform;
 class SoVertexProperty;
+class SoIRRenderAction;
 namespace Gui
 {
 
@@ -131,6 +132,13 @@ protected:
     void GLRender(SoGLRenderAction* action) override;
     void generatePrimitives(SoAction* action) override;
     void computeBBox(SoAction* action, SbBox3f& box, SbVec3f& center) override;
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    //! Retained-render (Vulkan/IR) entry point.  Reuses the node's own scene
+    //! graph and overlay camera, recording it into the IR draw list scoped to
+    //! the navigation-cube viewport, so the Vulkan viewport renders exactly the
+    //! same navcube as the OpenGL path without a separate node.
+    void IRRender(SoIRRenderAction* action) override;
+#endif
 
 private:
     enum class CubeFaceKind
@@ -236,6 +244,7 @@ private:
     mutable SoSwitch* axisSwitch {nullptr};
     mutable AxisNodes axisNodes[3];
     mutable SoSeparator* cubeSep {nullptr};
+    mutable SoShapeHints* cubeHints {nullptr};
     mutable SoMaterial* cubeMaterial {nullptr};
     mutable SoVertexProperty* cubeVertexProperty {nullptr};
     mutable SoIndexedFaceSet* cubeFaces {nullptr};
