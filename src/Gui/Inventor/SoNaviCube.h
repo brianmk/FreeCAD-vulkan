@@ -141,6 +141,29 @@ protected:
         std::vector<SbVec3f>& verts,
         std::vector<int>& triangles,
         std::vector<std::int32_t>& outline) const;
+
+    //! Geometry snapshot for the Vulkan/IR navcube.  The pointers reference the
+    //! node's internal, lazily-built arrays and stay valid until the next
+    //! geometryRevision() bump.
+    struct CubeGeometry
+    {
+        const std::vector<SbVec3f>* cubeCoords {nullptr};
+        const std::vector<std::int32_t>* cubeIndices {nullptr};
+        const std::vector<SbVec3f>* edgeCoords {nullptr};
+        const std::vector<std::int32_t>* edgeIndices {nullptr};
+        int faceCount {0};
+    };
+
+    //! Populate a CubeGeometry snapshot, building the geometry if necessary.
+    [[nodiscard]] bool getCubeGeometry(CubeGeometry& out) const;
+    //! Map a cube-face PickId to its slot in the drawn face order, or -1.
+    [[nodiscard]] static int cubeFaceSlot(PickId id);
+    //! Monotonic counter bumped whenever the cube/edge/label geometry changes.
+    [[nodiscard]] unsigned int geometryRevision() const
+    {
+        return geometryRev;
+    }
+
     static constexpr size_t labelIndex(PickId id)
     {
         return static_cast<size_t>(id);
@@ -304,6 +327,7 @@ private:
     mutable bool sceneDirty {true};
     float chamfer {0.12F};
     mutable bool geometryDirty {true};
+    mutable unsigned int geometryRev {0};
     mutable std::array<std::vector<SbVec3f>, kPickIdCount> faces;
     mutable std::array<std::vector<SbVec3f>, kPickIdCount> buttonOverlayVerts;
     mutable std::array<std::vector<int>, kPickIdCount> buttonTriangleIndices;

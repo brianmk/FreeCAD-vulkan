@@ -72,15 +72,6 @@ constexpr float kOverlayFovScale = 1.1F;
 constexpr float kOverlayCubeZ = -5.1F;
 constexpr float kOverlayButtonZ = -4.0F;  // in front of the cube (cube at ~-5.1)
 
-// The 8 unit-cube corners, shared by the cube fill and the edge line-set.
-static const std::array<SbVec3f, 8> kCubeCorners = {{
-    SbVec3f(-1.0F, -1.0F, -1.0F), SbVec3f(1.0F, -1.0F, -1.0F),
-    SbVec3f(1.0F, 1.0F, -1.0F),  SbVec3f(-1.0F, 1.0F, -1.0F),
-    SbVec3f(-1.0F, -1.0F, 1.0F), SbVec3f(1.0F, -1.0F, 1.0F),
-    SbVec3f(1.0F, 1.0F, 1.0F),   SbVec3f(-1.0F, 1.0F, 1.0F),
-}};
-
-
 float toTransparency(float alpha)
 {
     alpha = std::clamp(alpha, 0.0F, 1.0F);
@@ -121,27 +112,37 @@ SoNaviCubeVulkan::~SoNaviCubeVulkan()
     }
 }
 
-int SoNaviCubeVulkan::faceIndex(int pickId)
-{
-    switch (static_cast<PickId>(pickId)) {
-        case PickId::Front: return 0;
-        case PickId::Rear: return 1;
-        case PickId::Right: return 2;
-        case PickId::Left: return 3;
-        case PickId::Top: return 4;
-        case PickId::Bottom: return 5;
-        default: return -1;
-    }
-}
-
 #ifdef HAVE_COIN_IR_RENDER_ACTION
 
 void SoNaviCubeVulkan::ensureScene() const
 {
-    if (sceneBuilt) {
+    CubeGeometry geom;
+    (void)getCubeGeometry(geom);
+    const unsigned int rev = geometryRevision();
+    if (sceneBuilt && rev == builtRevision) {
         return;
     }
-    sceneBuilt = true;
+    if (sceneRoot) {
+        sceneRoot->unref();
+        sceneRoot = nullptr;
+    }
+    labelsSep = nullptr;
+    buttonsSep = nullptr;
+    cameraSwitch = nullptr;
+    orthoCamera = nullptr;
+    perspCamera = nullptr;
+    rootTransform = nullptr;
+    cubeFaces = nullptr;
+    cubeVertexProperty = nullptr;
+    cubeMaterial = nullptr;
+    edges = nullptr;
+    edgeVertexProperty = nullptr;
+    edgeMaterial = nullptr;
+    edgeDrawStyle = nullptr;
+    axisSwitch = nullptr;
+    axisNodes = {};
+    faceLabels = {};
+    buttonNodes = {};
 
     sceneRoot = new SoSeparator;
     sceneRoot->ref();
@@ -206,7 +207,7 @@ void SoNaviCubeVulkan::ensureScene() const
 
     // ---- Axis arrows ----
     {
-        auto* axisSwitch = new SoSwitch;
+        axisSwitch = new SoSwitch;
         cubeGroup->addChild(axisSwitch);
 
         constexpr float a = -1.1F;
@@ -249,7 +250,7 @@ void SoNaviCubeVulkan::ensureScene() const
         }
     }
 
-    // ---- Cube fill (6 faces) ----
+    // ---- Cube fill (chamfered 26-face geometry from the Coin node) ----
     {
         auto* cubeSep = new SoSeparator;
         cubeGroup->addChild(cubeSep);
@@ -262,9 +263,9 @@ void SoNaviCubeVulkan::ensureScene() const
         cubeSep->addChild(binding);
 
         // No polygon offset on the fill: it must write its true depth so the
-        // near (front) faces actually occlude the far faces' labels.  A +1
-        // offset pushed the front fill to the same depth the labels' -1 offset
-        // reaches, so LEQUAL let the far labels paint right through the shell.
+        // near faces occlude the far faces' labels.  A +1 offset pushed the
+        // front fill to the same depth the labels' -1 offset reaches, so
+        // LEQUAL let the far labels paint through the translucent shell.
         auto* offset = new SoPolygonOffset;
         offset->factor = 0.0F;
         offset->units = 0.0F;
@@ -272,13 +273,11 @@ void SoNaviCubeVulkan::ensureScene() const
         offset->on = TRUE;
         cubeSep->addChild(offset);
 
-        // The overlay camera is the inverse of the view camera, which together
-        // with the navcube's own view matrix is an opposite-handed view volume:
-        // the retained IR winding (outward, matching the GL navcube's
-        // COUNTERCLOCKWISE) culls the WRONG faces under the Vulkan pipeline's
-        // front-face convention.  Declare CLOCKWISE so SOLID culling keeps the
-        // faces toward the camera and cleanly hides the far faces (and the far
-        // faces' labels bleeding through the translucent shell).
+        // The overlay camera is the inverse of the view camera, so the IR
+        // view volume is opposite-handed relative to the Coin/GL winding:
+        // the geometry's outward-CCW faces would cull the WRONG side under
+        // the IR front-face convention.  Declare CLOCKWISE so SOLID culling
+        // keeps the faces toward the camera and hides the far faces' labels.
         auto* hints = new SoShapeHints;
         hints->vertexOrdering = SoShapeHints::CLOCKWISE;
         hints->shapeType = SoShapeHints::SOLID;
@@ -292,36 +291,30 @@ void SoNaviCubeVulkan::ensureScene() const
         cubeVertexProperty->materialBinding = SoVertexProperty::PER_FACE_INDEXED;
         cubeFaces->vertexProperty = cubeVertexProperty;
 
-        // Unit cube corners.
-        cubeVertexProperty->vertex.setValues(0, 8, kCubeCorners.data());
-
-        // Base SoNaviCube face convention: Top=+Z, Bottom=-Z, Front=-Y,
-        // Rear=+Y, Right=+X, Left=-X.  The base label quads, pickAt() and the
-        // per-face highlight all use this frame, so the cube must be built in
-        // the SAME Z-up frame (not Y-up) or every face's label lands on the
-        // wrong face.  Winding is outward-CCW (cross product of consecutive
-        // edges points at the outward normal), which the CLOCKWISE declaration
-        // below (compensating the IR's opposite-handed view volume) keeps
-        // front-facing.
-        // Front(-Y), Rear(+Y), Right(+X), Left(-X), Top(+Z), Bottom(-Z).
-        const std::int32_t faces[6][5] = {
-            {0, 1, 5, 4, -1},  // -Y front
-            {2, 3, 7, 6, -1},  // +Y rear
-            {5, 1, 2, 6, -1},  // +X right
-            {0, 4, 7, 3, -1},  // -X left
-            {4, 5, 6, 7, -1},  // +Z top
-            {1, 0, 3, 2, -1},  // -Z bottom
-        };
-        cubeFaces->coordIndex.setNum(6 * 5);
-        for (int f = 0; f < 6; ++f) {
-            cubeFaces->coordIndex.setValues(f * 5, 5, faces[f]);
+        if (geom.cubeCoords && !geom.cubeCoords->empty()) {
+            cubeVertexProperty->vertex.setValues(
+                0,
+                static_cast<int>(geom.cubeCoords->size()),
+                geom.cubeCoords->data()
+            );
         }
-        // Per-face material binding into the single cubeMaterial array.
-        const std::int32_t materialIndex[6] = {0, 1, 2, 3, 4, 5};
-        cubeFaces->materialIndex.setValues(0, 6, materialIndex);
+        if (geom.cubeIndices && !geom.cubeIndices->empty()) {
+            cubeFaces->coordIndex.setValues(
+                0,
+                static_cast<int>(geom.cubeIndices->size()),
+                geom.cubeIndices->data()
+            );
+        }
+        cubeFaces->materialIndex.setNum(geom.faceCount);
+        for (int i = 0; i < geom.faceCount; ++i) {
+            cubeFaces->materialIndex.set1Value(i, 0);
+        }
+
+        cubeMaterial->diffuseColor.setNum(2);
+        cubeMaterial->transparency.setNum(2);
     }
 
-    // ---- Cube edges ----
+    // ---- Cube edges (derived from the Coin face geometry) ----
     {
         auto* edgeSep = new SoSeparator;
         cubeGroup->addChild(edgeSep);
@@ -336,19 +329,21 @@ void SoNaviCubeVulkan::ensureScene() const
         edgeSep->addChild(edges);
 
         edgeVertexProperty = new SoVertexProperty;
-        edgeVertexProperty->vertex.setNum(8);
-        edgeVertexProperty->vertex.setValues(0, 8, kCubeCorners.data());
         edges->vertexProperty = edgeVertexProperty;
 
-        // 12 edges of the cube.
-        const std::int32_t edgeIdx[12][3] = {
-            {0, 1, -1}, {1, 2, -1}, {2, 3, -1}, {3, 0, -1},
-            {4, 5, -1}, {5, 6, -1}, {6, 7, -1}, {7, 4, -1},
-            {0, 4, -1}, {1, 5, -1}, {2, 6, -1}, {3, 7, -1},
-        };
-        edges->coordIndex.setNum(12 * 3);
-        for (int i = 0; i < 12; ++i) {
-            edges->coordIndex.setValues(i * 3, 3, edgeIdx[i]);
+        if (geom.edgeCoords && !geom.edgeCoords->empty()) {
+            edgeVertexProperty->vertex.setValues(
+                0,
+                static_cast<int>(geom.edgeCoords->size()),
+                geom.edgeCoords->data()
+            );
+        }
+        if (geom.edgeIndices && !geom.edgeIndices->empty()) {
+            edges->coordIndex.setValues(
+                0,
+                static_cast<int>(geom.edgeIndices->size()),
+                geom.edgeIndices->data()
+            );
         }
     }
 
@@ -359,6 +354,8 @@ void SoNaviCubeVulkan::ensureScene() const
     buildButtons();
 
     sceneRoot->touch();
+    sceneBuilt = true;
+    builtRevision = rev;
 }
 
 namespace
@@ -646,19 +643,25 @@ void SoNaviCubeVulkan::updateScene() const
 
     const float op = opacity.getValue();
 
-    // Cube face colours (base + hovered highlight).
+    // Cube face colours: like the Coin node, two materials (base + hovered
+    // highlight) selected per face via materialIndex.
     const SbColor base = baseColor.getValue();
     const SbColor hilite = hiliteColor.getValue();
     const float baseTr = toTransparency(baseAlpha.getValue() * op);
     const float hiliteTr = toTransparency(hiliteAlpha.getValue() * op);
-    const int hi = faceIndex(hiliteId.getValue());
     if (cubeMaterial) {
-        cubeMaterial->diffuseColor.setNum(6);
-        cubeMaterial->transparency.setNum(6);
-        for (int f = 0; f < 6; ++f) {
-            const bool isHilite = (f == hi);
-            cubeMaterial->diffuseColor.set1Value(f, isHilite ? hilite : base);
-            cubeMaterial->transparency.set1Value(f, isHilite ? hiliteTr : baseTr);
+        cubeMaterial->diffuseColor.setNum(2);
+        cubeMaterial->transparency.setNum(2);
+        cubeMaterial->diffuseColor.set1Value(0, base);
+        cubeMaterial->diffuseColor.set1Value(1, hilite);
+        cubeMaterial->transparency.set1Value(0, baseTr);
+        cubeMaterial->transparency.set1Value(1, hiliteTr);
+    }
+    if (cubeFaces) {
+        const int hi = cubeFaceSlot(static_cast<PickId>(hiliteId.getValue()));
+        const int n = cubeFaces->materialIndex.getNum();
+        for (int i = 0; i < n; ++i) {
+            cubeFaces->materialIndex.set1Value(i, (i == hi) ? 1 : 0);
         }
     }
 
@@ -694,6 +697,9 @@ void SoNaviCubeVulkan::updateScene() const
         nodes.points->touch();
         nodes.material->touch();
     }
+    if (axisSwitch) {
+        axisSwitch->whichChild = showCoordinateSystem.getValue() ? SO_SWITCH_ALL : SO_SWITCH_NONE;
+    }
 
     // Re-record the cube fill so the per-face highlight reaches the GPU.
     if (cubeFaces) {
@@ -717,7 +723,11 @@ void SoNaviCubeVulkan::updateScene() const
     if (edgeDrawStyle) {
         edgeDrawStyle->touch();
     }
-    // Re-record the face labels so they follow the rotating cube too.
+    // Re-record the face labels so they follow the rotating cube too, and keep
+    // their material in sync with the Coin node's updateLabels() (emphase
+    // colour plus the inactive-opacity fade).
+    const SbColor labelColor = emphaseColor.getValue();
+    const float labelTr = toTransparency(emphaseAlpha.getValue() * op);
     for (SoNaviCube::PickId pickId : kFaceLabelOrder) {
         LabelNodes& nodes = faceLabels[static_cast<std::size_t>(pickId)];
         if (nodes.face) {
@@ -727,7 +737,12 @@ void SoNaviCubeVulkan::updateScene() const
             nodes.vertexProperty->touch();
         }
         if (nodes.material) {
+            nodes.material->diffuseColor.setValue(labelColor);
+            nodes.material->transparency.setValue(labelTr);
             nodes.material->touch();
+        }
+        if (nodes.texture) {
+            nodes.texture->touch();
         }
     }
     // Refresh the screen-space navigation buttons (hover highlight + opacity).
