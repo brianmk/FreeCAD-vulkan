@@ -51,7 +51,9 @@
 
 #include "SoAxisCrossKit.h"
 #include "SoFCBoundingBox.h"
-#include "SoDevicePixelRatioElement.h"
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+#include <Inventor/elements/SoDevicePixelRatioElement.h>
+#endif
 
 using namespace Gui;
 
@@ -108,7 +110,10 @@ void SoShapeScale::updateScale(SoState* state)
     else {
         if (!state->isElementEnabled(SoViewportRegionElement::getClassStackIndex())
             || !state->isElementEnabled(SoViewVolumeElement::getClassStackIndex())
-            || !state->isElementEnabled(SoDevicePixelRatioElement::getClassStackIndex())) {
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+            || !state->isElementEnabled(SoDevicePixelRatioElement::getClassStackIndex())
+#endif
+        ) {
             return;
         }
 
@@ -125,7 +130,9 @@ void SoShapeScale::updateScale(SoState* state)
         SoModelMatrixElement::get(state).multVecMatrix(center, center);  // world coords
         float sf = vv.getWorldToScreenScale(center, nsize);
 
+#ifdef HAVE_COIN_IR_RENDER_ACTION
         sf *= SoDevicePixelRatioElement::get(state);
+#endif
 
         SbVec3f v(sf, sf, sf);
         if (scale->scaleFactor.getValue() != v) {
