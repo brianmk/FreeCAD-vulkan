@@ -3,7 +3,7 @@ name: Backport merged pull request
 on:
   pull_request_target:
     types: [closed, labeled]
-    branches: [main, releases/*]
+    branches: [dev, releases/*]
 
 permissions:
   contents: read
