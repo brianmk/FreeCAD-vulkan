@@ -77,7 +77,7 @@ jobs:
             const workflow_id = 'weekly-compare-link.yml';
 
             // Use the default branch so the workflow file is available
-            const ref = (context.payload?.repository?.default_branch) || 'main';
+            const ref = (context.payload?.repository?.default_branch) || 'dev';
             const current_tag = process.env.WEEKLY_TAG || '';
 
             await github.rest.actions.createWorkflowDispatch({
