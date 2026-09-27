@@ -40,8 +40,9 @@ on:
   workflow_dispatch: ~
   push:
     branches:
-      - main
+      - dev
       - releases/**
+      - freecad-integrate
   pull_request:
     types: [opened, synchronize, reopened, labeled]
   merge_group: ~
@@ -109,7 +110,7 @@ jobs:
               return;
             }
 
-            // For non-PR events (basically just push to main/releases and workflow_dispatch), each commit
+            // For non-PR events (basically just push to dev/releases/integrate and workflow_dispatch), each commit
             // gets its own run to help pinpoint any failures to a specific commit.
             if (!isPR) {
               core.setOutput('should-run', 'true');
