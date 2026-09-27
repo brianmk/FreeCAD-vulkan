@@ -36,6 +36,7 @@
 class QPrinter;
 class QOpenGLWidget;
 class QStackedWidget;
+class QLabel;
 
 namespace Gui
 {
@@ -192,6 +193,13 @@ protected Q_SLOTS:
 private:
     void applySettings();
 
+#ifdef FREECAD_VIEWPORT_RENDERER_LABEL
+    //! Refresh the corner renderer label from the current render mode.
+    void updateRendererLabel();
+    //! Keep the corner label pinned to the viewport's bottom-right corner.
+    void repositionRendererLabel();
+#endif
+
 protected:
     void windowStateChanged(QWidget* view) override;
     void dropEvent(QDropEvent* e) override;
@@ -209,6 +217,10 @@ private:
     QTimer* stopSpinTimer;
     QStackedWidget* stack;
     VulkanViewportAdapter* _vulkanAdapter = nullptr;
+#ifdef FREECAD_VIEWPORT_RENDERER_LABEL
+    //! Corner label naming the active viewport renderer ("OpenGL"/"Vulkan").
+    QLabel* rendererLabel = nullptr;
+#endif
     std::unique_ptr<View3DSettings> viewSettings;
     std::unique_ptr<NaviCubeSettings> naviSettings;
 #ifdef FREECAD_USE_VULKAN

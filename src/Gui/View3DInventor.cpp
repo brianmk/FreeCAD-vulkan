@@ -38,6 +38,9 @@
 #include <QPrintDialog>
 #include <QPrintPreviewDialog>
 #include <QStackedWidget>
+#ifdef FREECAD_VIEWPORT_RENDERER_LABEL
+# include <QLabel>
+#endif
 #include <QSurfaceFormat>
 #include <QTimer>
 #include <QUrl>
@@ -246,6 +249,31 @@ View3DInventor::View3DInventor(
     stopSpinTimer = new QTimer(this);
     connect(stopSpinTimer, &QTimer::timeout, this, &View3DInventor::stopAnimating);
 
+#ifdef FREECAD_VIEWPORT_RENDERER_LABEL
+    // Small corner label naming the active viewport renderer.  It is a child of
+    // the viewport stack (not a stack page), so it overlays whichever backend
+    // is current: the Coin/OpenGL viewer or the Vulkan surface.
+    rendererLabel = new QLabel(stack);
+    rendererLabel->setObjectName(QStringLiteral("ViewportRendererLabel"));
+    rendererLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    rendererLabel->setStyleSheet(QStringLiteral(
+        "QLabel#ViewportRendererLabel {"
+        " background-color: rgba(0, 0, 0, 140);"
+        " color: white;"
+        " padding: 1px 6px;"
+        " border-radius: 3px;"
+        " }"
+    ));
+    rendererLabel->setToolTip(tr("Active 3D viewport renderer"));
+    stack->installEventFilter(this);
+    // A page switch (GL <-> Vulkan) raises the new page, which would cover the
+    // label; re-raise it on every current-page change.
+    connect(stack, &QStackedWidget::currentChanged, this, [this] {
+        repositionRendererLabel();
+    });
+    updateRendererLabel();
+#endif
+
     setWindowIcon(
         Gui::BitmapFactory().iconFromTheme("Document", QIcon(Gui::BitmapFactory().pixmap("Document")))
     );
@@ -388,6 +416,36 @@ Gui::ViewRenderMode View3DInventor::getRenderMode() const
     return _renderMode;
 }
 
+#ifdef FREECAD_VIEWPORT_RENDERER_LABEL
+void View3DInventor::updateRendererLabel()
+{
+    if (!rendererLabel) {
+        return;
+    }
+#ifdef FREECAD_USE_VULKAN
+    const bool vulkan = (_renderMode != ViewRenderMode::RasterCoin);
+#else
+    const bool vulkan = false;
+#endif
+    rendererLabel->setText(vulkan ? tr("Vulkan") : tr("OpenGL"));
+    rendererLabel->adjustSize();
+    repositionRendererLabel();
+}
+
+void View3DInventor::repositionRendererLabel()
+{
+    if (!rendererLabel || !stack) {
+        return;
+    }
+    const QSize size = stack->size();
+    rendererLabel->move(
+        size.width() - rendererLabel->width() - 12,
+        size.height() - rendererLabel->height() - 12
+    );
+    rendererLabel->raise();
+}
+#endif
+
 void View3DInventor::setRenderMode(ViewRenderMode mode)
 {
     // No early return: the initial mode must also select the visible viewport
@@ -431,6 +489,9 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
     }
     // Let the status-bar render-mode selector reflect the effective mode.
     Q_EMIT renderModeChanged(static_cast<int>(_renderMode));
+#ifdef FREECAD_VIEWPORT_RENDERER_LABEL
+    updateRendererLabel();
+#endif
 }
 
 bool View3DInventor::getWireframe() const
@@ -1080,8 +1141,15 @@ void View3DInventor::focusInEvent(QFocusEvent*)
 
 bool View3DInventor::eventFilter(QObject* watched, QEvent* event)
 {
+#ifdef FREECAD_VIEWPORT_RENDERER_LABEL
+    if (watched == stack
+        && (event->type() == QEvent::Resize || event->type() == QEvent::Show)) {
+        repositionRendererLabel();
+    }
+#else
     Q_UNUSED(watched);
     Q_UNUSED(event);
+#endif
     return MDIView::eventFilter(watched, event);
 }
 
