@@ -34,6 +34,77 @@ queued to the worker.
 - Raw App::DocumentObject signals remain plain fastsignals with same-thread
   semantics. GUI code should not subscribe to them directly.
 
+\section asyncrecompute_signal_policy Signal delivery policy
+
+App::MainThreadSignal takes a per-signal App::DeliveryPolicy so the decision to
+block the emitting thread is explicit and reviewed at the declaration:
+
+- `Blocking` (default): hop to the main thread and wait. Required for non-void
+  signals and for observers that must run before the emitter continues. A
+  worker that emits a Blocking signal parks on the GUI thread, so a GUI-side
+  wait on the worker must abandon the parked hop instead of deadlocking (see
+  the note below).
+- `Queued`: hop without waiting. Document/DocumentObject/Property references
+  are captured as stable identity handles and resolved back to live objects on
+  the main thread; a destroyed target is dropped instead of dereferenced.
+- `Coalesced`: like Queued, but repeated emissions that resolve to the same
+  identity collapse into a single delivery. Use only when observers need the
+  latest state, not every transition.
+
+The policy applied to each document signal:
+
+| Signal | Policy | Reason |
+| --- | --- | --- |
+| signalBeforeChange, signalChanged | Blocking | main-thread document properties |
+| signalNewObject, signalActivatedObject, signalTransactionAppend | Blocking | add/activate object on the main thread |
+| signalDeletedObject, signalTransactionRemove | Blocking | observers must run before the object is destroyed |
+| signalBeforeChangeObject | Queued | only the aggregated App signal observes it |
+| signalChangedObject | Coalesced | per-property, high frequency during recompute |
+| signalTouchedObject | Coalesced | hottest signal (fine-grained dependency propagation) |
+| signalRelabelObject | Queued | low frequency |
+| signalRecomputedObject | Coalesced | one delivery per object per recompute burst |
+| signalBeforeRecompute, signalRecomputed, signalBecameStable, signalSkipRecompute | Blocking | recompute barriers; also flush earlier queued deliveries |
+| signalChangePropertyEditor | Queued | property-editor refresh |
+| signalLinkXsetValue | Queued | external-link value update |
+| save/restore/import/export signals | Blocking | file I/O on the main thread |
+
+Because a blocking delivery is posted to the same GUI event queue as queued
+deliveries, the trailing `signalRecomputed`/`signalBecameStable` barriers are
+processed after the queued per-object notifications they follow.
+
+\section asyncrecompute_pending_removals Pending removals
+
+Objects removed while a recompute is in progress are queued in
+DocumentP::pendingRemove and removed afterwards by
+Document::processPendingRemovals(). That sweep mutates the document and emits
+`signalDeletedObject` / `signalTransactionRemove`, whose observers must run
+before the objects are destroyed, so it must run on the main thread. When
+recompute runs on the worker, the worker hands the sweep to the main thread
+with a blocking hop and waits; because the worker is parked, no other recompute
+runs concurrently, which serializes the sweep against recompute. This replaces
+the previous per-object deletion hops from the worker.
+
+\note Residual blocking hops. `signalBeforeRecompute` and the
+`signalRecomputed` / `signalBecameStable` barriers, plus the one blocking
+hand-off of `processPendingRemovals`, remain Blocking on the worker. A worker
+parked in one of these would otherwise hold up
+Application::cancelRecomputeRequestsForDocument(), which blocks the main thread
+in closeDocument() and cannot service the hop. That deadlock is closed by the
+GUI invoker: while the main thread is waiting for the worker it sets
+MainThreadSignalConfig::setMainThreadWaiting(true), and a blocking delivery
+whose emitting thread is parked at that point is abandoned rather than run. The
+worker then continues and the posted event becomes a no-op if it is ever
+dispatched. The same mechanism covers Application destruction, which joins the
+worker.
+
+\section asyncrecompute_subject Observer lists
+
+Base::Subject snapshots its observer set under a mutex and calls OnChange()
+with the lock released, matching Base::ConsoleSingleton. This matters for
+Base::ParameterGrp: a Python-backed object can write a parameter from a worker
+recompute, which calls ParameterGrp::Notify() while GUI widgets attach/detach
+observers on the main thread.
+
 \section asyncrecompute_python Rules for Python-backed objects
 
 Python-backed features may execute from the recompute worker. The GIL is kept
