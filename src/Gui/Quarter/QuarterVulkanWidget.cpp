@@ -623,6 +623,10 @@ private:
 
         QVulkanDeviceFunctions * vkdf =
             m_instance->deviceFunctions(m_window->device());
+        // vkCmdResetQueryPool must not be recorded inside a render pass, so
+        // reset the GPU-timer query pool here, before the pass begins; the
+        // backend's scopes then write into the reset range during renderExternal.
+        m_manager.resetExternalGpuQueries(cb);
         vkdf->vkCmdBeginRenderPass(cb, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
 
         // QVulkanWindow's default render pass already clears color and depth
