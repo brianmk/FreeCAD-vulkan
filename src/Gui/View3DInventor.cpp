@@ -410,12 +410,6 @@ void View3DInventor::resyncVulkanViewport()
     }
 }
 
-#ifdef FREECAD_USE_VULKAN
-Gui::ViewRenderMode View3DInventor::getRenderMode() const
-{
-    return _renderMode;
-}
-
 #ifdef FREECAD_VIEWPORT_RENDERER_LABEL
 void View3DInventor::updateRendererLabel()
 {
@@ -445,6 +439,12 @@ void View3DInventor::repositionRendererLabel()
     rendererLabel->raise();
 }
 #endif
+
+#ifdef FREECAD_USE_VULKAN
+Gui::ViewRenderMode View3DInventor::getRenderMode() const
+{
+    return _renderMode;
+}
 
 void View3DInventor::setRenderMode(ViewRenderMode mode)
 {
