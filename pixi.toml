@@ -119,6 +119,10 @@ xorg-xproto = "*"
 # libvulkan-headers so <vulkan/vulkan.h> resolves for the experimental Vulkan
 # viewport (win-64 installs the LunarG SDK in the workflow instead).
 libvulkan-headers = "*"
+# Vulkan Memory Allocator (VMA, header-only) is required by the experimental
+# Vulkan viewport and is no longer bundled with Coin.  Install it so a Vulkan
+# build finds vk_mem_alloc.h on the include path.
+vulkan-memory-allocator = "*"
 
 ## Linux Dependencies (aarch64)
 [target.linux-aarch64.dependencies]
@@ -202,6 +206,9 @@ cpptrace = "*"
 ## libwinpthread, which ships only the DLL, so the headers come from
 ## winpthreads-devel -- the same package smesh itself builds against.
 winpthreads-devel = "*"
+# Vulkan Memory Allocator (header-only) for the experimental Vulkan viewport;
+# the LunarG SDK installed by the workflow does not ship vk_mem_alloc.h.
+vulkan-memory-allocator = "*"
 
 [pypi-dependencies]
 freecad-stubs = "*"

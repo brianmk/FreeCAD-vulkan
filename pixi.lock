@@ -366,6 +366,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/vtk-9.7.0-py313hacc98a6_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/vtk-base-9.7.0-py313hc6d8701_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/vtk-io-ffmpeg-9.7.0-py313he16cf18_1.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/vulkan-memory-allocator-3.3.0-ha770c72_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/wayland-1.26.0-hc1c935e_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/x264-1!164.3095-h7cc23a3_3.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/x265-3.5-h73f68a7_4.conda
@@ -2169,6 +2170,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/win-64/vtk-9.7.0-py313ha8f0a75_1.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/vtk-base-9.7.0-py313hf2a70ce_1.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/vtk-io-ffmpeg-9.7.0-py313h27a9027_1.conda
+      - conda: https://conda.anaconda.org/conda-forge/win-64/vulkan-memory-allocator-3.3.0-h57928b3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/winpthreads-devel-12.0.0.r4.gg4f2fc60ca-h57928b3_10.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/x264-1!164.3095-hfd05255_3.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/x265-3.5-h3ee6617_4.conda
@@ -7975,6 +7977,15 @@ packages:
     - vtk-io-ffmpeg >=9.7.0,<9.7.1.0a0
   size: 115395
   timestamp: 1789913359782
+- conda: https://conda.anaconda.org/conda-forge/linux-64/vulkan-memory-allocator-3.3.0-ha770c72_0.conda
+  sha256: ffaea618f51608178678a97be76dd36dce0d5429f10cbfd7ef1588cc9f78a9f1
+  md5: 145f1b57534ee49c6674fd838d1de4e7
+  license: MIT
+  license_family: MIT
+  purls: []
+  run_exports: {}
+  size: 123225
+  timestamp: 1759802640542
 - conda: https://conda.anaconda.org/conda-forge/linux-64/wayland-1.26.0-hc1c935e_2.conda
   sha256: df65b987979e6d7f88e756494da5a230d4f2d08d17437d04eecd35559c3a04e4
   md5: 88a47e22b53e50865b1cabe2eb648352
@@ -27636,7 +27647,7 @@ packages:
   license: BSD-3-Clause
   license_family: BSD
   purls:
-  - pkg:pypi/kiwisolver?source=compressed-mapping
+  - pkg:pypi/kiwisolver?source=hash-mapping
   run_exports: {}
   size: 73459
   timestamp: 1788505726845
@@ -29986,7 +29997,7 @@ packages:
   license: MIT
   license_family: MIT
   purls:
-  - pkg:pypi/ruamel-yaml-clib?source=compressed-mapping
+  - pkg:pypi/ruamel-yaml-clib?source=hash-mapping
   run_exports: {}
   size: 118565
   timestamp: 1788881211701
@@ -30459,6 +30470,15 @@ packages:
     - vtk-io-ffmpeg >=9.7.0,<9.7.1.0a0
   size: 100469
   timestamp: 1789913437172
+- conda: https://conda.anaconda.org/conda-forge/win-64/vulkan-memory-allocator-3.3.0-h57928b3_0.conda
+  sha256: 612b2884dfd8003a78142a8c6e463207bfcc64c3fb1d6508187a38ca454c8812
+  md5: c27ef626ff496f603ccf2976f0f32028
+  license: MIT
+  license_family: MIT
+  purls: []
+  run_exports: {}
+  size: 123731
+  timestamp: 1759802665623
 - conda: https://conda.anaconda.org/conda-forge/win-64/winpthreads-devel-12.0.0.r4.gg4f2fc60ca-h57928b3_10.conda
   sha256: d640e8ef78f82cad1584a123f655f0e9fe9a143d8aa5ed503522b04255b0624f
   md5: 95d8e9165c22fce5e2069e76828c81cf
