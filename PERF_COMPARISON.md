@@ -4,6 +4,11 @@ Controlled benchmarks of the fork's **Vulkan viewport** (with the
 `VulkanPresentMode` setting) against the fork's **GL fallback** and a
 **pristine upstream build**.
 
+> **Tooling moved.** The perf drivers now live in the
+> [`FreeCAD-DevTools`](https://github.com/brianmk/FreeCAD-DevTools) repo under
+> `perf/vulkan_vs_base/`; the `tools/perf/...` paths below are the old in-tree
+> locations.
+
 > **Verification status — read first.** The numbers below are **provisional and
 > unverified**. They compare Vulkan running in `Immediate` mode (V-Sync
 > disabled, on xcb) against a GL baseline on its default pacing, so part of the

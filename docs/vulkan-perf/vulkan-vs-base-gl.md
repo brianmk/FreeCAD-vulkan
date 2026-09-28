@@ -4,6 +4,11 @@ Controlled comparison of the fork's **Vulkan raster** viewport against a pristin
 **upstream OpenGL** build. Reproducible with the committed harness under
 [`tools/perf/vulkan_vs_base/`](../../tools/perf/vulkan_vs_base/).
 
+> **Tooling moved.** The harness now lives in the
+> [`FreeCAD-DevTools`](https://github.com/brianmk/FreeCAD-DevTools) repo under
+> `perf/vulkan_vs_base/`; the `tools/perf/...` paths below are the old in-tree
+> locations.
+
 > **Read the caveat first.** The Vulkan side is measured with V-Sync disabled
 > (present mode `Immediate`) on xcb, the GL side on its default pacing, so the
 > ratios overstate pure rasterizer throughput (see [Caveats](#caveats)). The

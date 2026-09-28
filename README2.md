@@ -112,9 +112,11 @@ The largest change is a **fork of Coin3D** pinned by `.gitmodules` to
 
 ## 7. Performance, startup & memory
 
-- `tools/perf/` suite: `renderer_perf.py`, `renderer_scene_probe.py`,
-  `sketch_perf.py`, `sketch_scene_probe.py`, `module_rollup.py`,
-  `sample_flame.py` (+ `samplib.c` CPU sampler).
+- `perf/` suite (in the
+  [`FreeCAD-DevTools`](https://github.com/brianmk/FreeCAD-DevTools) repo):
+  `renderer_perf.py`, `renderer_scene_probe.py`, `sketch_perf.py`,
+  `sketch_scene_probe.py`, `module_rollup.py`, `sample_flame.py`
+  (+ `samplib.c` CPU sampler).
 - Startup/restore quickening: skip full `updateView()` during restore; defer
   Draft/BIM view-provider updates; skip Draft SVG regeneration in TechDraw;
   avoid progress-bar churn while reading embedded files; memoize Draft
@@ -182,7 +184,7 @@ The largest change is a **fork of Coin3D** pinned by `.gitmodules` to
 > The numbers in this section are **provisional/unverified**: the Vulkan side
 > was measured with V-Sync disabled (Immediate, xcb) against a GL baseline on
 > default pacing, so they are not apples-to-apples. See the caveat list in
-> [`tools/perf/vulkan_vs_base/`](tools/perf/vulkan_vs_base/README.md).
+> [`FreeCAD-DevTools`](https://github.com/brianmk/FreeCAD-DevTools) `perf/vulkan_vs_base/`.
 
 Full report: [`PERF_COMPARISON.md`](PERF_COMPARISON.md). Charts:
 [`perf_dashboard.png`](docs/vulkan-perf/perf_dashboard.png),
@@ -323,8 +325,8 @@ A review pass tightened several product-quality concerns flagged on the fork:
   toggles `Visibility` to force a synchronous geometry rebuild; it pumps the
   GUI event loop until the async display geometry lands, without changing
   document state.
-- **Benchmarks committed and labelled.** The Vulkan-vs-base drivers are now in
-  [`tools/perf/vulkan_vs_base/`](tools/perf/vulkan_vs_base/), and
+- **Benchmarks committed and labelled.** The Vulkan-vs-base drivers live in
+  [`FreeCAD-DevTools`](https://github.com/brianmk/FreeCAD-DevTools) `perf/vulkan_vs_base/`, and
   [`PERF_COMPARISON.md`](PERF_COMPARISON.md) marks its numbers provisional
   (the Vulkan side was measured with V-Sync disabled against a paced GL
   baseline).
