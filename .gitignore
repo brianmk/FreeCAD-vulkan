@@ -19,6 +19,7 @@
 *.exp
 *.kdev4
 *.lib
+*.log
 *.manifest
 *.o
 *.obj
