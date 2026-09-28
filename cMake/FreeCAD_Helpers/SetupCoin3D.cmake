@@ -128,6 +128,32 @@ macro(SetupBundledCoinPivy)
     # Vulkan viewport.  The OpenGL backend remains built and the default.
     set(COIN_BUILD_VULKAN_RENDERER ${FREECAD_USE_VULKAN} CACHE BOOL
         "Build the bundled Coin Vulkan render backend" FORCE)
+    # A Vulkan build requires the Vulkan Memory Allocator (VMA); Coin no longer
+    # bundles it.  Resolve it here so a missing header fails configure with
+    # actionable guidance instead of deep inside the Coin subdirectory.
+    if (FREECAD_USE_VULKAN)
+        find_package(VulkanMemoryAllocator CONFIG QUIET)
+        if (NOT TARGET VulkanMemoryAllocator::VulkanMemoryAllocator AND NOT COIN_VMA_INCLUDE_DIR)
+            find_path(COIN_VMA_INCLUDE_DIR
+                NAMES vk_mem_alloc.h
+                PATH_SUFFIXES vma VulkanMemoryAllocator
+                DOC "Directory containing vk_mem_alloc.h (Vulkan Memory Allocator)")
+        endif ()
+        if (TARGET VulkanMemoryAllocator::VulkanMemoryAllocator)
+            set(FREECAD_COIN_VMA_SOURCE "system (VulkanMemoryAllocator CMake package)")
+        elseif (COIN_VMA_INCLUDE_DIR)
+            set(FREECAD_COIN_VMA_SOURCE "system (${COIN_VMA_INCLUDE_DIR})")
+        else ()
+            message(FATAL_ERROR
+                "FREECAD_USE_VULKAN requires the Vulkan Memory Allocator (VMA).\n"
+                "Coin no longer bundles VMA. Install the vk_mem_alloc.h header, e.g.:\n"
+                "  - pixi/conda:    vulkan-memory-allocator\n"
+                "  - Debian/Ubuntu: libvulkan-memory-allocator-dev\n"
+                "  - vcpkg:         vulkan-memory-allocator\n"
+                "  - manual:        configure with -DCOIN_VMA_INCLUDE_DIR=<dir containing vk_mem_alloc.h>")
+        endif ()
+        message(STATUS "Bundled Coin will use ${FREECAD_COIN_VMA_SOURCE} for the Vulkan Memory Allocator")
+    endif ()
     add_subdirectory("${CMAKE_SOURCE_DIR}/src/3rdParty/coin" "${CMAKE_BINARY_DIR}/src/3rdParty/coin")
     if (NOT DEFINED COIN_VERSION OR COIN_VERSION STREQUAL "")
         message(FATAL_ERROR "Bundled Coin did not define COIN_VERSION")
