@@ -59,6 +59,18 @@ public:
         viewProvider = vp;
     }
 
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    //! Mark this line set as the model's B-Rep feature edges so the Vulkan
+    //! edge overlay (VulkanWireframe) re-draws it with the uniform edge color.
+    //! See SoShape::isFeatureEdgeSet().  Guarded like IRRender: the base
+    //! virtual only exists in the bundled Coin, so an external/system Coin
+    //! build (which lacks it) compiles this out.
+    bool isFeatureEdgeSet() const override
+    {
+        return true;
+    }
+#endif
+
     /*! Returned by lineIndexFromEdge() for an edge that has no rendered line. */
     static constexpr int InvalidLine = -1;
 
