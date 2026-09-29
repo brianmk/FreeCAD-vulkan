@@ -59,6 +59,14 @@ public:
         viewProvider = vp;
     }
 
+    //! Mark this line set as the model's B-Rep feature edges so the Vulkan
+    //! edge overlay (VulkanWireframe) re-draws it with the uniform edge color.
+    //! See SoShape::isFeatureEdgeSet().
+    bool isFeatureEdgeSet() const override
+    {
+        return true;
+    }
+
     /*! Returned by lineIndexFromEdge() for an edge that has no rendered line. */
     static constexpr int InvalidLine = -1;
 
