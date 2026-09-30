@@ -1894,6 +1894,12 @@ bool ViewProviderSketch::mouseMove(const SbVec2s& cursorPos, Gui::View3DInventor
             return true;
         case STATUS_SKETCH_UseHandler:
             sketchHandler->mouseMove(*snapHandle);
+            // The display-only Vulkan viewport owns no Coin sensors, so it does
+            // not see the preview geometry the handler just rebuilt.  Ask it for
+            // a frame; otherwise the rubber-band stops tracking the cursor when
+            // the preselection does not change (e.g. after the pointer leaves and
+            // re-enters the 3D view) until a later event wakes it.
+            viewer->requestSceneRedraw();
             if (preselectChanged) {
                 editCoinManager->drawConstraintIcons();
                 sketchHandler->applyCursor();
