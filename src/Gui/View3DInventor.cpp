@@ -250,17 +250,19 @@ View3DInventor::View3DInventor(
     connect(stopSpinTimer, &QTimer::timeout, this, &View3DInventor::stopAnimating);
 
 #ifdef FREECAD_VIEWPORT_RENDERER_LABEL
-    // Small corner label naming the active viewport renderer.  It is a child of
-    // the viewport stack (not a stack page), so it overlays whichever backend
-    // is current: the Coin/OpenGL viewer or the Vulkan surface.
+    // Small corner label naming the active viewport renderer.  Opt-in via the
+    // VulkanRendererLabel preference (off by default); it is a child of the
+    // viewport stack (not a stack page), so it overlays whichever backend is
+    // current: the Coin/OpenGL viewer or the Vulkan surface.
     rendererLabel = new QLabel(stack);
     rendererLabel->setObjectName(QStringLiteral("ViewportRendererLabel"));
     rendererLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
     rendererLabel->setStyleSheet(QStringLiteral(
         "QLabel#ViewportRendererLabel {"
-        " background-color: rgba(0, 0, 0, 140);"
+        " background-color: rgba(0, 0, 0, 235);"
         " color: white;"
         " padding: 1px 6px;"
+        " border: 1px solid rgba(255, 255, 255, 90);"
         " border-radius: 3px;"
         " }"
     ));
@@ -272,6 +274,14 @@ View3DInventor::View3DInventor(
         repositionRendererLabel();
     });
     updateRendererLabel();
+#ifdef FREECAD_USE_VULKAN
+    // A "Vulkan*" view-preference change re-applies the Vulkan settings and
+    // emits this; re-reading the label preference here makes the toggle take
+    // effect without reopening the view.
+    connect(_viewer, &View3DInventorViewer::vulkanSettingsChanged, this, [this] {
+        updateRendererLabel();
+    });
+#endif
 #endif
 
     setWindowIcon(
@@ -414,6 +424,15 @@ void View3DInventor::resyncVulkanViewport()
 void View3DInventor::updateRendererLabel()
 {
     if (!rendererLabel) {
+        return;
+    }
+    // Opt-in QA aid: hidden unless the user enables "VulkanRendererLabel" in
+    // Preferences > Display > 3D View (Vulkan rendering).
+    const bool show = App::GetApplication()
+                          .GetParameterGroupByPath("User parameter:BaseApp/Preferences/View")
+                          ->GetBool("VulkanRendererLabel", false);
+    rendererLabel->setVisible(show);
+    if (!show) {
         return;
     }
 #ifdef FREECAD_USE_VULKAN
