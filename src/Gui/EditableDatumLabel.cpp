@@ -22,6 +22,7 @@
  ***************************************************************************/
 
 #include <limits>
+#include <string>
 #include <Inventor/sensors/SoNodeSensor.h>
 #include <Inventor/nodes/SoAnnotation.h>
 #include <Inventor/nodes/SoOrthographicCamera.h>
@@ -34,8 +35,10 @@
 #include <Inventor/SoPath.h>
 
 #include <QEvent>
+#include <QGuiApplication>
 #include <QFontMetrics>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QPixmap>
 #include <QLabel>
 #include <QLineEdit>
@@ -54,6 +57,17 @@
 
 
 using namespace Gui;
+
+
+// The renderer-drawn editor exists to avoid a QWidget child over the native
+// 3D surface: on Wayland that forces a whole-window wl_shm flush on every
+// repaint (tens of ms per mouse-move / keystroke).  Other platforms compose the
+// child cheaply, so keep the original widget overlay there.
+static bool useRendererEditor()
+{
+    const QString platform = QGuiApplication::platformName();
+    return platform.contains(QLatin1String("wayland"), Qt::CaseInsensitive);
+}
 
 
 struct NodeData
@@ -80,6 +94,8 @@ EditableDatumLabel::EditableDatumLabel(
     , pickStyle(nullptr)
     , function(Function::Positioning)
     , editStartValue(0.0)
+    , editorExpanded(false)
+    , inSceneEditor(useRendererEditor())
 {
     // NOLINTBEGIN
     initColors();
@@ -125,6 +141,16 @@ EditableDatumLabel::EditableDatumLabel(
     // NOLINTEND
 
     static_cast<SoSeparator*>(viewer->getSceneGraph())->addChild(root);  // NOLINT
+
+    // Blinks the in-scene editor caret (the editor is drawn by the renderer, so
+    // there is no QWidget caret to rely on).
+    caretVisible = true;
+    caretTimer = new QTimer(this);
+    caretTimer->setInterval(530);
+    connect(caretTimer, &QTimer::timeout, this, [this]() {
+        caretVisible = !caretVisible;
+        updateEditorText();
+    });
 
     if (view) {
         connect(view, &View3DInventorViewer::cameraChanged, this, [this]() {
@@ -207,11 +233,20 @@ void EditableDatumLabel::startEdit(double val, QObject* eventFilteringObj, bool 
     // Reset locked state when starting to edit
     this->resetLockedState();
 
-    QWidget* mdi = viewer->parentWidget();
+    value = val;
+    editStartValue = val;
+    currentUnit = Base::Unit::Length;
 
-    label->string = " ";
-
-    spinBox = new QuantitySpinBox(mdi);
+    // On Wayland the editor is drawn by the renderer (value shown by the scene
+    // graph, spin box kept 0x0); elsewhere keep the original visible widget.
+    if (inSceneEditor) {
+        editorExpanded = false;
+        setLabelText(val, Base::Unit::Length);
+    }
+    else {
+        label->string = " ";
+    }
+    spinBox = new QuantitySpinBox(viewer->parentWidget());
     spinBox->setUnit(Base::Unit::Length);
     spinBox->setMinimum(-std::numeric_limits<int>::max());
     spinBox->setMaximum(std::numeric_limits<int>::max());
@@ -223,8 +258,6 @@ void EditableDatumLabel::startEdit(double val, QObject* eventFilteringObj, bool 
     spinBox->setAutoAdjustWidth(true);
     spinBox->setMaxExpectedDigits(16);
     spinBox->setValue(Base::Quantity(val, Base::Unit::Length));
-    value = val;
-    editStartValue = val;
 
     lockIconLabel = new QLabel(spinBox);
     lockIconLabel->setObjectName(QStringLiteral("onViewParameterLockIcon"));
@@ -247,20 +280,6 @@ void EditableDatumLabel::startEdit(double val, QObject* eventFilteringObj, bool 
         setSpinboxVisibleToMouse(visibleToMouse);
     }
 
-    spinBox->show();
-    if (auto* edit = spinBox->findChild<QLineEdit*>()) {
-        updateGeometry(edit);
-        positionSpinbox();
-    }
-    setFocusToSpinbox();
-    QTimer::singleShot(0, this, [this]() {
-        if (!spinBox) {
-            return;
-        }
-        positionSpinbox();
-        setFocusToSpinbox();
-    });
-
     connect(
         spinBox,
         qOverload<double>(&QuantitySpinBox::valueChanged),
@@ -269,7 +288,38 @@ void EditableDatumLabel::startEdit(double val, QObject* eventFilteringObj, bool 
     );
     connect(spinBox, &QuantitySpinBox::inputCleared, this, &EditableDatumLabel::handleSpinBoxInputCleared);
     if (auto* edit = spinBox->findChild<QLineEdit*>()) {
-        connect(edit, &QLineEdit::textChanged, this, [this, edit]() { this->updateGeometry(edit); });
+        if (inSceneEditor) {
+            connect(edit, &QLineEdit::textChanged, this, [this]() { this->updateEditorText(); });
+        }
+        else {
+            connect(edit, &QLineEdit::textChanged, this, [this, edit]() { this->updateGeometry(edit); });
+        }
+    }
+
+    // Collapsed but focused, so the first keystroke is still delivered to us.
+    // The editor is drawn by the renderer (label background + caret), so the
+    // widget itself is never shown: a visible child over the GL/Vulkan viewport
+    // forces a whole-window wl_shm flush on Wayland (tens of ms per repaint).
+    label->editing = false;
+    if (inSceneEditor) {
+        spinBox->resize(0, 0);
+        spinBox->show();
+        spinBox->setFocus(Qt::OtherFocusReason);
+    }
+    else {
+        spinBox->show();
+        if (auto* edit = spinBox->findChild<QLineEdit*>()) {
+            updateGeometry(edit);
+            positionSpinbox();
+        }
+        setFocusToSpinbox();
+        QTimer::singleShot(0, this, [this]() {
+            if (!spinBox) {
+                return;
+            }
+            positionSpinbox();
+            setFocusToSpinbox();
+        });
     }
 }
 
@@ -321,6 +371,32 @@ bool EditableDatumLabel::eventFilter(QObject* watched, QEvent* event)
 {
     if (event->type() == QEvent::KeyPress) {
         auto* keyEvent = static_cast<QKeyEvent*>(event);
+
+        // The editor is collapsed until the user starts typing; the first
+        // editable keystroke expands it (Inventor-style).  The key is then
+        // processed normally, replacing the seeded selection.
+        if (inSceneEditor && !editorExpanded && watched == spinBox) {
+            const int k = keyEvent->key();
+            const QString text = keyEvent->text();
+            const bool editKey = keyEvent->matches(QKeySequence::Paste) || k == Qt::Key_Backspace
+                || k == Qt::Key_Delete
+                || (!text.isEmpty()
+                    && (text.front().isDigit() || text.front() == '-'
+                        || text.front() == '.' || text.front() == ','));
+            if (editKey) {
+                expandEditor();
+            }
+        }
+
+        // Tab reveals the collapsed editor before it cycles to the next
+        // parameter; consuming the first Tab keeps the reveal independent of
+        // the viewer's key routing.
+        if (inSceneEditor && !editorExpanded && watched == spinBox
+            && keyEvent->key() == Qt::Key_Tab) {
+            expandEditor();
+            return true;
+        }
+
         if (keyEvent->key() == Qt::Key_Escape) {
             if (qobject_cast<QAbstractSpinBox*>(watched)) {
                 this->value = this->editStartValue;
@@ -387,15 +463,35 @@ bool EditableDatumLabel::eventFilter(QObject* watched, QEvent* event)
 void EditableDatumLabel::stopEdit(bool writeChanges)
 {
     if (spinBox) {
-        if (writeChanges) {
-            // write the spinbox value in the label.
-            Base::Quantity quantity = spinBox->value();
-            std::string valueStr = quantity.getUserString();
-            label->string = SbString(valueStr.c_str());
+        if (!inSceneEditor) {
+            // Original widget-overlay behaviour.
+            if (writeChanges) {
+                label->string = SbString(spinBox->value().getUserString().c_str());
+            }
+            else {
+                Base::Quantity quantity(editStartValue, spinBox->unit());
+                label->string = quantity.getUserString().c_str();
+            }
+        }
+        else if (editorExpanded) {
+            if (writeChanges) {
+                // write the spinbox value in the label.
+                Base::Quantity quantity = spinBox->value();
+                label->string = SbString(quantity.getUserString().c_str());
+            }
+            else {
+                Base::Quantity quantity(editStartValue, currentUnit);
+                label->string = quantity.getUserString().c_str();
+            }
+        }
+        else if (!writeChanges) {
+            // Never expanded: restore the initial value in the display.
+            Base::Quantity quantity(editStartValue, currentUnit);
+            label->string = quantity.getUserString().c_str();
         }
         else {
-            Base::Quantity quantity(editStartValue, spinBox->unit());
-            label->string = quantity.getUserString().c_str();
+            // Never expanded: the display is already the current mouse value.
+            setLabelText(value, currentUnit);
         }
 
         spinBox->deleteLater();
@@ -403,6 +499,13 @@ void EditableDatumLabel::stopEdit(bool writeChanges)
 
         // Lock icon will be automatically destroyed as it's a child of spinbox
         lockIconLabel = nullptr;
+    }
+
+    editorExpanded = false;
+    label->editing = false;
+    caretVisible = true;
+    if (caretTimer) {
+        caretTimer->stop();
     }
 }
 
@@ -416,6 +519,14 @@ bool EditableDatumLabel::isInEdit() const
     return spinBox != nullptr;
 }
 
+bool EditableDatumLabel::isEditorExpanded() const
+{
+    // Only the Wayland renderer-drawn editor starts collapsed; the widget
+    // overlay is always visible, so report it expanded so callers keep their
+    // original Tab-cycling behaviour.
+    return inSceneEditor ? editorExpanded : true;
+}
+
 
 double EditableDatumLabel::getValue() const
 {
@@ -423,37 +534,114 @@ double EditableDatumLabel::getValue() const
     return value;
 }
 
+void EditableDatumLabel::setLabelText(double val, const Base::Unit& unit)
+{
+    Base::Quantity quantity(val, unit);
+    double factor {};
+    std::string unitStr;
+    std::string valueStr = quantity.getUserString(factor, unitStr);
+    label->string = SbString(valueStr.c_str());
+}
+
 void EditableDatumLabel::setSpinboxValue(double val, const Base::Unit& unit)
 {
     value = val;
+    currentUnit = unit;
 
-    if (!spinBox) {
-        Base::Quantity quantity(val, unit);
-        double factor {};
-        std::string unitStr;
-        std::string valueStr = quantity.getUserString(factor, unitStr);
-        label->string = SbString(valueStr.c_str());
+    if (!inSceneEditor) {
+        // Original widget-overlay behaviour.
+        if (!spinBox) {
+            setLabelText(val, unit);
+            return;
+        }
+        QSignalBlocker block(spinBox);
+        spinBox->setValue(Base::Quantity(val, unit));
+        positionSpinbox();
+        if (spinBox->hasFocus()) {
+            spinBox->selectNumber();
+        }
+        return;
+    }
+
+    if (!spinBox || !editorExpanded) {
+        setLabelText(val, unit);
+        return;
+    }
+
+    // While the editor is open the user owns the value: ignore mouse-driven
+    // updates so they neither overwrite the input nor move the widget (moving
+    // a child on Wayland forces a whole-window wl_shm re-upload).
+    if (spinBox->hasFocus()) {
         return;
     }
 
     QSignalBlocker block(spinBox);
     spinBox->setValue(Base::Quantity(val, unit));
-    positionSpinbox();
-
-    if (spinBox->hasFocus()) {
-        spinBox->selectNumber();
-    }
 }
 
-void EditableDatumLabel::setFocusToSpinbox()
+void EditableDatumLabel::expandEditor()
+{
+    if (!spinBox || editorExpanded) {
+        return;
+    }
+
+    editorExpanded = true;
+
+    // Seed the editor with the current (mouse-driven) value, selected so that
+    // the keystroke that triggered this replaces it.
+    {
+        QSignalBlocker block(spinBox);
+        spinBox->setUnit(currentUnit);
+        spinBox->setValue(Base::Quantity(value, currentUnit));
+    }
+
+    // The editor is drawn in the scene graph: show the input box and mirror the
+    // spin box text (with a blinking caret). The widget stays 0x0.
+    label->editing = true;
+    caretVisible = true;
+    caretTimer->start();
+    spinBox->selectNumber();
+    updateEditorText();
+}
+
+void EditableDatumLabel::updateEditorText()
+{
+    if (!spinBox || !editorExpanded) {
+        return;
+    }
+
+    QString text = spinBox->text();
+    // Keep the caret slot at a constant width so the drawn box does not jitter
+    // as the caret blinks.
+    text += caretVisible ? QLatin1Char('|') : QLatin1Char(' ');
+    label->string = text.toUtf8().constData();
+}
+
+void EditableDatumLabel::setFocusToSpinbox(bool expand)
 {
     if (!spinBox) {
         return;
     }
+
+    if (!inSceneEditor) {
+        // Original widget-overlay behaviour: focus and select the visible box.
+        if (!spinBox->hasFocus()) {
+            spinBox->setFocus();
+            spinBox->selectNumber();
+        }
+        return;
+    }
+
+    // Focus alone must not materialise the editor: the value stays drawn by the
+    // scene graph until the user asks to edit (Tab, click, or first keystroke).
+    if (expand) {
+        expandEditor();
+    }
     if (!spinBox->hasFocus()) {
         spinBox->setFocus();
-        spinBox->selectNumber();
     }
+    // Do NOT re-select here: this runs on every mouse-move enforce, and a
+    // re-selection would make the next keystroke replace the digit just typed.
 }
 
 void EditableDatumLabel::clearSelection()
@@ -469,7 +657,10 @@ void EditableDatumLabel::clearSelection()
 
 void EditableDatumLabel::positionSpinbox()
 {
-    if (!spinBox) {
+    // The renderer-drawn editor keeps the widget 0x0 and never moves it (moving
+    // a child over the native surface forces a whole-window wl_shm flush on
+    // Wayland).  The original widget overlay is positioned as before.
+    if (!spinBox || inSceneEditor) {
         return;
     }
 
@@ -652,7 +843,10 @@ void EditableDatumLabel::setPickable(bool val)
 
 void EditableDatumLabel::setFocus()
 {
-    if (spinBox) {
+    if (inSceneEditor) {
+        setFocusToSpinbox();
+    }
+    else if (spinBox) {
         spinBox->selectNumber();
     }
 }

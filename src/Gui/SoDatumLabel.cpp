@@ -222,6 +222,7 @@ SoDatumLabel::SoDatumLabel()
     extensionLines.setNum(0);
     SO_NODE_ADD_FIELD(norm, (SbVec3f(.0F, .0F, 1.F)));
     SO_NODE_ADD_FIELD(strikethrough, (false));
+    SO_NODE_ADD_FIELD(editing, (false));
 
     SO_NODE_ADD_FIELD(name, ("osifont"));
     SO_NODE_ADD_FIELD(size, (10.F));
@@ -381,7 +382,18 @@ void SoDatumLabel::drawImage()
     QColor front;
     front.setRgbF(t[0], t[1], t[2]);
 
-    QImage image(w * sampling.getValue(), h * sampling.getValue(), QImage::Format_ARGB32_Premultiplied);
+    // In editing mode the label is the input field: draw a filled box behind
+    // the text so the editor is visible without a widget over the 3D viewport.
+    const bool box = editing.getValue();
+    const int pad = box ? std::max(h / 3, 4) : 0;
+    const int imgW = w + 2 * pad;
+    const int imgH = h + 2 * pad;
+
+    QImage image(
+        imgW * sampling.getValue(),
+        imgH * sampling.getValue(),
+        QImage::Format_ARGB32_Premultiplied
+    );
     image.setDevicePixelRatio(sampling.getValue());
     image.fill(0x00000000);
 
@@ -390,12 +402,23 @@ void SoDatumLabel::drawImage()
         painter.setRenderHint(QPainter::Antialiasing);
     }
 
+    if (box) {
+        QColor background(32, 32, 40, 230);
+        painter.setBrush(background);
+        painter.setPen(QPen(front, std::max(h / 10, 1)));
+        painter.drawRoundedRect(
+            QRectF(0.5, 0.5, imgW - 1.0, imgH - 1.0),
+            h / 4.0,
+            h / 4.0
+        );
+    }
+
     painter.setPen(QPen(front, 2));
     painter.setFont(font);
-    painter.drawText(0, fm.ascent() + rect.y(), w, rect.height(), Qt::AlignLeft, str);
+    painter.drawText(pad, pad + fm.ascent() + rect.y(), w, rect.height(), Qt::AlignLeft, str);
     if (strikethrough.getValue()) {
         int strikepos = fm.ascent() - fm.strikeOutPos();
-        painter.drawLine(0, strikepos, w, strikepos);
+        painter.drawLine(pad, pad + strikepos, pad + w, pad + strikepos);
     }
     painter.end();
 
@@ -1288,6 +1311,9 @@ void SoDatumLabel::notify(SoNotList* l)
         this->glimagevalid = false;
     }
     else if (f == &this->image) {
+        this->glimagevalid = false;
+    }
+    else if (f == &this->editing) {
         this->glimagevalid = false;
     }
     inherited::notify(l);

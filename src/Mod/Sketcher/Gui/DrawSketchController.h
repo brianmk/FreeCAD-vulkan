@@ -696,6 +696,14 @@ protected:
                 parameterWithFocus = i;
             });
 
+            // Clicking the value in the 3D view starts editing it: the editor is
+            // collapsed (value drawn by the scene graph) until the user edits.
+            QObject::connect(
+                parameter,
+                &Gui::EditableDatumLabel::clicked,
+                [this, i](Gui::EditableDatumLabel*) { setFocusToOnViewParameter(i, true); }
+            );
+
             // this gets triggered whenever user deletes content in OVP, we remove the
             // constraints and unset everything to give user another change to select stuff
             // with mouse
@@ -789,14 +797,16 @@ protected:
     }
 
     /// This function gives the focus to a spinbox and tracks the focus.
-    bool setFocusToOnViewParameter(unsigned int onviewparameterindex)
+    /// `expand` materialises the editor; automatic focus (mouse moves, state
+    /// changes) leaves it collapsed so only the drawn value shows.
+    bool setFocusToOnViewParameter(unsigned int onviewparameterindex, bool expand = false)
     {
         if (onviewparameterindex < onViewParameters.size()) {
 
             bool visible = isOnViewParameterVisible(onviewparameterindex);
 
             if (visible) {
-                onViewParameters[onviewparameterindex]->setFocusToSpinbox();
+                onViewParameters[onviewparameterindex]->setFocusToSpinbox(expand);
                 parameterWithFocus = static_cast<int>(onviewparameterindex);
                 return true;
             }
@@ -807,6 +817,15 @@ protected:
     /// Switches focus to the next parameter in the current state machine.
     void passFocusToNextOnViewParameter()
     {
+        // The editors start collapsed, so the first Tab must reveal the
+        // parameter that already has focus instead of skipping to the next one.
+        if (parameterWithFocus >= 0
+            && static_cast<size_t>(parameterWithFocus) < onViewParameters.size()
+            && !onViewParameters[parameterWithFocus]->isEditorExpanded()
+            && setFocusToOnViewParameter(static_cast<unsigned int>(parameterWithFocus), true)) {
+            return;
+        }
+
         unsigned int index = parameterWithFocus + 1;
 
         if (index >= onViewParameters.size()) {
@@ -816,7 +835,7 @@ protected:
         auto trySetFocus = [this](unsigned int& idx) -> bool {
             while (idx < onViewParameters.size()) {
                 if (isOnViewParameterOfCurrentMode(idx) && isOnViewParameterVisible(idx)) {
-                    setFocusToOnViewParameter(idx);
+                    setFocusToOnViewParameter(idx, true);
                     return true;
                 }
                 idx++;
