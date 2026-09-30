@@ -38,6 +38,7 @@ class SoAnnotation;
 class SoSwitch;
 class SoEventCallback;
 class SoPickStyle;
+class QTimer;
 
 namespace Gui
 {
@@ -83,7 +84,8 @@ public:
     void setFocus();
     void setPoints(SbVec3f p1, SbVec3f p2);
     void setPoints(Base::Vector3d p1, Base::Vector3d p2);
-    void setFocusToSpinbox();
+    void setFocusToSpinbox(bool expand = false);
+    bool isEditorExpanded() const;  ///< true once the value is shown by the editor (not the scene)
     void clearSelection();  ///< Clears text selection in the spinbox
     void setLabelType(SoDatumLabel::Type type, Function function = Function::Positioning);
     void setLabelDistance(double val);
@@ -135,6 +137,13 @@ private:
     SbVec3f getTextCenterPoint() const;
     void initColors();
 
+    /// Materialise the editable spin box (it is collapsed until the user edits).
+    void expandEditor();
+    /// Draw the value in the scene graph (used while the editor is collapsed).
+    void setLabelText(double val, const Base::Unit& unit);
+    /// Mirror the spin box text (plus caret) into the scene-graph label.
+    void updateEditorText();
+
     void handleEvent(SoEventCallback* cb);
     static void eventCallbackF(void* userData, SoEventCallback* cb);
 
@@ -154,6 +163,11 @@ private:
 
     Function function;
     double editStartValue;
+    QTimer* caretTimer;     ///< blinks the in-scene editor caret
+    bool caretVisible;      ///< current caret blink phase
+    bool editorExpanded;    ///< true while the in-scene editor is active (box + caret)
+    bool inSceneEditor;     ///< true on Wayland: the editor is drawn by the renderer
+    Base::Unit currentUnit; ///< unit of the displayed/edited value (length or angle)
 };
 
 }  // namespace Gui

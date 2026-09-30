@@ -123,6 +123,7 @@ public:
     SoMFVec3f extensionLines;
     SoSFVec3f norm;
     SoSFBool strikethrough;
+    SoSFBool editing;  ///< Draw an input-box background behind the text (on-view parameter editing).
     SoSFImage image;
     SoSFFloat lineWidth;
     SoSFFloat sampling;
