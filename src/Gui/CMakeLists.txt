@@ -128,11 +128,11 @@ if(FREECAD_USE_VULKAN)
     find_package(Vulkan REQUIRED)
     list(APPEND FreeCADGui_LIBS Vulkan::Vulkan)
     target_compile_definitions(FreeCADGui PRIVATE FREECAD_USE_VULKAN=1)
-    # The bundled Coin is built with COIN_BUILD_VULKAN_RENDERER=ON (see
-    # SetupCoin3D.cmake).  Coin's public Vulkan headers are compiled only
-    # when this macro is set, so FreeCAD must define it for its own
-    # compilation of those headers (e.g. QuarterVulkanWidget.cpp).
-    target_compile_definitions(FreeCADGui PRIVATE COIN_BUILD_VULKAN_RENDERER=1)
+    # Coin's public Vulkan headers (SoVulkanRenderManager.h, SoVulkanRenderTarget.h,
+    # SoVulkanImageCopy.h) gate their declarations on the capability the installed
+    # Coin exports from its generated basic.h -- COIN_HAVE_VULKAN_RENDERER.  That
+    # header is generated from src/3rdParty/coin/include/Inventor/C/basic.h.cmake.in,
+    # so FreeCAD must not hand-define a build flag of its own here.
     # Debug/test hooks (synthetic mouse injector + frame dumper).  Auto-on for
     # Debug builds; a release build only gets them with an explicit
     # -DFREECAD_USE_VULKAN_DEBUG_HOOKS=ON.  $<CONFIG:Debug> (not

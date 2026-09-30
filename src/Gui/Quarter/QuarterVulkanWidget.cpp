@@ -526,7 +526,7 @@ private:
         // settings blob).  The manager forwards it to the raster backend and is
         // idempotent, so applying it every frame is cheap.
         m_manager.setInteractionLod(frame.interactionLod ? TRUE : FALSE);
-        if (std::getenv("FC_VULKAN_BACKEND_DEBUG") != nullptr) {
+        if (std::getenv("COIN_VULKAN_BACKEND_DEBUG") != nullptr) {
             static int syncLog = 0;
             if (syncLog++ < 3) {
                 Base::Console().message(
@@ -737,11 +737,11 @@ public:
     // added to the device extension list.
     bool synchronization2ExtensionAvailable = false;
     // VK_EXT_pipeline_creation_feedback: lets the backend log pipeline-cache
-    // hits and creation cost (FC_VULKAN_PIPELINE_FEEDBACK).
+    // hits and creation cost (COIN_VULKAN_PIPELINE_FEEDBACK).
     bool pipelineCreationFeedbackAvailable = false;
     // VK_EXT_debug_printf (+ VK_KHR_shader_non_semantic_info): lets shaders
     // compiled with COIN_ENABLE_DEBUG_PRINTF emit diagnostics
-    // (FC_VULKAN_DEBUG_PRINTF).
+    // (COIN_VULKAN_DEBUG_PRINTF).
     bool debugPrintfAvailable = false;
     // VK_KHR_synchronization2 / Vulkan 1.3 core feature struct.  It lives on
     // the window object (not the modifier lambda) because QVulkanWindowPrivate::
@@ -895,7 +895,7 @@ static QVulkanInstance * ensureSharedVulkanInstanceLocked()
         }
         // VK_EXT_debug_utils is enabled unconditionally: it is the instance
         // half of the Coin renderer's optional object names / command-buffer
-        // labels (FC_VULKAN_DEBUG_UTILS), and an unused extension is free.
+        // labels (COIN_VULKAN_DEBUG_UTILS), and an unused extension is free.
         g_sharedVulkanInstance.instance->setExtensions({
             QByteArrayLiteral("VK_EXT_debug_utils"),
         });
@@ -1131,15 +1131,15 @@ void QuarterVulkanWidget::configureDeviceFeatures()
         deviceExt << QByteArrayLiteral("VK_KHR_synchronization2");
     }
     // VK_EXT_pipeline_creation_feedback lets the backend log pipeline-cache
-    // hits and creation cost (FC_VULKAN_PIPELINE_FEEDBACK).
+    // hits and creation cost (COIN_VULKAN_PIPELINE_FEEDBACK).
     if (d->vulkanWindow->pipelineCreationFeedbackAvailable) {
         deviceExt << QByteArrayLiteral("VK_EXT_pipeline_creation_feedback");
     }
     // Shader-side diagnostics (debugPrintfEXT) are opt-in: the extension is
-    // only requested when FC_VULKAN_DEBUG_PRINTF is set, since it changes the
+    // only requested when COIN_VULKAN_DEBUG_PRINTF is set, since it changes the
     // SPIR-V the shaders must have been compiled with.
     if (d->vulkanWindow->debugPrintfAvailable
-        && std::getenv("FC_VULKAN_DEBUG_PRINTF") != nullptr) {
+        && std::getenv("COIN_VULKAN_DEBUG_PRINTF") != nullptr) {
         deviceExt << QByteArrayLiteral("VK_EXT_debug_printf")
                   << QByteArrayLiteral("VK_KHR_shader_non_semantic_info");
     }
