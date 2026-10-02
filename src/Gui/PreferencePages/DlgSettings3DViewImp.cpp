@@ -79,6 +79,7 @@ void DlgSettings3DViewImp::saveSettings()
     ui->CheckBox_VulkanWireframe->onSave();
     ui->CheckBox_VulkanShowPoints->onSave();
     ui->CheckBox_VulkanInteractionLod->onSave();
+    ui->CheckBox_VulkanRendererLabel->onSave();
     ui->VulkanEdgeColor->onSave();
 }
 
@@ -104,6 +105,7 @@ void DlgSettings3DViewImp::loadSettings()
     ui->CheckBox_VulkanWireframe->onRestore();
     ui->CheckBox_VulkanShowPoints->onRestore();
     ui->CheckBox_VulkanInteractionLod->onRestore();
+    ui->CheckBox_VulkanRendererLabel->onRestore();
     ui->VulkanEdgeColor->onRestore();
 
     loadAntiAliasing();

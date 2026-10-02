@@ -662,6 +662,22 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
        </widget>
       </item>
       <item>
+       <widget class="Gui::PrefCheckBox" name="CheckBox_VulkanRendererLabel">
+        <property name="text">
+         <string>Show the active renderer label in the viewport corner</string>
+        </property>
+        <property name="toolTip">
+         <string>Draw a small label naming the backend that is currently rendering each 3D viewport ("OpenGL" or "Vulkan") in its bottom-right corner.  A development/QA aid; off by default.</string>
+        </property>
+        <property name="prefEntry" stdset="0">
+         <cstring>VulkanRendererLabel</cstring>
+        </property>
+        <property name="prefPath" stdset="0">
+         <cstring>View</cstring>
+        </property>
+       </widget>
+      </item>
+      <item>
        <layout class="QHBoxLayout" name="horizontalLayoutVulkanEdge">
         <item>
          <widget class="QLabel" name="labelVulkanEdgeColor">
