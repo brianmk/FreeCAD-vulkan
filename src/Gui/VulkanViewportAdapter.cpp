@@ -370,7 +370,7 @@ void VulkanViewportAdapter::pushSettings()
     vs.wireframeOverlay = effEdgeOverlay;
     vs.edgeColor = settings.edgeColor;
 
-    if (std::getenv("FC_VULKAN_BACKEND_DEBUG") != nullptr) {
+    if (std::getenv("COIN_VULKAN_BACKEND_DEBUG") != nullptr) {
         Base::Console().message(
             "[VK-SET] pushSettings edgeOverlay={} points={} "
             "edgeColor=({:.2f},{:.2f},{:.2f},{:.2f}) "

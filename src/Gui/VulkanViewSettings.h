@@ -19,9 +19,6 @@
 
 #include <Base/Parameter.h>
 #include <Inventor/SbColor4f.h>
-#ifdef FREECAD_USE_VULKAN
-#include <Inventor/rendering/SoVulkanViewMode.h>
-#endif
 
 namespace Gui {
 
@@ -44,16 +41,6 @@ constexpr bool isRasterMode(int renderMode) noexcept
 {
     return renderMode >= 0
         && renderMode <= static_cast<int>(ViewRenderMode::Wireframe);
-}
-
-//! Map a ViewRenderMode to the renderer's SoVulkanViewMode.  The application
-//! enum distinguishes the two raster backends and the wireframe override; this
-//! single place relates the two so callers pass the result to the renderer with
-//! no magic ints.
-constexpr SoVulkanViewMode viewRenderModeToWidgetMode(ViewRenderMode mode) noexcept
-{
-    (void)mode;
-    return SoVulkanViewMode::Raster;
 }
 #endif // FREECAD_USE_VULKAN
 
