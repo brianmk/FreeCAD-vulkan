@@ -56,6 +56,12 @@ public:
         viewProvider = vp;
     }
 
+    //! Drop the cached overlay coordinate copy.  Must be called whenever the
+    //! owning view provider rebuilds the base geometry (see
+    //! ViewProviderPartExt::setupCoinGeometry) so the next highlight/selection
+    //! overlay render re-reads the new vertices instead of a stale copy.
+    void invalidateOverlayCache();
+
     SoMFInt32 highlightCoordIndex;
     SoMFInt32 selectionCoordIndex;
     SoSFColor highlightColor;

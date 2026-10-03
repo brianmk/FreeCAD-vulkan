@@ -59,6 +59,12 @@ public:
         viewProvider = vp;
     }
 
+    //! Drop the cached overlay coordinate copy.  Must be called whenever the
+    //! owning view provider rebuilds the base geometry (see
+    //! ViewProviderPartExt::setupCoinGeometry) so the next highlight/selection
+    //! overlay render re-reads the new vertices instead of a stale copy.
+    void invalidateOverlayCache();
+
 #ifdef HAVE_COIN_IR_RENDER_ACTION
     //! Mark this line set as the model's B-Rep feature edges so the Vulkan
     //! edge overlay (VulkanWireframe) re-draws it with the uniform edge color.

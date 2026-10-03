@@ -102,6 +102,11 @@ SoBrepEdgeSet::~SoBrepEdgeSet()
     }
 }
 
+void SoBrepEdgeSet::invalidateOverlayCache()
+{
+    invalidateOverlayCoordinates(overlayLineSet);
+}
+
 // Optional overlay rendering for deterministic tests (and programmatic
 // usage): identical for the GL and IR paths, so it is shared.
 template <typename Action>

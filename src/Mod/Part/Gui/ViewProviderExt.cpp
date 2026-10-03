@@ -1100,6 +1100,21 @@ void ViewProviderPartExt::setupCoinGeometry(
     bool normalsFromUV
 )
 {
+    // The highlight/selection overlay nodes cache a copy of the vertex array.
+    // A rebuild that keeps the same vertex count (e.g. changing a pad or box
+    // length) moves every vertex without changing the count, which the overlay
+    // cache check cannot detect, so the overlay would keep drawing the old
+    // geometry.  Drop the cached copy whenever the base geometry is rebuilt.
+    if (faceset) {
+        faceset->invalidateOverlayCache();
+    }
+    if (lineset) {
+        lineset->invalidateOverlayCache();
+    }
+    if (nodeset) {
+        nodeset->invalidateOverlayCache();
+    }
+
     if (Part::Tools::isShapeEmpty(shape)) {
         coords->point.setNum(0);
         norm->vector.setNum(0);
