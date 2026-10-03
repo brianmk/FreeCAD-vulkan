@@ -1000,54 +1000,55 @@ void SoBrepFaceSet::generatePrimitivesRayPick(SoRayPickAction* action)
     SoFaceDetail faceDetail;
 
     int pos = 0;
-    int part = 0;
-    int remaining = 0;
-    bool include = false;
-    while (pos + 2 < coordIndexCount) {
-        if (remaining == 0) {
-            while (part < partCount && parts[part] <= 0) {
-                ++part;
-            }
-            if (part >= partCount) {
-                break;
-            }
-            remaining = parts[part];
-            // Use the action's own box test so the pick radius (the cone the
-            // actual triangle test uses) is honoured.  A plain center-ray box
-            // test would drop faces the radius reaches - e.g. a face just off
-            // the cursor near a boundary - and let a farther face/object be
-            // picked through it.
-            include = action->intersect(faceBoxes[part], TRUE);
-            ++part;
+    for (int part = 0; part < partCount; ++part) {
+        const int ntri = parts[part];
+        if (ntri <= 0) {
+            continue;
+        }
+        if (pos + ntri * 4 > coordIndexCount) {
+            break;
+        }
+        // Use the action's own box test so the pick radius (the cone the
+        // actual triangle test uses) is honoured.  A plain center-ray box
+        // test would drop faces the radius reaches - e.g. a face just off
+        // the cursor near a boundary - and let a farther face/object be
+        // picked through it.
+        if (!action->intersect(faceBoxes[part], TRUE)) {
+            // Skip this face's triangles in O(1) instead of walking them only
+            // to discard.  The global triangle index must still advance, since
+            // createTriangleDetail() maps it back to a part via the cumulative
+            // partIndex.
+            faceDetail.setFaceIndex(faceDetail.getFaceIndex() + ntri);
+            pos += ntri * 4;
+            continue;
         }
 
-        const int i0 = cindices[pos];
-        const int i1 = cindices[pos + 1];
-        const int i2 = cindices[pos + 2];
-        pos += 4;
-        --remaining;
+        for (int t = 0; t < ntri; ++t, pos += 4) {
+            const int i0 = cindices[pos];
+            const int i1 = cindices[pos + 1];
+            const int i2 = cindices[pos + 2];
+            if (i0 >= 0 && i1 >= 0 && i2 >= 0) {
+                const SbVec3f p0 = points ? points[i0] : coords->get3(i0);
+                const SbVec3f p1 = points ? points[i1] : coords->get3(i1);
+                const SbVec3f p2 = points ? points[i2] : coords->get3(i2);
+                SbVec3f normal = (p1 - p0).cross(p2 - p0);
+                normal.normalize();
 
-        if (include && i0 >= 0 && i1 >= 0 && i2 >= 0) {
-            const SbVec3f p0 = points ? points[i0] : coords->get3(i0);
-            const SbVec3f p1 = points ? points[i1] : coords->get3(i1);
-            const SbVec3f p2 = points ? points[i2] : coords->get3(i2);
-            SbVec3f normal = (p1 - p0).cross(p2 - p0);
-            normal.normalize();
+                const SbVec3f pts[3] = {p0, p1, p2};
+                for (int i = 0; i < 3; ++i) {
+                    vertex[i].setPoint(pts[i]);
+                    vertex[i].setNormal(normal);
+                }
 
-            const SbVec3f pts[3] = {p0, p1, p2};
-            for (int i = 0; i < 3; ++i) {
-                vertex[i].setPoint(pts[i]);
-                vertex[i].setNormal(normal);
+                faceDetail.setPartIndex(part);
+                this->beginShape(action, TRIANGLES, &faceDetail);
+                this->shapeVertex(&vertex[0]);
+                this->shapeVertex(&vertex[1]);
+                this->shapeVertex(&vertex[2]);
+                this->endShape();
             }
-
-            faceDetail.setPartIndex(part - 1);
-            this->beginShape(action, TRIANGLES, &faceDetail);
-            this->shapeVertex(&vertex[0]);
-            this->shapeVertex(&vertex[1]);
-            this->shapeVertex(&vertex[2]);
-            this->endShape();
+            faceDetail.incFaceIndex();
         }
-        faceDetail.incFaceIndex();
     }
 }
 
