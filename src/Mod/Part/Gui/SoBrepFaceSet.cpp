@@ -146,44 +146,6 @@ static void expandPartMaterialIndexToFaceMaterialIndex(
     }
 }
 
-//! Fast axis-aligned ray/box test used to cull faces during a ray pick. Uses
-//! the object-space pick ray, so it is exact for the (triangles-only) geometry
-//! this node stores and much cheaper than SoRayPickAction::intersect(box).
-static bool rayHitsBox(const SbLine& ray, const SbBox3f& box)
-{
-    if (box.isEmpty()) {
-        return false;
-    }
-    const SbVec3f origin = ray.getPosition();
-    const SbVec3f dir = ray.getDirection();
-    const SbVec3f bmin = box.getMin();
-    const SbVec3f bmax = box.getMax();
-
-    float tmin = 0.0f;
-    float tmax = std::numeric_limits<float>::max();
-    for (int i = 0; i < 3; ++i) {
-        if (std::abs(dir[i]) < 1e-12f) {
-            if (origin[i] < bmin[i] || origin[i] > bmax[i]) {
-                return false;
-            }
-        }
-        else {
-            const float inv = 1.0f / dir[i];
-            float t1 = (bmin[i] - origin[i]) * inv;
-            float t2 = (bmax[i] - origin[i]) * inv;
-            if (t1 > t2) {
-                std::swap(t1, t2);
-            }
-            tmin = std::max(tmin, t1);
-            tmax = std::min(tmax, t2);
-            if (tmin > tmax) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
 //! Shared decision logic for renderHighlight()/renderHighlightIR(): which
 //! parts the highlight covers, and whether it covers all parts.
 static bool collectHighlightParts(Gui::SoFCSelectionContextExPtr ctx,
@@ -1029,7 +991,6 @@ void SoBrepFaceSet::generatePrimitivesRayPick(SoRayPickAction* action)
 
     const SoCoordinateElement* coords = SoCoordinateElement::getInstance(action->getState());
     const SbVec3f* points = coords->getArrayPtr3();
-    const SbLine& ray = action->getLine();
 
     SoPrimitiveVertex vertex[3];
     SoPointDetail pointDetail[3];
@@ -1051,11 +1012,12 @@ void SoBrepFaceSet::generatePrimitivesRayPick(SoRayPickAction* action)
                 break;
             }
             remaining = parts[part];
-            // Strict ray/box test: the triangle test below is an exact
-            // ray/triangle test (the pick radius only widens the cone used for
-            // the whole-shape box), so rejecting a face whose box the ray
-            // misses can never drop a real hit.
-            include = rayHitsBox(ray, faceBoxes[part]);
+            // Use the action's own box test so the pick radius (the cone the
+            // actual triangle test uses) is honoured.  A plain center-ray box
+            // test would drop faces the radius reaches - e.g. a face just off
+            // the cursor near a boundary - and let a farther face/object be
+            // picked through it.
+            include = action->intersect(faceBoxes[part], TRUE);
             ++part;
         }
 
