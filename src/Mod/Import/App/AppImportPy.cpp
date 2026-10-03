@@ -165,22 +165,26 @@ private:
 
             Handle(XCAFApp_Application) hApp = XCAFApp_Application::GetApplication();
             Handle(TDocStd_Document) hDoc;
-            hApp->NewDocument(TCollection_ExtendedString("MDTV-CAF"), hDoc);
 
             if (file.hasExtension({"stp", "step"})) {
-                try {
-                    Import::ReaderStep reader(file);
-                    reader.read(hDoc);
-                }
-                catch (OSD_Exception& e) {
-                    Base::Console().error("{}\n", e.GetMessageString());
-                    Base::Console().message("Try to load STEP file without colors...\n");
+                Import::ReaderStep reader(file);
+                if (!reader.tryReadFromCache(hDoc)) {
+                    hApp->NewDocument(TCollection_ExtendedString("MDTV-CAF"), hDoc);
+                    try {
+                        reader.read(hDoc);
+                        reader.writeCache(hDoc);
+                    }
+                    catch (OSD_Exception& e) {
+                        Base::Console().error("{}\n", e.GetMessageString());
+                        Base::Console().message("Try to load STEP file without colors...\n");
 
-                    Part::ImportStepParts(pcDoc, Utf8Name.c_str());
-                    pcDoc->recompute();
+                        Part::ImportStepParts(pcDoc, Utf8Name.c_str());
+                        pcDoc->recompute();
+                    }
                 }
             }
             else if (file.hasExtension({"igs", "iges"})) {
+                hApp->NewDocument(TCollection_ExtendedString("MDTV-CAF"), hDoc);
                 try {
                     Import::ReaderIges reader(file);
                     reader.read(hDoc);
@@ -194,6 +198,7 @@ private:
                 }
             }
             else if (file.hasExtension({"glb", "gltf"})) {
+                hApp->NewDocument(TCollection_ExtendedString("MDTV-CAF"), hDoc);
                 Import::ReaderGltf reader(file);
                 reader.read(hDoc);
             }

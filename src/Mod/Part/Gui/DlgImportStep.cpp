@@ -48,6 +48,7 @@ DlgImportStep::DlgImportStep(QWidget* parent)
     ui->checkBoxReduceObjects->setChecked(settings.getReduceObjects());
     ui->checkBoxExpandCompound->setChecked(settings.getExpandCompound());
     ui->checkBoxShowProgress->setChecked(settings.getShowProgress());
+    ui->checkBoxUseStepImportCache->setChecked(settings.getUseStepImportCache());
 #if OCC_VERSION_HEX >= 0x070800
     std::list<Part::OCAF::ImportExportSettings::CodePage> codepagelist;
     codepagelist = settings.getCodePageList();
@@ -79,6 +80,7 @@ void DlgImportStep::saveSettings()
     ui->checkBoxReduceObjects->onSave();
     ui->checkBoxExpandCompound->onSave();
     ui->checkBoxShowProgress->onSave();
+    ui->checkBoxUseStepImportCache->onSave();
     ui->comboBoxImportMode->onSave();
 }
 
@@ -95,6 +97,7 @@ void DlgImportStep::loadSettings()
     ui->checkBoxReduceObjects->onRestore();
     ui->checkBoxExpandCompound->onRestore();
     ui->checkBoxShowProgress->onRestore();
+    ui->checkBoxUseStepImportCache->onRestore();
     ui->comboBoxImportMode->onRestore();
 }
 

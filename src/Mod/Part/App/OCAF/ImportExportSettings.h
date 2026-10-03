@@ -103,6 +103,9 @@ public:
     void setShowProgress(bool);
     bool getShowProgress() const;
 
+    void setUseStepImportCache(bool);
+    bool getUseStepImportCache() const;
+
     void setImportMode(ImportMode);
     ImportMode getImportMode() const;
 
