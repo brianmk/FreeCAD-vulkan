@@ -106,7 +106,10 @@ public:
     /// once.
     static void suspendVisualUpdates(bool suspend);
     /// Generate any deferred mesh for this object (no-op if up to date).
-    void flushPendingVisual();
+    /// \param meshDone if true the caller has already tessellated the shape
+    /// (e.g. on a worker thread); skip re-meshing and only build the Coin
+    /// geometry from the existing triangulation.
+    void flushPendingVisual(bool meshDone = false);
     /// If no other task is pending it opens a dialog to allow one to change face colors
     bool changeFaceAppearances();
 
@@ -199,7 +202,8 @@ public:
         double deviation,
         double angularDeflection,
         bool normalsFromUV = false,
-        double minDeflection = 0.0
+        double minDeflection = 0.0,
+        bool meshDone = false
     );
 
     static void setupCoinGeometry(
@@ -208,7 +212,8 @@ public:
         double deviation,
         double angularDeflection,
         bool normalsFromUV = false,
-        double minDeflection = 0.0
+        double minDeflection = 0.0,
+        bool meshDone = false
     );
 
 protected:
@@ -250,6 +255,9 @@ protected:
     /// instead of each object's, so small parts of an assembly are not meshed
     /// excessively finely.
     bool UseAssemblyDeviation = false;
+    /// Set by flushPendingVisual(true): the shape was already tessellated off
+    /// the GUI thread, so setupCoinGeometry must not re-mesh it.
+    bool MeshDone = false;
     bool faceHighlightActive = false;
 
 private:
