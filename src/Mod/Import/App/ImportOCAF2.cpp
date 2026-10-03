@@ -25,6 +25,8 @@
 #if defined(__MINGW32__)
 # define WNT  // avoid conflict with GUID
 #endif
+#include <algorithm>
+
 #include <Interface_Static.hxx>
 #include <Quantity_ColorRGBA.hxx>
 #include <Standard_Failure.hxx>
@@ -240,6 +242,86 @@ bool ImportOCAF2::getColor(const TopoDS_Shape& shape, Info& info, bool check, bo
         }
     }
     return ret;
+}
+
+std::vector<Base::Color> ImportOCAF2::getMergedFaceColors(
+    const TopoDS_Shape& shape,
+    const std::map<Part::Feature*, std::vector<Base::Color>>& colors
+)
+{
+    TopTools_IndexedMapOfShape mergedFaces;
+    TopExp::MapShapes(shape, TopAbs_FACE, mergedFaces);
+    if (mergedFaces.Extent() == 0) {
+        return {};
+    }
+
+    // Index every face of every colored source object by its TShape, which is
+    // shared by all instances (App::Link) of a shape definition and maps to one
+    // color. Source objects are reached through the document so both directly
+    // placed features and link instances are covered.
+    std::unordered_map<const TopoDS_TShape*, Base::Color> indexedColors;
+    indexedColors.reserve(mergedFaces.Extent());
+
+    auto addObject = [&](App::DocumentObject* obj, Part::Feature* key) {
+        if (!obj || !key) {
+            return;
+        }
+        auto it = colors.find(key);
+        if (it == colors.end() || it->second.empty()) {
+            return;
+        }
+        const std::vector<Base::Color>& objColors = it->second;
+        Part::TopoShape tshape = Part::Feature::getTopoShape(
+            obj,
+            Part::ShapeOption::ResolveLink | Part::ShapeOption::Transform
+        );
+        if (tshape.isNull()) {
+            return;
+        }
+        int i = 0;
+        for (TopExp_Explorer e(tshape.getShape(), TopAbs_FACE); e.More(); e.Next(), ++i) {
+            const TopoDS_TShape* key = e.Current().TShape().get();
+            if (indexedColors.find(key) != indexedColors.end()) {
+                continue;
+            }
+            const size_t index = objColors.size() == 1
+                ? 0
+                : std::min<size_t>(static_cast<size_t>(i), objColors.size() - 1);
+            indexedColors.emplace(key, objColors[index]);
+        }
+    };
+
+    for (auto* obj : pDocument->getObjects()) {
+        if (auto* link = dynamic_cast<App::Link*>(obj)) {
+            addObject(link, dynamic_cast<Part::Feature*>(link->getLinkedObject(true)));
+        }
+        else if (auto* part = dynamic_cast<Part::Feature*>(obj)) {
+            addObject(part, part);
+        }
+    }
+
+    std::vector<Base::Color> out(mergedFaces.Extent(), options.defaultFaceColor);
+    bool found = false;
+    for (int i = 1; i <= mergedFaces.Extent(); ++i) {
+        auto it = indexedColors.find(mergedFaces(i).TShape().get());
+        if (it != indexedColors.end()) {
+            out[i - 1] = it->second;
+            found = true;
+        }
+    }
+
+    if (!found) {
+        return {};
+    }
+
+    // Collapse to a single uniform color when every face shares the same one.
+    const Base::Color& first = out.front();
+    if (std::all_of(out.begin(), out.end(), [&first](const Base::Color& c) {
+            return c == first;
+        })) {
+        return {first};
+    }
+    return out;
 }
 
 App::DocumentObject* ImportOCAF2::expandShape(App::Document* doc, TDF_Label label, const TopoDS_Shape& shape)
@@ -564,21 +646,29 @@ App::DocumentObject* ImportOCAF2::loadShapes()
         ret->recomputeFeature(true);
     }
     if (options.merge && ret && !ret->isDerivedFrom<Part::Feature>()) {
+        auto shape = Part::Feature::getTopoShape(
+            ret,
+            Part::ShapeOption::ResolveLink | Part::ShapeOption::Transform
+        );
+
+        // Recover the source per-face colors for the flattened shape. This has
+        // to happen before the source objects are removed below.
+        std::vector<Base::Color> mergedColors;
+        if (const auto* colors = getPartColors()) {
+            mergedColors = getMergedFaceColors(shape.getShape(), *colors);
+        }
+
         // The individual dependency objects are removed below. Drop any colors
         // recorded for them first, otherwise a subclass that keeps the
         // Part::Feature pointers (e.g. ImportOCAFExt::partColors) would be left
         // with dangling entries that callers later dereference.
         clearFaceColors();
 
-        auto shape = Part::Feature::getTopoShape(
-            ret,
-            Part::ShapeOption::ResolveLink | Part::ShapeOption::Transform
-        );
         auto feature = pDocument->addObject<Part::Feature>("Feature");
         auto name = Tools::labelName(pDoc->Main());
         feature->Label.setValue(name.empty() ? default_name.c_str() : name.c_str());
         feature->Shape.setValue(shape);
-        applyFaceColors(feature, {});
+        applyFaceColors(feature, mergedColors);
 
         std::vector<std::pair<App::Document*, std::string>> objNames;
         for (auto obj : App::Document::getDependencyList(objs, App::Document::DepSort)) {
@@ -896,4 +986,9 @@ void ImportOCAFExt::applyFaceColors(Part::Feature* part, const std::vector<Base:
 void ImportOCAFExt::clearFaceColors()
 {
     partColors.clear();
+}
+
+const std::map<Part::Feature*, std::vector<Base::Color>>* ImportOCAFExt::getPartColors() const
+{
+    return &partColors;
 }

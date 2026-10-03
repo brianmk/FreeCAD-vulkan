@@ -173,6 +173,12 @@ private:
         bool canReduce = false
     );
     bool getColor(const TopoDS_Shape& shape, Info& info, bool check = false, bool noDefault = false);
+    // Rebuild the per-face colors of a merged compound by matching each of its
+    // faces (by TShape) against the source features recorded in \p colors.
+    std::vector<Base::Color> getMergedFaceColors(
+        const TopoDS_Shape& shape,
+        const std::map<Part::Feature*, std::vector<Base::Color>>& colors
+    );
     void getSHUOColors(TDF_Label label, std::map<std::string, Base::Color>& colors, bool appendFirst);
     void setObjectName(Info& info, TDF_Label label);
     std::string getLabelName(TDF_Label label);
@@ -191,6 +197,12 @@ private:
     // remain in a subclass that stores them.
     virtual void clearFaceColors()
     {}
+    // Per-face colors recorded while loading, when the subclass keeps them.
+    // Used by the compound merge to preserve colors on the flattened feature.
+    virtual const std::map<Part::Feature*, std::vector<Base::Color>>* getPartColors() const
+    {
+        return nullptr;
+    }
 
 private:
     class ImportLegacy: public ImportOCAF
@@ -237,6 +249,7 @@ public:
 private:
     void applyFaceColors(Part::Feature* part, const std::vector<Base::Color>& colors) override;
     void clearFaceColors() override;
+    const std::map<Part::Feature*, std::vector<Base::Color>>* getPartColors() const override;
 };
 
 struct ImportExport ExportOCAFOptions
