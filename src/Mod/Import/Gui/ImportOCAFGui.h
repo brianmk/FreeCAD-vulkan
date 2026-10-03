@@ -42,6 +42,10 @@ private:
         App::DocumentObject* obj,
         const std::map<std::string, Base::Color>& colors
     ) override;
+    const std::map<Part::Feature*, std::vector<Base::Color>>* getPartColors() const override;
+
+    // Kept so the compound merge can rebuild the flattened face colors.
+    std::map<Part::Feature*, std::vector<Base::Color>> partColors;
 };
 
 }  // namespace ImportGui

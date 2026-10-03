@@ -36,6 +36,8 @@ ImportOCAFGui::ImportOCAFGui(Handle(TDocStd_Document) hDoc, App::Document* pDoc,
 
 void ImportOCAFGui::applyFaceColors(Part::Feature* part, const std::vector<Base::Color>& colors)
 {
+    partColors[part] = colors;
+
     auto vp = dynamic_cast<PartGui::ViewProviderPartExt*>(
         Gui::Application::Instance->getViewProvider(part)
     );
@@ -113,4 +115,9 @@ void ImportOCAFGui::applyElementColors(
         return;
     }
     (void)colors;
+}
+
+const std::map<Part::Feature*, std::vector<Base::Color>>* ImportOCAFGui::getPartColors() const
+{
+    return &partColors;
 }
