@@ -1048,6 +1048,46 @@ void ViewProviderPartExt::unsetEdit(int ModNum)
     }
 }
 
+namespace
+{
+
+// A fallback triangulation created by Part::Tools::triangulationOfFace() is built from the
+// face's surface and meshed in that surface's own frame. Usually the surface is stored in the
+// face-local frame, so the face location still has to be applied. However, invalid shapes (for
+// example produced by a faulty STEP import) can store a face whose surface is already in the
+// parent frame while the face still carries a non-identity location. In that case the fallback
+// mesh is already placed, and applying the location again would draw the face far away from its
+// true position (the "floating" artifacts). Detect this by checking whether the raw fallback
+// nodes already fit inside the face's own bounding box.
+bool isTriangulationInParentFrame(const Handle(Poly_Triangulation)& mesh, const TopoDS_Face& face)
+{
+    if (mesh.IsNull() || mesh->NbNodes() == 0) {
+        return false;
+    }
+
+    Bnd_Box box;
+    BRepBndLib::Add(face, box);
+    if (box.IsVoid()) {
+        return false;
+    }
+    box.Enlarge(Precision::Confusion());
+
+    const int total = mesh->NbNodes();
+    const int allowedOutside = total / 20 + 1;
+    int outside = 0;
+    for (int i = 1; i <= total; ++i) {
+        if (box.IsOut(mesh->Node(i))) {
+            if (++outside > allowedOutside) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+}  // namespace
+
 void ViewProviderPartExt::setupCoinGeometry(
     TopoDS_Shape shape,
     SoCoordinate3* coords,
@@ -1206,8 +1246,10 @@ void ViewProviderPartExt::setupCoinGeometry(
         const TopoDS_Face& actFace = TopoDS::Face(faceMap(i));
         // get the mesh of the shape
         Handle(Poly_Triangulation) mesh = BRep_Tool::Triangulation(actFace, aLoc);
+        bool fallback = false;
         if (mesh.IsNull()) {
             mesh = Part::Tools::triangulationOfFace(actFace);
+            fallback = true;
         }
         if (mesh.IsNull()) {
             parts[ii] = 0;
@@ -1220,6 +1262,13 @@ void ViewProviderPartExt::setupCoinGeometry(
         if (!aLoc.IsIdentity()) {
             identity = false;
             myTransf = aLoc.Transformation();
+        }
+
+        // A fallback mesh may already be expressed in the parent frame, in which case the
+        // location must not be applied a second time.
+        if (fallback && !identity && isTriangulationInParentFrame(mesh, actFace)) {
+            identity = true;
+            myTransf = gp_Trsf();
         }
 
         // getting size of node and triangle array of this face
