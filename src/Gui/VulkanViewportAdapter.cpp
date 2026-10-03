@@ -198,6 +198,12 @@ void VulkanViewportAdapter::useVulkanViewport(bool vulkan)
         return;
     }
     _wantVulkanViewport = vulkan;
+    // Gate the hidden surface's rendering: while the view shows the classic
+    // Coin/OpenGL raster (vulkan == false), the Vulkan window must not re-render
+    // on every scene/camera change — it is invisible, and it is re-synced (and
+    // redrawn) once when the Vulkan page is shown again. Without this, orbiting
+    // in GL mode pays for a full redundant Vulkan frame per GL frame.
+    _vulkanViewer->setRedrawEnabled(vulkan);
     // The hidden GL viewer drives picking/navigation, but its own geometry is
     // unreliable (it is never shown, so it keeps a stale/default size).  The
     // render-manager viewport region is the single source of truth and is
