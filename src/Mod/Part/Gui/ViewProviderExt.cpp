@@ -22,6 +22,8 @@
  *                                                                         *
  ***************************************************************************/
 
+#include <algorithm>
+
 #include <Bnd_Box.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepTools.hxx>
@@ -83,6 +85,7 @@
 #include <Gui/ViewParams.h>
 #include <Gui/Utilities.h>
 
+#include <Mod/Part/App/PartFeature.h>
 #include <Mod/Part/App/ShapeMapHasher.h>
 #include <Mod/Part/App/Tools.h>
 
@@ -118,6 +121,7 @@ ViewProviderPartExt::ViewProviderPartExt()
     VisualTouched = true;
     forceUpdateCount = 0;
     NormalsFromUV = true;
+    UseAssemblyDeviation = false;
 
     // get default line color
     unsigned long lcol = Gui::ViewParams::instance()->getDefaultShapeLineColor();  // dark grey
@@ -947,6 +951,7 @@ bool ViewProviderPartExt::loadParameter()
     float deviation = hGrp->GetFloat("MeshDeviation", 0.2);
     float angularDeflection = hGrp->GetFloat("MeshAngularDeflection", 28.65);
     NormalsFromUV = hGrp->GetBool("NormalsFromUVNodes", NormalsFromUV);
+    UseAssemblyDeviation = hGrp->GetBool("UseAssemblyDeviation", UseAssemblyDeviation);
 
     if (Deviation.getValue() != deviation) {
         Deviation.setValue(deviation);
@@ -1097,7 +1102,8 @@ void ViewProviderPartExt::setupCoinGeometry(
     SoBrepPointSet* nodeset,
     double deviation,
     double angularDeflection,
-    bool normalsFromUV
+    bool normalsFromUV,
+    double minDeflection
 )
 {
     if (Part::Tools::isShapeEmpty(shape)) {
@@ -1122,6 +1128,13 @@ void ViewProviderPartExt::setupCoinGeometry(
 
     // calculating the deflection value
     Standard_Real deflection = Part::Tools::getDeflection(shape, deviation);
+
+    // Optionally raise the deflection to the assembly/document scale (computed
+    // by updateVisual) so that small parts of a large assembly are not
+    // tessellated excessively finely.
+    if (minDeflection > deflection) {
+        deflection = minDeflection;
+    }
 
     // Since OCCT 7.6 a value of equal 0 is not allowed any more, this can happen if a single
     // vertex should be displayed.
@@ -1544,7 +1557,8 @@ void ViewProviderPartExt::setupCoinGeometry(
     SoFCShape* node,
     double deviation,
     double angularDeflection,
-    bool normalsFromUV
+    bool normalsFromUV,
+    double minDeflection
 )
 {
     setupCoinGeometry(
@@ -1556,19 +1570,53 @@ void ViewProviderPartExt::setupCoinGeometry(
         node->nodeset,
         deviation,
         angularDeflection,
-        normalsFromUV
+        normalsFromUV,
+        minDeflection
     );
 }
 
 namespace
 {
 int visualUpdateSuspends = 0;
+
+// Reference bounding box for the UseAssemblyDeviation option. Computed once per
+// suspended bulk operation (e.g. an import) and reused for every object, so the
+// cost stays O(document) rather than O(document^2).
+const App::Document* referenceBoundsDoc = nullptr;
+Bnd_Box referenceBounds;
+bool referenceBoundsValid = false;
+
+const Bnd_Box& getReferenceBounds(App::Document* doc)
+{
+    if (referenceBoundsValid && referenceBoundsDoc == doc) {
+        return referenceBounds;
+    }
+    referenceBounds = Bnd_Box();
+    referenceBoundsDoc = doc;
+    if (doc) {
+        for (auto* obj : doc->getObjects()) {
+            if (!obj->isDerivedFrom<Part::Feature>() || !obj->Visibility.getValue()) {
+                continue;
+            }
+            auto shape = Part::Feature::getTopoShape(
+                obj,
+                Part::ShapeOption::ResolveLink | Part::ShapeOption::Transform
+            );
+            if (!shape.isNull()) {
+                BRepBndLib::Add(shape.getShape(), referenceBounds);
+            }
+        }
+    }
+    referenceBoundsValid = true;
+    return referenceBounds;
 }
+}  // namespace
 
 void ViewProviderPartExt::suspendVisualUpdates(bool suspend)
 {
     if (suspend) {
         ++visualUpdateSuspends;
+        referenceBoundsValid = false;
     }
     else if (visualUpdateSuspends > 0) {
         --visualUpdateSuspends;
@@ -1618,6 +1666,18 @@ void ViewProviderPartExt::updateVisual()
     haction.apply(this->lineset);
     haction.apply(this->nodeset);
 
+    // With UseAssemblyDeviation, raise the deflection to the document scale so
+    // small parts of a large assembly are not tessellated excessively finely.
+    double minDeflection = 0.0;
+    if (UseAssemblyDeviation) {
+        if (App::Document* doc = getObject() ? getObject()->getDocument() : nullptr) {
+            const Bnd_Box& ref = getReferenceBounds(doc);
+            if (!ref.IsVoid()) {
+                minDeflection = Part::Tools::getDeflection(ref, Deviation.getValue());
+            }
+        }
+    }
+
     try {
         setupCoinGeometry(
             shape,
@@ -1628,7 +1688,8 @@ void ViewProviderPartExt::updateVisual()
             nodeset,
             Deviation.getValue(),
             AngularDeflection.getValue(),
-            NormalsFromUV
+            NormalsFromUV,
+            minDeflection
         );
 
         lastRenderedShape = shape;
