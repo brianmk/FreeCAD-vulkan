@@ -72,6 +72,23 @@
 #include <Mod/Part/App/ImportStep.h>
 #include <Mod/Part/App/Interface.h>
 #include <Mod/Part/Gui/ViewProviderExt.h>
+#include <App/Application.h>
+#include <App/MainThreadSignal.h>
+#include <Base/Parameter.h>
+#include <Mod/Part/App/PartFeature.h>
+#include <Mod/Part/App/Tools.h>
+
+#include <QThreadPool>
+#include <QRunnable>
+
+#include <BRepMesh_IncrementalMesh.hxx>
+#include <BRepTools.hxx>
+#include <IMeshTools_Parameters.hxx>
+
+#include <cmath>
+#include <cstdlib>
+#include <map>
+#include <set>
 #include <Mod/Part/App/OCAF/ImportExportSettings.h>
 #include <Mod/Part/App/encodeFilename.h>
 #include <Mod/Part/Gui/DlgExportStep.h>
@@ -403,12 +420,103 @@ private:
                 PartGui::ViewProviderPartExt::suspendVisualUpdates(false);
                 throw;
             }
-            PartGui::ViewProviderPartExt::suspendVisualUpdates(false);
-            for (auto* obj : pcDoc->getObjects()) {
-                auto* vp = dynamic_cast<PartGui::ViewProviderPartExt*>(
-                    Gui::Application::Instance->getViewProvider(obj));
-                if (vp && vp->Visibility.getValue()) {
-                    vp->flushPendingVisual();
+
+            // Optional: tessellate the imported shapes on a worker thread and
+            // build the Coin geometry on the GUI thread when it finishes, so
+            // the import command returns without blocking on BRepMesh.
+            auto hPartGrp = App::GetApplication().GetParameterGroupByPath(
+                "User parameter:BaseApp/Preferences/Mod/Part"
+            );
+            const bool asyncTess = hPartGrp->GetBool("AsyncTessellation", false)
+                || std::getenv("FC_ASYNC_TESS") != nullptr;
+            if (asyncTess) {
+                struct MeshJob
+                {
+                    std::string name;
+                    TopoDS_Shape shape;
+                    double deviation;
+                    double angular;
+                };
+                std::vector<MeshJob> jobs;
+                std::map<std::string, TopoDS_Shape> captured;
+                for (auto* obj : pcDoc->getObjects()) {
+                    auto* feat = dynamic_cast<Part::Feature*>(obj);
+                    if (!feat || !obj->Visibility.getValue()) {
+                        continue;
+                    }
+                    auto* vp = dynamic_cast<PartGui::ViewProviderPartExt*>(
+                        Gui::Application::Instance->getViewProvider(obj)
+                    );
+                    if (!vp) {
+                        continue;
+                    }
+                    TopoDS_Shape shape = feat->Shape.getValue();
+                    std::string name = obj->getNameInDocument();
+                    captured[name] = shape;
+                    jobs.push_back({name, shape, vp->Deviation.getValue(), vp->AngularDeflection.getValue()});
+                }
+                const std::string docName = pcDoc->getName();
+                QThreadPool::globalInstance()->start(QRunnable::create(
+                    [jobs = std::move(jobs), captured = std::move(captured), docName]() {
+                        std::set<std::string> meshed;
+                        for (const auto& job : jobs) {
+                            try {
+                                TopoDS_Shape shape = job.shape;
+                                IMeshTools_Parameters params;
+                                params.Deflection = Part::Tools::getDeflection(shape, job.deviation);
+                                params.Relative = Standard_False;
+                                params.Angle = job.angular * M_PI / 180.0;
+                                params.InParallel = Standard_True;
+                                params.AllowQualityDecrease = Standard_True;
+                                BRepTools::Clean(shape, Standard_True);
+                                BRepMesh_IncrementalMesh(shape, params);
+                                meshed.insert(job.name);
+                            }
+                            catch (const Standard_Failure&) {
+                                // Fall back to a synchronous mesh on the GUI thread.
+                            }
+                        }
+                        App::MainThreadSignalConfig::invoke(
+                            [docName,
+                             captured = std::move(captured),
+                             meshed = std::move(meshed)]() {
+                                PartGui::ViewProviderPartExt::suspendVisualUpdates(false);
+                                auto* doc = App::GetApplication().getDocument(docName.c_str());
+                                if (!doc) {
+                                    return;
+                                }
+                                for (auto* obj : doc->getObjects()) {
+                                    auto* vp = dynamic_cast<PartGui::ViewProviderPartExt*>(
+                                        Gui::Application::Instance->getViewProvider(obj)
+                                    );
+                                    if (!vp || !vp->Visibility.getValue()) {
+                                        continue;
+                                    }
+                                    // Only reuse the worker's mesh if the shape is
+                                    // still the one that was meshed; otherwise let
+                                    // flushPendingVisual() mesh it synchronously.
+                                    bool done = false;
+                                    if (auto* feat = dynamic_cast<Part::Feature*>(obj);
+                                        feat && meshed.count(obj->getNameInDocument())) {
+                                        auto it = captured.find(obj->getNameInDocument());
+                                        done = it != captured.end()
+                                            && feat->Shape.getValue().IsSame(it->second);
+                                    }
+                                    vp->flushPendingVisual(done);
+                                }
+                            },
+                            /*blocking=*/false);
+                    }
+                ));
+            }
+            else {
+                PartGui::ViewProviderPartExt::suspendVisualUpdates(false);
+                for (auto* obj : pcDoc->getObjects()) {
+                    auto* vp = dynamic_cast<PartGui::ViewProviderPartExt*>(
+                        Gui::Application::Instance->getViewProvider(obj));
+                    if (vp && vp->Visibility.getValue()) {
+                        vp->flushPendingVisual();
+                    }
                 }
             }
             hApp->Close(hDoc);

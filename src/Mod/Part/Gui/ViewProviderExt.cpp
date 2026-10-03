@@ -1103,7 +1103,8 @@ void ViewProviderPartExt::setupCoinGeometry(
     double deviation,
     double angularDeflection,
     bool normalsFromUV,
-    double minDeflection
+    double minDeflection,
+    bool meshDone
 )
 {
     if (Part::Tools::isShapeEmpty(shape)) {
@@ -1157,14 +1158,16 @@ void ViewProviderPartExt::setupCoinGeometry(
     meshParams.InParallel = Standard_True;
     meshParams.AllowQualityDecrease = Standard_True;
 
-    // Clear triangulation and PCurves from geometry which can slow down the process
+    if (!meshDone) {
+        // Clear triangulation and PCurves from geometry which can slow down the process
 #if OCC_VERSION_HEX < 0x070600
-    BRepTools::Clean(shape);
+        BRepTools::Clean(shape);
 #else
-    BRepTools::Clean(shape, Standard_True);
+        BRepTools::Clean(shape, Standard_True);
 #endif
 
-    BRepMesh_IncrementalMesh(shape, meshParams);
+        BRepMesh_IncrementalMesh(shape, meshParams);
+    }
 
     // We must reset the location here because the transformation data
     // are set in the placement property
@@ -1558,7 +1561,8 @@ void ViewProviderPartExt::setupCoinGeometry(
     double deviation,
     double angularDeflection,
     bool normalsFromUV,
-    double minDeflection
+    double minDeflection,
+    bool meshDone
 )
 {
     setupCoinGeometry(
@@ -1571,7 +1575,8 @@ void ViewProviderPartExt::setupCoinGeometry(
         deviation,
         angularDeflection,
         normalsFromUV,
-        minDeflection
+        minDeflection,
+        meshDone
     );
 }
 
@@ -1623,9 +1628,11 @@ void ViewProviderPartExt::suspendVisualUpdates(bool suspend)
     }
 }
 
-void ViewProviderPartExt::flushPendingVisual()
+void ViewProviderPartExt::flushPendingVisual(bool meshDone)
 {
+    MeshDone = meshDone;
     updateVisual();
+    MeshDone = false;
 }
 
 void ViewProviderPartExt::updateVisual()
@@ -1689,7 +1696,8 @@ void ViewProviderPartExt::updateVisual()
             Deviation.getValue(),
             AngularDeflection.getValue(),
             NormalsFromUV,
-            minDeflection
+            minDeflection,
+            MeshDone
         );
 
         lastRenderedShape = shape;
