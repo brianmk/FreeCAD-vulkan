@@ -230,6 +230,11 @@ SoBrepFaceSet::~SoBrepFaceSet()
     }
 }
 
+void SoBrepFaceSet::invalidateOverlayCache()
+{
+    invalidateOverlayCoordinates(overlayFaceSet);
+}
+
 void SoBrepFaceSet::doAction(SoAction* action)
 {
     if (action->getTypeId() == Gui::SoHighlightElementAction::getClassTypeId()) {

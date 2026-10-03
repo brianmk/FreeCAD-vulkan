@@ -84,6 +84,11 @@ SoBrepPointSet::~SoBrepPointSet()
     }
 }
 
+void SoBrepPointSet::invalidateOverlayCache()
+{
+    invalidateOverlayCoordinates(overlayPointSet);
+}
+
 // Optional overlay rendering for deterministic tests (and programmatic
 // usage): identical for the GL and IR paths, so it is shared.
 template <typename Action>
