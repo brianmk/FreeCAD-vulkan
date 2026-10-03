@@ -22,9 +22,12 @@
  ******************************************************************************/
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <set>
+#include <utility>
 #include <vector>
+#include <Inventor/SbLine.h>
 #include <Inventor/SoPickedPoint.h>
 #include <Inventor/SoPrimitiveVertex.h>
 #include <Inventor/actions/SoGetBoundingBoxAction.h>
@@ -35,6 +38,7 @@
 #include <Inventor/actions/SoRayPickAction.h>
 #include <Inventor/bundles/SoMaterialBundle.h>
 #include <Inventor/details/SoFaceDetail.h>
+#include <Inventor/details/SoPointDetail.h>
 #include <Inventor/elements/SoCoordinateElement.h>
 #include <Inventor/elements/SoDepthBufferElement.h>
 #include <Inventor/elements/SoLazyElement.h>
@@ -140,6 +144,44 @@ static void expandPartMaterialIndexToFaceMaterialIndex(
         const int repeats = std::max(partTriCounts[i], 0);
         outFaceMaterialIndex.insert(outFaceMaterialIndex.end(), repeats, perPartMaterialIndex[i]);
     }
+}
+
+//! Fast axis-aligned ray/box test used to cull faces during a ray pick. Uses
+//! the object-space pick ray, so it is exact for the (triangles-only) geometry
+//! this node stores and much cheaper than SoRayPickAction::intersect(box).
+static bool rayHitsBox(const SbLine& ray, const SbBox3f& box)
+{
+    if (box.isEmpty()) {
+        return false;
+    }
+    const SbVec3f origin = ray.getPosition();
+    const SbVec3f dir = ray.getDirection();
+    const SbVec3f bmin = box.getMin();
+    const SbVec3f bmax = box.getMax();
+
+    float tmin = 0.0f;
+    float tmax = std::numeric_limits<float>::max();
+    for (int i = 0; i < 3; ++i) {
+        if (std::abs(dir[i]) < 1e-12f) {
+            if (origin[i] < bmin[i] || origin[i] > bmax[i]) {
+                return false;
+            }
+        }
+        else {
+            const float inv = 1.0f / dir[i];
+            float t1 = (bmin[i] - origin[i]) * inv;
+            float t2 = (bmax[i] - origin[i]) * inv;
+            if (t1 > t2) {
+                std::swap(t1, t2);
+            }
+            tmin = std::max(tmin, t1);
+            tmax = std::min(tmax, t2);
+            if (tmin > tmax) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 //! Shared decision logic for renderHighlight()/renderHighlightIR(): which
@@ -961,7 +1003,90 @@ void SoBrepFaceSet::GLRenderBelowPath(SoGLRenderAction* action)
 
 void SoBrepFaceSet::generatePrimitives(SoAction* action)
 {
+    // A merged/large part becomes a single SoBrepFaceSet with millions of
+    // triangles. The default ray-pick walks every triangle, which makes
+    // hovering a face take hundreds of milliseconds. When we have a per-face
+    // bounding-box cache that matches partIndex, cull the faces the pick ray
+    // cannot reach so only their triangles are emitted.
+    if (action->getTypeId().isDerivedFrom(SoRayPickAction::getClassTypeId())
+        && faceBoxes.size() == static_cast<std::size_t>(partIndex.getNum())) {
+        generatePrimitivesRayPick(static_cast<SoRayPickAction*>(action));
+        return;
+    }
     inherited::generatePrimitives(action);
+}
+
+void SoBrepFaceSet::generatePrimitivesRayPick(SoRayPickAction* action)
+{
+    const int32_t* cindices = this->coordIndex.getValues(0);
+    const int coordIndexCount = this->coordIndex.getNum();
+    const int32_t* parts = this->partIndex.getValues(0);
+    const int partCount = this->partIndex.getNum();
+    if (!cindices || coordIndexCount < 3 || coordIndexCount % 4 != 0 || !parts || partCount <= 0) {
+        inherited::generatePrimitives(action);
+        return;
+    }
+
+    const SoCoordinateElement* coords = SoCoordinateElement::getInstance(action->getState());
+    const SbVec3f* points = coords->getArrayPtr3();
+    const SbLine& ray = action->getLine();
+
+    SoPrimitiveVertex vertex[3];
+    SoPointDetail pointDetail[3];
+    for (int i = 0; i < 3; ++i) {
+        vertex[i].setDetail(&pointDetail[i]);
+    }
+    SoFaceDetail faceDetail;
+
+    int pos = 0;
+    int part = 0;
+    int remaining = 0;
+    bool include = false;
+    while (pos + 2 < coordIndexCount) {
+        if (remaining == 0) {
+            while (part < partCount && parts[part] <= 0) {
+                ++part;
+            }
+            if (part >= partCount) {
+                break;
+            }
+            remaining = parts[part];
+            // Strict ray/box test: the triangle test below is an exact
+            // ray/triangle test (the pick radius only widens the cone used for
+            // the whole-shape box), so rejecting a face whose box the ray
+            // misses can never drop a real hit.
+            include = rayHitsBox(ray, faceBoxes[part]);
+            ++part;
+        }
+
+        const int i0 = cindices[pos];
+        const int i1 = cindices[pos + 1];
+        const int i2 = cindices[pos + 2];
+        pos += 4;
+        --remaining;
+
+        if (include && i0 >= 0 && i1 >= 0 && i2 >= 0) {
+            const SbVec3f p0 = points ? points[i0] : coords->get3(i0);
+            const SbVec3f p1 = points ? points[i1] : coords->get3(i1);
+            const SbVec3f p2 = points ? points[i2] : coords->get3(i2);
+            SbVec3f normal = (p1 - p0).cross(p2 - p0);
+            normal.normalize();
+
+            const SbVec3f pts[3] = {p0, p1, p2};
+            for (int i = 0; i < 3; ++i) {
+                vertex[i].setPoint(pts[i]);
+                vertex[i].setNormal(normal);
+            }
+
+            faceDetail.setPartIndex(part - 1);
+            this->beginShape(action, TRIANGLES, &faceDetail);
+            this->shapeVertex(&vertex[0]);
+            this->shapeVertex(&vertex[1]);
+            this->shapeVertex(&vertex[2]);
+            this->endShape();
+        }
+        faceDetail.incFaceIndex();
+    }
 }
 
 void SoBrepFaceSet::getBoundingBox(SoGetBoundingBoxAction* action)

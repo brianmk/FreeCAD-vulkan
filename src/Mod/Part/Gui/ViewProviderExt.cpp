@@ -1112,6 +1112,7 @@ void ViewProviderPartExt::setupCoinGeometry(
         norm->vector.setNum(0);
         faceset->coordIndex.setNum(0);
         faceset->partIndex.setNum(0);
+        faceset->setFaceBoxes({});
         lineset->coordIndex.setNum(0);
         lineset->setEdgeMapping({});
         nodeset->startIndex.setValue(0);
@@ -1256,6 +1257,11 @@ void ViewProviderPartExt::setupCoinGeometry(
         norms[i] = SbVec3f(0.0, 0.0, 0.0);
     }
 
+    // Per-face object-space bounding boxes used to accelerate ray picking (see
+    // SoBrepFaceSet::generatePrimitivesRayPick()). Kept in sync with partIndex.
+    std::vector<SbBox3f> faceBoxes;
+    faceBoxes.reserve(faceMap.Extent());
+
     int ii = 0, faceNodeOffset = 0, faceTriaOffset = 0;
     for (int i = 1; i <= faceMap.Extent(); i++, ii++) {
         TopLoc_Location aLoc;
@@ -1269,6 +1275,7 @@ void ViewProviderPartExt::setupCoinGeometry(
         }
         if (mesh.IsNull()) {
             parts[ii] = 0;
+            faceBoxes.emplace_back();
             continue;
         }
 
@@ -1306,6 +1313,7 @@ void ViewProviderPartExt::setupCoinGeometry(
             Part::Tools::getPointNormals(actFace, mesh, Normals);
         }
 
+        SbBox3f faceBox;
         for (int g = 1; g <= nbTriInFace; g++) {
             // Get the triangle
             Standard_Integer N1, N2, N3;
@@ -1359,6 +1367,11 @@ void ViewProviderPartExt::setupCoinGeometry(
                 }
             }
 
+            // grow the per-face bounding box (used for ray-pick culling)
+            faceBox.extendBy(Base::convertTo<SbVec3f>(V1));
+            faceBox.extendBy(Base::convertTo<SbVec3f>(V2));
+            faceBox.extendBy(Base::convertTo<SbVec3f>(V3));
+
             // add the normals for all points of this triangle
             norms[faceNodeOffset + N1 - 1] += Base::convertTo<SbVec3f>(NV1);
             norms[faceNodeOffset + N2 - 1] += Base::convertTo<SbVec3f>(NV2);
@@ -1376,6 +1389,7 @@ void ViewProviderPartExt::setupCoinGeometry(
             index[faceTriaOffset * 4 + 4 * (g - 1) + 3] = SO_END_FACE_INDEX;
         }
 
+        faceBoxes.push_back(faceBox);
         parts[ii] = nbTriInFace;  // new part
 
         // handling the edges lying on this face
@@ -1537,6 +1551,7 @@ void ViewProviderPartExt::setupCoinGeometry(
     norm->vector.finishEditing();
     faceset->coordIndex.finishEditing();
     faceset->partIndex.finishEditing();
+    faceset->setFaceBoxes(std::move(faceBoxes));
     lineset->coordIndex.finishEditing();
 
 #ifdef FC_DEBUG
