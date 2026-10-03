@@ -71,6 +71,7 @@
 #include <Mod/Part/App/ImportIges.h>
 #include <Mod/Part/App/ImportStep.h>
 #include <Mod/Part/App/Interface.h>
+#include <Mod/Part/Gui/ViewProviderExt.h>
 #include <Mod/Part/App/OCAF/ImportExportSettings.h>
 #include <Mod/Part/App/encodeFilename.h>
 #include <Mod/Part/Gui/DlgExportStep.h>
@@ -237,7 +238,20 @@ private:
 
             Handle(XCAFApp_Application) hApp = XCAFApp_Application::GetApplication();
             Handle(TDocStd_Document) hDoc;
-            hApp->NewDocument(TCollection_ExtendedString("MDTV-CAF"), hDoc);
+
+            // Reuse the STEP/XCAF cache here too (the App Import module already
+            // does). The cached document is settings-independent, so it can be
+            // loaded before the import options are applied. This avoids
+            // re-parsing the STEP file on every Gui import.
+            bool stepCacheHit = false;
+            if (file.hasExtension({"stp", "step"})) {
+                Import::ReaderStep cacheReader(file);
+                stepCacheHit = cacheReader.tryReadFromCache(hDoc);
+            }
+            if (!stepCacheHit) {
+                hApp->NewDocument(TCollection_ExtendedString("MDTV-CAF"), hDoc);
+            }
+
             ImportOCAFGui ocaf(hDoc, pcDoc, file.fileNamePure());
             ocaf.setImportOptions(ImportOCAFGui::customImportOptions());
 
@@ -317,11 +331,14 @@ private:
                     if (ocaf.showProgress()) {
                         pi = new Part::ProgressIndicator();
                     }
-                    Import::ReaderStep reader(file);
+                    if (!stepCacheHit) {
+                        Import::ReaderStep reader(file);
 #if OCC_VERSION_HEX >= 0x070800
-                    reader.setCodePage(cp);
+                        reader.setCodePage(cp);
 #endif
-                    reader.read(hDoc, Message_ProgressIndicator::Start(pi));
+                        reader.read(hDoc, Message_ProgressIndicator::Start(pi));
+                        reader.writeCache(hDoc);
+                    }
                 }
                 catch (OSD_Exception& e) {
                     Base::Console().error("{}\n", e.GetMessageString());
@@ -373,7 +390,27 @@ private:
             if (mode >= 0) {
                 ocaf.setMode(mode);
             }
-            auto ret = ocaf.loadShapes();
+            // An assembly import creates many temporary objects before the
+            // optional merge collapses them into one shape. Defer the
+            // (expensive) display tessellation of every intermediate object
+            // until the import is done, then mesh only the survivors once.
+            App::DocumentObject* ret = nullptr;
+            PartGui::ViewProviderPartExt::suspendVisualUpdates(true);
+            try {
+                ret = ocaf.loadShapes();
+            }
+            catch (...) {
+                PartGui::ViewProviderPartExt::suspendVisualUpdates(false);
+                throw;
+            }
+            PartGui::ViewProviderPartExt::suspendVisualUpdates(false);
+            for (auto* obj : pcDoc->getObjects()) {
+                auto* vp = dynamic_cast<PartGui::ViewProviderPartExt*>(
+                    Gui::Application::Instance->getViewProvider(obj));
+                if (vp && vp->Visibility.getValue()) {
+                    vp->flushPendingVisual();
+                }
+            }
             hApp->Close(hDoc);
 
             if (ret) {

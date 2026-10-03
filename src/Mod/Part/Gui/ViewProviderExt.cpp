@@ -1560,8 +1560,34 @@ void ViewProviderPartExt::setupCoinGeometry(
     );
 }
 
+namespace
+{
+int visualUpdateSuspends = 0;
+}
+
+void ViewProviderPartExt::suspendVisualUpdates(bool suspend)
+{
+    if (suspend) {
+        ++visualUpdateSuspends;
+    }
+    else if (visualUpdateSuspends > 0) {
+        --visualUpdateSuspends;
+    }
+}
+
+void ViewProviderPartExt::flushPendingVisual()
+{
+    updateVisual();
+}
+
 void ViewProviderPartExt::updateVisual()
 {
+    if (visualUpdateSuspends > 0) {
+        // Defer the (expensive) tessellation until the bulk operation ends.
+        VisualTouched = true;
+        return;
+    }
+
     TopoDS_Shape shape = getRenderedShape().getShape();
 
     if (!VisualTouched && lastRenderedShape.IsPartner(shape)) {
