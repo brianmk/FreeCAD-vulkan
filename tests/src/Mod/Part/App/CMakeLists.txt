@@ -50,3 +50,17 @@ fc_target_copy_resource(PartTestData
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_BINARY_DIR}/tests
         ${PartTestData_Files})
+
+# Standalone benchmark (always passes, reports timings) comparing the
+# OCCT triangulation -> vertex-array conversion done by
+# ViewProviderPartExt::setupCoinGeometry against a direct interleaved pack.
+add_executable(PartTessellationBench TessellationBench.cpp)
+target_link_libraries(PartTessellationBench Part)
+if(WIN32)
+    set_target_properties(PartTessellationBench PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests)
+else()
+    set_target_properties(PartTessellationBench PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests)
+endif()
+add_test(NAME PartTessellationBench COMMAND PartTessellationBench)
