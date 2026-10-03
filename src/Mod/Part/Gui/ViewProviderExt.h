@@ -198,7 +198,8 @@ public:
         SoBrepPointSet* nodeset,
         double deviation,
         double angularDeflection,
-        bool normalsFromUV = false
+        bool normalsFromUV = false,
+        double minDeflection = 0.0
     );
 
     static void setupCoinGeometry(
@@ -206,7 +207,8 @@ public:
         SoFCShape* node,
         double deviation,
         double angularDeflection,
-        bool normalsFromUV = false
+        bool normalsFromUV = false,
+        double minDeflection = 0.0
     );
 
 protected:
@@ -244,6 +246,10 @@ protected:
 
     bool VisualTouched;
     bool NormalsFromUV;
+    /// Derive the tessellation deviation from the whole document's bounding box
+    /// instead of each object's, so small parts of an assembly are not meshed
+    /// excessively finely.
+    bool UseAssemblyDeviation = false;
     bool faceHighlightActive = false;
 
 private:
