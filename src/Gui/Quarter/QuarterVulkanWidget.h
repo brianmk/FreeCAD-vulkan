@@ -182,6 +182,11 @@ public:
     //! Schedule a redraw on the Vulkan window (safe from any thread).
     void redraw();
 
+    //! Whether redraw() actually schedules a frame. When false (the view is on
+    //! the classic Coin/OpenGL raster and this surface is hidden), redraw() is
+    //! a no-op; the adapter flips this in useVulkanViewport().
+    void setRedrawEnabled(bool enabled);
+
     /*!
       \brief Whether the underlying QVulkanWindow supports grabbing a
       resolved frame back to the CPU.

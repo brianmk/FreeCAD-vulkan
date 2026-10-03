@@ -796,6 +796,12 @@ public:
     QString injectPath;
     int injectConsumed = 0;
 #endif
+    // When the Vulkan surface is not the visible page (the view is on the
+    // classic Coin/OpenGL raster), redraw() must be a no-op: the scene is
+    // shared and re-synced on switch-back (useVulkanViewport(true) ->
+    // syncViewer), so re-rendering the hidden surface on every GL frame is
+    // pure waste. The adapter sets this in useVulkanViewport().
+    bool redrawEnabled = true;
 };
 
 QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent)
@@ -1474,7 +1480,18 @@ void QuarterVulkanWidget::setPreferredColorFormat(int vkFormat)
 
 void QuarterVulkanWidget::redraw()
 {
+    // Hidden-surface guard: while the view shows the classic GL raster, the
+    // Vulkan window is not the visible page; rendering to it on every scene
+    // change is wasted work (the surface is re-synced on switch-back).
+    if (!d->redrawEnabled) {
+        return;
+    }
     d->window->requestUpdate();
+}
+
+void QuarterVulkanWidget::setRedrawEnabled(bool enabled)
+{
+    d->redrawEnabled = enabled;
 }
 
 bool QuarterVulkanWidget::supportsGrab() const
