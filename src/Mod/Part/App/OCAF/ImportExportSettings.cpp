@@ -277,6 +277,16 @@ void ImportExportSettings::setShowProgress(bool on)
     pGroup->SetBool("ShowProgress", on);
 }
 
+void ImportExportSettings::setUseStepImportCache(bool on)
+{
+    pGroup->SetBool("UseStepImportCache", on);
+}
+
+bool ImportExportSettings::getUseStepImportCache() const
+{
+    return pGroup->GetBool("UseStepImportCache", true);
+}
+
 bool ImportExportSettings::getShowProgress() const
 {
     return pGroup->GetBool("ShowProgress", true);
