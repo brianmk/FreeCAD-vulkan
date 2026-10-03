@@ -47,6 +47,22 @@ public:
         const Message_ProgressRange& theProgress = Message_ProgressRange()
     );
 
+    /**
+     * Tries to load the STEP conversion from the import cache. On success the OCAF
+     * document in @p outDoc contains the fully transferred model and true is
+     * returned. On a miss (or when caching is disabled) false is returned and
+     * @p outDoc stays null.
+     */
+    bool tryReadFromCache(Handle(TDocStd_Document)& outDoc) const;
+
+    /**
+     * Stores the converted OCAF document in the import cache so that the next
+     * import of the same, unchanged file can skip the STEP parsing and transfer.
+     * This is a best effort operation: failures are reported but never abort
+     * the import.
+     */
+    void writeCache(Handle(TDocStd_Document) hDoc) const;
+
 private:
     Base::FileInfo file;
     Resource_FormatType codePage {};

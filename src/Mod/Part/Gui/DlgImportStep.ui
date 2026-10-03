@@ -219,16 +219,35 @@
             <string>Object per document in sub-directory</string>
            </property>
           </item>
-         </widget>
-        </item>
-       </layout>
-      </item>
-     </layout>
-    </widget>
-   </item>
-  </layout>
- </widget>
- <customwidgets>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <widget class="Gui::PrefCheckBox" name="checkBoxUseStepImportCache">
+         <property name="toolTip">
+          <string>Convert the STEP file once and store the result in the FreeCAD cache. Re-importing the same, unchanged file then loads the cached model instead of re-converting the STEP data, which is much faster for large assemblies.</string>
+         </property>
+         <property name="text">
+          <string>Cache converted STEP file (skip re-import)</string>
+         </property>
+         <property name="checked">
+          <bool>true</bool>
+         </property>
+         <property name="prefEntry" stdset="0">
+          <cstring>UseStepImportCache</cstring>
+         </property>
+         <property name="prefPath" stdset="0">
+          <cstring>Mod/Import</cstring>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+  <customwidgets>
   <customwidget>
    <class>Gui::PrefCheckBox</class>
    <extends>QCheckBox</extends>
@@ -246,8 +265,9 @@
   <tabstop>checkBoxImportHiddenObj</tabstop>
   <tabstop>checkBoxReduceObjects</tabstop>
   <tabstop>checkBoxExpandCompound</tabstop>
-  <tabstop>checkBoxUseBaseName</tabstop>
-  <tabstop>comboBoxImportMode</tabstop>
+   <tabstop>checkBoxUseBaseName</tabstop>
+   <tabstop>comboBoxImportMode</tabstop>
+   <tabstop>checkBoxUseStepImportCache</tabstop>
  </tabstops>
  <resources/>
  <connections/>
