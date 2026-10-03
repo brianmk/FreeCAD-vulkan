@@ -82,7 +82,7 @@ static inline void applyOverlayDepthState(SoState* state, OverlayDepthMode depth
             SoDepthBufferElement::set(
                 state,
                 TRUE,
-                FALSE,
+                TRUE,
                 SoDepthBufferElement::LEQUAL,
                 SbVec2f(0.0f, 1.0f)
             );
