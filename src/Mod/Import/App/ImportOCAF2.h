@@ -186,6 +186,11 @@ private:
     {}
     virtual void applyLinkColor(App::DocumentObject*, int /*index*/, Base::Color)
     {}
+    // Drops all face colors recorded so far. Needed before dependency objects
+    // are deleted (see loadShapes merge) so no dangling Part::Feature pointers
+    // remain in a subclass that stores them.
+    virtual void clearFaceColors()
+    {}
 
 private:
     class ImportLegacy: public ImportOCAF
@@ -231,6 +236,7 @@ public:
 
 private:
     void applyFaceColors(Part::Feature* part, const std::vector<Base::Color>& colors) override;
+    void clearFaceColors() override;
 };
 
 struct ImportExport ExportOCAFOptions
