@@ -35,7 +35,11 @@
 */
 
 #include <QEvent>
+#include <QElapsedTimer>
 #include <QMouseEvent>
+
+#include <cstdio>
+#include <cstdlib>
 
 #include "devices/Keyboard.h"
 #include "devices/Mouse.h"
@@ -52,7 +56,28 @@ QPointF getLocalPosition(const QMouseEvent* event)
   return event->position();
 }
 
+// A hover pick is synchronous (the whole scene traversal runs before the next
+// Qt event is read), so if the pointer moves faster than picks complete the
+// queued QMouseEvents are already obsolete when they are dispatched.  Dropping
+// a pure-hover move whose platform timestamp is older than this lets the queue
+// drain to the latest position instead of picking thousands of stale points
+// the user never sees.  Overridable via FC_HOVER_STALE_MS; 0 disables it.
+int staleHoverMoveMs()
+{
+  static const int ms = []() {
+    const char* env = std::getenv("FC_HOVER_STALE_MS");
+    return env ? std::atoi(env) : 100;
+  }();
+  return ms;
 }
+
+bool hoverTimingEnabled()
+{
+  static const bool enabled = std::getenv("FC_HOVER_TIMING") != nullptr;
+  return enabled;
+}
+
+}  // namespace
 
 class EventFilterP {
 public:
@@ -152,6 +177,32 @@ bool
 EventFilter::eventFilter(QObject * obj, QEvent * qevent)
 {
   Q_UNUSED(obj); 
+  // Drop stale pure-hover mouse moves (see staleHoverMoveMs()).  While a
+  // button is held every move matters, so only no-button moves are coalesced.
+  if (qevent->type() == QEvent::MouseMove) {
+    auto * me = static_cast<QMouseEvent *>(qevent);
+    const int staleMs = staleHoverMoveMs();
+    const quint64 ts = me->timestamp();
+    if (staleMs > 0 && me->buttons() == Qt::NoButton && ts != 0) {
+      QElapsedTimer clock;
+      clock.start();
+      const qint64 age = clock.msecsSinceReference() - static_cast<qint64>(ts);
+      // Also guards a clock-domain mismatch or a synthetic timestamp: only a
+      // plausible, genuinely old age is dropped.
+      if (age > staleMs && age < 3600000) {
+        if (hoverTimingEnabled()) {
+          std::fprintf(stderr, "[HOVERT] drop age=%lldms\n",
+                       static_cast<long long>(age));
+        }
+        return true;
+      }
+      if (hoverTimingEnabled()) {
+        std::fprintf(stderr, "[HOVERT] keep age=%lldms\n",
+                     static_cast<long long>(age));
+      }
+    }
+  }
+
   // make sure every device has updated screen size and mouse position
   // before translating events
   switch (qevent->type()) {
