@@ -98,6 +98,15 @@ public:
     std::vector<std::string> getDisplayModes() const override;
     /// Update the view representation
     void reload();
+
+    /// Suspend expensive mesh (re)generation while a bulk operation (e.g. an
+    /// assembly import) creates many objects that may be discarded. While
+    /// suspended, updateVisual() only marks the object dirty; call
+    /// flushPendingVisual() on the surviving objects afterwards to mesh them
+    /// once.
+    static void suspendVisualUpdates(bool suspend);
+    /// Generate any deferred mesh for this object (no-op if up to date).
+    void flushPendingVisual();
     /// If no other task is pending it opens a dialog to allow one to change face colors
     bool changeFaceAppearances();
 
