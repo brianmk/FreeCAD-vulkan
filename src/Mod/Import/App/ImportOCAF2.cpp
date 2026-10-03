@@ -564,6 +564,12 @@ App::DocumentObject* ImportOCAF2::loadShapes()
         ret->recomputeFeature(true);
     }
     if (options.merge && ret && !ret->isDerivedFrom<Part::Feature>()) {
+        // The individual dependency objects are removed below. Drop any colors
+        // recorded for them first, otherwise a subclass that keeps the
+        // Part::Feature pointers (e.g. ImportOCAFExt::partColors) would be left
+        // with dangling entries that callers later dereference.
+        clearFaceColors();
+
         auto shape = Part::Feature::getTopoShape(
             ret,
             Part::ShapeOption::ResolveLink | Part::ShapeOption::Transform
@@ -885,4 +891,9 @@ ImportOCAFExt::ImportOCAFExt(Handle(TDocStd_Document) hStdDoc, App::Document* do
 void ImportOCAFExt::applyFaceColors(Part::Feature* part, const std::vector<Base::Color>& colors)
 {
     partColors[part] = colors;
+}
+
+void ImportOCAFExt::clearFaceColors()
+{
+    partColors.clear();
 }
