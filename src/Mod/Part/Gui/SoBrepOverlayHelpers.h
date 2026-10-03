@@ -82,7 +82,7 @@ static inline void applyOverlayDepthState(SoState* state, OverlayDepthMode depth
             SoDepthBufferElement::set(
                 state,
                 TRUE,
-                FALSE,
+                TRUE,
                 SoDepthBufferElement::LEQUAL,
                 SbVec2f(0.0f, 1.0f)
             );
@@ -168,6 +168,27 @@ static void bindOverlayCoordinates(SoState* state, Node* node)
             dst[i] = ptr[i];
         }
         vp->vertex.finishEditing();
+    }
+}
+
+//! Drop the cached overlay coordinate copy so the next overlay render re-reads
+//! the (possibly changed) base coordinates.
+//!
+//! bindOverlayCoordinates() caches a copy of the base vertex array on the
+//! overlay node and only refreshes it when the vertex count changes.  A rebuild
+//! of the same topology (e.g. changing a pad/box length) keeps the vertex count
+//! and the source array pointer unchanged, so the count-only check cannot detect
+//! it and the overlay keeps drawing the old, moved geometry.  The geometry
+//! producer must therefore call this whenever it rebuilds the shape.
+template <typename Node>
+static void invalidateOverlayCoordinates(Node* node)
+{
+    if (!node) {
+        return;
+    }
+    SoVertexProperty* vp = static_cast<SoVertexProperty*>(node->vertexProperty.getValue());
+    if (vp && vp->vertex.getNum() > 0) {
+        vp->vertex.setNum(0);
     }
 }
 

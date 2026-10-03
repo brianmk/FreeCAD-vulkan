@@ -102,6 +102,11 @@ SoBrepEdgeSet::~SoBrepEdgeSet()
     }
 }
 
+void SoBrepEdgeSet::invalidateOverlayCache()
+{
+    invalidateOverlayCoordinates(overlayLineSet);
+}
+
 // Optional overlay rendering for deterministic tests (and programmatic
 // usage): identical for the GL and IR paths, so it is shared.
 template <typename Action>
@@ -246,7 +251,7 @@ void SoBrepEdgeSet::GLRender(SoGLRenderAction* action)
     }
     else if (
         Gui::Selection().isClarifySelectionActive()
-        && !Gui::SoDelayedAnnotationsElement::isProcessingDelayedPaths && hasAnyHighlight
+        && Gui::SoDelayedAnnotationsElement::isProcessingDelayedPaths && hasAnyHighlight
     ) {
         state->push();
         SoDepthBufferElement::set(state, FALSE, FALSE, SoDepthBufferElement::ALWAYS, SbVec2f(0.0f, 1.0f));
