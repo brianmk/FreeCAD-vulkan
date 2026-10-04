@@ -26,13 +26,16 @@
 #include <Inventor/fields/SoMFInt32.h>
 #include <Inventor/fields/SoSFColor.h>
 #include <Inventor/nodes/SoIndexedFaceSet.h>
+#include <Inventor/SbBox3f.h>
 #include <memory>
+#include <utility>
 #include <vector>
 #include <Gui/Selection/SoFCSelectionContext.h>
 #include <Mod/Part/PartGlobal.h>
 
 
 class SoIRRenderAction;
+class SoRayPickAction;
 
 namespace PartGui
 {
@@ -92,6 +95,15 @@ public:
         viewProvider = vp;
     }
 
+    /// Per-face bounding boxes (one per entry in partIndex, in object space).
+    /// Used to cull the linear triangle ray-pick so that a pick on a large
+    /// shape does not test every triangle. Must be rebuilt together with
+    /// coordIndex/partIndex (see ViewProviderPartExt::setupCoinGeometry).
+    void setFaceBoxes(std::vector<SbBox3f>&& boxes)
+    {
+        faceBoxes = std::move(boxes);
+    }
+
     //! Drop the cached overlay coordinate copy.  Must be called whenever the
     //! owning view provider rebuilds the base geometry (see
     //! ViewProviderPartExt::setupCoinGeometry) so the next highlight/selection
@@ -141,6 +153,11 @@ private:
     using SelContext = Gui::SoFCSelectionContextEx;
     using SelContextPtr = Gui::SoFCSelectionContextExPtr;
 
+    /// Ray-pick triangle generation that skips faces whose bounding box the
+    /// pick ray cannot reach. Falls back to the inherited implementation when
+    /// no matching face-box cache is available.
+    void generatePrimitivesRayPick(SoRayPickAction* action);
+
     void renderHighlight(SoGLRenderAction* action, SelContextPtr);
     void renderSelection(SoGLRenderAction* action, SelContextPtr, bool push = true);
 #ifdef HAVE_COIN_IR_RENDER_ACTION
@@ -178,6 +195,9 @@ private:
 
     SoIndexedFaceSet* overlayFaceSet {nullptr};
     std::vector<int32_t> overlayCoordIndex;
+
+    // One object-space bounding box per part (face); see setFaceBoxes().
+    std::vector<SbBox3f> faceBoxes;
 
     // backreference to viewprovider that owns this node
     ViewProviderPartExt* viewProvider = nullptr;

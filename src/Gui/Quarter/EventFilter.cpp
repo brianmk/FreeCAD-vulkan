@@ -34,8 +34,16 @@
 
 */
 
+#include <QElapsedTimer>
 #include <QEvent>
 #include <QMouseEvent>
+#include <QTimer>
+
+#include <cstdio>
+#include <cstdlib>
+
+#include <Inventor/SbTime.h>
+#include <Inventor/events/SoLocation2Event.h>
 
 #include "devices/Keyboard.h"
 #include "devices/Mouse.h"
@@ -52,7 +60,30 @@ QPointF getLocalPosition(const QMouseEvent* event)
   return event->position();
 }
 
+// A hover pick is synchronous (the whole scene traversal runs before the next
+// Qt event is read), so if the pointer moves faster than picks complete the
+// queued QMouseEvents are already obsolete when they are dispatched.  Dropping
+// a pure-hover move whose platform timestamp is older than this lets the queue
+// drain to the latest position instead of picking thousands of stale points
+// the user never sees.  A dropped move's position is still picked once the
+// pointer comes to rest (see EventFilterP::flushPendingHover()).  Overridable
+// via FC_HOVER_STALE_MS; 0 disables it.
+int staleHoverMoveMs()
+{
+  static const int ms = []() {
+    const char* env = std::getenv("FC_HOVER_STALE_MS");
+    return env ? std::atoi(env) : 60;
+  }();
+  return ms;
 }
+
+bool hoverTimingEnabled()
+{
+  static const bool enabled = std::getenv("FC_HOVER_TIMING") != nullptr;
+  return enabled;
+}
+
+}  // namespace
 
 class EventFilterP {
 public:
@@ -60,6 +91,13 @@ public:
   InputDeviceHost * host;
   QPoint globalmousepos;
   SbVec2s windowsize;
+
+  // Trailing hover pick: a stale move is dropped but its position is kept and
+  // re-picked once the event loop goes idle, so the position where the pointer
+  // comes to rest is always resolved even though its own event was stale.
+  QTimer * hoverFlush = nullptr;
+  bool hoverPending = false;
+  SbVec2s hoverPendingPos;
 
   void trackWindowSize(QResizeEvent * event)
   {
@@ -85,6 +123,48 @@ public:
         host->devicePixelRatio());
     Q_FOREACH(InputDevice * device, this->devices) {
       device->setMousePosition(mousepos);
+    }
+  }
+
+  // Remember a dropped (stale) hover position and schedule a trailing pick that
+  // runs when the event loop is otherwise idle -- i.e. when the pointer has
+  // come to rest.  This gives the resting position priority over the stream of
+  // stale moves that are being discarded.
+  void deferPendingHover(QObject * owner, const SbVec2s & pos)
+  {
+    this->hoverPending = true;
+    this->hoverPendingPos = pos;
+    if (!this->hoverFlush) {
+      this->hoverFlush = new QTimer(owner);
+      this->hoverFlush->setSingleShot(true);
+      this->hoverFlush->setInterval(0);
+      QObject::connect(this->hoverFlush, &QTimer::timeout, owner,
+                       [this]() { this->flushPendingHover(); });
+    }
+    this->hoverFlush->start();
+  }
+
+  void flushPendingHover()
+  {
+    if (!this->hoverPending || !this->host) {
+      return;
+    }
+    this->hoverPending = false;
+    SoLocation2Event hovered;
+    hovered.setPosition(this->hoverPendingPos);
+    hovered.setTime(SbTime::getTimeOfDay());
+    if (hoverTimingEnabled()) {
+      std::fprintf(stderr, "[HOVERT] flush resting pick (%d,%d)\n",
+                   int(this->hoverPendingPos[0]), int(this->hoverPendingPos[1]));
+    }
+    this->host->processSoEvent(&hovered);
+  }
+
+  void clearPendingHover()
+  {
+    this->hoverPending = false;
+    if (this->hoverFlush) {
+      this->hoverFlush->stop();
     }
   }
 };
@@ -168,11 +248,51 @@ EventFilter::eventFilter(QObject * obj, QEvent * qevent)
     break;
   }
 
+  const bool isMove = qevent->type() == QEvent::MouseMove;
+  const int staleMs = staleHoverMoveMs();
+  const QMouseEvent * me = isMove ? static_cast<QMouseEvent *>(qevent) : nullptr;
+
   // translate QEvent into SoEvent and see if it is handled by scene
   // graph
   Q_FOREACH(InputDevice * device, PRIVATE(this)->devices) {
     const SoEvent * soevent = device->translateEvent(qevent);
-    if (soevent && PRIVATE(this)->host->processSoEvent(soevent)) {
+    if (!soevent) {
+      continue;
+    }
+
+    // A hover pick runs the whole scene traversal synchronously, so when the
+    // pointer moves faster than picks complete the queued moves are already
+    // obsolete when dispatched.  Consume a stale pure-hover move without
+    // picking so the queue drains to the latest position; its position is
+    // remembered for the trailing pick that runs once the pointer stops.
+    if (isMove && staleMs > 0 && me->buttons() == Qt::NoButton) {
+      const quint64 ts = me->timestamp();
+      if (ts != 0) {
+        QElapsedTimer clock;
+        clock.start();
+        const qint64 age = clock.msecsSinceReference() - static_cast<qint64>(ts);
+        // Also guards a clock-domain mismatch or a synthetic timestamp: only a
+        // plausible, genuinely old age is dropped.
+        if (age > staleMs && age < 3600000) {
+          PRIVATE(this)->deferPendingHover(this, soevent->getPosition());
+          if (hoverTimingEnabled()) {
+            std::fprintf(stderr, "[HOVERT] drop age=%lldms\n",
+                         static_cast<long long>(age));
+          }
+          return true;
+        }
+        if (hoverTimingEnabled()) {
+          std::fprintf(stderr, "[HOVERT] keep age=%lldms\n",
+                       static_cast<long long>(age));
+        }
+      }
+    }
+    // A live move supersedes any pending trailing pick.
+    if (isMove) {
+      PRIVATE(this)->clearPendingHover();
+    }
+
+    if (PRIVATE(this)->host->processSoEvent(soevent)) {
       return true;
     }
   }

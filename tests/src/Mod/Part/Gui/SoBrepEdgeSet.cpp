@@ -2,7 +2,14 @@
 
 #include <gtest/gtest.h>
 
+#include <Inventor/SbVec3f.h>
+#include <Inventor/SbViewportRegion.h>
 #include <Inventor/SoDB.h>
+#include <Inventor/SoPickedPoint.h>
+#include <Inventor/actions/SoRayPickAction.h>
+#include <Inventor/details/SoLineDetail.h>
+#include <Inventor/nodes/SoCoordinate3.h>
+#include <Inventor/nodes/SoSeparator.h>
 
 #include <Mod/Part/Gui/SoBrepEdgeSet.h>
 
@@ -114,4 +121,89 @@ TEST_F(SoBrepEdgeSetMappingTest, remappingReplacesThePreviousMapping)
     EXPECT_EQ(edgeSet->lineIndexFromEdge(3), 1);
     EXPECT_EQ(edgeSet->lineIndexFromEdge(1), PartGui::SoBrepEdgeSet::InvalidLine);
     EXPECT_EQ(edgeSet->lineIndexFromEdge(4), PartGui::SoBrepEdgeSet::InvalidLine);
+}
+
+//! Ray picking a polyline must report the topological edge from the rendered
+//! line index (via the mapping set by ViewProviderPartExt::setupCoinGeometry),
+//! not the raw line index.
+class SoBrepEdgeSetPickTest: public ::testing::Test
+{
+protected:
+    static void SetUpTestSuite()
+    {
+        SoDB::init();
+        if (PartGui::SoBrepEdgeSet::getClassTypeId().isBad()) {
+            PartGui::SoBrepEdgeSet::initClass();
+        }
+    }
+
+    //! `edges` vertical segments at x = 0 .. edges-1, y in [0, 1], z = 0.
+    void build(int edges, const std::vector<int>& mapping)
+    {
+        root = new SoSeparator;
+        root->ref();
+        coords = new SoCoordinate3;
+        edgeSet = new PartGui::SoBrepEdgeSet;
+        root->addChild(coords);
+        root->addChild(edgeSet);
+
+        coords->point.setNum(edges * 2);
+        edgeSet->coordIndex.setNum(edges * 3);
+
+        SbVec3f* points = coords->point.startEditing();
+        int32_t* indices = edgeSet->coordIndex.startEditing();
+        for (int i = 0; i < edges; ++i) {
+            points[2 * i] = SbVec3f(static_cast<float>(i), 0.0f, 0.0f);
+            points[2 * i + 1] = SbVec3f(static_cast<float>(i), 1.0f, 0.0f);
+            indices[3 * i] = 2 * i;
+            indices[3 * i + 1] = 2 * i + 1;
+            indices[3 * i + 2] = -1;
+        }
+        coords->point.finishEditing();
+        edgeSet->coordIndex.finishEditing();
+        edgeSet->setEdgeMapping(mapping);
+    }
+
+    ~SoBrepEdgeSetPickTest() override
+    {
+        if (root) {
+            root->unref();
+        }
+    }
+
+    //! Returns the picked topological edge, or -1.
+    int pick(float x) const
+    {
+        SbViewportRegion viewport(200, 200);
+        SoRayPickAction action(viewport);
+        action.setRay(SbVec3f(x, 0.5f, 10.0f), SbVec3f(0.0f, 0.0f, -1.0f));
+        action.apply(root);
+        const SoPickedPoint* pp = action.getPickedPoint();
+        if (!pp) {
+            return -1;
+        }
+        const auto* detail = dynamic_cast<const SoLineDetail*>(pp->getDetail());
+        return detail ? detail->getPartIndex() : -1;
+    }
+
+    SoSeparator* root {nullptr};
+    SoCoordinate3* coords {nullptr};
+    PartGui::SoBrepEdgeSet* edgeSet {nullptr};
+};
+
+TEST_F(SoBrepEdgeSetPickTest, pickReportsMappedEdge)
+{
+    build(3, {10, 11, 12});
+
+    EXPECT_EQ(pick(0.0f), 10);
+    EXPECT_EQ(pick(1.0f), 11);
+    EXPECT_EQ(pick(2.0f), 12);
+}
+
+TEST_F(SoBrepEdgeSetPickTest, missReturnsNoEdge)
+{
+    build(3, {10, 11, 12});
+
+    EXPECT_EQ(pick(0.5f), -1);
+    EXPECT_EQ(pick(5.0f), -1);
 }

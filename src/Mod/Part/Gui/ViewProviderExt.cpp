@@ -22,6 +22,8 @@
  *                                                                         *
  ***************************************************************************/
 
+#include <algorithm>
+
 #include <Bnd_Box.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepTools.hxx>
@@ -83,6 +85,7 @@
 #include <Gui/ViewParams.h>
 #include <Gui/Utilities.h>
 
+#include <Mod/Part/App/PartFeature.h>
 #include <Mod/Part/App/ShapeMapHasher.h>
 #include <Mod/Part/App/Tools.h>
 
@@ -118,6 +121,7 @@ ViewProviderPartExt::ViewProviderPartExt()
     VisualTouched = true;
     forceUpdateCount = 0;
     NormalsFromUV = true;
+    UseAssemblyDeviation = false;
 
     // get default line color
     unsigned long lcol = Gui::ViewParams::instance()->getDefaultShapeLineColor();  // dark grey
@@ -947,6 +951,7 @@ bool ViewProviderPartExt::loadParameter()
     float deviation = hGrp->GetFloat("MeshDeviation", 0.2);
     float angularDeflection = hGrp->GetFloat("MeshAngularDeflection", 28.65);
     NormalsFromUV = hGrp->GetBool("NormalsFromUVNodes", NormalsFromUV);
+    UseAssemblyDeviation = hGrp->GetBool("UseAssemblyDeviation", UseAssemblyDeviation);
 
     if (Deviation.getValue() != deviation) {
         Deviation.setValue(deviation);
@@ -1097,7 +1102,9 @@ void ViewProviderPartExt::setupCoinGeometry(
     SoBrepPointSet* nodeset,
     double deviation,
     double angularDeflection,
-    bool normalsFromUV
+    bool normalsFromUV,
+    double minDeflection,
+    bool meshDone
 )
 {
     // The highlight/selection overlay nodes cache a copy of the vertex array.
@@ -1120,6 +1127,7 @@ void ViewProviderPartExt::setupCoinGeometry(
         norm->vector.setNum(0);
         faceset->coordIndex.setNum(0);
         faceset->partIndex.setNum(0);
+        faceset->setFaceBoxes({});
         lineset->coordIndex.setNum(0);
         lineset->setEdgeMapping({});
         nodeset->startIndex.setValue(0);
@@ -1137,6 +1145,13 @@ void ViewProviderPartExt::setupCoinGeometry(
 
     // calculating the deflection value
     Standard_Real deflection = Part::Tools::getDeflection(shape, deviation);
+
+    // Optionally raise the deflection to the assembly/document scale (computed
+    // by updateVisual) so that small parts of a large assembly are not
+    // tessellated excessively finely.
+    if (minDeflection > deflection) {
+        deflection = minDeflection;
+    }
 
     // Since OCCT 7.6 a value of equal 0 is not allowed any more, this can happen if a single
     // vertex should be displayed.
@@ -1159,14 +1174,16 @@ void ViewProviderPartExt::setupCoinGeometry(
     meshParams.InParallel = Standard_True;
     meshParams.AllowQualityDecrease = Standard_True;
 
-    // Clear triangulation and PCurves from geometry which can slow down the process
+    if (!meshDone) {
+        // Clear triangulation and PCurves from geometry which can slow down the process
 #if OCC_VERSION_HEX < 0x070600
-    BRepTools::Clean(shape);
+        BRepTools::Clean(shape);
 #else
-    BRepTools::Clean(shape, Standard_True);
+        BRepTools::Clean(shape, Standard_True);
 #endif
 
-    BRepMesh_IncrementalMesh(shape, meshParams);
+        BRepMesh_IncrementalMesh(shape, meshParams);
+    }
 
     // We must reset the location here because the transformation data
     // are set in the placement property
@@ -1255,6 +1272,11 @@ void ViewProviderPartExt::setupCoinGeometry(
         norms[i] = SbVec3f(0.0, 0.0, 0.0);
     }
 
+    // Per-face object-space bounding boxes used to accelerate ray picking (see
+    // SoBrepFaceSet::generatePrimitivesRayPick()). Kept in sync with partIndex.
+    std::vector<SbBox3f> faceBoxes;
+    faceBoxes.reserve(faceMap.Extent());
+
     int ii = 0, faceNodeOffset = 0, faceTriaOffset = 0;
     for (int i = 1; i <= faceMap.Extent(); i++, ii++) {
         TopLoc_Location aLoc;
@@ -1268,6 +1290,7 @@ void ViewProviderPartExt::setupCoinGeometry(
         }
         if (mesh.IsNull()) {
             parts[ii] = 0;
+            faceBoxes.emplace_back();
             continue;
         }
 
@@ -1305,6 +1328,7 @@ void ViewProviderPartExt::setupCoinGeometry(
             Part::Tools::getPointNormals(actFace, mesh, Normals);
         }
 
+        SbBox3f faceBox;
         for (int g = 1; g <= nbTriInFace; g++) {
             // Get the triangle
             Standard_Integer N1, N2, N3;
@@ -1358,6 +1382,11 @@ void ViewProviderPartExt::setupCoinGeometry(
                 }
             }
 
+            // grow the per-face bounding box (used for ray-pick culling)
+            faceBox.extendBy(Base::convertTo<SbVec3f>(V1));
+            faceBox.extendBy(Base::convertTo<SbVec3f>(V2));
+            faceBox.extendBy(Base::convertTo<SbVec3f>(V3));
+
             // add the normals for all points of this triangle
             norms[faceNodeOffset + N1 - 1] += Base::convertTo<SbVec3f>(NV1);
             norms[faceNodeOffset + N2 - 1] += Base::convertTo<SbVec3f>(NV2);
@@ -1375,6 +1404,7 @@ void ViewProviderPartExt::setupCoinGeometry(
             index[faceTriaOffset * 4 + 4 * (g - 1) + 3] = SO_END_FACE_INDEX;
         }
 
+        faceBoxes.push_back(faceBox);
         parts[ii] = nbTriInFace;  // new part
 
         // handling the edges lying on this face
@@ -1536,6 +1566,7 @@ void ViewProviderPartExt::setupCoinGeometry(
     norm->vector.finishEditing();
     faceset->coordIndex.finishEditing();
     faceset->partIndex.finishEditing();
+    faceset->setFaceBoxes(std::move(faceBoxes));
     lineset->coordIndex.finishEditing();
 
 #ifdef FC_DEBUG
@@ -1559,7 +1590,9 @@ void ViewProviderPartExt::setupCoinGeometry(
     SoFCShape* node,
     double deviation,
     double angularDeflection,
-    bool normalsFromUV
+    bool normalsFromUV,
+    double minDeflection,
+    bool meshDone
 )
 {
     setupCoinGeometry(
@@ -1571,12 +1604,75 @@ void ViewProviderPartExt::setupCoinGeometry(
         node->nodeset,
         deviation,
         angularDeflection,
-        normalsFromUV
+        normalsFromUV,
+        minDeflection,
+        meshDone
     );
+}
+
+namespace
+{
+int visualUpdateSuspends = 0;
+
+// Reference bounding box for the UseAssemblyDeviation option. Computed once per
+// suspended bulk operation (e.g. an import) and reused for every object, so the
+// cost stays O(document) rather than O(document^2).
+const App::Document* referenceBoundsDoc = nullptr;
+Bnd_Box referenceBounds;
+bool referenceBoundsValid = false;
+
+const Bnd_Box& getReferenceBounds(App::Document* doc)
+{
+    if (referenceBoundsValid && referenceBoundsDoc == doc) {
+        return referenceBounds;
+    }
+    referenceBounds = Bnd_Box();
+    referenceBoundsDoc = doc;
+    if (doc) {
+        for (auto* obj : doc->getObjects()) {
+            if (!obj->isDerivedFrom<Part::Feature>() || !obj->Visibility.getValue()) {
+                continue;
+            }
+            auto shape = Part::Feature::getTopoShape(
+                obj,
+                Part::ShapeOption::ResolveLink | Part::ShapeOption::Transform
+            );
+            if (!shape.isNull()) {
+                BRepBndLib::Add(shape.getShape(), referenceBounds);
+            }
+        }
+    }
+    referenceBoundsValid = true;
+    return referenceBounds;
+}
+}  // namespace
+
+void ViewProviderPartExt::suspendVisualUpdates(bool suspend)
+{
+    if (suspend) {
+        ++visualUpdateSuspends;
+        referenceBoundsValid = false;
+    }
+    else if (visualUpdateSuspends > 0) {
+        --visualUpdateSuspends;
+    }
+}
+
+void ViewProviderPartExt::flushPendingVisual(bool meshDone)
+{
+    MeshDone = meshDone;
+    updateVisual();
+    MeshDone = false;
 }
 
 void ViewProviderPartExt::updateVisual()
 {
+    if (visualUpdateSuspends > 0) {
+        // Defer the (expensive) tessellation until the bulk operation ends.
+        VisualTouched = true;
+        return;
+    }
+
     TopoDS_Shape shape = getRenderedShape().getShape();
 
     if (!VisualTouched && lastRenderedShape.IsPartner(shape)) {
@@ -1607,6 +1703,18 @@ void ViewProviderPartExt::updateVisual()
     haction.apply(this->lineset);
     haction.apply(this->nodeset);
 
+    // With UseAssemblyDeviation, raise the deflection to the document scale so
+    // small parts of a large assembly are not tessellated excessively finely.
+    double minDeflection = 0.0;
+    if (UseAssemblyDeviation) {
+        if (App::Document* doc = getObject() ? getObject()->getDocument() : nullptr) {
+            const Bnd_Box& ref = getReferenceBounds(doc);
+            if (!ref.IsVoid()) {
+                minDeflection = Part::Tools::getDeflection(ref, Deviation.getValue());
+            }
+        }
+    }
+
     try {
         setupCoinGeometry(
             shape,
@@ -1617,7 +1725,9 @@ void ViewProviderPartExt::updateVisual()
             nodeset,
             Deviation.getValue(),
             AngularDeflection.getValue(),
-            NormalsFromUV
+            NormalsFromUV,
+            minDeflection,
+            MeshDone
         );
 
         lastRenderedShape = shape;

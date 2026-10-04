@@ -380,12 +380,13 @@ class TestOnViewParameterGui(SketcherGuiTestCase):
             "Expected the second line tool activation to switch the origin marker appearance",
         )
         self.move(viewport, drawing_point)
+        self.flush_gui()
         self.click(viewport, drawing_point)
         self.move(viewport, second_point)
+        self.flush_gui()
         self.click(viewport, second_point)
-        self.assertGreater(
-            self.sketch.GeometryCount,
-            0,
+        self.assertTrue(
+            self.wait_until(lambda: self.sketch.GeometryCount > 0, timeout_ms=3000),
             "Expected geometry away from the origin before cancelling the tool",
         )
         self.cancel_drawing_tool(viewport)

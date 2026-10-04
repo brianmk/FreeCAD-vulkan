@@ -108,15 +108,53 @@
           <property name="value">
            <double>28.5</double>
           </property>
-          <property name="prefEntry" stdset="0">
-           <cstring>MeshAngularDeflection</cstring>
-          </property>
-          <property name="prefPath" stdset="0">
-           <cstring>Mod/Part</cstring>
-          </property>
-         </widget>
-        </item>
-       </layout>
+           <property name="prefEntry" stdset="0">
+            <cstring>MeshAngularDeflection</cstring>
+           </property>
+           <property name="prefPath" stdset="0">
+            <cstring>Mod/Part</cstring>
+           </property>
+          </widget>
+         </item>
+         <item row="2" column="0" colspan="2">
+          <widget class="Gui::PrefCheckBox" name="useAssemblyDeviation">
+           <property name="toolTip">
+            <string>Derive the tessellation deviation from the bounding box of the whole document instead of each object, so small parts of an assembly are not tessellated excessively finely.</string>
+           </property>
+           <property name="text">
+            <string>Use the document bounding box for the deviation</string>
+           </property>
+           <property name="checked">
+            <bool>false</bool>
+           </property>
+           <property name="prefEntry" stdset="0">
+            <cstring>UseAssemblyDeviation</cstring>
+           </property>
+           <property name="prefPath" stdset="0">
+            <cstring>Mod/Part</cstring>
+           </property>
+          </widget>
+         </item>
+         <item row="3" column="0" colspan="2">
+          <widget class="Gui::PrefCheckBox" name="asyncTessellation">
+           <property name="toolTip">
+            <string>Tessellate imported shapes on a background thread so the import returns without waiting for the mesh. The 3D view fills in when the mesh is ready.</string>
+           </property>
+           <property name="text">
+            <string>Tessellate on a background thread</string>
+           </property>
+           <property name="checked">
+            <bool>false</bool>
+           </property>
+           <property name="prefEntry" stdset="0">
+            <cstring>AsyncTessellation</cstring>
+           </property>
+           <property name="prefPath" stdset="0">
+            <cstring>Mod/Part</cstring>
+           </property>
+          </widget>
+         </item>
+        </layout>
       </item>
      </layout>
     </widget>
@@ -141,6 +179,11 @@
   <customwidget>
    <class>Gui::PrefDoubleSpinBox</class>
    <extends>QDoubleSpinBox</extends>
+   <header>Gui/PrefWidgets.h</header>
+  </customwidget>
+  <customwidget>
+   <class>Gui::PrefCheckBox</class>
+   <extends>QCheckBox</extends>
    <header>Gui/PrefWidgets.h</header>
   </customwidget>
  </customwidgets>
