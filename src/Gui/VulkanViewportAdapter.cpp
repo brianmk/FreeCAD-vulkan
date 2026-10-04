@@ -161,6 +161,17 @@ void VulkanViewportAdapter::syncViewer()
     // Re-point the camera + axis-cross decorations and re-attach the change
     // sensors (shared with the camera-changed fast path).
     this->resyncCameraAndDecorations();
+    // The hidden GL viewer never renders on the Vulkan path (the Vulkan surface
+    // does), so the shared camera's near/far are not auto-fitted after a scene
+    // edit.  SoRayPickAction derives its ray depth range, and the
+    // SoShape/SoBrepFaceSet CLIP_NEAR/CLIP_FAR bounding-box cull, from those
+    // planes.  With a stale range a pick rejects geometry outside it, so
+    // hovering a solid that just appeared (e.g. a freshly padded sketch) hit
+    // the entity behind it -- or the solid's own far cap -- instead of the
+    // camera-facing face, until some later viewAll refreshed the clip.  Mirror
+    // the GL render's auto-clip here so the pick range always matches the
+    // current scene.
+    rm->updateClippingPlanes();
     // The background (solid color + gradient) is pushed by pushSettings(), the
     // single source of truth derived from the hidden GL viewer.  syncViewer()
     // only re-seeds scene/camera/overlays here and lets pushSettings() refresh
