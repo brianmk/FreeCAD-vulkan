@@ -120,11 +120,7 @@ void SoShapeScale::updateScale(SoState* state)
     }
     else {
         if (!state->isElementEnabled(SoViewportRegionElement::getClassStackIndex())
-            || !state->isElementEnabled(SoViewVolumeElement::getClassStackIndex())
-#ifdef HAVE_COIN_IR_RENDER_ACTION
-            || !state->isElementEnabled(SoDevicePixelRatioElement::getClassStackIndex())
-#endif
-        ) {
+            || !state->isElementEnabled(SoViewVolumeElement::getClassStackIndex())) {
             return;
         }
 
@@ -142,7 +138,14 @@ void SoShapeScale::updateScale(SoState* state)
         float sf = vv.getWorldToScreenScale(center, nsize);
 
 #ifdef HAVE_COIN_IR_RENDER_ACTION
-        sf *= SoDevicePixelRatioElement::get(state);
+        // The device pixel ratio element is only pushed by some render paths
+        // (the IR/Vulkan traversal). The OpenGL path leaves it disabled, so
+        // treat a missing ratio as 1.0 instead of skipping the scale update
+        // entirely -- otherwise the kit keeps its identity scale and the
+        // indicator renders at native size instead of the requested size.
+        if (state->isElementEnabled(SoDevicePixelRatioElement::getClassStackIndex())) {
+            sf *= SoDevicePixelRatioElement::get(state);
+        }
 #endif
 
         SbVec3f v(sf, sf, sf);
