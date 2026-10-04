@@ -143,7 +143,13 @@ _SNAPSHOT_FIXTURES = {
     "SoFrameLabel": _SnapshotFixture(_CameraPolicy.FIXED_OVERLAY),
     "SoFCColorBar": _SnapshotFixture(_CameraPolicy.COLOR_BAR_OVERLAY),
     "So3DAnnotation": _SnapshotFixture(),
-    "SoFCPlacementIndicatorKit": _SnapshotFixture(),
+    # SoFCPlacementIndicatorKit's root is a SoShapeScale, whose scale is derived
+    # from the view volume.  With VIEW_ALL framing, `SoCamera::viewAll()` runs a
+    # bounding-box pass that does not re-derive that scale, so it frames the
+    # *unscaled* geometry and the render then scales the node up (~2.4x) unless a
+    # previous render already primed the factor.  Use a fixed camera so the
+    # snapshot does not depend on that render-order race.
+    "SoFCPlacementIndicatorKit": _SnapshotFixture(_CameraPolicy.FIXED_OVERLAY),
     "SoAxisCrossKit": _SnapshotFixture(),
     "SoFCBackgroundGradient": _SnapshotFixture(),
     "SoNaviCube": _SnapshotFixture(),
