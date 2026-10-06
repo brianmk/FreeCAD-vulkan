@@ -185,6 +185,10 @@ Base::Vector3d GeoListModel<T>::getPoint(const Part::Geometry* geo, Sketcher::Po
         else if (pos == PointPos::end) {
             return lineSeg->getEndPoint();
         }
+        else if (pos == PointPos::mid) {
+            // Experimental line-midpoint vertex (see commit revert note).
+            return (lineSeg->getStartPoint() + lineSeg->getEndPoint()) / 2.0;
+        }
     }
     else if (geo->is<Part::GeomCircle>()) {
         const Part::GeomCircle* circle = static_cast<const Part::GeomCircle*>(geo);
@@ -304,6 +308,10 @@ void GeoListModel<T>::rebuildVertexIndex() const
         ) {
             addGeoElement(geoId, PointPos::start);
             addGeoElement(geoId, PointPos::end);
+            // Experimental line-midpoint vertex (see commit revert note).
+            if (type == Part::GeomLineSegment::getClassTypeId()) {
+                addGeoElement(geoId, PointPos::mid);
+            }
         }
         else if (
             type == Part::GeomCircle::getClassTypeId() || type == Part::GeomEllipse::getClassTypeId()

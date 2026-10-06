@@ -211,6 +211,13 @@ target_include_directories(
 
 target_link_libraries(SketcherGui ${SketcherGui_LIBS})
 
+# Mirror FreeCADGui's private Vulkan define so the SketcherGui-only Vulkan aids
+# (e.g. the hover line-midpoint marker) compile in the Vulkan build and are
+# compiled out entirely in the GL/upstream build.
+if(FREECAD_USE_VULKAN)
+    target_compile_definitions(SketcherGui PRIVATE FREECAD_USE_VULKAN=1)
+endif()
+
 if(CMAKE_SYSTEM_NAME MATCHES "^(Linux|FreeBSD|OpenBSD|NetBSD)$")
     find_package(Fontconfig REQUIRED)
     target_link_libraries(SketcherGui Fontconfig::Fontconfig)

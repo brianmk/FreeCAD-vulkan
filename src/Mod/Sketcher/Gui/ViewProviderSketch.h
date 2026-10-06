@@ -1062,6 +1062,14 @@ private:
     Preselection preselection;
     Selection selection;
 
+    //! Vulkan-only hover-midpoint marker: the last midpoint handed to the edit
+    //! coin manager.  Tracked by value, not just presence, so both entering/
+    //! leaving a line center and a midpoint that moves while still hovered (e.g.
+    //! dragging an endpoint) update the marker.  Reset on edit enter/exit so a
+    //! stale marker cannot suppress the first hover of a new edit session.
+    //! Unused without Vulkan.
+    std::optional<Base::Vector3d> hoverMidpoint;
+
     std::unique_ptr<Gui::Rubberband> rubberband;
 
     std::string editDocName;

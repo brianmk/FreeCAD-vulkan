@@ -30,6 +30,8 @@
 #include <memory>
 #include <ranges>
 
+#include <FCConfig.h>
+
 #include <Inventor/SbVec2f.h>
 #include <Inventor/SbVec3f.h>
 #include <Inventor/SoPickedPoint.h>
@@ -47,6 +49,7 @@
 #include <Inventor/nodes/SoMaterial.h>
 #include <Inventor/nodes/SoPickStyle.h>
 #include <Inventor/nodes/SoSeparator.h>
+#include <Inventor/nodes/SoSwitch.h>
 #include <Inventor/nodes/SoText2.h>
 #include <Inventor/nodes/SoTranslation.h>
 
@@ -339,6 +342,28 @@ struct GeometryScreenPreselector
                         startPoint[0] + (endPoint[0] - startPoint[0]) * interpolation,
                         startPoint[1] + (endPoint[1] - startPoint[1]) * interpolation
                     ));
+
+#ifdef FREECAD_USE_VULKAN
+                    // Vulkan-only Sketcher aid: when the hovered curve is a
+                    // line and the cursor is close to its center, ask for the
+                    // hover-midpoint marker.  Only this hovered line is ever
+                    // considered, so the cost is O(1) per hover.
+                    if (const Part::Geometry* geom = geolist.getGeometryFromGeoId(geoIndex);
+                        geom && geom->is<Part::GeomLineSegment>()) {
+                        const SbVec3f midpoint = (startPoint + endPoint) * 0.5F;
+                        const SbVec2f midpointScreen = projectToScreen(midpoint);
+                        const float mdx = cursorPoint[0] - midpointScreen[0];
+                        const float mdy = cursorPoint[1] - midpointScreen[1];
+                        const float midpointRadius = std::max(
+                            curveHitRadius,
+                            static_cast<float>(drawingParameters.markerSize)
+                        );
+                        if (mdx * mdx + mdy * mdy <= midpointRadius * midpointRadius) {
+                            result.LineMidpoint = Base::Vector3d(midpoint[0], midpoint[1], 0.0);
+                        }
+                    }
+#endif
+
                     bestDistanceSquared = bestCurveDistanceSquared;
                     found = true;
                 }
@@ -1580,6 +1605,33 @@ EditModeCoinManager::PreselectionResult EditModeCoinManager::detectPreselection(
     return resolvePreselectionCandidates(
         collectPreselectionCandidates(points, cursorPos, hoveredPointIndex)
     );
+}
+
+void EditModeCoinManager::setHoverMidpoint(const std::optional<Base::Vector3d>& midpoint)
+{
+#ifdef FREECAD_USE_VULKAN
+    if (!editModeScenegraphNodes.HoverMidpointSwitch) {
+        return;
+    }
+
+    if (midpoint) {
+        editModeScenegraphNodes.HoverMidpointCoordinate->point.set1Value(
+            0,
+            SbVec3f(
+                static_cast<float>(midpoint->x),
+                static_cast<float>(midpoint->y),
+                ViewProviderSketchCoinAttorney::getViewOrientationFactor(viewProvider)
+                    * drawingParameters.zHighlight
+            )
+        );
+        editModeScenegraphNodes.HoverMidpointSwitch->whichChild = SO_SWITCH_ALL;
+    }
+    else {
+        editModeScenegraphNodes.HoverMidpointSwitch->whichChild = SO_SWITCH_NONE;
+    }
+#else
+    (void)midpoint;
+#endif
 }
 
 SoGroup* EditModeCoinManager::getSelectedConstraints()

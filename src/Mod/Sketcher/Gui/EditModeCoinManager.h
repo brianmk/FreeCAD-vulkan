@@ -222,6 +222,10 @@ public:
         std::set<int> ConstrIndices;
         ConstraintHitKind ConstraintKind = ConstraintHitKind::None;
         std::optional<Base::Vector3d> PickedPoint;
+        //! Sketch-plane midpoint (z unused) of the hovered line when the cursor
+        //! is close enough to its center to show the hover-midpoint marker
+        //! (Vulkan-only aid; see EditModeGeometryCoinManager).
+        std::optional<Base::Vector3d> LineMidpoint;
 
         [[nodiscard]] inline bool hasWinner() const
         {
@@ -250,6 +254,7 @@ public:
             ConstrIndices.clear();
             ConstraintKind = ConstraintHitKind::None;
             PickedPoint.reset();
+            LineMidpoint.reset();
         }
     };
 
@@ -366,6 +371,19 @@ private:
 
     void updateGeometryColor(const GeoListFacade& geolistfacade, bool issketchinvalid);
 
+public:
+    /** @name Vulkan-only hover line-midpoint marker
+     *
+     * Show the marker at the given sketch-plane point (the center of the line
+     * under the mouse) or hide it when empty.  Only the hovered line's center is
+     * ever handed in, so no per-line geometry is produced.  A no-op without
+     * Vulkan (the marker nodes do not exist).
+     */
+    //@{
+    void setHoverMidpoint(const std::optional<Base::Vector3d>& midpoint);
+    //@}
+
+private:
     // causes the ViewProvider to draw
     void redrawViewProvider();
 

@@ -944,6 +944,19 @@ int Sketch::addLineSegment(const Part::GeomLineSegment& lineSegment, bool fixed)
     Points.push_back(p1);
     Points.push_back(p2);
 
+    // Expose the line midpoint as a real vertex so it can be snapped to and
+    // constrained like any other point.  It is a free parameter tied to the
+    // endpoints by an internal (solver-only, never serialized) symmetric
+    // constraint below, so constraining the midpoint moves the line.
+    // (Experimental: see the revert note in the commit message.)
+    GCS::Point pmid;
+    params.push_back(new double((start.x + end.x) / 2));
+    params.push_back(new double((start.y + end.y) / 2));
+    pmid.x = params[params.size() - 2];
+    pmid.y = params[params.size() - 1];
+    def.midPointId = Points.size();
+    Points.push_back(pmid);
+
     // set the line for later constraints
     GCS::Line l;
     l.p1 = p1;
@@ -953,6 +966,13 @@ int Sketch::addLineSegment(const Part::GeomLineSegment& lineSegment, bool fixed)
 
     // store complete set
     Geoms.push_back(def);
+
+    // Internal midpoint rule (like the internal ArcRules of arcs): pmid is the
+    // midpoint of p1 and p2.  Lives only in the solver, so it is rebuilt from
+    // the geometry on load and needs no file-format change.
+    if (!fixed) {
+        GCSsys.addConstraintP2PSymmetric(p1, p2, pmid);
+    }
 
     if (!fixed) {
         param2geoelement.emplace(
