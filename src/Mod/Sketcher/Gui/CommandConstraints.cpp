@@ -9914,6 +9914,43 @@ private:
             std::swap(reference, moving);
         }
 
+        // When the two elements share a vertex, that pair of endpoints is
+        // coincident. A point-pair Symmetric constraint on two coincident points
+        // has a perpendicularity equation that is identically satisfied, so the
+        // pair is rank-deficient; the solver reports it as redundant and the two
+        // Symmetric constraints conflict (over-constrained sketch). Such a pair
+        // only needs its (shared) point to lie on the symmetry line.
+        //
+        // The shared vertex also decides which endpoint of the moving element
+        // corresponds to which endpoint of the reference. Pairing the shared
+        // vertex with itself keeps the two elements spread over opposite sides of
+        // the line; keeping the start/start, end/end pairing when the vertex is
+        // shared cross-wise (reference start with moving end) instead makes the
+        // two elements collapse onto the same segment.
+        const auto refStart = Sketcher::PointPos::start;
+        const auto refEnd = Sketcher::PointPos::end;
+        const bool crossPairing =
+            !Obj->arePointsCoincident(reference, refStart, moving, refStart)
+            && !Obj->arePointsCoincident(reference, refEnd, moving, refEnd)
+            && (Obj->arePointsCoincident(reference, refStart, moving, refEnd)
+                || Obj->arePointsCoincident(reference, refEnd, moving, refStart));
+        const auto movingStartPair = crossPairing ? refEnd : refStart;
+        const auto movingEndPair = crossPairing ? refStart : refEnd;
+
+        const bool startCoincident =
+            Obj->arePointsCoincident(reference, refStart, moving, movingStartPair);
+        const bool endCoincident =
+            Obj->arePointsCoincident(reference, refEnd, moving, movingEndPair);
+
+        if (startCoincident && endCoincident) {
+            Gui::TranslatedUserWarning(Obj,
+                                       QObject::tr("Wrong selection"),
+                                       QObject::tr("Cannot add a symmetry constraint "
+                                                   "between two elements that share both "
+                                                   "endpoints."));
+            return false;
+        }
+
         openCommand(QT_TRANSLATE_NOOP("Command", "Add symmetric constraint"));
 
         // The Symmetric constraint only ties the corresponding endpoints of the
@@ -9938,41 +9975,77 @@ private:
                                 "about the symmetry line."));
                 return false;
             }
-            const Base::Vector3d targetStart = mirrorPointAboutLine(
-                Obj->getPoint(reference, Sketcher::PointPos::start),
+            Base::Vector3d targetStart = mirrorPointAboutLine(
+                Obj->getPoint(reference, refStart),
                 axisStart,
                 axisDirection
             );
-            const Base::Vector3d targetEnd = mirrorPointAboutLine(
-                Obj->getPoint(reference, Sketcher::PointPos::end),
+            Base::Vector3d targetEnd = mirrorPointAboutLine(
+                Obj->getPoint(reference, refEnd),
                 axisStart,
                 axisDirection
             );
+            // The moving element's own start/end follow the correspondence: for a
+            // cross-wise shared vertex they are swapped relative to the
+            // reference's.
+            Base::Vector3d movingStart = crossPairing ? targetEnd : targetStart;
+            Base::Vector3d movingEnd = crossPairing ? targetStart : targetEnd;
+            // A shared vertex is a single point of the sketch, so displacing it
+            // would drag the reference element with it. Leave it where it is:
+            // the constraint added below puts it on the symmetry line.
+            if (startCoincident) {
+                if (crossPairing) {
+                    movingEnd = Obj->getPoint(moving, refEnd);
+                }
+                else {
+                    movingStart = Obj->getPoint(moving, refStart);
+                }
+            }
+            if (endCoincident) {
+                if (crossPairing) {
+                    movingStart = Obj->getPoint(moving, refStart);
+                }
+                else {
+                    movingEnd = Obj->getPoint(moving, refEnd);
+                }
+            }
             // Clone the moving element so that its id, construction flag and
             // other metadata are kept, and only replace its endpoints.
             std::unique_ptr<Part::Geometry> displaced(Obj->getGeometry(moving)->clone());
-            static_cast<Part::GeomLineSegment*>(displaced.get())->setPoints(targetStart, targetEnd);
+            static_cast<Part::GeomLineSegment*>(displaced.get())->setPoints(movingStart, movingEnd);
             Obj->setGeometry(moving, displaced.get());
         }
 
-        // One constraint per corresponding endpoint pair keeps the two elements
-        // mirror images of each other about the symmetry line.
-        Gui::cmdAppObjectArgs(
-            Obj,
-            "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d))",
-            reference,
-            static_cast<int>(Sketcher::PointPos::start),
-            moving,
-            static_cast<int>(Sketcher::PointPos::start),
-            GeoId3);
-        Gui::cmdAppObjectArgs(
-            Obj,
-            "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d))",
-            reference,
-            static_cast<int>(Sketcher::PointPos::end),
-            moving,
-            static_cast<int>(Sketcher::PointPos::end),
-            GeoId3);
+        // Each pair of corresponding endpoints either keeps the two elements
+        // mirror images of each other about the symmetry line (non-coincident
+        // pair), or, when the two elements share that vertex, merely puts the
+        // shared point on the line - the rank-1 remainder of the pair, which is
+        // all that a pair of coincident points can contribute and what keeps the
+        // constraint set non-redundant.
+        auto addEndpointPair = [&](Sketcher::PointPos refPos,
+                                   Sketcher::PointPos movingPos,
+                                   bool coincident) {
+            if (coincident) {
+                Gui::cmdAppObjectArgs(
+                    Obj,
+                    "addConstraint(Sketcher.Constraint('PointOnObject',%d,%d,%d))",
+                    reference,
+                    static_cast<int>(refPos),
+                    GeoId3);
+            }
+            else {
+                Gui::cmdAppObjectArgs(
+                    Obj,
+                    "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d))",
+                    reference,
+                    static_cast<int>(refPos),
+                    moving,
+                    static_cast<int>(movingPos),
+                    GeoId3);
+            }
+        };
+        addEndpointPair(refStart, movingStartPair, startCoincident);
+        addEndpointPair(refEnd, movingEndPair, endCoincident);
         finishTransactionAndUpdate(this, Obj);
 
         return true;
