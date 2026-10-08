@@ -647,6 +647,11 @@ private:
 
         QVulkanDeviceFunctions * vkdf =
             m_instance->deviceFunctions(m_window->device());
+        // GPU timestamp queries for the caller-owned pass.  renderExternal()
+        // records the scope writes inside this pass, but vkCmdResetQueryPool is
+        // illegal inside a render pass, so the reset must be recorded here,
+        // before vkCmdBeginRenderPass.  No-op unless FC_VULKAN_GPU_TIMING=1.
+        m_manager.resetExternalGpuQueries(cb);
         vkdf->vkCmdBeginRenderPass(cb, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
 
         // QVulkanWindow's default render pass already clears color and depth

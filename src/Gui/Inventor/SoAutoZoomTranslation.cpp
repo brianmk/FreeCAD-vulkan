@@ -34,6 +34,10 @@
 #include <Inventor/elements/SoViewVolumeElement.h>
 #include <Inventor/nodes/SoCamera.h>
 
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+#    include <Inventor/actions/SoIRRenderAction.h>
+#endif
+
 
 #include "SoAutoZoomTranslation.h"
 
@@ -95,6 +99,15 @@ void SoAutoZoomTranslation::GLRender(SoGLRenderAction* action)
 // Doc in superclass.
 void SoAutoZoomTranslation::doAction(SoAction* action)
 {
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    // The recorded scale is derived from the view volume, so the scene is
+    // camera-dependent: the Vulkan manager must re-record it on a camera move
+    // rather than replaying a cached list that holds the previous camera's
+    // scale.
+    if (action && action->isOfType(SoIRRenderAction::getClassTypeId())) {
+        static_cast<SoIRRenderAction*>(action)->setCameraDependent(TRUE);
+    }
+#endif
     float sf = this->getScaleFactor(action);
     auto state = action->getState();
     SbRotation r, so;

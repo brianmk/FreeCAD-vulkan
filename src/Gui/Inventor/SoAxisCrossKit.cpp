@@ -52,7 +52,8 @@
 #include "SoAxisCrossKit.h"
 #include "SoFCBoundingBox.h"
 #ifdef HAVE_COIN_IR_RENDER_ACTION
-#include <Inventor/elements/SoDevicePixelRatioElement.h>
+#    include <Inventor/actions/SoIRRenderAction.h>
+#    include <Inventor/elements/SoDevicePixelRatioElement.h>
 #endif
 
 using namespace Gui;
@@ -90,6 +91,16 @@ void SoShapeScale::GLRender(SoGLRenderAction* action)
 
 void SoShapeScale::doAction(SoAction* action)
 {
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    // This kit bakes a view-volume-derived (camera-dependent) scale into the
+    // retained IR draw list, so flag the traversal: the Vulkan manager must
+    // re-record the scene on a camera move instead of replaying the cached
+    // list with the previous camera's scale (the origin planes would otherwise
+    // only rescale when an unrelated change, e.g. a hover, forced a re-record).
+    if (action && action->isOfType(SoIRRenderAction::getClassTypeId())) {
+        static_cast<SoIRRenderAction*>(action)->setCameraDependent(TRUE);
+    }
+#endif
     updateScale(action ? action->getState() : nullptr);
     inherited::doAction(action);
 }
