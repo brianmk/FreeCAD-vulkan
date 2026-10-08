@@ -1414,6 +1414,8 @@ public:
     static constexpr const char* PICK_SYMMETRY_POINT = "%1 pick symmetry point";
     static constexpr const char* PICK_SYMMETRY_LINE_OR_POINT = "%1 pick symmetry line or point";
     static constexpr const char* PICK_SYMMETRY_LINE = "%1 pick symmetry line";
+    static constexpr const char* PICK_SECOND_EDGE_SYMMETRY_LINE_OR_POINT =
+        "%1 pick second edge, symmetry line or point";
     static constexpr const char* PICK_SECOND_LINE = "%1 pick second line";
     static constexpr const char* PICK_SECOND_POINT_OR_EDGE = "%1 pick second point or edge";
     static constexpr const char* PICK_POINT_OR_EDGE = "%1 pick point or edge";
@@ -1716,8 +1718,9 @@ public:
                 // Point + Edge + Point or Point + Point + Edge/Point workflow
                 return {{QObject::tr(PICK_EDGE_OR_SECOND_POINT), {Gui::InputHint::UserInput::MouseLeft}}};
             } else {
-                // Edge + Point workflow
-                return {{QObject::tr(PICK_SYMMETRY_POINT), {Gui::InputHint::UserInput::MouseLeft}}};
+                // Edge + Point (symmetry point) or Edge + Edge + Edge (center edge) workflow
+                return {{QObject::tr(PICK_SECOND_EDGE_SYMMETRY_LINE_OR_POINT),
+                         {Gui::InputHint::UserInput::MouseLeft}}};
             }
         } else if (selectionStep == 2 && !selSeq.empty()) {
             if (isVertex(selSeq[0].GeoId, selSeq[0].PosId) && isVertex(selSeq[1].GeoId, selSeq[1].PosId)) {
@@ -1726,6 +1729,10 @@ public:
             } else if (isVertex(selSeq[0].GeoId, selSeq[0].PosId) && !isVertex(selSeq[1].GeoId, selSeq[1].PosId)) {
                 // Point + Edge + Point workflow
                 return {{QObject::tr(PICK_POINT), {Gui::InputHint::UserInput::MouseLeft}}};
+            } else if (!isVertex(selSeq[0].GeoId, selSeq[0].PosId)
+                       && !isVertex(selSeq[1].GeoId, selSeq[1].PosId)) {
+                // Edge + Edge + Edge workflow: the third selection is the center edge
+                return {{QObject::tr(PICK_SYMMETRY_LINE), {Gui::InputHint::UserInput::MouseLeft}}};
             }
         }
     }
@@ -2255,6 +2262,19 @@ public:
 
     size_t s_pts, s_lns, s_cir, s_ell, s_spl;
 };
+
+// Defined further down, next to the Symmetric command. Declared here because the
+// constraint handlers below also emit a point-pair symmetry, and that emission
+// has to degrade to the non-degenerate remainder when the two points coincide.
+static void addPointPairSymmetricConstraint(
+    Sketcher::SketchObject* Obj,
+    int GeoId1,
+    Sketcher::PointPos PosId1,
+    int GeoId2,
+    Sketcher::PointPos PosId2,
+    int GeoId3,
+    Sketcher::PointPos PosId3
+);
 
 class DrawSketchHandlerDimension : public DrawSketchHandler
 {
@@ -3809,8 +3829,14 @@ protected:
                     return;
                 }
 
-                Gui::cmdAppObjectArgs(Obj, "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d)) ",
-                    GeoId1, static_cast<int>(PosId1), GeoId2, static_cast<int>(PosId2), GeoId3);
+                addPointPairSymmetricConstraint(
+                    Obj,
+                    GeoId1,
+                    PosId1,
+                    GeoId2,
+                    PosId2,
+                    GeoId3,
+                    Sketcher::PointPos::none);
 
                 addConstraintIndex();
                 tryAutoRecompute(Obj);
@@ -3833,8 +3859,7 @@ protected:
                     return;
                 }
             }
-            Gui::cmdAppObjectArgs(Obj, "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d,%d)) ",
-                GeoId1, static_cast<int>(PosId1), GeoId2, static_cast<int>(PosId2), GeoId3, static_cast<int>(PosId3));
+            addPointPairSymmetricConstraint(Obj, GeoId1, PosId1, GeoId2, PosId2, GeoId3, PosId3);
 
             addConstraintIndex();
             tryAutoRecompute(Obj);
@@ -9719,6 +9744,99 @@ void CmdSketcherConstrainEqual::applyConstraint(std::vector<SelIdPair>& selSeq, 
 
 // ======================================================================================
 
+static void showSymmetricWrongSelectionWarning(Sketcher::SketchObject* Obj)
+{
+    Gui::TranslatedUserWarning(Obj,
+                               QObject::tr("Wrong selection"),
+                               QObject::tr("Select two points and a symmetry line, "
+                                           "two points and a symmetry point, "
+                                           "an element and a symmetry line, "
+                                           "an element and a symmetry point "
+                                           "or two elements and a symmetry line from the sketch."));
+}
+
+/// Reflection of point across the line through lineStart with direction lineDirection.
+static Base::Vector3d mirrorPointAboutLine(
+    const Base::Vector3d& point,
+    const Base::Vector3d& lineStart,
+    const Base::Vector3d& lineDirection
+)
+{
+    const double lengthSquared = lineDirection.Sqr();
+    if (lengthSquared < Precision::SquareConfusion()) {
+        return point;
+    }
+    const Base::Vector3d offset = point - lineStart;
+    const Base::Vector3d projection =
+        lineStart + lineDirection * (offset.Dot(lineDirection) / lengthSquared);
+    return projection * 2 - point;
+}
+
+/// Add the Symmetric constraint between two points and their symmetry element,
+/// which is a line (PosId3 == none) or a centre point.
+///
+/// A point-pair symmetry is Perpendicular + MidpointOnLine about a line, and
+/// PointOnLine + PointOnPerpBisector about a centre point. When the two points
+/// coincide, both halves of the relevant form become identically satisfied
+/// equations: the perpendicularity of a null segment, and "on the line through
+/// p1p2 / on its perpendicular bisector" of a segment with no length. The solver
+/// then reports the pair as redundant and conflicting, over-constraining the
+/// sketch. Only the rank-1 remainder of the request carries information, so add
+/// that instead: the shared point lies on the symmetry line, or - for a centre
+/// point - the centre is that point.
+static void addPointPairSymmetricConstraint(
+    Sketcher::SketchObject* Obj,
+    int GeoId1,
+    Sketcher::PointPos PosId1,
+    int GeoId2,
+    Sketcher::PointPos PosId2,
+    int GeoId3,
+    Sketcher::PointPos PosId3
+)
+{
+    const bool coincident = Obj->arePointsCoincident(GeoId1, PosId1, GeoId2, PosId2);
+    const bool aboutLine = PosId3 == Sketcher::PointPos::none;
+
+    if (coincident && aboutLine) {
+        Gui::cmdAppObjectArgs(
+            Obj,
+            "addConstraint(Sketcher.Constraint('PointOnObject',%d,%d,%d))",
+            GeoId1,
+            static_cast<int>(PosId1),
+            GeoId3);
+    }
+    else if (coincident) {
+        Gui::cmdAppObjectArgs(
+            Obj,
+            "addConstraint(Sketcher.Constraint('Coincident',%d,%d,%d,%d))",
+            GeoId1,
+            static_cast<int>(PosId1),
+            GeoId3,
+            static_cast<int>(PosId3));
+    }
+    else if (aboutLine) {
+        Gui::cmdAppObjectArgs(
+            Obj,
+            "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d))",
+            GeoId1,
+            static_cast<int>(PosId1),
+            GeoId2,
+            static_cast<int>(PosId2),
+            GeoId3);
+    }
+    else {
+        Gui::cmdAppObjectArgs(
+            Obj,
+            "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d,%d))",
+            GeoId1,
+            static_cast<int>(PosId1),
+            GeoId2,
+            static_cast<int>(PosId2),
+            GeoId3,
+            static_cast<int>(PosId3));
+    }
+}
+
 class CmdSketcherConstrainSymmetric: public CmdSketcherConstraint
 {
 public:
@@ -9741,6 +9859,280 @@ private:
                || isArcOfHyperbola(geom) || isArcOfParabola(geom)
                || (isBSplineCurve(geom) && !isPeriodicBSplineCurve(geom));
     }
+
+    /// Emits the Symmetric constraints making two edges mirror images of each
+    /// other about a third (center) edge.
+    ///
+    /// All three selections are edges, so only the symmetry axis is required to
+    /// be a line and H/V axes can only ever act as the axis. Those are moved to
+    /// the third position first, mirroring the swap logic used for two points
+    /// and a symmetry line. For three plain sketch edges there is no type
+    /// information telling the axis apart from the two elements to be made
+    /// symmetric, so the third selection is taken as the axis, following the
+    /// "two elements and a symmetry line, in that order" convention.
+    ///
+    /// Returns false, after showing a warning, when the selection cannot be
+    /// interpreted as two elements and a symmetry line.
+    bool applyEdgesSymmetricConstraint(Sketcher::SketchObject* Obj, int GeoId1, int GeoId2, int GeoId3)
+    {
+        auto isHV = [](int geoId) {
+            return geoId == Sketcher::GeoEnum::HAxis || geoId == Sketcher::GeoEnum::VAxis;
+        };
+        auto isLine = [Obj](int geoId) {
+            const Part::Geometry* geo = Obj->getGeometry(geoId);
+            return geo != nullptr && isLineSegment(*geo);
+        };
+
+        // An H/V axis can only be the symmetry line, never one of the elements
+        // being made symmetric, so at most one of them may be selected.
+        const int axisCount = (isHV(GeoId1) ? 1 : 0) + (isHV(GeoId2) ? 1 : 0)
+            + (isHV(GeoId3) ? 1 : 0);
+        if (axisCount > 1) {
+            showSymmetricWrongSelectionWarning(Obj);
+            return false;
+        }
+        if (isHV(GeoId1)) {
+            std::swap(GeoId1, GeoId3);
+        }
+        else if (isHV(GeoId2)) {
+            std::swap(GeoId2, GeoId3);
+        }
+        else {
+            // A symmetry line is a line. If exactly one of the three selected
+            // edges is a line, that one is the axis whatever its position.
+            const bool line1 = isLine(GeoId1);
+            const bool line2 = isLine(GeoId2);
+            const bool line3 = isLine(GeoId3);
+            if (line1 && !line2 && !line3) {
+                std::swap(GeoId1, GeoId3);
+            }
+            else if (line2 && !line1 && !line3) {
+                std::swap(GeoId2, GeoId3);
+            }
+        }
+
+        if (!isHV(GeoId3) && !isLine(GeoId3)) {
+            Gui::TranslatedUserWarning(
+                Obj,
+                QObject::tr("Wrong selection"),
+                QObject::tr("Cannot add a symmetry constraint "
+                            "because the symmetry line is not a line. "
+                            "Select a line or an axis instead."));
+            return false;
+        }
+
+        if (GeoId1 == GeoId2) {
+            Gui::TranslatedUserWarning(Obj,
+                                       QObject::tr("Wrong selection"),
+                                       QObject::tr("Cannot add a symmetry constraint "
+                                                   "between an element and itself."));
+            return false;
+        }
+
+        if (GeoId1 == GeoId3 || GeoId2 == GeoId3) {
+            Gui::TranslatedUserWarning(Obj,
+                                       QObject::tr("Wrong selection"),
+                                       QObject::tr("Cannot add a symmetry constraint "
+                                                   "between an element and its symmetry line."));
+            return false;
+        }
+
+        const Part::Geometry* geom1 = Obj->getGeometry(GeoId1);
+        if (!geom1 || !hasEndpoints(*geom1)) {
+            Gui::TranslatedUserWarning(
+                Obj,
+                QObject::tr("Wrong selection"),
+                QObject::tr("Cannot add a symmetry constraint "
+                            "because the first selected element has no endpoints. "
+                            "Select a line or an open curve instead."));
+            return false;
+        }
+
+        const Part::Geometry* geom2 = Obj->getGeometry(GeoId2);
+        if (!geom2 || !hasEndpoints(*geom2)) {
+            Gui::TranslatedUserWarning(
+                Obj,
+                QObject::tr("Wrong selection"),
+                QObject::tr("Cannot add a symmetry constraint "
+                            "because the second selected element has no endpoints. "
+                            "Select a line or an open curve instead."));
+            return false;
+        }
+
+        // GeoId3 was validated to be a line; the H/V axes are line segments too.
+        const Part::Geometry* axisGeometry = Obj->getGeometry(GeoId3);
+        auto* axisLine = static_cast<const Part::GeomLineSegment*>(axisGeometry);
+        const Base::Vector3d axisStart = axisLine->getStartPoint();
+        const Base::Vector3d axisDirection = axisLine->getEndPoint() - axisStart;
+
+        // An element that is its own mirror image cannot be used as the
+        // reference of the symmetry: the other element would simply be moved
+        // onto it.
+        auto isSelfSymmetric = [&](int geoId) {
+            const Part::Geometry* geo = Obj->getGeometry(geoId);
+            std::unique_ptr<Part::Geometry> mirrored(geo->clone());
+            mirrored->mirror(axisStart, axisDirection);
+            const Base::Vector3d start = Obj->getPoint(geoId, Sketcher::PointPos::start);
+            const Base::Vector3d end = Obj->getPoint(geoId, Sketcher::PointPos::end);
+            const Base::Vector3d mirroredStart =
+                SketchObject::getPoint(mirrored.get(), Sketcher::PointPos::start);
+            const Base::Vector3d mirroredEnd =
+                SketchObject::getPoint(mirrored.get(), Sketcher::PointPos::end);
+            const double tolerance = std::max((end - start).Length(), 1.0) * 1e-7;
+            return ((mirroredStart - start).Length() < tolerance
+                    || (mirroredStart - end).Length() < tolerance)
+                && ((mirroredEnd - end).Length() < tolerance
+                    || (mirroredEnd - start).Length() < tolerance);
+        };
+
+        // The reference element is kept where it is, the moving one is displaced
+        // onto its mirror image. A fixed element must not be displaced, and a
+        // self-symmetric element cannot be the (stationary) reference.
+        int reference = GeoId1;
+        int moving = GeoId2;
+        if (isSelfSymmetric(reference) && !isSelfSymmetric(moving)) {
+            std::swap(reference, moving);
+        }
+        if (isPointOrSegmentFixed(Obj, moving) && !isPointOrSegmentFixed(Obj, reference)) {
+            std::swap(reference, moving);
+        }
+
+        // When the two elements share a vertex, that pair of endpoints is
+        // coincident. A point-pair Symmetric constraint on two coincident points
+        // has a perpendicularity equation that is identically satisfied, so the
+        // pair is rank-deficient; the solver reports it as redundant and the two
+        // Symmetric constraints conflict (over-constrained sketch). Such a pair
+        // only needs its (shared) point to lie on the symmetry line.
+        //
+        // The shared vertex also decides which endpoint of the moving element
+        // corresponds to which endpoint of the reference. Pairing the shared
+        // vertex with itself keeps the two elements spread over opposite sides of
+        // the line; keeping the start/start, end/end pairing when the vertex is
+        // shared cross-wise (reference start with moving end) instead makes the
+        // two elements collapse onto the same segment.
+        const auto refStart = Sketcher::PointPos::start;
+        const auto refEnd = Sketcher::PointPos::end;
+        const bool crossPairing =
+            !Obj->arePointsCoincident(reference, refStart, moving, refStart)
+            && !Obj->arePointsCoincident(reference, refEnd, moving, refEnd)
+            && (Obj->arePointsCoincident(reference, refStart, moving, refEnd)
+                || Obj->arePointsCoincident(reference, refEnd, moving, refStart));
+        const auto movingStartPair = crossPairing ? refEnd : refStart;
+        const auto movingEndPair = crossPairing ? refStart : refEnd;
+
+        const bool startCoincident =
+            Obj->arePointsCoincident(reference, refStart, moving, movingStartPair);
+        const bool endCoincident =
+            Obj->arePointsCoincident(reference, refEnd, moving, movingEndPair);
+
+        if (startCoincident && endCoincident) {
+            Gui::TranslatedUserWarning(Obj,
+                                       QObject::tr("Wrong selection"),
+                                       QObject::tr("Cannot add a symmetry constraint "
+                                                   "between two elements that share both "
+                                                   "endpoints."));
+            return false;
+        }
+
+        openCommand(QT_TRANSLATE_NOOP("Command", "Add symmetric constraint"));
+
+        // The Symmetric constraint only ties the corresponding endpoints of the
+        // two elements together. When both of them are free the closest
+        // solution the solver can find may be the degenerate one in which both
+        // collapse onto the symmetry line, so the moving element is placed onto
+        // the mirror image of the reference first. This is what makes the two
+        // elements end up on opposite sides of the symmetry line.
+        const bool bothFreeLines = !isPointOrSegmentFixed(Obj, reference)
+            && !isPointOrSegmentFixed(Obj, moving) && isLineSegment(*Obj->getGeometry(reference))
+            && isLineSegment(*Obj->getGeometry(moving));
+        if (bothFreeLines) {
+            if (isSelfSymmetric(reference)) {
+                // Both elements are their own mirror image, so there is no
+                // non-degenerate solution.
+                abortCommand();
+                Gui::TranslatedUserWarning(
+                    Obj,
+                    QObject::tr("Wrong selection"),
+                    QObject::tr("Cannot add a symmetry constraint "
+                                "because both selected elements are already symmetric "
+                                "about the symmetry line."));
+                return false;
+            }
+            Base::Vector3d targetStart = mirrorPointAboutLine(
+                Obj->getPoint(reference, refStart),
+                axisStart,
+                axisDirection
+            );
+            Base::Vector3d targetEnd = mirrorPointAboutLine(
+                Obj->getPoint(reference, refEnd),
+                axisStart,
+                axisDirection
+            );
+            // The moving element's own start/end follow the correspondence: for a
+            // cross-wise shared vertex they are swapped relative to the
+            // reference's.
+            Base::Vector3d movingStart = crossPairing ? targetEnd : targetStart;
+            Base::Vector3d movingEnd = crossPairing ? targetStart : targetEnd;
+            // A shared vertex is a single point of the sketch, so displacing it
+            // would drag the reference element with it. Leave it where it is:
+            // the constraint added below puts it on the symmetry line.
+            if (startCoincident) {
+                if (crossPairing) {
+                    movingEnd = Obj->getPoint(moving, refEnd);
+                }
+                else {
+                    movingStart = Obj->getPoint(moving, refStart);
+                }
+            }
+            if (endCoincident) {
+                if (crossPairing) {
+                    movingStart = Obj->getPoint(moving, refStart);
+                }
+                else {
+                    movingEnd = Obj->getPoint(moving, refEnd);
+                }
+            }
+            // Clone the moving element so that its id, construction flag and
+            // other metadata are kept, and only replace its endpoints.
+            std::unique_ptr<Part::Geometry> displaced(Obj->getGeometry(moving)->clone());
+            static_cast<Part::GeomLineSegment*>(displaced.get())->setPoints(movingStart, movingEnd);
+            Obj->setGeometry(moving, displaced.get());
+        }
+
+        // Each pair of corresponding endpoints either keeps the two elements
+        // mirror images of each other about the symmetry line (non-coincident
+        // pair), or, when the two elements share that vertex, merely puts the
+        // shared point on the line - the rank-1 remainder of the pair, which is
+        // all that a pair of coincident points can contribute and what keeps the
+        // constraint set non-redundant.
+        auto addEndpointPair = [&](Sketcher::PointPos refPos,
+                                   Sketcher::PointPos movingPos,
+                                   bool coincident) {
+            if (coincident) {
+                Gui::cmdAppObjectArgs(
+                    Obj,
+                    "addConstraint(Sketcher.Constraint('PointOnObject',%d,%d,%d))",
+                    reference,
+                    static_cast<int>(refPos),
+                    GeoId3);
+            }
+            else {
+                Gui::cmdAppObjectArgs(
+                    Obj,
+                    "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d))",
+                    reference,
+                    static_cast<int>(refPos),
+                    moving,
+                    static_cast<int>(movingPos),
+                    GeoId3);
+            }
+        };
+        addEndpointPair(refStart, movingStartPair, startCoincident);
+        addEndpointPair(refEnd, movingEndPair, endCoincident);
+        finishTransactionAndUpdate(this, Obj);
+
+        return true;
+    }
 };
 
 CmdSketcherConstrainSymmetric::CmdSketcherConstrainSymmetric()
@@ -9749,7 +10141,7 @@ CmdSketcherConstrainSymmetric::CmdSketcherConstrainSymmetric()
     sAppModule = "Sketcher";
     sGroup = "Sketcher";
     sMenuText = QT_TR_NOOP("Symmetric Constraint");
-    sToolTipText = QT_TR_NOOP("Constrains the selected elements to be symmetric");
+    sToolTipText = QT_TR_NOOP("Constrains the selected elements to be symmetric about a line, an axis or a point");
     sWhatsThis = "Sketcher_ConstrainSymmetric";
     sStatusTip = sToolTipText;
     sPixmap = "Constraint_Symmetric";
@@ -9768,7 +10160,11 @@ CmdSketcherConstrainSymmetric::CmdSketcherConstrainSymmetric()
                            {SelEdge, SelEdgeOrAxis},
                            {SelEdge, SelExternalEdge},
                            {SelExternalEdge, SelEdge},
-                           {SelEdgeOrAxis, SelEdge}};
+                           {SelEdgeOrAxis, SelEdge},
+                           // Two elements made symmetric about a center edge
+                           // (the third selection).
+                           {SelEdge, SelEdge, SelEdgeOrAxis},
+                           {SelEdge, SelEdge, SelExternalEdge}};
 }
 
 void CmdSketcherConstrainSymmetric::activated(int iMsg)
@@ -9784,12 +10180,7 @@ void CmdSketcherConstrainSymmetric::activated(int iMsg)
     auto* Obj = static_cast<Sketcher::SketchObject*>(selection->getObject());
 
     if (SubNames.size() != 3 && SubNames.size() != 2) {
-        Gui::TranslatedUserWarning(Obj,
-                                   QObject::tr("Wrong selection"),
-                                   QObject::tr("Select two points and a symmetry line, "
-                                               "two points and a symmetry point, "
-                                               "an element and a symmetry line "
-                                               "or an element and a symmetry point from the sketch."));
+        showSymmetricWrongSelectionWarning(Obj);
         return;
     }
 
@@ -9864,12 +10255,7 @@ void CmdSketcherConstrainSymmetric::activated(int iMsg)
             return;
         }
 
-        Gui::TranslatedUserWarning(Obj,
-                                   QObject::tr("Wrong selection"),
-                                   QObject::tr("Select two points and a symmetry line, "
-                                               "two points and a symmetry point, "
-                                               "an element and a symmetry line "
-                                               "or an element and a symmetry point from the sketch."));
+        showSymmetricWrongSelectionWarning(Obj);
         return;
     }
 
@@ -9889,6 +10275,12 @@ void CmdSketcherConstrainSymmetric::activated(int iMsg)
         return;
     }
 
+    if (isEdge(GeoId1, PosId1) && isEdge(GeoId2, PosId2) && isEdge(GeoId3, PosId3)) {
+        // Two elements made symmetric about a center edge (the third selection).
+        applyEdgesSymmetricConstraint(Obj, GeoId1, GeoId2, GeoId3);
+        return;
+    }
+
     if (isVertex(GeoId1, PosId1) && isVertex(GeoId2, PosId2)) {
         if (isEdge(GeoId3, PosId3)) {
             const Part::Geometry* geom = Obj->getGeometry(GeoId3);
@@ -9904,14 +10296,14 @@ void CmdSketcherConstrainSymmetric::activated(int iMsg)
 
                 // undo command open
                 openCommand(QT_TRANSLATE_NOOP("Command", "Add symmetric constraint"));
-                Gui::cmdAppObjectArgs(
-                    selection->getObject(),
-                    "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d))",
+                addPointPairSymmetricConstraint(
+                    Obj,
                     GeoId1,
-                    static_cast<int>(PosId1),
+                    PosId1,
                     GeoId2,
-                    static_cast<int>(PosId2),
-                    GeoId3);
+                    PosId2,
+                    GeoId3,
+                    Sketcher::PointPos::none);
 
                 finishTransactionAndUpdate(this, Obj);
                 return;
@@ -9920,27 +10312,14 @@ void CmdSketcherConstrainSymmetric::activated(int iMsg)
         else if (isVertex(GeoId3, PosId3)) {
             // undo command open
             openCommand(QT_TRANSLATE_NOOP("Command", "Add symmetric constraint"));
-            Gui::cmdAppObjectArgs(
-                selection->getObject(),
-                "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d,%d))",
-                GeoId1,
-                static_cast<int>(PosId1),
-                GeoId2,
-                static_cast<int>(PosId2),
-                GeoId3,
-                static_cast<int>(PosId3));
+            addPointPairSymmetricConstraint(Obj, GeoId1, PosId1, GeoId2, PosId2, GeoId3, PosId3);
 
             finishTransactionAndUpdate(this, Obj);
             return;
         }
     }
 
-    Gui::TranslatedUserWarning(Obj,
-                               QObject::tr("Wrong selection"),
-                               QObject::tr("Select two points and a symmetry line, "
-                                           "two points and a symmetry point, "
-                                           "an element and a symmetry line "
-                                           "or an element and a symmetry point from the sketch."));
+    showSymmetricWrongSelectionWarning(Obj);
 }
 
 void CmdSketcherConstrainSymmetric::applyConstraint(std::vector<SelIdPair>& selSeq, int seqIndex)
@@ -10031,25 +10410,19 @@ void CmdSketcherConstrainSymmetric::applyConstraint(std::vector<SelIdPair>& selS
 
                 // undo command open
                 openCommand(QT_TRANSLATE_NOOP("Command", "Add symmetric constraint"));
-                Gui::cmdAppObjectArgs(
+                addPointPairSymmetricConstraint(
                     Obj,
-                    "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d))",
                     GeoId1,
-                    static_cast<int>(PosId1),
+                    PosId1,
                     GeoId2,
-                    static_cast<int>(PosId2),
-                    GeoId3);
+                    PosId2,
+                    GeoId3,
+                    Sketcher::PointPos::none);
 
                 finishTransactionAndUpdate(this, Obj);
             }
             else {
-                Gui::TranslatedUserWarning(
-                    Obj,
-                    QObject::tr("Wrong selection"),
-                    QObject::tr("Select two points and a symmetry line, "
-                                "two points and a symmetry point, "
-                                "an element and a symmetry line "
-                                "or an element and a symmetry point from the sketch."));
+                showSymmetricWrongSelectionWarning(Obj);
             }
             return;
         }
@@ -10070,15 +10443,7 @@ void CmdSketcherConstrainSymmetric::applyConstraint(std::vector<SelIdPair>& selS
 
             // undo command open
             openCommand(QT_TRANSLATE_NOOP("Command", "Add symmetric constraint"));
-            Gui::cmdAppObjectArgs(
-                Obj,
-                "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d,%d))",
-                GeoId1,
-                static_cast<int>(PosId1),
-                GeoId2,
-                static_cast<int>(PosId2),
-                GeoId3,
-                static_cast<int>(PosId3));
+            addPointPairSymmetricConstraint(Obj, GeoId1, PosId1, GeoId2, PosId2, GeoId3, PosId3);
 
             finishTransactionAndUpdate(this, Obj);
             return;
@@ -10134,6 +10499,25 @@ void CmdSketcherConstrainSymmetric::applyConstraint(std::vector<SelIdPair>& selS
                 return;
             }
             break;
+        }
+        case 13:// {SelEdge, SelEdge, SelEdgeOrAxis}
+        case 14:// {SelEdge, SelEdge, SelExternalEdge}
+        {
+            // Two elements made symmetric about a center edge (the third selection).
+            GeoId1 = selSeq.at(0).GeoId;
+            GeoId2 = selSeq.at(1).GeoId;
+            GeoId3 = selSeq.at(2).GeoId;
+            PosId1 = Sketcher::PointPos::none;
+            PosId2 = Sketcher::PointPos::none;
+            PosId3 = Sketcher::PointPos::none;
+
+            if (areAllPointsOrSegmentsFixed(Obj, GeoId1, GeoId2, GeoId3)) {
+                showNoConstraintBetweenFixedGeometry(Obj);
+                return;
+            }
+
+            applyEdgesSymmetricConstraint(Obj, GeoId1, GeoId2, GeoId3);
+            return;
         }
         default:
             break;

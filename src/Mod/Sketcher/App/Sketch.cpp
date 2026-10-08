@@ -4169,6 +4169,17 @@ int Sketch::addSymmetricConstraint(int geoId1, PointPos pos1, int geoId2, PointP
         GCS::Point& p2 = Points[pointId2];
         GCS::Line& l = Lines[Geoms[geoId3].index];
         int tag = ++ConstraintsCounter;
+
+        if (pointId1 == pointId2) {
+            // The two points are the same GCS point, so the perpendicularity part of the
+            // symmetry is identically satisfied and the full constraint is
+            // rank-deficient. This is the same degeneracy as the arc-centre case handled
+            // above: only the midpoint-on-line part carries information, reducing to the
+            // point lying on the symmetry line.
+            GCSsys.addConstraintMidpointOnLine(p1, p2, l.p1, l.p2, tag);
+            return ConstraintsCounter;
+        }
+
         GCSsys.addConstraintP2PSymmetric(p1, p2, l, tag);
         return ConstraintsCounter;
     }
@@ -4198,6 +4209,19 @@ int Sketch::addSymmetricConstraint(
         GCS::Point& p2 = Points[pointId2];
         GCS::Point& p = Points[pointId3];
         int tag = ++ConstraintsCounter;
+
+        if (pointId1 == pointId2) {
+            // A point cannot be the mirror of itself about another point. The
+            // point-pair symmetry is PointOnLine + PointOnPerpBisector of the
+            // segment p1p2, and a segment of zero length has no perpendicular
+            // bisector: both equations become identically satisfied, so the
+            // constraint carries no information and the solver reports it as
+            // conflicting. The relation really means that the centre is that
+            // point.
+            GCSsys.addConstraintP2PCoincident(p, p1, tag);
+            return ConstraintsCounter;
+        }
+
         GCSsys.addConstraintP2PSymmetric(p1, p2, p, tag);
         return ConstraintsCounter;
     }
