@@ -76,12 +76,14 @@ Gui::SelectionPickPolicy::Candidate pickCandidate(
     int priority,
     bool closeToFirst,
     bool hasGate,
-    bool passesGate
+    bool passesGate,
+    int ownerPriority = 0
 )
 {
     Gui::SelectionPickPolicy::Candidate candidate;
     candidate.owner = owner;
     candidate.priority = priority;
+    candidate.ownerPriority = ownerPriority;
     candidate.closeToFirst = closeToFirst;
     candidate.hasGate = hasGate;
     candidate.passesGate = passesGate;
@@ -162,6 +164,35 @@ TEST(SelectionPickPolicyTest, keepsPreferredPickWhenNoCandidatePassesGate)
     std::vector<Gui::SelectionPickPolicy::Candidate> candidates {
         pickCandidate(&firstOwner, 1, true, true, false),
         pickCandidate(&secondOwner, 0, true, true, false),
+    };
+
+    EXPECT_EQ(Gui::SelectionPickPolicy::choosePreferredPick(candidates), 0U);
+}
+
+// A sketch lying on a solid face produces a coincident pick with the face.
+// The sketch's view provider claims a higher pick priority, so it must win even
+// though the face is the first owner in the depth-sorted pick list.
+TEST(SelectionPickPolicyTest, prefersHigherOwnerPriorityForCoincidentPicks)
+{
+    int faceOwner {};
+    int sketchOwner {};
+    std::vector<Gui::SelectionPickPolicy::Candidate> candidates {
+        pickCandidate(&faceOwner, 1, true, false, true),
+        pickCandidate(&sketchOwner, 2, true, false, true, 1),
+    };
+
+    EXPECT_EQ(Gui::SelectionPickPolicy::choosePreferredPick(candidates), 1U);
+}
+
+// The same object priority must not reach through a farther object: when the
+// higher-priority pick does not coincide with the first pick it is ignored.
+TEST(SelectionPickPolicyTest, ignoresOwnerPriorityWhenNotCoincident)
+{
+    int faceOwner {};
+    int sketchOwner {};
+    std::vector<Gui::SelectionPickPolicy::Candidate> candidates {
+        pickCandidate(&faceOwner, 1, true, false, true),
+        pickCandidate(&sketchOwner, 3, false, false, true, 1),
     };
 
     EXPECT_EQ(Gui::SelectionPickPolicy::choosePreferredPick(candidates), 0U);

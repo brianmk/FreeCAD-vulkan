@@ -687,6 +687,15 @@ protected:
 public:
     virtual ViewProvider* startEditing(int ModNum = 0);
     bool isEditing() const;
+    /** Report whether an interactive tool/handler is actively consuming mouse
+     * moves while editing and driving a live on-view preview (e.g. a Sketcher
+     * DrawSketchHandler).  Callers use this to avoid coalescing the moves such a
+     * handler needs, without disabling stale-hover coalescing for the whole
+     * edit session.  Defaults to false. */
+    virtual bool isEditHandlerActive() const
+    {
+        return false;
+    }
     void finishEditing();
     virtual void setActive(bool active);
 

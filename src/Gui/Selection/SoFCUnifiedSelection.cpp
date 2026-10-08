@@ -149,17 +149,37 @@ std::size_t choosePreferredPick(const std::vector<Candidate>& picked)
 
     std::size_t preferred = 0;
     int pickedPriority = picked.front().priority;
-    const void* firstOwner = picked.front().owner;
+    int pickedOwnerPriority = picked.front().ownerPriority;
+    const void* preferredOwner = picked.front().owner;
     bool preferredIsAnnotation = picked.front().isAnnotation;
 
     for (std::size_t i = 1; i < picked.size(); ++i) {
         const auto& info = picked[i];
-        if (info.owner != firstOwner) {
-            break;
-        }
-
         if (!info.closeToFirst) {
             continue;
+        }
+
+        // A pickup from an object that claims a higher pick priority wins even
+        // across owners: a sketch edge/face lying exactly on a solid face must
+        // beat the coincident solid face regardless of scene order.  See
+        // ViewProviderDocumentObject::getPickPriority().
+        if (info.ownerPriority > pickedOwnerPriority) {
+            preferred = i;
+            pickedPriority = info.priority;
+            pickedOwnerPriority = info.ownerPriority;
+            preferredOwner = info.owner;
+            preferredIsAnnotation = info.isAnnotation;
+            continue;
+        }
+        if (info.ownerPriority < pickedOwnerPriority) {
+            continue;
+        }
+
+        // Within the preferred owner keep the historic behaviour: only the detail
+        // priority (point > line > face) may change the choice, never a jump to a
+        // different object.
+        if (info.owner != preferredOwner) {
+            break;
         }
 
         if (info.priority > pickedPriority) {
@@ -315,6 +335,15 @@ static bool isAnnotationPick(const SoPickedPoint* pp, const Document* doc)
     return false;
 }
 
+// Two picked points name the same on-screen feature when they hit the same
+// scene location (within a small tolerance).  This happens e.g. for a sketch
+// lying exactly on the solid face it is attached to; such picks must be
+// resolved by priority, not treated as one object occluding another.
+static bool coincidentPickedPoint(const SoPickedPoint* a, const SoPickedPoint* b)
+{
+    return a && b && a->getPoint().equals(b->getPoint(), 0.2F);
+}
+
 int SoFCUnifiedSelection::getPriority(const SoPickedPoint* p)
 {
     const SoDetail* detail = p->getDetail();
@@ -370,6 +399,7 @@ SelectionPickPolicy::Candidate SoFCUnifiedSelection::getPickCandidate(
     SelectionPickPolicy::Candidate candidate;
     candidate.owner = info.vpd;
     candidate.priority = getPriority(info.pp);
+    candidate.ownerPriority = info.vpd ? info.vpd->getPickPriority() : 0;
     candidate.isAnnotation = doc && info.pp && isAnnotationPick(info.pp, doc);
     candidate.hasGate = hasSelectionGate(info);
     candidate.passesGate = passesSelectionGate(info);
@@ -418,7 +448,23 @@ std::vector<SoFCUnifiedSelection::PickedInfo> SoFCUnifiedSelection::getPickedLis
         if (this->pcDocument && path && path->containsPath(action->getCurPath())) {
             vp = this->pcDocument->getViewProviderByPathFromHead(path);
             if (singlePick && last_vp && last_vp != vp && canFinalizeSinglePick(ret)) {
-                break;
+                // Normally the first object that produced a pick owns the single
+                // pick and we must not reach through it to a farther object.  A
+                // coincident pick from an object with a higher pick priority is
+                // not "farther" though: a sketch lying on a solid face shares the
+                // picked point with the face, so keep it as a candidate and let
+                // the priority choice below pick the sketch.
+                const int newPriority = (vp && vp->isDerivedFrom(ViewProviderDocumentObject::getClassTypeId()))
+                    ? static_cast<ViewProviderDocumentObject*>(vp)->getPickPriority()
+                    : 0;
+                const int curPriority = (!ret.empty() && ret.front().vpd)
+                    ? ret.front().vpd->getPickPriority()
+                    : 0;
+                const bool coincident = !ret.empty() && ret.front().pp
+                    && coincidentPickedPoint(info.pp, ret.front().pp);
+                if (!coincident || newPriority <= curPriority) {
+                    break;
+                }
             }
         }
         if (!vp || !vp->isDerivedFrom(ViewProviderDocumentObject::getClassTypeId())) {

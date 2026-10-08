@@ -58,6 +58,7 @@
 #include <QWhatsThis>
 #include <QWindow>
 #include <QPushButton>
+#include <cstdlib>
 #include <string>
 
 
@@ -1054,6 +1055,13 @@ void MainWindow::closeActiveWindow()
 
 int MainWindow::confirmSave(App::Document* doc, QWidget* parent, bool addCheckbox)
 {
+    // Test hook: FC_SKIP_UNSAVED_PROMPT=1 makes an unattended run (the fcprobe
+    // harness) never block on this modal dialog -- it discards unsaved changes
+    // instead of asking.  No effect on a normal interactive session.
+    if (std::getenv("FC_SKIP_UNSAVED_PROMPT") != nullptr) {
+        return ConfirmSaveResult::Discard;
+    }
+
     QMessageBox box(parent ? parent : this);
     box.setObjectName(QStringLiteral("confirmSave"));
     box.setIcon(QMessageBox::Question);

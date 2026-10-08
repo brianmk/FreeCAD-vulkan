@@ -19,6 +19,7 @@
 #include <Inventor/SbVec3f.h>
 #include <Inventor/SbViewportRegion.h>
 #include <Inventor/SoEventManager.h>
+#include <Inventor/actions/SoHandleEventAction.h>
 #include <Inventor/nodes/SoAnnotation.h>
 #include <Inventor/nodes/SoCamera.h>
 #include <Inventor/nodes/SoDirectionalLight.h>
@@ -129,6 +130,23 @@ VulkanViewportAdapter::VulkanViewportAdapter(QStackedWidget* stack,
         auto* controller = _viewer ? _viewer->getInteractionController() : nullptr;
         return controller && controller->processSoEvent(ev);
     });
+    // Hover coalescing in the input EventFilter drops stale no-button moves;
+    // while an active tool/drag handler is driving a live preview from those
+    // moves it must not, or the preview stops tracking the cursor.  A modal Coin
+    // grabber covers draggers, but a Sketcher DrawSketchHandler drives its
+    // preview without one, so ask the editing provider for its active handler
+    // (not merely "is editing": hovering during an edit session is exactly the
+    // workload coalescing was added to speed up, so treating all of edit mode as
+    // consuming would disable it for the whole session).
+    _vulkanViewer->setEventGrabProbe([this]() -> bool {
+        if (_viewer && _viewer->isEditingHandlerActive()) {
+            return true;
+        }
+        auto* controller = _viewer ? _viewer->getInteractionController() : nullptr;
+        SoEventManager* manager = controller ? controller->getSoEventManager() : nullptr;
+        SoHandleEventAction* action = manager ? manager->getHandleEventAction() : nullptr;
+        return action && action->getGrabber() != nullptr;
+    });
     // Navigation's cursor shapes are routed to the visible surface by
     // View3DInventorViewer::setCursorTarget() (set in useVulkanViewport), so
     // no cursor mirroring is needed.  The event filter on the GL widget only
@@ -161,6 +179,17 @@ void VulkanViewportAdapter::syncViewer()
     // Re-point the camera + axis-cross decorations and re-attach the change
     // sensors (shared with the camera-changed fast path).
     this->resyncCameraAndDecorations();
+    // The hidden GL viewer never renders on the Vulkan path (the Vulkan surface
+    // does), so the shared camera's near/far are not auto-fitted after a scene
+    // edit.  SoRayPickAction derives its ray depth range, and the
+    // SoShape/SoBrepFaceSet CLIP_NEAR/CLIP_FAR bounding-box cull, from those
+    // planes.  With a stale range a pick rejects geometry outside it, so
+    // hovering a solid that just appeared (e.g. a freshly padded sketch) hit
+    // the entity behind it -- or the solid's own far cap -- instead of the
+    // camera-facing face, until some later viewAll refreshed the clip.  Mirror
+    // the GL render's auto-clip here so the pick range always matches the
+    // current scene.
+    rm->updateClippingPlanes();
     // The background (solid color + gradient) is pushed by pushSettings(), the
     // single source of truth derived from the hidden GL viewer.  syncViewer()
     // only re-seeds scene/camera/overlays here and lets pushSettings() refresh
@@ -299,17 +328,8 @@ void VulkanViewportAdapter::resyncViewport()
     if (QWidget* container = _vulkanViewer->getNativeWidget()) {
         applySurfaceViewportToGL(container->size());
     }
-    // SoRayPickAction derives its ray depth range from the shared camera's
-    // near/far planes.  A GL render auto-fits those planes to the scene, but
-    // the display-only Vulkan path never renders through the GL viewer, so on
-    // a scene that appeared after the camera was last framed (e.g. the origin
-    // planes the sketch attachment editor enlarges over a brand-new empty
-    // document) the planes fall outside [near, far] and hover/click picks miss
-    // until a render-mode round-trip runs the GL auto-clip.  Refresh the planes
-    // here, from the same scene bounding box the GL render would use.
-    if (SoRenderManager* rm = _viewer->getSoRenderManager()) {
-        rm->updateClippingPlanes();
-    }
+    // syncViewer() refreshes the shared camera's near/far (the pick depth range
+    // the display-only Vulkan path never auto-fits) before pushing settings.
     syncViewer();
 #endif
 }
@@ -827,6 +847,7 @@ VulkanViewportAdapter::~VulkanViewportAdapter()
         // Stop delivering input to the (soon-dead) GL viewer/controller.
         _vulkanViewer->setEventSink(nullptr);
         _vulkanViewer->setRawEventTarget(nullptr);
+        _vulkanViewer->setEventGrabProbe(nullptr);
         QWidget* host = _vulkanViewer->parentWidget();
         if (auto* stack = qobject_cast<QStackedWidget*>(host)) {
             stack->removeWidget(_vulkanViewer);

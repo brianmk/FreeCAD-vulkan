@@ -33,6 +33,8 @@
 #include <QToolButton>
 #include <QStyleOption>
 
+#include <cstdio>
+#include <cstdlib>
 
 #include <boost/algorithm/string/predicate.hpp>
 
@@ -181,6 +183,9 @@ ToolBar::ToolBar(QWidget* parent)
 
 void ToolBar::undock()
 {
+    if (std::getenv("FC_DRAG_DEBUG")) {  // DNDBG
+        fprintf(stderr, "[DNDBG] TOOLBAR undock %s\n", objectName().toUtf8().constData());
+    }
     {
         // We want to block only some signals - topLevelChanged should still be propagated
         QSignalBlocker blocker(this);
@@ -298,6 +303,12 @@ void ToolBarGrip::paintEvent(QPaintEvent*)
 
 void ToolBarGrip::mouseMoveEvent(QMouseEvent* me)
 {
+    if (std::getenv("FC_DRAG_DEBUG")) {  // DNDBG
+        const QPoint _g = me->globalPosition().toPoint();
+        auto* _tb = qobject_cast<ToolBar*>(parentWidget());
+        fprintf(stderr, "[DNDBG] GRIP move btns=%d g=(%d,%d) tb=%s\n", int(me->buttons()),
+                _g.x(), _g.y(), _tb ? _tb->objectName().toUtf8().constData() : "-");
+    }
     auto toolbar = qobject_cast<ToolBar*>(parentWidget());
     if (!toolbar) {
         return;
@@ -937,6 +948,11 @@ bool ToolBarManager::addToolBarToArea(QObject* source, QMouseEvent* ev)
     if (!tb || !tb->isFloating()) {
         return false;
     }
+    if (std::getenv("FC_DRAG_DEBUG")) {  // DNDBG
+        const QPoint _c = QCursor::pos();
+        fprintf(stderr, "[DNDBG] TBM addToolBarToArea ev=%d tb=%s cursor=(%d,%d)\n",
+                int(ev->type()), tb->objectName().toUtf8().constData(), _c.x(), _c.y());
+    }
 
     static QPointer<OverlayDragFrame> tbPlaceholder;
     static QPointer<ToolBarAreaWidget> lastArea;
@@ -1156,6 +1172,30 @@ void ToolBarManager::onToggleStatusBarWidget(QWidget* widget, bool visible)
 bool ToolBarManager::eventFilter(QObject* source, QEvent* ev)
 {
     bool res = false;
+    if (std::getenv("FC_DRAG_DEBUG")) {  // DNDBG
+        const QEvent::Type _t = ev->type();
+        auto* _tb = qobject_cast<QToolBar*>(source);
+        if (_t == QEvent::Move || _t == QEvent::ParentChange || _t == QEvent::WindowStateChange
+            || _t == QEvent::Show || _t == QEvent::Hide) {
+            if (_tb) {
+                const QPoint _g0 = _tb->mapToGlobal(QPoint(0, 0));
+                const QRect _gg = _tb->geometry();
+                fprintf(stderr,
+                        "[DNDBG] TBM tbEv ev=%d tb=%s floating=%d isWin=%d geom=(%d,%d,%d,%d) "
+                        "g0=(%d,%d)\n",
+                        int(_t), _tb->objectName().toUtf8().constData(),
+                        _tb->isFloating() ? 1 : 0, _tb->isWindow() ? 1 : 0, _gg.x(), _gg.y(),
+                        _gg.width(), _gg.height(), _g0.x(), _g0.y());
+            }
+        }
+        if (_t == QEvent::MouseMove || _t == QEvent::MouseButtonRelease
+            || _t == QEvent::MouseButtonPress) {
+            fprintf(stderr, "[DNDBG] TBM eventFilter ev=%d src=%s tb=%s floating=%d\n", int(_t),
+                    source->metaObject()->className(),
+                    _tb ? _tb->objectName().toUtf8().constData() : "-",
+                    _tb ? (_tb->isFloating() ? 1 : 0) : -1);
+        }
+    }
     switch (ev->type()) {
         case QEvent::Show:
         case QEvent::Hide:
