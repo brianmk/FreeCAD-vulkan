@@ -841,3 +841,36 @@ class TestConstraintCommandsGui(SketcherGuiTestCase):
         self.assertEqual(list(self.sketch.RedundantConstraints), [])
         self.assertEqual(list(self.sketch.ConflictingConstraints), [])
 
+    def test_symmetric_coincident_vertices_about_a_centre_point(self):
+        # The same coincident pair, but made symmetric about a centre point. The
+        # point-pair symmetry is PointOnLine + PointOnPerpBisector of the segment
+        # between the two points; for a segment of zero length there is no
+        # perpendicular bisector, so both equations are vacuous and the solver
+        # reports the constraint conflicting. The request really means that the
+        # centre is the shared point.
+        self.sketch.addGeometry(
+            Part.LineSegment(App.Vector(10, 15, 0), App.Vector(-30, 30, 0)), False
+        )  # Edge2 starts where Edge1 ends
+        self.sketch.addConstraint(Sketcher.Constraint("Coincident", 0, 2, 1, 1))
+        self.sketch.addGeometry(
+            Part.LineSegment(App.Vector(40, -20, 0), App.Vector(40, 20, 0)), False
+        )  # Edge3 provides the free vertex that becomes the centre
+        self.doc.recompute()
+
+        self.select("Vertex2", "Vertex4", "Vertex7")
+        Gui.runCommand("Sketcher_ConstrainSymmetric")
+
+        self.assertEqual(
+            sorted(constraint.Type for constraint in self.sketch.Constraints),
+            ["Coincident", "Coincident"],
+        )
+        self.assertEqual(self.sketch.solve(), 0)
+        self.assertEqual(list(self.sketch.RedundantConstraints), [])
+        self.assertEqual(list(self.sketch.ConflictingConstraints), [])
+
+        # The centre ends up on the shared point.
+        shared = self.sketch.getPoint(0, 2)
+        centre = self.sketch.getPoint(2, 1)
+        self.assertAlmostEqual(centre.x, shared.x, places=6)
+        self.assertAlmostEqual(centre.y, shared.y, places=6)
+

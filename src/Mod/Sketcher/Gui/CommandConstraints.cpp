@@ -2263,6 +2263,19 @@ public:
     size_t s_pts, s_lns, s_cir, s_ell, s_spl;
 };
 
+// Defined further down, next to the Symmetric command. Declared here because the
+// constraint handlers below also emit a point-pair symmetry, and that emission
+// has to degrade to the non-degenerate remainder when the two points coincide.
+static void addPointPairSymmetricConstraint(
+    Sketcher::SketchObject* Obj,
+    int GeoId1,
+    Sketcher::PointPos PosId1,
+    int GeoId2,
+    Sketcher::PointPos PosId2,
+    int GeoId3,
+    Sketcher::PointPos PosId3
+);
+
 class DrawSketchHandlerDimension : public DrawSketchHandler
 {
 public:
@@ -3816,8 +3829,14 @@ protected:
                     return;
                 }
 
-                Gui::cmdAppObjectArgs(Obj, "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d)) ",
-                    GeoId1, static_cast<int>(PosId1), GeoId2, static_cast<int>(PosId2), GeoId3);
+                addPointPairSymmetricConstraint(
+                    Obj,
+                    GeoId1,
+                    PosId1,
+                    GeoId2,
+                    PosId2,
+                    GeoId3,
+                    Sketcher::PointPos::none);
 
                 addConstraintIndex();
                 tryAutoRecompute(Obj);
@@ -3840,8 +3859,7 @@ protected:
                     return;
                 }
             }
-            Gui::cmdAppObjectArgs(Obj, "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d,%d)) ",
-                GeoId1, static_cast<int>(PosId1), GeoId2, static_cast<int>(PosId2), GeoId3, static_cast<int>(PosId3));
+            addPointPairSymmetricConstraint(Obj, GeoId1, PosId1, GeoId2, PosId2, GeoId3, PosId3);
 
             addConstraintIndex();
             tryAutoRecompute(Obj);
@@ -9754,6 +9772,71 @@ static Base::Vector3d mirrorPointAboutLine(
     return projection * 2 - point;
 }
 
+/// Add the Symmetric constraint between two points and their symmetry element,
+/// which is a line (PosId3 == none) or a centre point.
+///
+/// A point-pair symmetry is Perpendicular + MidpointOnLine about a line, and
+/// PointOnLine + PointOnPerpBisector about a centre point. When the two points
+/// coincide, both halves of the relevant form become identically satisfied
+/// equations: the perpendicularity of a null segment, and "on the line through
+/// p1p2 / on its perpendicular bisector" of a segment with no length. The solver
+/// then reports the pair as redundant and conflicting, over-constraining the
+/// sketch. Only the rank-1 remainder of the request carries information, so add
+/// that instead: the shared point lies on the symmetry line, or - for a centre
+/// point - the centre is that point.
+static void addPointPairSymmetricConstraint(
+    Sketcher::SketchObject* Obj,
+    int GeoId1,
+    Sketcher::PointPos PosId1,
+    int GeoId2,
+    Sketcher::PointPos PosId2,
+    int GeoId3,
+    Sketcher::PointPos PosId3
+)
+{
+    const bool coincident = Obj->arePointsCoincident(GeoId1, PosId1, GeoId2, PosId2);
+    const bool aboutLine = PosId3 == Sketcher::PointPos::none;
+
+    if (coincident && aboutLine) {
+        Gui::cmdAppObjectArgs(
+            Obj,
+            "addConstraint(Sketcher.Constraint('PointOnObject',%d,%d,%d))",
+            GeoId1,
+            static_cast<int>(PosId1),
+            GeoId3);
+    }
+    else if (coincident) {
+        Gui::cmdAppObjectArgs(
+            Obj,
+            "addConstraint(Sketcher.Constraint('Coincident',%d,%d,%d,%d))",
+            GeoId1,
+            static_cast<int>(PosId1),
+            GeoId3,
+            static_cast<int>(PosId3));
+    }
+    else if (aboutLine) {
+        Gui::cmdAppObjectArgs(
+            Obj,
+            "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d))",
+            GeoId1,
+            static_cast<int>(PosId1),
+            GeoId2,
+            static_cast<int>(PosId2),
+            GeoId3);
+    }
+    else {
+        Gui::cmdAppObjectArgs(
+            Obj,
+            "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d,%d))",
+            GeoId1,
+            static_cast<int>(PosId1),
+            GeoId2,
+            static_cast<int>(PosId2),
+            GeoId3,
+            static_cast<int>(PosId3));
+    }
+}
+
 class CmdSketcherConstrainSymmetric: public CmdSketcherConstraint
 {
 public:
@@ -10213,30 +10296,14 @@ void CmdSketcherConstrainSymmetric::activated(int iMsg)
 
                 // undo command open
                 openCommand(QT_TRANSLATE_NOOP("Command", "Add symmetric constraint"));
-                // Two coincident points cannot be the two halves of a point-pair
-                // Symmetric constraint: for p1 == p2 its perpendicularity
-                // equation is identically satisfied, so the pair is
-                // rank-deficient and the solver reports it redundant, which
-                // makes the sketch over-constrained. What remains is that the
-                // shared point lies on the symmetry line.
-                if (Obj->arePointsCoincident(GeoId1, PosId1, GeoId2, PosId2)) {
-                    Gui::cmdAppObjectArgs(
-                        selection->getObject(),
-                        "addConstraint(Sketcher.Constraint('PointOnObject',%d,%d,%d))",
-                        GeoId1,
-                        static_cast<int>(PosId1),
-                        GeoId3);
-                }
-                else {
-                    Gui::cmdAppObjectArgs(
-                        selection->getObject(),
-                        "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d))",
-                        GeoId1,
-                        static_cast<int>(PosId1),
-                        GeoId2,
-                        static_cast<int>(PosId2),
-                        GeoId3);
-                }
+                addPointPairSymmetricConstraint(
+                    Obj,
+                    GeoId1,
+                    PosId1,
+                    GeoId2,
+                    PosId2,
+                    GeoId3,
+                    Sketcher::PointPos::none);
 
                 finishTransactionAndUpdate(this, Obj);
                 return;
@@ -10245,15 +10312,7 @@ void CmdSketcherConstrainSymmetric::activated(int iMsg)
         else if (isVertex(GeoId3, PosId3)) {
             // undo command open
             openCommand(QT_TRANSLATE_NOOP("Command", "Add symmetric constraint"));
-            Gui::cmdAppObjectArgs(
-                selection->getObject(),
-                "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d,%d))",
-                GeoId1,
-                static_cast<int>(PosId1),
-                GeoId2,
-                static_cast<int>(PosId2),
-                GeoId3,
-                static_cast<int>(PosId3));
+            addPointPairSymmetricConstraint(Obj, GeoId1, PosId1, GeoId2, PosId2, GeoId3, PosId3);
 
             finishTransactionAndUpdate(this, Obj);
             return;
@@ -10351,14 +10410,14 @@ void CmdSketcherConstrainSymmetric::applyConstraint(std::vector<SelIdPair>& selS
 
                 // undo command open
                 openCommand(QT_TRANSLATE_NOOP("Command", "Add symmetric constraint"));
-                Gui::cmdAppObjectArgs(
+                addPointPairSymmetricConstraint(
                     Obj,
-                    "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d))",
                     GeoId1,
-                    static_cast<int>(PosId1),
+                    PosId1,
                     GeoId2,
-                    static_cast<int>(PosId2),
-                    GeoId3);
+                    PosId2,
+                    GeoId3,
+                    Sketcher::PointPos::none);
 
                 finishTransactionAndUpdate(this, Obj);
             }
@@ -10384,15 +10443,7 @@ void CmdSketcherConstrainSymmetric::applyConstraint(std::vector<SelIdPair>& selS
 
             // undo command open
             openCommand(QT_TRANSLATE_NOOP("Command", "Add symmetric constraint"));
-            Gui::cmdAppObjectArgs(
-                Obj,
-                "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d,%d))",
-                GeoId1,
-                static_cast<int>(PosId1),
-                GeoId2,
-                static_cast<int>(PosId2),
-                GeoId3,
-                static_cast<int>(PosId3));
+            addPointPairSymmetricConstraint(Obj, GeoId1, PosId1, GeoId2, PosId2, GeoId3, PosId3);
 
             finishTransactionAndUpdate(this, Obj);
             return;
