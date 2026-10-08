@@ -106,6 +106,13 @@ public:
     /// traces (which carry the same ordinal) to a single monotonic value.
     uint32_t getRenderFrameCount() const;
 
+    /// True only when the Vulkan surface is the viewport's currently shown
+    /// page -- i.e. the classic Coin/OpenGL viewer is not the page on screen.
+    /// This reflects the actual stacked-widget page, not the requested render
+    /// mode, so it is false while a raster-Vulkan request has not (yet) brought
+    /// the Vulkan surface up, and false in the classic GL page.
+    bool isVulkanViewportVisible() const;
+
     /// Force a single Vulkan frame regardless of whether the viewport is
     /// converged-idle.  Used by scripted probes after a scene/camera edit:
     /// the demand-driven widget only re-renders on redraw() or refining, and

@@ -627,6 +627,22 @@ uint32_t VulkanViewportAdapter::getRenderFrameCount() const
 #endif
 }
 
+bool VulkanViewportAdapter::isVulkanViewportVisible() const
+{
+#ifdef FREECAD_USE_VULKAN
+    if (!_vulkanViewer) {
+        return false;
+    }
+    // The viewport is a QStackedWidget: exactly one backend page is current,
+    // so the Vulkan surface is on screen iff it is the current page (and the
+    // classic Coin/OpenGL viewer therefore is not).
+    auto* host = qobject_cast<QStackedWidget*>(_vulkanViewer->parentWidget());
+    return host && host->currentWidget() == _vulkanViewer;
+#else
+    return false;
+#endif
+}
+
 void VulkanViewportAdapter::requestVulkanRender()
 {
 #ifdef FREECAD_USE_VULKAN
