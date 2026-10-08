@@ -682,3 +682,134 @@ class TestConstraintCommandsGui(SketcherGuiTestCase):
                 self.doc.undo()
                 self.assertEqual(self.sketch.ConstraintCount, 0)
 
+    # --- Symmetric constraint with a vertex shared by the two elements -------
+    #
+    # Two edges meeting at an apex (the classic V / roof) share that vertex. The
+    # shared pair of endpoints is coincident, and a point-pair Symmetric
+    # constraint on two coincident points has a perpendicularity equation that
+    # is identically satisfied. Adding it anyway makes the pair rank-deficient,
+    # so the solver reports it redundant and the two Symmetric constraints
+    # conflict: the sketch comes out over-constrained. The shared vertex only
+    # needs to lie on the symmetry line.
+
+    def add_shared_vertex_geometry(self, apex):
+        """Edge2 and Edge3 meet at `apex` (Edge1 comes from setUp)."""
+        self.sketch.addGeometry(
+            Part.LineSegment(apex, apex + App.Vector(6, 3, 0)), False
+        )
+        self.sketch.addGeometry(
+            Part.LineSegment(apex, apex + App.Vector(-4, 5, 0)), False
+        )
+        self.sketch.addConstraint(Sketcher.Constraint("Coincident", 1, 1, 2, 1))
+        self.doc.recompute()
+
+    def test_symmetric_shared_vertex_is_not_over_constrained(self):
+        self.add_shared_vertex_geometry(App.Vector(0, 4, 0))
+
+        self.select("Edge2", "Edge3", "H_Axis")
+        Gui.runCommand("Sketcher_ConstrainSymmetric")
+
+        # The shared apex gets the on-line remainder of the pair instead of a
+        # second Symmetric constraint.
+        self.assertEqual(
+            sorted(constraint.Type for constraint in self.sketch.Constraints),
+            ["Coincident", "PointOnObject", "Symmetric"],
+        )
+        self.assertEqual(self.sketch.solve(), 0)
+        self.assertEqual(list(self.sketch.RedundantConstraints), [])
+        self.assertEqual(list(self.sketch.ConflictingConstraints), [])
+
+        # The apex lands on the line of symmetry and the edges are mirrored.
+        self.assertAlmostEqual(self.sketch.getPoint(1, 1).y, 0.0, places=6)
+        self.assert_mirrored(1, 2, -1)
+
+    def test_symmetric_shared_vertex_with_internal_center_line(self):
+        self.add_shared_vertex_geometry(App.Vector(2, 6, 0))
+        self.sketch.addGeometry(
+            Part.LineSegment(App.Vector(0, -20, 0), App.Vector(0, 20, 0)), False
+        )
+        self.doc.recompute()
+
+        # Three internal lines: the last selected one is the center edge.
+        self.select("Edge2", "Edge3", "Edge4")
+        Gui.runCommand("Sketcher_ConstrainSymmetric")
+
+        self.assertEqual(
+            sorted(constraint.Type for constraint in self.sketch.Constraints),
+            ["Coincident", "PointOnObject", "Symmetric"],
+        )
+        self.assertEqual(self.sketch.solve(), 0)
+        self.assertEqual(list(self.sketch.RedundantConstraints), [])
+        self.assertEqual(list(self.sketch.ConflictingConstraints), [])
+
+        # The center line is free to move during the solve, so the symmetry is
+        # asserted against the solved line: the shared apex lies on it (it is
+        # its own mirror image) and the far endpoints are mirrored.
+        self.assert_mirrored(1, 2, 3)
+
+    def test_symmetric_shared_vertex_cross_pairing(self):
+        # The shared vertex is Edge2's start and Edge3's end, so the endpoints
+        # pair cross-wise: the shared vertex is the apex that lands on the line
+        # and the two free tips are mirrored. Keeping the start/start, end/end
+        # pairing here would satisfy the solver while collapsing both edges onto
+        # the same segment.
+        apex = App.Vector(0, 3, 0)
+        self.sketch.addGeometry(
+            Part.LineSegment(apex, apex + App.Vector(6, 4, 0)), False
+        )
+        self.sketch.addGeometry(
+            Part.LineSegment(apex + App.Vector(-5, 5, 0), apex), False
+        )
+        self.sketch.addConstraint(Sketcher.Constraint("Coincident", 1, 1, 2, 2))
+        self.doc.recompute()
+
+        self.select("Edge2", "Edge3", "H_Axis")
+        Gui.runCommand("Sketcher_ConstrainSymmetric")
+
+        self.assertEqual(
+            sorted(constraint.Type for constraint in self.sketch.Constraints),
+            ["Coincident", "PointOnObject", "Symmetric"],
+        )
+        self.assertEqual(self.sketch.solve(), 0)
+        self.assertEqual(list(self.sketch.RedundantConstraints), [])
+        self.assertEqual(list(self.sketch.ConflictingConstraints), [])
+
+        # The apex lies on the symmetry line and the free tips are mirrored.
+        self.assertAlmostEqual(self.sketch.getPoint(1, 1).y, 0.0, places=6)
+        tip = self.sketch.getPoint(1, 2)
+        mirrored_tip = self.mirror_point(tip, *self.axis_points(-1))
+        second_tip = self.sketch.getPoint(2, 1)
+        self.assertAlmostEqual(second_tip.x, mirrored_tip.x, places=6)
+        self.assertAlmostEqual(second_tip.y, mirrored_tip.y, places=6)
+
+        # The two edges must not collapse onto the same segment.
+        self.assertGreater((tip - second_tip).Length, 1e-6)
+
+    def test_symmetric_both_endpoints_shared_is_rejected(self):
+        start = App.Vector(0, 2, 0)
+        end = App.Vector(5, 6, 0)
+        self.sketch.addGeometry(Part.LineSegment(start, end), False)
+        self.sketch.addGeometry(Part.LineSegment(start, end), False)
+        self.sketch.addConstraint(Sketcher.Constraint("Coincident", 1, 1, 2, 1))
+        self.sketch.addConstraint(Sketcher.Constraint("Coincident", 1, 2, 2, 2))
+        self.doc.recompute()
+        before = self.sketch.ConstraintCount
+
+        self.select("Edge2", "Edge3", "H_Axis")
+        Gui.runCommand("Sketcher_ConstrainSymmetric")
+
+        # Both pairs would be the degenerate on-line remainder of the same line,
+        # which cannot express a symmetry: nothing is added.
+        self.assertEqual(self.sketch.ConstraintCount, before)
+
+    def test_symmetric_disjoint_edges_have_no_redundancy(self):
+        self.add_symmetric_test_geometry()
+
+        self.select("Edge1", "Edge2", "Edge3")
+        Gui.runCommand("Sketcher_ConstrainSymmetric")
+
+        self.assertEqual(self.sketch.ConstraintCount, 2)
+        self.assertEqual(self.sketch.solve(), 0)
+        self.assertEqual(list(self.sketch.RedundantConstraints), [])
+        self.assertEqual(list(self.sketch.ConflictingConstraints), [])
+
