@@ -200,3 +200,93 @@ TEST_F(SketchObjectTest, testAddSymmetricCircleGetsCenterSymmetricAndEqual)
     EXPECT_GE(countConstraintsOfType(getObject(), Symmetric), 1);
     EXPECT_GE(countConstraintsOfType(getObject(), Equal), 1);
 }
+
+namespace
+{
+// Reflection of point across the line through axisStart and axisEnd.
+Base::Vector3d mirrorPoint(
+    const Base::Vector3d& point,
+    const Base::Vector3d& axisStart,
+    const Base::Vector3d& axisEnd
+)
+{
+    Base::Vector3d direction = axisEnd - axisStart;
+    Base::Vector3d offset = point - axisStart;
+    Base::Vector3d projection = axisStart + direction * (offset.Dot(direction) / direction.Sqr());
+    return projection * 2 - point;
+}
+}  // namespace
+
+TEST_F(SketchObjectTest, testTwoEdgesSymmetricAboutLineConstraintPair)
+{
+    // The "two elements and a center edge" form of the Symmetric constraint is
+    // represented by one constraint per corresponding endpoint pair
+    // (start<->start and end<->end). Verify that the solver really produces the
+    // mirror image of the first element about the center edge.
+    Part::GeomLineSegment line1;
+    Part::GeomLineSegment line2;
+    Part::GeomLineSegment centerLine;
+    line1.setPoints(Base::Vector3d(3, 1, 0), Base::Vector3d(5, 4, 0));
+    line2.setPoints(Base::Vector3d(12, 2, 0), Base::Vector3d(11, 5, 0));
+    centerLine.setPoints(Base::Vector3d(6, -5, 0), Base::Vector3d(6, 5, 0));
+    int geo1 = getObject()->addGeometry(&line1);
+    int geo2 = getObject()->addGeometry(&line2);
+    int geo3 = getObject()->addGeometry(&centerLine);
+
+    for (auto pos : {PointPos::start, PointPos::end}) {
+        auto* symmetric = new Constraint();
+        symmetric->Type = Symmetric;
+        symmetric->First = geo1;
+        symmetric->FirstPos = pos;
+        symmetric->Second = geo2;
+        symmetric->SecondPos = pos;
+        symmetric->Third = geo3;
+        symmetric->ThirdPos = PointPos::none;
+        getObject()->addConstraint(symmetric);
+    }
+
+    EXPECT_EQ(countConstraintsOfType(getObject(), Symmetric), 2);
+    EXPECT_EQ(getObject()->solve(), SketchSolveStatus::Success);
+
+    Base::Vector3d axisStart = getObject()->getPoint(geo3, PointPos::start);
+    Base::Vector3d axisEnd = getObject()->getPoint(geo3, PointPos::end);
+    for (auto pos : {PointPos::start, PointPos::end}) {
+        Base::Vector3d first = getObject()->getPoint(geo1, pos);
+        Base::Vector3d second = getObject()->getPoint(geo2, pos);
+        Base::Vector3d expected = mirrorPoint(first, axisStart, axisEnd);
+        EXPECT_NEAR((second - expected).Length(), 0.0, 1e-6);
+    }
+}
+
+TEST_F(SketchObjectTest, testTwoEdgesSymmetricAboutAxisConstraintPair)
+{
+    // Same as above, but with the sketch coordinate axis as the center edge.
+    Part::GeomLineSegment line1;
+    Part::GeomLineSegment line2;
+    line1.setPoints(Base::Vector3d(3, 1, 0), Base::Vector3d(5, 4, 0));
+    line2.setPoints(Base::Vector3d(12, 2, 0), Base::Vector3d(11, 5, 0));
+    int geo1 = getObject()->addGeometry(&line1);
+    int geo2 = getObject()->addGeometry(&line2);
+
+    for (auto pos : {PointPos::start, PointPos::end}) {
+        auto* symmetric = new Constraint();
+        symmetric->Type = Symmetric;
+        symmetric->First = geo1;
+        symmetric->FirstPos = pos;
+        symmetric->Second = geo2;
+        symmetric->SecondPos = pos;
+        symmetric->Third = VAxis;
+        symmetric->ThirdPos = PointPos::none;
+        getObject()->addConstraint(symmetric);
+    }
+
+    EXPECT_EQ(getObject()->solve(), SketchSolveStatus::Success);
+
+    for (auto pos : {PointPos::start, PointPos::end}) {
+        Base::Vector3d first = getObject()->getPoint(geo1, pos);
+        Base::Vector3d second = getObject()->getPoint(geo2, pos);
+        // Mirroring about the vertical axis negates x.
+        EXPECT_NEAR(second.x, -first.x, 1e-6);
+        EXPECT_NEAR(second.y, first.y, 1e-6);
+    }
+}

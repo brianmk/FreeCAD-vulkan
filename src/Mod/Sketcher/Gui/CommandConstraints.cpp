@@ -1414,6 +1414,8 @@ public:
     static constexpr const char* PICK_SYMMETRY_POINT = "%1 pick symmetry point";
     static constexpr const char* PICK_SYMMETRY_LINE_OR_POINT = "%1 pick symmetry line or point";
     static constexpr const char* PICK_SYMMETRY_LINE = "%1 pick symmetry line";
+    static constexpr const char* PICK_SECOND_EDGE_SYMMETRY_LINE_OR_POINT =
+        "%1 pick second edge, symmetry line or point";
     static constexpr const char* PICK_SECOND_LINE = "%1 pick second line";
     static constexpr const char* PICK_SECOND_POINT_OR_EDGE = "%1 pick second point or edge";
     static constexpr const char* PICK_POINT_OR_EDGE = "%1 pick point or edge";
@@ -1716,8 +1718,9 @@ public:
                 // Point + Edge + Point or Point + Point + Edge/Point workflow
                 return {{QObject::tr(PICK_EDGE_OR_SECOND_POINT), {Gui::InputHint::UserInput::MouseLeft}}};
             } else {
-                // Edge + Point workflow
-                return {{QObject::tr(PICK_SYMMETRY_POINT), {Gui::InputHint::UserInput::MouseLeft}}};
+                // Edge + Point (symmetry point) or Edge + Edge + Edge (center edge) workflow
+                return {{QObject::tr(PICK_SECOND_EDGE_SYMMETRY_LINE_OR_POINT),
+                         {Gui::InputHint::UserInput::MouseLeft}}};
             }
         } else if (selectionStep == 2 && !selSeq.empty()) {
             if (isVertex(selSeq[0].GeoId, selSeq[0].PosId) && isVertex(selSeq[1].GeoId, selSeq[1].PosId)) {
@@ -1726,6 +1729,10 @@ public:
             } else if (isVertex(selSeq[0].GeoId, selSeq[0].PosId) && !isVertex(selSeq[1].GeoId, selSeq[1].PosId)) {
                 // Point + Edge + Point workflow
                 return {{QObject::tr(PICK_POINT), {Gui::InputHint::UserInput::MouseLeft}}};
+            } else if (!isVertex(selSeq[0].GeoId, selSeq[0].PosId)
+                       && !isVertex(selSeq[1].GeoId, selSeq[1].PosId)) {
+                // Edge + Edge + Edge workflow: the third selection is the center edge
+                return {{QObject::tr(PICK_SYMMETRY_LINE), {Gui::InputHint::UserInput::MouseLeft}}};
             }
         }
     }
@@ -9719,6 +9726,17 @@ void CmdSketcherConstrainEqual::applyConstraint(std::vector<SelIdPair>& selSeq, 
 
 // ======================================================================================
 
+static void showSymmetricWrongSelectionWarning(Sketcher::SketchObject* Obj)
+{
+    Gui::TranslatedUserWarning(Obj,
+                               QObject::tr("Wrong selection"),
+                               QObject::tr("Select two points and a symmetry line, "
+                                           "two points and a symmetry point, "
+                                           "an element and a symmetry line, "
+                                           "an element and a symmetry point "
+                                           "or two elements and a symmetry line from the sketch."));
+}
+
 class CmdSketcherConstrainSymmetric: public CmdSketcherConstraint
 {
 public:
@@ -9741,6 +9759,122 @@ private:
                || isArcOfHyperbola(geom) || isArcOfParabola(geom)
                || (isBSplineCurve(geom) && !isPeriodicBSplineCurve(geom));
     }
+
+    /// Emits the Symmetric constraints making two edges mirror images of each
+    /// other about a third (center) edge.
+    ///
+    /// All three selections are edges, so only the symmetry axis is required to
+    /// be a line and H/V axes can only ever act as the axis. Those are moved to
+    /// the third position first, mirroring the swap logic used for two points
+    /// and a symmetry line. For three plain sketch edges there is no type
+    /// information telling the axis apart from the two elements to be made
+    /// symmetric, so the third selection is taken as the axis, following the
+    /// "two elements and a symmetry line, in that order" convention.
+    ///
+    /// Returns false, after showing a warning, when the selection cannot be
+    /// interpreted as two elements and a symmetry line.
+    bool applyEdgesSymmetricConstraint(Sketcher::SketchObject* Obj, int GeoId1, int GeoId2, int GeoId3)
+    {
+        auto isHV = [](int geoId) {
+            return geoId == Sketcher::GeoEnum::HAxis || geoId == Sketcher::GeoEnum::VAxis;
+        };
+        auto isLine = [Obj](int geoId) {
+            const Part::Geometry* geo = Obj->getGeometry(geoId);
+            return geo != nullptr && isLineSegment(*geo);
+        };
+
+        // An H/V axis can only be the symmetry line, never one of the elements
+        // being made symmetric, so at most one of them may be selected.
+        const int axisCount = (isHV(GeoId1) ? 1 : 0) + (isHV(GeoId2) ? 1 : 0)
+            + (isHV(GeoId3) ? 1 : 0);
+        if (axisCount > 1) {
+            showSymmetricWrongSelectionWarning(Obj);
+            return false;
+        }
+        if (isHV(GeoId1)) {
+            std::swap(GeoId1, GeoId3);
+        }
+        else if (isHV(GeoId2)) {
+            std::swap(GeoId2, GeoId3);
+        }
+        else {
+            // A symmetry line is a line. If exactly one of the three selected
+            // edges is a line, that one is the axis whatever its position.
+            const bool line1 = isLine(GeoId1);
+            const bool line2 = isLine(GeoId2);
+            const bool line3 = isLine(GeoId3);
+            if (line1 && !line2 && !line3) {
+                std::swap(GeoId1, GeoId3);
+            }
+            else if (line2 && !line1 && !line3) {
+                std::swap(GeoId2, GeoId3);
+            }
+        }
+
+        if (!isHV(GeoId3) && !isLine(GeoId3)) {
+            Gui::TranslatedUserWarning(
+                Obj,
+                QObject::tr("Wrong selection"),
+                QObject::tr("Cannot add a symmetry constraint "
+                            "because the symmetry line is not a line. "
+                            "Select a line or an axis instead."));
+            return false;
+        }
+
+        if (GeoId1 == GeoId2) {
+            Gui::TranslatedUserWarning(Obj,
+                                       QObject::tr("Wrong selection"),
+                                       QObject::tr("Cannot add a symmetry constraint "
+                                                   "between an element and itself."));
+            return false;
+        }
+
+        if (GeoId1 == GeoId3 || GeoId2 == GeoId3) {
+            Gui::TranslatedUserWarning(Obj,
+                                       QObject::tr("Wrong selection"),
+                                       QObject::tr("Cannot add a symmetry constraint "
+                                                   "between an element and its symmetry line."));
+            return false;
+        }
+
+        const Part::Geometry* geom1 = Obj->getGeometry(GeoId1);
+        if (!geom1 || !hasEndpoints(*geom1)) {
+            Gui::TranslatedUserWarning(
+                Obj,
+                QObject::tr("Wrong selection"),
+                QObject::tr("Cannot add a symmetry constraint "
+                            "because the first selected element has no endpoints. "
+                            "Select a line or an open curve instead."));
+            return false;
+        }
+
+        const Part::Geometry* geom2 = Obj->getGeometry(GeoId2);
+        if (!geom2 || !hasEndpoints(*geom2)) {
+            Gui::TranslatedUserWarning(
+                Obj,
+                QObject::tr("Wrong selection"),
+                QObject::tr("Cannot add a symmetry constraint "
+                            "because the second selected element has no endpoints. "
+                            "Select a line or an open curve instead."));
+            return false;
+        }
+
+        // One constraint per corresponding endpoint pair makes the two elements
+        // mirror images of each other about the symmetry line.
+        openCommand(QT_TRANSLATE_NOOP("Command", "Add symmetric constraint"));
+        for (auto pos : {Sketcher::PointPos::start, Sketcher::PointPos::end}) {
+            Gui::cmdAppObjectArgs(Obj,
+                                  "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d))",
+                                  GeoId1,
+                                  static_cast<int>(pos),
+                                  GeoId2,
+                                  static_cast<int>(pos),
+                                  GeoId3);
+        }
+        finishTransactionAndUpdate(this, Obj);
+
+        return true;
+    }
 };
 
 CmdSketcherConstrainSymmetric::CmdSketcherConstrainSymmetric()
@@ -9749,7 +9883,7 @@ CmdSketcherConstrainSymmetric::CmdSketcherConstrainSymmetric()
     sAppModule = "Sketcher";
     sGroup = "Sketcher";
     sMenuText = QT_TR_NOOP("Symmetric Constraint");
-    sToolTipText = QT_TR_NOOP("Constrains the selected elements to be symmetric");
+    sToolTipText = QT_TR_NOOP("Constrains the selected elements to be symmetric about a line, an axis or a point");
     sWhatsThis = "Sketcher_ConstrainSymmetric";
     sStatusTip = sToolTipText;
     sPixmap = "Constraint_Symmetric";
@@ -9768,7 +9902,11 @@ CmdSketcherConstrainSymmetric::CmdSketcherConstrainSymmetric()
                            {SelEdge, SelEdgeOrAxis},
                            {SelEdge, SelExternalEdge},
                            {SelExternalEdge, SelEdge},
-                           {SelEdgeOrAxis, SelEdge}};
+                           {SelEdgeOrAxis, SelEdge},
+                           // Two elements made symmetric about a center edge
+                           // (the third selection).
+                           {SelEdge, SelEdge, SelEdgeOrAxis},
+                           {SelEdge, SelEdge, SelExternalEdge}};
 }
 
 void CmdSketcherConstrainSymmetric::activated(int iMsg)
@@ -9784,12 +9922,7 @@ void CmdSketcherConstrainSymmetric::activated(int iMsg)
     auto* Obj = static_cast<Sketcher::SketchObject*>(selection->getObject());
 
     if (SubNames.size() != 3 && SubNames.size() != 2) {
-        Gui::TranslatedUserWarning(Obj,
-                                   QObject::tr("Wrong selection"),
-                                   QObject::tr("Select two points and a symmetry line, "
-                                               "two points and a symmetry point, "
-                                               "an element and a symmetry line "
-                                               "or an element and a symmetry point from the sketch."));
+        showSymmetricWrongSelectionWarning(Obj);
         return;
     }
 
@@ -9864,12 +9997,7 @@ void CmdSketcherConstrainSymmetric::activated(int iMsg)
             return;
         }
 
-        Gui::TranslatedUserWarning(Obj,
-                                   QObject::tr("Wrong selection"),
-                                   QObject::tr("Select two points and a symmetry line, "
-                                               "two points and a symmetry point, "
-                                               "an element and a symmetry line "
-                                               "or an element and a symmetry point from the sketch."));
+        showSymmetricWrongSelectionWarning(Obj);
         return;
     }
 
@@ -9886,6 +10014,12 @@ void CmdSketcherConstrainSymmetric::activated(int iMsg)
 
     if (areAllPointsOrSegmentsFixed(Obj, GeoId1, GeoId2, GeoId3)) {
         showNoConstraintBetweenFixedGeometry(Obj);
+        return;
+    }
+
+    if (isEdge(GeoId1, PosId1) && isEdge(GeoId2, PosId2) && isEdge(GeoId3, PosId3)) {
+        // Two elements made symmetric about a center edge (the third selection).
+        applyEdgesSymmetricConstraint(Obj, GeoId1, GeoId2, GeoId3);
         return;
     }
 
@@ -9935,12 +10069,7 @@ void CmdSketcherConstrainSymmetric::activated(int iMsg)
         }
     }
 
-    Gui::TranslatedUserWarning(Obj,
-                               QObject::tr("Wrong selection"),
-                               QObject::tr("Select two points and a symmetry line, "
-                                           "two points and a symmetry point, "
-                                           "an element and a symmetry line "
-                                           "or an element and a symmetry point from the sketch."));
+    showSymmetricWrongSelectionWarning(Obj);
 }
 
 void CmdSketcherConstrainSymmetric::applyConstraint(std::vector<SelIdPair>& selSeq, int seqIndex)
@@ -10043,13 +10172,7 @@ void CmdSketcherConstrainSymmetric::applyConstraint(std::vector<SelIdPair>& selS
                 finishTransactionAndUpdate(this, Obj);
             }
             else {
-                Gui::TranslatedUserWarning(
-                    Obj,
-                    QObject::tr("Wrong selection"),
-                    QObject::tr("Select two points and a symmetry line, "
-                                "two points and a symmetry point, "
-                                "an element and a symmetry line "
-                                "or an element and a symmetry point from the sketch."));
+                showSymmetricWrongSelectionWarning(Obj);
             }
             return;
         }
@@ -10134,6 +10257,25 @@ void CmdSketcherConstrainSymmetric::applyConstraint(std::vector<SelIdPair>& selS
                 return;
             }
             break;
+        }
+        case 13:// {SelEdge, SelEdge, SelEdgeOrAxis}
+        case 14:// {SelEdge, SelEdge, SelExternalEdge}
+        {
+            // Two elements made symmetric about a center edge (the third selection).
+            GeoId1 = selSeq.at(0).GeoId;
+            GeoId2 = selSeq.at(1).GeoId;
+            GeoId3 = selSeq.at(2).GeoId;
+            PosId1 = Sketcher::PointPos::none;
+            PosId2 = Sketcher::PointPos::none;
+            PosId3 = Sketcher::PointPos::none;
+
+            if (areAllPointsOrSegmentsFixed(Obj, GeoId1, GeoId2, GeoId3)) {
+                showNoConstraintBetweenFixedGeometry(Obj);
+                return;
+            }
+
+            applyEdgesSymmetricConstraint(Obj, GeoId1, GeoId2, GeoId3);
+            return;
         }
         default:
             break;
