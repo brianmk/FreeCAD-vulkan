@@ -10213,14 +10213,30 @@ void CmdSketcherConstrainSymmetric::activated(int iMsg)
 
                 // undo command open
                 openCommand(QT_TRANSLATE_NOOP("Command", "Add symmetric constraint"));
-                Gui::cmdAppObjectArgs(
-                    selection->getObject(),
-                    "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d))",
-                    GeoId1,
-                    static_cast<int>(PosId1),
-                    GeoId2,
-                    static_cast<int>(PosId2),
-                    GeoId3);
+                // Two coincident points cannot be the two halves of a point-pair
+                // Symmetric constraint: for p1 == p2 its perpendicularity
+                // equation is identically satisfied, so the pair is
+                // rank-deficient and the solver reports it redundant, which
+                // makes the sketch over-constrained. What remains is that the
+                // shared point lies on the symmetry line.
+                if (Obj->arePointsCoincident(GeoId1, PosId1, GeoId2, PosId2)) {
+                    Gui::cmdAppObjectArgs(
+                        selection->getObject(),
+                        "addConstraint(Sketcher.Constraint('PointOnObject',%d,%d,%d))",
+                        GeoId1,
+                        static_cast<int>(PosId1),
+                        GeoId3);
+                }
+                else {
+                    Gui::cmdAppObjectArgs(
+                        selection->getObject(),
+                        "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d))",
+                        GeoId1,
+                        static_cast<int>(PosId1),
+                        GeoId2,
+                        static_cast<int>(PosId2),
+                        GeoId3);
+                }
 
                 finishTransactionAndUpdate(this, Obj);
                 return;
