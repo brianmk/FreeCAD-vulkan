@@ -408,6 +408,72 @@ class TestConstraintCommandsGui(SketcherGuiTestCase):
         self.doc.undo()
         self.assertEqual(self.sketch.ConstraintCount, 0)
 
+    def test_symmetric_same_side_elements_are_displaced_to_opposite_sides(self):
+        # Both elements start on the same side of the center edge. They must end
+        # up on opposite sides as mirror images instead of collapsing onto the
+        # symmetry line.
+        self.sketch.addGeometry(
+            Part.LineSegment(App.Vector(0, 2, 0), App.Vector(0, 5, 0)), False
+        )
+        self.doc.recompute()
+        first_before = (self.sketch.getPoint(0, 1), self.sketch.getPoint(0, 2))
+
+        self.select("Edge1", "Edge2", "H_Axis")
+        Gui.runCommand("Sketcher_ConstrainSymmetric")
+
+        self.assertEqual(self.sketch.ConstraintCount, 2)
+        for constraint in self.sketch.Constraints:
+            self.assertEqual(constraint.Type, "Symmetric")
+            self.assertEqual(constraint.Third, -1)
+            self.assertEqual(constraint.ThirdPos, 0)
+        self.assertEqual(self.sketch.solve(), 0)
+
+        # The first selected element is the reference and stays in place.
+        for index, before in enumerate(first_before):
+            after = self.sketch.getPoint(0, index + 1)
+            self.assertAlmostEqual(after.x, before.x, places=6)
+            self.assertAlmostEqual(after.y, before.y, places=6)
+
+        # The second element is displaced to the other side of the axis.
+        self.assert_mirrored(0, 1, -1)
+        for pos in (1, 2):
+            self.assertGreater(self.sketch.getPoint(0, pos).y, 0.0)
+            self.assertLess(self.sketch.getPoint(1, pos).y, 0.0)
+
+    def test_symmetric_self_symmetric_reference_is_rejected(self):
+        # Both elements cross the center edge symmetrically, so each of them is
+        # its own mirror image and there is no non-degenerate solution.
+        self.sketch.addGeometry(
+            Part.LineSegment(App.Vector(3, -4, 0), App.Vector(3, 4, 0)), False
+        )
+        self.sketch.addGeometry(
+            Part.LineSegment(App.Vector(6, -2, 0), App.Vector(6, 2, 0)), False
+        )
+        self.doc.recompute()
+
+        self.select("Edge2", "Edge3", "H_Axis")
+        Gui.runCommand("Sketcher_ConstrainSymmetric")
+        self.assertEqual(self.sketch.ConstraintCount, 0)
+
+    def test_symmetric_self_symmetric_first_element_swaps_roles(self):
+        # Edge2 is its own mirror image about the center edge, so Edge3 has to
+        # become the stationary reference and Edge2 is displaced onto its
+        # mirror image.
+        self.sketch.addGeometry(
+            Part.LineSegment(App.Vector(3, -4, 0), App.Vector(3, 4, 0)), False
+        )
+        self.sketch.addGeometry(
+            Part.LineSegment(App.Vector(6, 1, 0), App.Vector(6, 5, 0)), False
+        )
+        self.doc.recompute()
+
+        self.select("Edge2", "Edge3", "H_Axis")
+        Gui.runCommand("Sketcher_ConstrainSymmetric")
+
+        self.assertEqual(self.sketch.ConstraintCount, 2)
+        self.assertEqual(self.sketch.solve(), 0)
+        self.assert_mirrored(1, 2, -1)
+
     def test_symmetric_center_edge_any_position_with_axis(self):
         self.add_symmetric_test_geometry()
         for selection in (
