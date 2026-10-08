@@ -67,6 +67,7 @@
 #include "EditModeGeometryCoinConverter.h"
 #include "EditModeGeometryCoinManager.h"
 #include "EditModeInformationOverlayCoinConverter.h"
+#include "SoZoomTranslation.h"
 #include "Utils.h"
 #include "ViewProviderSketch.h"
 #include "ViewProviderSketchCoinAttorney.h"
@@ -1734,6 +1735,18 @@ void EditModeCoinManager::updateAxesLength(const Base::BoundBox2d& bb)
         1,
         SbVec3f(0.0f, bb.MaxY, zCrossH)
     );
+
+    // The axes are plain SoLineSets fed by a sibling SoCoordinate3.  SoShape's
+    // retained-IR tessellation cache is invalidated only by a shape field
+    // change (SoShape::notify()); a sibling coordinate write does not notify
+    // it, so the Vulkan path would keep replaying the previous axis geometry
+    // even after a re-record.  Touch the line sets so their cached tessellation
+    // is rebuilt.  The GL path reads the coordinate element every frame and has
+    // no such cache, so this is a no-op there.
+    editModeScenegraphNodes.RootCrossHSet->touch();
+    editModeScenegraphNodes.RootCrossVSet->touch();
+    editModeScenegraphNodes.RootCrossSetOccludedH->touch();
+    editModeScenegraphNodes.RootCrossSetOccludedV->touch();
 }
 
 void EditModeCoinManager::updateColor()
@@ -1803,6 +1816,14 @@ void EditModeCoinManager::createEditModeInventorNodes()
     editModeScenegraphNodes.pickStyleAxes->style = SoPickStyle::SHAPE;
     crossRoot->addChild(editModeScenegraphNodes.pickStyleAxes);
     editModeScenegraphNodes.EditRoot->addChild(crossRoot);
+
+    // Camera-dependent marker.  The origin axes are stretched to the viewport on
+    // every camera change (see updateAxesLength), so their geometry is
+    // camera-baked.  This identity SoZoomTranslation flags the render action as
+    // camera-dependent, so the retained-IR Vulkan renderer re-records on a
+    // camera move instead of replaying the previous camera's axis geometry; the
+    // GL path re-traverses every frame and is unaffected.
+    crossRoot->addChild(new SoZoomTranslation());
 
     editModeScenegraphNodes.RootCrossDrawStyle = new SoDrawStyle;
     editModeScenegraphNodes.RootCrossDrawStyle->setName("RootCrossDrawStyle");

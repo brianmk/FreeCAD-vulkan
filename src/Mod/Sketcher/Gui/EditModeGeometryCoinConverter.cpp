@@ -167,6 +167,9 @@ void EditModeGeometryCoinConverter::convert(const Sketcher::GeoListFacade& geoli
 
         const auto GeoId = geolistfacade.getGeoIdFromGeomListIndex(i);
         const auto geom = geolistfacade.getGeometryFacadeFromGeoId(GeoId);
+        if (!geom || !geom->getGeometry()) {
+            continue;
+        }
         const auto type = geom->getGeometry()->getTypeId();
 
         int layerId = getSafeGeomLayerId(geom);
