@@ -1499,6 +1499,9 @@ void SketchObject::rebuildVertexIndex()
             VertexId2PosId.push_back(PointPos::start);
             VertexId2GeoId.push_back(i);
             VertexId2PosId.push_back(PointPos::end);
+            // Experimental line-midpoint vertex (see commit revert note).
+            VertexId2GeoId.push_back(i);
+            VertexId2PosId.push_back(PointPos::mid);
         }
         else if ((*it)->is<Part::GeomCircle>()) {
             VertexId2GeoId.push_back(i);

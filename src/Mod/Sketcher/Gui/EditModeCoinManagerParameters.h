@@ -38,6 +38,7 @@
 #include <Inventor/nodes/SoMarkerSet.h>
 #include <Inventor/nodes/SoMaterial.h>
 #include <Inventor/nodes/SoPickStyle.h>
+#include <Inventor/nodes/SoSwitch.h>
 #include <Inventor/nodes/SoText2.h>
 #include <Inventor/nodes/SoTranslation.h>
 
@@ -495,6 +496,20 @@ struct EditModeScenegraphNodes
     SoCoordinate3* EditMarkersCoordinate;
     SoMarkerSet* EditMarkerSet;
     SoDrawStyle* EditMarkersDrawStyle;
+    //@}
+
+    /** @name Hover line-midpoint marker (Vulkan-only Sketcher aid)
+     *
+     * A single reusable marker drawn at the center of the line under the mouse
+     * when the cursor gets close to that center.  It is only computed for the
+     * hovered line (never for every line), so the cost stays O(1) per hover.
+     * Created and driven from EditModeGeometryCoinManager.
+     */
+    //@{
+    SoSwitch* HoverMidpointSwitch = nullptr;
+    SoMaterial* HoverMidpointMaterial = nullptr;
+    SoCoordinate3* HoverMidpointCoordinate = nullptr;
+    SoMarkerSet* HoverMidpointSet = nullptr;
     //@}
 
     /** @name Temporal edit text nodes*/

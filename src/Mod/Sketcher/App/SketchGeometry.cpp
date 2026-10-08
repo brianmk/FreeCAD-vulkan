@@ -69,6 +69,10 @@ public:
             case PointPos::end: {
                 return lineSeg->getEndPoint();
             }
+            case PointPos::mid: {
+                // Experimental line-midpoint vertex (see commit revert note).
+                return (lineSeg->getStartPoint() + lineSeg->getEndPoint()) / 2.0;
+            }
             default:
                 break;
         }

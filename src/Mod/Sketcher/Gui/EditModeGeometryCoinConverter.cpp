@@ -192,9 +192,11 @@ void EditModeGeometryCoinConverter::convert(const Sketcher::GeoListFacade& geoli
             );
         }
         else if (type == Part::GeomLineSegment::getClassTypeId()) {  // add a line
+            // Experimental: line midpoints are exposed as vertices (see commit
+            // revert note), so a line draws start, end and mid.
             convert<
                 Part::GeomLineSegment,
-                EditModeGeometryCoinConverter::PointsMode::InsertStartEnd,
+                EditModeGeometryCoinConverter::PointsMode::InsertStartEndMid,
                 EditModeGeometryCoinConverter::CurveMode::StartEndPointsOnly,
                 EditModeGeometryCoinConverter::AnalyseMode::BoundingBoxMagnitude>(
                 geom,
@@ -205,7 +207,7 @@ void EditModeGeometryCoinConverter::convert(const Sketcher::GeoListFacade& geoli
             setTracking(
                 GeoId,
                 coinLayer,
-                EditModeGeometryCoinConverter::PointsMode::InsertStartEnd,
+                EditModeGeometryCoinConverter::PointsMode::InsertStartEndMid,
                 1,
                 subLayerId,
                 isGroupMember
@@ -284,6 +286,9 @@ void EditModeGeometryCoinConverter::convert(const Sketcher::GeoListFacade& geoli
     for (auto l = 0; l < geometryLayerParameters.getCoinLayerCount(); l++) {
         geometryLayerNodes.PointsCoordinate[l]->point.setNum(Points[l].size());
         geometryLayerNodes.PointsMaterials[l]->diffuseColor.setNum(Points[l].size());
+        // Per-vertex transparency: line midpoints are hidden until hovered (see
+        // EditModeGeometryCoinManager::updateGeometryColor).
+        geometryLayerNodes.PointsMaterials[l]->transparency.setNum(Points[l].size());
         SbVec3f* pverts = geometryLayerNodes.PointsCoordinate[l]->point.startEditing();
 
         int i = 0;  // setting up the point set
@@ -354,10 +359,21 @@ void EditModeGeometryCoinConverter::convert(
             addPoint(Points[coinLayer], geo->getEndPoint());
         }
         else if constexpr (pointmode == PointsMode::InsertStartEndMid) {
-            // All in this group are Trimmed Curves (see Geometry.h)
-            addPoint(Points[coinLayer], geo->getStartPoint(/*emulateCCW=*/true));
-            addPoint(Points[coinLayer], geo->getEndPoint(/*emulateCCW=*/true));
-            addPoint(Points[coinLayer], geo->getCenter());
+            if constexpr (std::is_same<GeoType, Part::GeomLineSegment>::value) {
+                // Experimental line-midpoint vertex: plain start/end plus the
+                // geometric midpoint (lines have no getCenter()).
+                const Base::Vector3d start = geo->getStartPoint();
+                const Base::Vector3d end = geo->getEndPoint();
+                addPoint(Points[coinLayer], start);
+                addPoint(Points[coinLayer], end);
+                addPoint(Points[coinLayer], (start + end) / 2.0);
+            }
+            else {
+                // All in this group are Trimmed Curves (see Geometry.h)
+                addPoint(Points[coinLayer], geo->getStartPoint(/*emulateCCW=*/true));
+                addPoint(Points[coinLayer], geo->getEndPoint(/*emulateCCW=*/true));
+                addPoint(Points[coinLayer], geo->getCenter());
+            }
         }
         else if constexpr (pointmode == PointsMode::InsertMidOnly) {
             addPoint(Points[coinLayer], geo->getCenter());

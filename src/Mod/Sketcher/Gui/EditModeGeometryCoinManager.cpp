@@ -33,6 +33,7 @@
 #include <Inventor/nodes/SoMarkerSet.h>
 #include <Inventor/nodes/SoMaterial.h>
 #include <Inventor/nodes/SoSeparator.h>
+#include <Inventor/nodes/SoSwitch.h>
 
 #include <Gui/Inventor/MarkerBitmaps.h>
 #include <Gui/Inventor/SmSwitchboard.h>
@@ -231,7 +232,25 @@ void EditModeGeometryCoinManager::updateGeometryColor(
         float x, y, z;
         int PtNum = editModeScenegraphNodes.PointsMaterials[l]->diffuseColor.getNum();
         SbColor* pcolor = editModeScenegraphNodes.PointsMaterials[l]->diffuseColor.startEditing();
+        float* ptrans = editModeScenegraphNodes.PointsMaterials[l]->transparency.startEditing();
         SbVec3f* pverts = editModeScenegraphNodes.PointsCoordinate[l]->point.startEditing();
+
+        // A line midpoint is a real vertex (so it can be snapped to/constrained)
+        // but must not be drawn until the mouse is near it.  Hide every line-mid
+        // point by default; the preselection/selection blocks below make the
+        // hovered/selected one opaque again.
+        for (int i = 0; i < PtNum; i++) {
+            ptrans[i] = 0.0f;
+            if (!coinMapping.isValidPointId(i, l)
+                || coinMapping.getPointPosId(i, l) != Sketcher::PointPos::mid) {
+                continue;
+            }
+            auto midgeom = geolistfacade.getGeometryFacadeFromGeoId(coinMapping.getPointGeoId(i, l));
+            if (midgeom && midgeom->getGeometry()
+                && midgeom->getGeometry()->is<Part::GeomLineSegment>()) {
+                ptrans[i] = 1.0f;  // fully transparent
+            }
+        }
 
         // colors of the point set
         for (int i = 0; i < PtNum; i++) {
@@ -390,6 +409,7 @@ void EditModeGeometryCoinManager::updateGeometryColor(
                 && preselectpointmfid.fieldIndex < PtNum) {
 
                 pcolor[preselectpointmfid.fieldIndex] = drawingParameters.PreselectColor;
+                ptrans[preselectpointmfid.fieldIndex] = 0.0f;
 
                 raisePoint(
                     pverts[preselectpointmfid.fieldIndex],
@@ -402,6 +422,7 @@ void EditModeGeometryCoinManager::updateGeometryColor(
             viewProvider,
             [this,
              pcolor,
+             ptrans,
              pverts,
              PtNum,
              preselectpointmfid,
@@ -423,6 +444,7 @@ void EditModeGeometryCoinManager::updateGeometryColor(
                     pcolor[pointindex.fieldIndex] = (preselectpointmfid == pointindex)
                         ? drawingParameters.PreselectSelectedColor
                         : drawingParameters.SelectColor;
+                    ptrans[pointindex.fieldIndex] = 0.0f;
 
                     raisePoint(
                         pverts[pointindex.fieldIndex],
@@ -598,6 +620,7 @@ void EditModeGeometryCoinManager::updateGeometryColor(
         }
 
         editModeScenegraphNodes.PointsMaterials[l]->diffuseColor.finishEditing();
+        editModeScenegraphNodes.PointsMaterials[l]->transparency.finishEditing();
         editModeScenegraphNodes.PointsCoordinate[l]->point.finishEditing();
     }
 
@@ -645,6 +668,44 @@ void EditModeGeometryCoinManager::createEditModeInventorNodes()
     createEditModePointInventorNodes();
 
     createEditModeCurveInventorNodes();
+
+#ifdef FREECAD_USE_VULKAN
+    // Vulkan-only Sketcher aid: a single reusable marker for the center of the
+    // line under the mouse.  Only one point exists and it is moved in place for
+    // the hovered line, so no per-line geometry/mapping is added and the cost
+    // stays O(1) per hover.  The GL/upstream path never creates or touches it.
+    auto* hoverSwitch = new SoSwitch;
+    hoverSwitch->whichChild = SO_SWITCH_NONE;
+    hoverSwitch->setName("HoverMidpointSwitch");
+    editModeScenegraphNodes.EditRoot->addChild(hoverSwitch);
+    editModeScenegraphNodes.HoverMidpointSwitch = hoverSwitch;
+
+    auto* hoverMaterial = new SoMaterial;
+    hoverMaterial->diffuseColor = drawingParameters.PreselectColor;
+    hoverMaterial->setName("HoverMidpointMaterial");
+    hoverSwitch->addChild(hoverMaterial);
+    editModeScenegraphNodes.HoverMidpointMaterial = hoverMaterial;
+
+    auto* hoverCoords = new SoCoordinate3;
+    hoverCoords->point.setNum(1);
+    hoverCoords->point.set1Value(0, SbVec3f(0.0f, 0.0f, 0.0f));
+    hoverCoords->setName("HoverMidpointCoordinate");
+    hoverSwitch->addChild(hoverCoords);
+    editModeScenegraphNodes.HoverMidpointCoordinate = hoverCoords;
+
+    auto* hoverStyle = new SoDrawStyle;
+    hoverStyle->pointSize = 8 * drawingParameters.pixelScalingFactor;
+    hoverSwitch->addChild(hoverStyle);
+
+    auto* hoverSet = new SoMarkerSet;
+    hoverSet->setName("HoverMidpointSet");
+    hoverSet->markerIndex = Gui::Inventor::MarkerBitmaps::getMarkerIndex(
+        "CIRCLE_FILLED",
+        drawingParameters.markerSize
+    );
+    hoverSwitch->addChild(hoverSet);
+    editModeScenegraphNodes.HoverMidpointSet = hoverSet;
+#endif
 }
 
 void EditModeGeometryCoinManager::createGeometryRootNodes()

@@ -38,6 +38,8 @@
 #include <Inventor/nodes/SoSeparator.h>
 #include <Inventor/nodes/SoTransform.h>
 
+#include <FCConfig.h>
+
 #include <QApplication>
 #include <QFontMetricsF>
 #include <QHelpEvent>
@@ -2932,6 +2934,18 @@ bool ViewProviderSketch::detectAndShowPreselection(
         }
     };
 
+    // Vulkan-only: reflect the hover line-midpoint marker.  Tracked here so a
+    // change as the cursor enters/leaves a line center forces a redraw even when
+    // the hovered edge itself did not change.
+    bool midpointChanged = false;
+#ifdef FREECAD_USE_VULKAN
+    if (result.LineMidpoint != hoverMidpoint) {
+        editCoinManager->setHoverMidpoint(result.LineMidpoint);
+        hoverMidpoint = result.LineMidpoint;
+        midpointChanged = true;
+    }
+#endif
+
     if (result.hasWinner()) {
         if (result.Kind == EditModeCoinManager::PreselectionResult::HitKind::Point
             && result.PointIndex != preselection.PreselectPoint) {// if a new point is hit
@@ -3103,7 +3117,7 @@ bool ViewProviderSketch::detectAndShowPreselection(
         return true;
     }
 
-    return false;
+    return midpointChanged;
 }
 
 void ViewProviderSketch::centerSelection()
@@ -4227,6 +4241,7 @@ bool ViewProviderSketch::setEdit(int ModNum)
     assert(!isInEditMode());
     preselection.reset();
     selection.reset();
+    hoverMidpoint.reset();
     editCoinManager = std::make_unique<EditModeCoinManager>(*this);
     snapManager = std::make_unique<SnapManager>(*this);
 
@@ -4548,6 +4563,7 @@ void ViewProviderSketch::unsetEdit(int ModNum)
         snapManager = nullptr;
         preselection.reset();
         selection.reset();
+        hoverMidpoint.reset();
 
         if (editingCancelled) {
             App::AutoTransaction trans(getDocument()->getDocument(), "Cancel sketch editing");
