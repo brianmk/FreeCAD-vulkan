@@ -39,6 +39,12 @@
 #include "So3DAnnotation.h"
 #include <Gui/Selection/Selection.h>
 
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+# include <Inventor/actions/SoIRRenderAction.h>
+# include <Inventor/elements/SoViewportRegionElement.h>
+# include <Inventor/rendering/SoRenderIR.h>
+#endif
+
 using namespace Gui;
 
 SO_ELEMENT_SOURCE(SoDelayedAnnotationsElement);
@@ -184,3 +190,51 @@ void So3DAnnotation::GLRenderOffPath(SoGLRenderAction* /* action */)
 {
     // should never render, this is a separator node
 }
+
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+void So3DAnnotation::IRRender(SoIRRenderAction* action)
+{
+    // On the OpenGL path annotations are deferred through SoDelayedAnnotationsElement
+    // and replayed later with the depth buffer cleared, so the subtree always draws on
+    // top of the scene (while still depth-testing against itself).  The retained-IR
+    // path has no delayed replay: render the subtree inline and then promote the
+    // commands it recorded to the OVERLAY pass, which the raster backend draws last,
+    // on top.  This mirrors SoFCSelection/SoRasterOverlay.  Without it, for example a
+    // PartDesign pattern's semi-transparent removed-volume preview is depth-rejected
+    // by the opaque solid it is embedded in, so it never appears.
+    if (!action) {
+        return;
+    }
+
+    SoDrawList& list = action->getMutableDrawList();
+    const int firstCommand = list.getNumCommands();
+
+    inherited::IRRender(action);
+
+    const int count = list.getNumCommands();
+    if (count <= firstCommand) {
+        return;
+    }
+
+    SoState* state = action->getState();
+    const SbViewportRegion vp = SoViewportRegionElement::get(state);
+    const short vx = static_cast<short>(
+        std::max(0, static_cast<int>(vp.getViewportOriginPixels()[0])));
+    const short vy = static_cast<short>(
+        std::max(0, static_cast<int>(vp.getViewportOriginPixels()[1])));
+    const short vw = static_cast<short>(
+        std::max(1, static_cast<int>(vp.getViewportSizePixels()[0])));
+    const short vh = static_cast<short>(
+        std::max(1, static_cast<int>(vp.getViewportSizePixels()[1])));
+
+    for (int i = firstCommand; i < count; ++i) {
+        SoRenderCommand& command = list.getCommand(i);
+        command.pass = SO_RENDERPASS_OVERLAY;
+        command.state.raster.scissorEnabled = TRUE;
+        command.state.raster.scissorX = vx;
+        command.state.raster.scissorY = vy;
+        command.state.raster.scissorWidth = vw;
+        command.state.raster.scissorHeight = vh;
+    }
+}
+#endif

@@ -30,6 +30,8 @@
 #include <FCGlobal.h>
 #include <vector>
 
+class SoIRRenderAction;
+
 namespace Gui
 {
 
@@ -122,6 +124,10 @@ public:
     void GLRenderBelowPath(SoGLRenderAction* action) override;
     void GLRenderInPath(SoGLRenderAction* action) override;
     void GLRenderOffPath(SoGLRenderAction* action) override;
+
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    void IRRender(SoIRRenderAction* action) override;
+#endif
 
 protected:
     ~So3DAnnotation() override = default;

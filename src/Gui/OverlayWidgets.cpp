@@ -46,6 +46,8 @@
 #include <QPropertyAnimation>
 
 #include <array>
+#include <cstdio>
+#include <cstdlib>
 #include <unordered_map>
 
 #include "OverlayWidgets.h"
@@ -511,6 +513,9 @@ OverlayTabWidget::~OverlayTabWidget()
     }
 
     if (_Dragging == this || (_Dragging && isAncestorOf(_Dragging))) {
+        if (std::getenv("FC_DRAG_DEBUG")) {  // DNDBG
+            fprintf(stderr, "[DNDBG] TABWIDGET clear _Dragging (teardown)\n");
+        }
         _Dragging = nullptr;
     }
 }
@@ -2276,6 +2281,10 @@ static inline bool isNear(const QPoint& a, const QPoint& b, int tol = 16)
 
 void OverlayTitleBar::endDrag()
 {
+    if (std::getenv("FC_DRAG_DEBUG")) {  // DNDBG
+        fprintf(stderr, "[DNDBG] TITLEBAR endDrag isDrag=%d\n",
+                OverlayTabWidget::_Dragging == this ? 1 : 0);
+    }
     if (OverlayTabWidget::_Dragging == this) {
         OverlayTabWidget::_Dragging = nullptr;
         setCursor(Qt::OpenHandCursor);
@@ -2290,6 +2299,11 @@ void OverlayTitleBar::endDrag()
 
 void OverlayTitleBar::mouseMoveEvent(QMouseEvent* me)
 {
+    if (std::getenv("FC_DRAG_DEBUG")) {  // DNDBG
+        fprintf(stderr, "[DNDBG] TITLEBAR move btns=%d pending=%d isDrag=%d\n",
+                int(me->buttons()), mouseMovePending ? 1 : 0,
+                OverlayTabWidget::_Dragging == this ? 1 : 0);
+    }
     if (ignoreMouse) {
         if (!(me->buttons() & Qt::LeftButton)) {
             ignoreMouse = false;
@@ -2306,6 +2320,9 @@ void OverlayTitleBar::mouseMoveEvent(QMouseEvent* me)
         }
         mouseMovePending = false;
         OverlayTabWidget::_Dragging = this;
+        if (std::getenv("FC_DRAG_DEBUG")) {  // DNDBG
+            fprintf(stderr, "[DNDBG] TITLEBAR START DRAG\n");
+        }
     }
 
     if (OverlayTabWidget::_Dragging != this) {
@@ -2324,6 +2341,11 @@ void OverlayTitleBar::mouseMoveEvent(QMouseEvent* me)
 
 void OverlayTitleBar::mousePressEvent(QMouseEvent* me)
 {
+    if (std::getenv("FC_DRAG_DEBUG")) {  // DNDBG
+        fprintf(stderr, "[DNDBG] TITLEBAR press btn=%d dragging=%s\n", int(me->button()),
+                OverlayTabWidget::_Dragging
+                    ? OverlayTabWidget::_Dragging->metaObject()->className() : "-");
+    }
     mouseMovePending = false;
     QWidget* parent = parentWidget();
     if (OverlayTabWidget::_Dragging || !parent || !getMainWindow() || me->button() != Qt::LeftButton) {
@@ -2377,6 +2399,10 @@ void OverlayTitleBar::mousePressEvent(QMouseEvent* me)
 
 void OverlayTitleBar::mouseReleaseEvent(QMouseEvent* me)
 {
+    if (std::getenv("FC_DRAG_DEBUG")) {  // DNDBG
+        fprintf(stderr, "[DNDBG] TITLEBAR release btn=%d isDrag=%d\n", int(me->button()),
+                OverlayTabWidget::_Dragging == this ? 1 : 0);
+    }
     if (ignoreMouse) {
         me->ignore();
         return;
@@ -2681,6 +2707,10 @@ void OverlaySplitterHandle::paintEvent(QPaintEvent* e)
 
 void OverlaySplitterHandle::endDrag()
 {
+    if (std::getenv("FC_DRAG_DEBUG")) {  // DNDBG
+        fprintf(stderr, "[DNDBG] SPLIT endDrag isDrag=%d\n",
+                OverlayTabWidget::_Dragging == this ? 1 : 0);
+    }
     auto tabWidget = qobject_cast<OverlayTabWidget*>(splitter()->parentWidget());
     if (tabWidget) {
         dockWidget();
@@ -2705,6 +2735,13 @@ void OverlaySplitterHandle::keyPressEvent(QKeyEvent* ke)
 
 void OverlaySplitterHandle::mouseMoveEvent(QMouseEvent* me)
 {
+    if (std::getenv("FC_DRAG_DEBUG")) {  // DNDBG
+        const QPoint _lp = me->pos();
+        const QPoint _gp = me->globalPosition().toPoint();
+        fprintf(stderr, "[DNDBG] SPLIT move dragging=%d btns=%d isDrag=%d lpos=(%d,%d) g=(%d,%d)\n",
+                dragging, int(me->buttons()), OverlayTabWidget::_Dragging == this ? 1 : 0,
+                _lp.x(), _lp.y(), _gp.x(), _gp.y());
+    }
     if (OverlayTabWidget::_Dragging != this) {
         return;
     }
@@ -2749,6 +2786,11 @@ void OverlaySplitterHandle::mouseMoveEvent(QMouseEvent* me)
 
 void OverlaySplitterHandle::mousePressEvent(QMouseEvent* me)
 {
+    if (std::getenv("FC_DRAG_DEBUG")) {  // DNDBG
+        fprintf(stderr, "[DNDBG] SPLIT press btn=%d dragging=%s\n", int(me->button()),
+                OverlayTabWidget::_Dragging
+                    ? OverlayTabWidget::_Dragging->metaObject()->className() : "-");
+    }
     if (OverlayTabWidget::_Dragging || !getMainWindow() || me->button() != Qt::LeftButton) {
         return;
     }
@@ -2782,6 +2824,10 @@ void OverlaySplitterHandle::mousePressEvent(QMouseEvent* me)
 
 void OverlaySplitterHandle::mouseReleaseEvent(QMouseEvent* me)
 {
+    if (std::getenv("FC_DRAG_DEBUG")) {  // DNDBG
+        fprintf(stderr, "[DNDBG] SPLIT release btn=%d isDrag=%d\n", int(me->button()),
+                OverlayTabWidget::_Dragging == this ? 1 : 0);
+    }
     if (OverlayTabWidget::_Dragging != this || me->button() != Qt::LeftButton) {
         return;
     }

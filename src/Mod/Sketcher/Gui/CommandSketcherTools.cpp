@@ -162,7 +162,8 @@ std::vector<int> getListOfSelectedGeoIds(bool forceInternalSelection)
                 int geoId {};
                 Sketcher::PointPos PosId {};
                 Obj->getGeoVertexIndex(VtId, geoId, PosId);
-                if (isPoint(*Obj->getGeometry(geoId))) {
+                const Part::Geometry* geo = Obj->getGeometry(geoId);
+                if (geo && isPoint(*geo)) {
                     if (geoId >= 0) {
                         listOfGeoIds.push_back(geoId);
                     }
@@ -175,7 +176,9 @@ std::vector<int> getListOfSelectedGeoIds(bool forceInternalSelection)
         const size_t loopSize = listOfGeoIds.size();
         for (size_t i = 0; i < loopSize; i++) {
             const Part::Geometry* geo = Obj->getGeometry(listOfGeoIds[i]);
-            if (isEllipse(*geo) || isArcOfEllipse(*geo) || isArcOfHyperbola(*geo) || isArcOfParabola(*geo) || isBSplineCurve(*geo)) {
+            if (geo
+                && (isEllipse(*geo) || isArcOfEllipse(*geo) || isArcOfHyperbola(*geo)
+                    || isArcOfParabola(*geo) || isBSplineCurve(*geo))) {
                 const std::vector<Sketcher::Constraint*>& constraints = Obj->Constraints.getValues();
                 for (const auto constr : constraints) {
                     if (constr->Type == InternalAlignment && constr->Second == listOfGeoIds[i]) {
@@ -202,8 +205,9 @@ Sketcher::SketchObject* getSketchObject()
 {
     Gui::Document* doc = Gui::Application::Instance->activeDocument();
     ReleaseHandler(doc);
-    auto* vp = static_cast<SketcherGui::ViewProviderSketch*>(doc->getInEdit());
-    return vp->getSketchObject();
+    auto* vp = doc ? dynamic_cast<SketcherGui::ViewProviderSketch*>(doc->getInEdit())
+                   : nullptr;
+    return vp ? vp->getSketchObject() : nullptr;
 }
 
 // ================================================================================
@@ -230,6 +234,17 @@ bool copySelectionToClipboard(Sketcher::SketchObject* obj)
     // Sort and remove duplicates to avoid double-copying geometries
     std::sort(listOfGeoId.begin(), listOfGeoId.end());
     listOfGeoId.erase(std::unique(listOfGeoId.begin(), listOfGeoId.end()), listOfGeoId.end());
+
+    // Drop ids that no longer resolve (e.g. a stale external reference left in
+    // the selection) so the geometry list and the copiedGeoIds map stay aligned.
+    listOfGeoId.erase(
+        std::remove_if(listOfGeoId.begin(),
+                       listOfGeoId.end(),
+                       [obj](int geoId) { return obj->getGeometry(geoId) == nullptr; }),
+        listOfGeoId.end());
+    if (listOfGeoId.empty()) {
+        return false;
+    }
 
     std::vector<std::unique_ptr<Part::Geometry>> shapeGeometry;
     shapeGeometry.reserve(listOfGeoId.size());
@@ -368,7 +383,11 @@ void CmdSketcherCut::activated(int iMsg)
 
         Gui::Document* doc = getActiveGuiDocument();
         ReleaseHandler(doc);
-        auto* vp = static_cast<SketcherGui::ViewProviderSketch*>(doc->getInEdit());
+        auto* vp = doc ? dynamic_cast<SketcherGui::ViewProviderSketch*>(doc->getInEdit())
+                       : nullptr;
+        if (!vp) {
+            return;
+        }
 
         openCommand(QT_TRANSLATE_NOOP("Command", "Cut in Sketcher"));
         vp->deleteSelected();
@@ -406,7 +425,11 @@ void CmdSketcherPaste::activated(int iMsg)
     Q_UNUSED(iMsg);
     Gui::Document* doc = getActiveGuiDocument();
     ReleaseHandler(doc);
-    auto* vp = static_cast<SketcherGui::ViewProviderSketch*>(doc->getInEdit());
+    auto* vp = doc ? dynamic_cast<SketcherGui::ViewProviderSketch*>(doc->getInEdit())
+                   : nullptr;
+    if (!vp) {
+        return;
+    }
     Sketcher::SketchObject* obj = vp->getSketchObject();
 
     std::string data = QGuiApplication::clipboard()->text().toStdString();
@@ -1489,7 +1512,8 @@ void SketcherCopy::activate(SketcherCopy::Op op)
             int GeoId {};
             Sketcher::PointPos PosId {};
             Obj->getGeoVertexIndex(VtId, GeoId, PosId);
-            if (Obj->getGeometry(GeoId)->is<Part::GeomPoint>()) {
+            const Part::Geometry* geom = Obj->getGeometry(GeoId);
+            if (geom && geom->is<Part::GeomPoint>()) {
                 LastGeoId = GeoId;
                 LastPointPos = Sketcher::PointPos::start;
                 // points to copy
@@ -1507,7 +1531,8 @@ void SketcherCopy::activate(SketcherCopy::Op op)
         int GeoId {};
         Sketcher::PointPos PosId {};
         Obj->getGeoVertexIndex(VtId, GeoId, PosId);
-        if (!Obj->getGeometry(GeoId)->is<Part::GeomPoint>()) {
+        const Part::Geometry* geom = Obj->getGeometry(GeoId);
+        if (geom && !geom->is<Part::GeomPoint>()) {
             LastGeoId = GeoId;
             LastPointPos = PosId;
         }
@@ -2095,7 +2120,8 @@ void CmdSketcherRectangularArray::activated(int iMsg)
             int GeoId {};
             Sketcher::PointPos PosId {};
             Obj->getGeoVertexIndex(VtId, GeoId, PosId);
-            if (Obj->getGeometry(GeoId)->is<Part::GeomPoint>()) {
+            const Part::Geometry* geom = Obj->getGeometry(GeoId);
+            if (geom && geom->is<Part::GeomPoint>()) {
                 LastGeoId = GeoId;
                 LastPointPos = Sketcher::PointPos::start;
                 // points to copy
@@ -2113,7 +2139,8 @@ void CmdSketcherRectangularArray::activated(int iMsg)
         int GeoId {};
         Sketcher::PointPos PosId {};
         Obj->getGeoVertexIndex(VtId, GeoId, PosId);
-        if (!Obj->getGeometry(GeoId)->is<Part::GeomPoint>()) {
+        const Part::Geometry* geom = Obj->getGeometry(GeoId);
+        if (geom && !geom->is<Part::GeomPoint>()) {
             LastGeoId = GeoId;
             LastPointPos = PosId;
         }
@@ -2375,7 +2402,8 @@ void CmdSketcherRemoveAxesAlignment::activated(int iMsg)
             int GeoId {};
             Sketcher::PointPos PosId {};
             Obj->getGeoVertexIndex(VtId, GeoId, PosId);
-            if (Obj->getGeometry(GeoId)->is<Part::GeomPoint>()) {
+            const Part::Geometry* geom = Obj->getGeometry(GeoId);
+            if (geom && geom->is<Part::GeomPoint>()) {
                 LastGeoId = GeoId;
                 // points to copy
                 if (LastGeoId >= 0) {
@@ -2476,7 +2504,8 @@ void CmdSketcherOffset::activated(int iMsg)
             }
 
             const Part::Geometry* geo = Obj->getGeometry(geoId);
-            if (!isPoint(*geo)
+            if (geo
+                && !isPoint(*geo)
                 && !isBSplineCurve(*geo)
                 && !isEllipse(*geo)
                 && !isArcOfEllipse(*geo)
@@ -2645,7 +2674,11 @@ void CreateSketcherCommandsConstraintAccel()
 void SketcherGui::centerScale(double scaleFactor)
 {
     Gui::Document* doc = Gui::Application::Instance->activeDocument();
-    auto* vp = static_cast<SketcherGui::ViewProviderSketch*>(doc->getInEdit());
+    auto* vp = doc ? dynamic_cast<SketcherGui::ViewProviderSketch*>(doc->getInEdit())
+                   : nullptr;
+    if (!vp) {
+        return;
+    }
     auto scaler = DrawSketchHandlerScale::make_centerScaleAll(vp, scaleFactor, false);
     scaler->setSketchGui(vp);
     scaler->executeCommands();

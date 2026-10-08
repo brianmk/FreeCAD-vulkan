@@ -519,8 +519,20 @@ static void renderOverlayFaces(
     }
 
     SoLazyElement::setEmissive(state, &color);
-    const uint32_t packed = color.getPackedValue(0.0f);
-    SoLazyElement::setPacked(state, faceSet, 1, &packed, false);
+    // On the retained-IR path the selection/highlight is a separate overlay (the
+    // base is not re-materialed for cache stability), so the overlay must carry
+    // the shape's own transparency or an opaque overlay hides a transparent
+    // shape (the PartDesign pattern "selected object turns solid green" case).
+    // GL bakes the color into the base material and keeps its transparency
+    // element, so leave its overlay fallback on the historical opaque behavior.
+    float overlayTransparency = 0.0f;
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    if constexpr (isIR) {
+        overlayTransparency = SoLazyElement::getTransparency(state, 0);
+    }
+#endif
+    const uint32_t packed = color.getPackedValue(overlayTransparency);
+    SoLazyElement::setPacked(state, faceSet, 1, &packed, overlayTransparency > 0.0f);
 
     // setValues() does not shrink the field, so rewrite the overlay index
     // array to the exact size to avoid stale faces from a previous, larger

@@ -258,9 +258,22 @@ SoDatumLabel::SoDatumLabel()
     m_Root = new SoSeparator;
     m_Root->ref();
 
+    // Datum/dimension labels are screen annotations that must read on top of the
+    // geometry they annotate.  The retained IR path routes depth-disabled commands
+    // to its on-top pass, so disable the depth test for it; otherwise a label
+    // coplanar with, e.g., the sketch face z-fights with it.  Keep the GL/system
+    // Coin path untouched: it has no on-top pass, and the Sketcher does not wrap
+    // datum labels in So3DAnnotation, so flipping the shared node there would
+    // change GL/upstream rendering and the checked-in node snapshots.  (The
+    // companion text subgraph already renders depth-off via m_TextDepth.)
     m_GeometryDepth = new SoDepthBuffer;
-    m_GeometryDepth->test.setValue(true);
     m_GeometryDepth->write.setValue(false);
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    m_GeometryDepth->test.setValue(false);
+    m_GeometryDepth->function.setValue(SoDepthBuffer::ALWAYS);
+#else
+    m_GeometryDepth->test.setValue(true);
+#endif
     m_Root->addChild(m_GeometryDepth);
 
     m_LightModel = new SoLightModel;
