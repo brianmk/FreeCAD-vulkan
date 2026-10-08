@@ -26,6 +26,9 @@
 
 #include <Inventor/actions/SoGLRenderAction.h>
 #include <Inventor/actions/SoGetMatrixAction.h>
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+#    include <Inventor/actions/SoIRRenderAction.h>
+#endif
 #include <Inventor/elements/SoModelMatrixElement.h>
 #include <Inventor/elements/SoViewVolumeElement.h>
 #include <Inventor/elements/SoViewportRegionElement.h>
@@ -88,6 +91,17 @@ void SoZoomTranslation::GLRender(SoGLRenderAction* action)
 // Doc in superclass.
 void SoZoomTranslation::doAction(SoAction* action)
 {
+#ifdef HAVE_COIN_IR_RENDER_ACTION
+    // The offset is derived from the view volume (zoom), so the scene is
+    // camera-dependent: the retained-IR Vulkan renderer must re-record it on a
+    // camera move rather than replaying a cached list that holds the previous
+    // camera's offsets.  Marked before the identity early-return so an identity
+    // instance doubles as a plain camera-dependent marker for the sketch edit
+    // scene (whose origin axes are also stretched to the viewport per camera).
+    if (action && action->isOfType(SoIRRenderAction::getClassTypeId())) {
+        static_cast<SoIRRenderAction*>(action)->setCameraDependent(TRUE);
+    }
+#endif
     SbVec3f v;
     if (this->translation.getValue() == SbVec3f(0.0f, 0.0f, 0.0f)
         && this->abPos.getValue() == SbVec3f(0.0f, 0.0f, 0.0f)) {
