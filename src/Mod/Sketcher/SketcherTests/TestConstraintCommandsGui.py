@@ -813,3 +813,31 @@ class TestConstraintCommandsGui(SketcherGuiTestCase):
         self.assertEqual(list(self.sketch.RedundantConstraints), [])
         self.assertEqual(list(self.sketch.ConflictingConstraints), [])
 
+    def test_symmetric_coincident_vertices_about_a_line_are_not_over_constrained(self):
+        # Two distinct vertices tied by a Coincident constraint cannot take the
+        # point-pair Symmetric constraint: for two coincident points its
+        # perpendicularity equation is identically satisfied, so the pair is
+        # rank-deficient and the solver reports the sketch over-constrained.
+        # Only the on-line remainder of the pair is meaningful.
+        self.sketch.addGeometry(
+            Part.LineSegment(App.Vector(10, 15, 0), App.Vector(-30, 30, 0)), False
+        )  # Edge2 starts where Edge1 ends
+        self.sketch.addConstraint(Sketcher.Constraint("Coincident", 0, 2, 1, 1))
+        self.sketch.addGeometry(
+            Part.LineSegment(App.Vector(0, -20, 0), App.Vector(0, 20, 0)), False
+        )  # Edge3 is the symmetry line
+        self.doc.recompute()
+
+        # Vertex2 is Edge1's end, Vertex3 its midpoint; Edge2's vertices start at
+        # Vertex4 (lines expose start, end and midpoint).
+        self.select("Vertex2", "Vertex4", "Edge3")
+        Gui.runCommand("Sketcher_ConstrainSymmetric")
+
+        self.assertEqual(
+            sorted(constraint.Type for constraint in self.sketch.Constraints),
+            ["Coincident", "PointOnObject"],
+        )
+        self.assertEqual(self.sketch.solve(), 0)
+        self.assertEqual(list(self.sketch.RedundantConstraints), [])
+        self.assertEqual(list(self.sketch.ConflictingConstraints), [])
+
