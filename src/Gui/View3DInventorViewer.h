@@ -311,6 +311,8 @@ public:
     void setEditingViewProvider(Gui::ViewProvider* vp, int ModNum);
     /// return whether a view provider is edited
     bool isEditingViewProvider() const override;
+    /// return whether the editing provider has an active move-consuming handler
+    bool isEditingHandlerActive() const;
     /// return currently editing view provider
     ViewProvider* getEditingViewProvider() const;
     /// reset from edit mode

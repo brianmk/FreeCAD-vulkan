@@ -888,6 +888,14 @@ void ViewProviderSketch::setSketchMode(SketchMode mode)
     Gui::Application::Instance->commandManager().testActive();
 }
 
+bool ViewProviderSketch::isEditHandlerActive() const
+{
+    // Only an active DrawSketchHandler drives a live preview from button-less
+    // hover moves (STATUS_SKETCH_UseHandler).  Pure hovering (STATUS_NONE) must
+    // still be coalesced, so it is deliberately excluded here.
+    return Mode == STATUS_SKETCH_UseHandler;
+}
+
 SoPickedPointList ViewProviderSketch::getPickedPointsOnRay(
     const SbVec2s& pos,
     const Gui::View3DInventorViewer* viewer
@@ -2623,6 +2631,14 @@ bool ViewProviderSketch::isSelectable() const
         return PartGui::ViewProvider2DObject::isSelectable();
 }
 
+int ViewProviderSketch::getPickPriority() const
+{
+    // The sketch geometry is coplanar with the face it is attached to, so the
+    // two picks coincide and depth cannot separate them.  Outrank the solid so
+    // hovering/clicking the sketch picks the sketch, not the face underneath.
+    return 1;
+}
+
 Base::BoundBox3d ViewProviderSketch::_getBoundingBox(
     const char* subname,
     const Base::Matrix4D* mat,
@@ -3625,9 +3641,10 @@ void ViewProviderSketch::scaleBSplinePoleCirclesAndUpdateSolverAndSketchObjectGe
         if (GeoId >= geolistfacade.getInternalCount())
             GeoId = -geolistfacade.getExternalCount();
 
-        if ((*it)->getGeometry()->is<Part::GeomCircle>()) {// circle
+        const Part::Geometry* circleGeo = (*it)->getGeometry();
+        if (circleGeo && circleGeo->is<Part::GeomCircle>()) {// circle
             const Part::GeomCircle* circle =
-                static_cast<const Part::GeomCircle*>((*it)->getGeometry());
+                static_cast<const Part::GeomCircle*>(circleGeo);
             auto& gf = (*it);
 
             // BSpline weights have a radius corresponding to the weight value
@@ -4908,7 +4925,8 @@ bool ViewProviderSketch::onDelete(const std::vector<std::string>& subList)
                 int GeoId;
                 Sketcher::PointPos PosId;
                 getSketchObject()->getGeoVertexIndex(VtId, GeoId, PosId);
-                if (getSketchObject()->getGeometry(GeoId)->is<Part::GeomPoint>()) {
+                const Part::Geometry* vgeo = getSketchObject()->getGeometry(GeoId);
+                if (vgeo && vgeo->is<Part::GeomPoint>()) {
                     if (GeoId >= 0)
                         delInternalGeometries.insert(GeoId);
                     else

@@ -790,6 +790,9 @@ public:
     //! an InputDeviceHost) and delivers them through eventSink.
     EventFilter* eventFilter = nullptr;
     std::function<bool(const SoEvent*)> eventSink;
+    //! Reports whether an active tool/edit handler consumes the events (see
+    //! setEventGrabProbe).
+    std::function<bool()> eventGrabProbe;
 
     // Debug-only synthetic mouse injector state (see pollInjectFile()).
 #ifdef FREECAD_VULKAN_DEBUG_HOOKS
@@ -1317,6 +1320,11 @@ void QuarterVulkanWidget::setEventSink(std::function<bool(const SoEvent *)> sink
     d->eventSink = std::move(sink);
 }
 
+void QuarterVulkanWidget::setEventGrabProbe(std::function<bool()> probe)
+{
+    d->eventGrabProbe = std::move(probe);
+}
+
 qreal QuarterVulkanWidget::devicePixelRatio() const
 {
     return QWidget::devicePixelRatio();
@@ -1344,6 +1352,11 @@ SbVec2s QuarterVulkanWidget::inputWindowSize() const
 bool QuarterVulkanWidget::processSoEvent(const SoEvent * event)
 {
     return d->eventSink ? d->eventSink(event) : false;
+}
+
+bool QuarterVulkanWidget::eventsGrabbed() const
+{
+    return d->eventGrabProbe ? d->eventGrabProbe() : false;
 }
 
 #ifdef FREECAD_VULKAN_DEBUG_HOOKS

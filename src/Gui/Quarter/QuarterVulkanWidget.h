@@ -140,6 +140,17 @@ public:
     */
     void setEventSink(std::function<bool(const SoEvent *)> sink);
 
+    /*!
+      \brief Predicate reporting whether an active tool/edit handler is
+      consuming the events.
+
+      The widget holds no Coin event pipeline of its own (the hidden GL viewer
+      owns the `SoHandleEventAction`), so the viewport adapter supplies this
+      query.  Hover coalescing uses it to avoid discarding a move that drives a
+      live preview.
+    */
+    void setEventGrabProbe(std::function<bool()> probe);
+
     //! @name InputDeviceHost
     //@{
     qreal devicePixelRatio() const override;
@@ -147,6 +158,7 @@ public:
     QSize inputSize() const override;
     SbVec2s inputWindowSize() const override;
     bool processSoEvent(const SoEvent * event) override;
+    bool eventsGrabbed() const override;
     //@}
 
     /*!

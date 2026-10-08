@@ -1550,6 +1550,16 @@ bool DrawSketchHandler::filterRedundantAutoConstraints(
             int redundantconstraintindex = redundants[index] - 1;
             if (redundantconstraintindex > lastsketchconstraintindex) {
                 int removeindex = redundantconstraintindex - lastsketchconstraintindex - 1;
+                // The solver reports constraints by tag, and tags are only guaranteed to
+                // line up with the additional auto-constraints when every constraint maps
+                // to a single solver entry. With solver-internal constraints (e.g. the
+                // experimental line-midpoint rule) or otherwise non-contiguous tags this
+                // can fall outside the vector; erasing there would run past the end and
+                // crash (see the polyline OVP acceptance path). Treat it as a redundancy
+                // that is not an auto-constraint, like the existing branch below.
+                if (removeindex < 0 || removeindex >= static_cast<int>(autoConstraints.size())) {
+                    return false;
+                }
                 autoConstraints.erase(std::next(autoConstraints.begin(), removeindex));
             }
             else {
@@ -1572,6 +1582,11 @@ bool DrawSketchHandler::filterRedundantAutoConstraints(
             int conflictingIndex = conflicting[index] - 1;
             if (conflictingIndex > lastsketchconstraintindex) {
                 int removeindex = conflictingIndex - lastsketchconstraintindex - 1;
+                // Bound the erase for the same reason as the redundant loop above: the
+                // solver tag may not map onto a supplied auto-constraint.
+                if (removeindex < 0 || removeindex >= static_cast<int>(autoConstraints.size())) {
+                    continue;
+                }
                 autoConstraints.erase(std::next(autoConstraints.begin(), removeindex));
             }
         }

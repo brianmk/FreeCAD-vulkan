@@ -76,6 +76,12 @@ class OnViewParameters: public ControlAmount<sizes...>
 
 namespace sp = std::placeholders;
 
+#ifdef FREECAD_USE_VULKAN
+/// Default colour of the in-progress (preview) dimension labels shown while
+/// drawing. White by default so the values are legible on the sketch background.
+inline const SbColor previewLabelColor(1.0f, 1.0f, 1.0f);
+#endif
+
 /** @brief Class defining a generic handler controller operable with a DrawSketchControllableHandler
  *
  * @details
@@ -670,6 +676,13 @@ protected:
                                  )
                                  .get();
 
+            // The in-progress (preview) dimension labels start white so they stay
+            // legible against the sketch background. They only take the active
+            // (driving) colour once the user actually edits the value.
+#ifdef FREECAD_USE_VULKAN
+            parameter->setColor(previewLabelColor);
+#endif
+
             const auto handleParameterValueChanged = [this, parameter, i](double value) {
                 parameter->setActivatedColor();
                 onViewValueChanged(i, value);
@@ -724,7 +737,11 @@ protected:
     {
         onViewParameter->isSet = false;
         onViewParameter->hasFinishedEditing = false;
+#ifdef FREECAD_USE_VULKAN
+        onViewParameter->setColor(previewLabelColor);
+#else
         onViewParameter->setDeactivatedColor();
+#endif
         onViewParameter->setLockedAppearance(false);
     }
 

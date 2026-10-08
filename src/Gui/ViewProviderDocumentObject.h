@@ -200,6 +200,22 @@ public:
         return false;
     }
 
+    /** Pick priority for geometry that is coincident with another object.
+     *
+     * Two view providers can produce a pick at the very same scene point -- most
+     * commonly a sketch lying exactly on the face of the solid it is attached
+     * to.  Scene-graph order alone then decides which one the selection sees,
+     * which flips with the tiniest depth variation (z-fighting between picking
+     * the sketch and picking the face).  When the candidates coincide, the one
+     * whose view provider returns the higher value here wins, independent of
+     * owner and scene order.  The default (0) keeps the historic behaviour; a
+     * sketch returns a positive value so it is picked over the coincident face.
+     */
+    virtual int getPickPriority() const
+    {
+        return 0;
+    }
+
     void setShowable(bool enable);
     bool isShowable() const;
 

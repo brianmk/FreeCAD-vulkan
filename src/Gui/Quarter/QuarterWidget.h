@@ -179,6 +179,8 @@ public:
   void removeStateMachine(SoScXMLStateMachine * statemachine);
 
   bool processSoEvent(const SoEvent * event) override;
+  //! InputDeviceHost: true while a scene node grabs the events (active tool).
+  bool eventsGrabbed() const override;
   QSize minimumSizeHint() const override;
 
   QList<QAction *> transparencyTypeActions() const;

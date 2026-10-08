@@ -75,6 +75,7 @@
 #include <Inventor/SoDB.h>
 #include <Inventor/SoEventManager.h>
 #include <Inventor/SoRenderManager.h>
+#include <Inventor/actions/SoHandleEventAction.h>
 #include <Inventor/nodes/SoCamera.h>
 #include <Inventor/nodes/SoDirectionalLight.h>
 #include <Inventor/nodes/SoNode.h>
@@ -791,6 +792,22 @@ SoEventManager *
 QuarterWidget::getSoEventManager() const
 {
   return PRIVATE(this)->soeventmanager;
+}
+
+/*!
+  InputDeviceHost: true while a scene node is currently grabbing the translated
+  events (a modal interaction such as a dragger).  Hover coalescing consults
+  this so it never drops the moves that drive a live preview.  Handlers that
+  consume events via SoEventCallback::setHandled() without setting a grabber
+  (notably the Sketcher) are reported by the surface host instead -- see
+  VulkanViewportAdapter::setEventGrabProbe().
+*/
+bool
+QuarterWidget::eventsGrabbed() const
+{
+  SoEventManager * manager = this->getSoEventManager();
+  SoHandleEventAction * action = manager ? manager->getHandleEventAction() : nullptr;
+  return action && action->getGrabber() != nullptr;
 }
 
 /*!

@@ -993,7 +993,8 @@ private:
             }
 
             // Here we make sure that if possible the first wire is not a single line.
-            if (CC.size() == 1 && isLineSegment(*Obj->getGeometry(CC[0]))) {
+            if (CC.size() == 1 && Obj->getGeometry(CC[0])
+                && isLineSegment(*Obj->getGeometry(CC[0]))) {
                 sourceWires.push_back(wire);
             }
             else {
