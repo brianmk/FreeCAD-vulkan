@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <numbers>
 
 #include <FCConfig.h>
@@ -256,6 +257,37 @@ TEST_F(SketchObjectTest, testTwoEdgesSymmetricAboutLineConstraintPair)
         Base::Vector3d expected = mirrorPoint(first, axisStart, axisEnd);
         EXPECT_NEAR((second - expected).Length(), 0.0, 1e-6);
     }
+}
+
+TEST_F(SketchObjectTest, testSymmetricPointWithItselfOnLineIsNotOverconstrained)
+{
+    // Symmetric(geo, start, geo, start, H_Axis) asks for a point to be the mirror
+    // of itself about the horizontal axis. Both endpoints of the constraint are
+    // the same GCS point, so the perpendicularity equation of the symmetry is
+    // identically satisfied; adding it makes the constraint rank-deficient and
+    // the solver reports it as redundant/conflicting. Only the on-line remainder
+    // may be added, which puts the point on the axis.
+    Part::GeomLineSegment line;
+    line.setPoints(Base::Vector3d(1, 2, 0), Base::Vector3d(4, 5, 0));
+    int geo = getObject()->addGeometry(&line);
+
+    auto* symmetric = new Constraint();
+    symmetric->Type = Symmetric;
+    symmetric->First = geo;
+    symmetric->FirstPos = PointPos::start;
+    symmetric->Second = geo;
+    symmetric->SecondPos = PointPos::start;
+    symmetric->Third = HAxis;
+    symmetric->ThirdPos = PointPos::none;
+    getObject()->addConstraint(symmetric);
+
+    EXPECT_EQ(getObject()->solve(), SketchSolveStatus::Success);
+    EXPECT_EQ(getObject()->hasConflicts(), 0);
+    // The point is on the symmetry line...
+    EXPECT_NEAR(getObject()->getPoint(geo, PointPos::start).y, 0.0, 1e-6);
+    // ...and the element as a whole is not dragged onto it (the line is free to
+    // move, so only require the far endpoint to stay off the axis).
+    EXPECT_GT(std::abs(getObject()->getPoint(geo, PointPos::end).y), 1e-3);
 }
 
 TEST_F(SketchObjectTest, testTwoEdgesSymmetricAboutAxisConstraintPair)
