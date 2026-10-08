@@ -9737,6 +9737,23 @@ static void showSymmetricWrongSelectionWarning(Sketcher::SketchObject* Obj)
                                            "or two elements and a symmetry line from the sketch."));
 }
 
+/// Reflection of point across the line through lineStart with direction lineDirection.
+static Base::Vector3d mirrorPointAboutLine(
+    const Base::Vector3d& point,
+    const Base::Vector3d& lineStart,
+    const Base::Vector3d& lineDirection
+)
+{
+    const double lengthSquared = lineDirection.Sqr();
+    if (lengthSquared < Precision::SquareConfusion()) {
+        return point;
+    }
+    const Base::Vector3d offset = point - lineStart;
+    const Base::Vector3d projection =
+        lineStart + lineDirection * (offset.Dot(lineDirection) / lengthSquared);
+    return projection * 2 - point;
+}
+
 class CmdSketcherConstrainSymmetric: public CmdSketcherConstraint
 {
 public:
@@ -9859,18 +9876,103 @@ private:
             return false;
         }
 
-        // One constraint per corresponding endpoint pair makes the two elements
-        // mirror images of each other about the symmetry line.
-        openCommand(QT_TRANSLATE_NOOP("Command", "Add symmetric constraint"));
-        for (auto pos : {Sketcher::PointPos::start, Sketcher::PointPos::end}) {
-            Gui::cmdAppObjectArgs(Obj,
-                                  "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d))",
-                                  GeoId1,
-                                  static_cast<int>(pos),
-                                  GeoId2,
-                                  static_cast<int>(pos),
-                                  GeoId3);
+        // GeoId3 was validated to be a line; the H/V axes are line segments too.
+        const Part::Geometry* axisGeometry = Obj->getGeometry(GeoId3);
+        auto* axisLine = static_cast<const Part::GeomLineSegment*>(axisGeometry);
+        const Base::Vector3d axisStart = axisLine->getStartPoint();
+        const Base::Vector3d axisDirection = axisLine->getEndPoint() - axisStart;
+
+        // An element that is its own mirror image cannot be used as the
+        // reference of the symmetry: the other element would simply be moved
+        // onto it.
+        auto isSelfSymmetric = [&](int geoId) {
+            const Part::Geometry* geo = Obj->getGeometry(geoId);
+            std::unique_ptr<Part::Geometry> mirrored(geo->clone());
+            mirrored->mirror(axisStart, axisDirection);
+            const Base::Vector3d start = Obj->getPoint(geoId, Sketcher::PointPos::start);
+            const Base::Vector3d end = Obj->getPoint(geoId, Sketcher::PointPos::end);
+            const Base::Vector3d mirroredStart =
+                SketchObject::getPoint(mirrored.get(), Sketcher::PointPos::start);
+            const Base::Vector3d mirroredEnd =
+                SketchObject::getPoint(mirrored.get(), Sketcher::PointPos::end);
+            const double tolerance = std::max((end - start).Length(), 1.0) * 1e-7;
+            return ((mirroredStart - start).Length() < tolerance
+                    || (mirroredStart - end).Length() < tolerance)
+                && ((mirroredEnd - end).Length() < tolerance
+                    || (mirroredEnd - start).Length() < tolerance);
+        };
+
+        // The reference element is kept where it is, the moving one is displaced
+        // onto its mirror image. A fixed element must not be displaced, and a
+        // self-symmetric element cannot be the (stationary) reference.
+        int reference = GeoId1;
+        int moving = GeoId2;
+        if (isSelfSymmetric(reference) && !isSelfSymmetric(moving)) {
+            std::swap(reference, moving);
         }
+        if (isPointOrSegmentFixed(Obj, moving) && !isPointOrSegmentFixed(Obj, reference)) {
+            std::swap(reference, moving);
+        }
+
+        openCommand(QT_TRANSLATE_NOOP("Command", "Add symmetric constraint"));
+
+        // The Symmetric constraint only ties the corresponding endpoints of the
+        // two elements together. When both of them are free the closest
+        // solution the solver can find may be the degenerate one in which both
+        // collapse onto the symmetry line, so the moving element is placed onto
+        // the mirror image of the reference first. This is what makes the two
+        // elements end up on opposite sides of the symmetry line.
+        const bool bothFreeLines = !isPointOrSegmentFixed(Obj, reference)
+            && !isPointOrSegmentFixed(Obj, moving) && isLineSegment(*Obj->getGeometry(reference))
+            && isLineSegment(*Obj->getGeometry(moving));
+        if (bothFreeLines) {
+            if (isSelfSymmetric(reference)) {
+                // Both elements are their own mirror image, so there is no
+                // non-degenerate solution.
+                abortCommand();
+                Gui::TranslatedUserWarning(
+                    Obj,
+                    QObject::tr("Wrong selection"),
+                    QObject::tr("Cannot add a symmetry constraint "
+                                "because both selected elements are already symmetric "
+                                "about the symmetry line."));
+                return false;
+            }
+            const Base::Vector3d targetStart = mirrorPointAboutLine(
+                Obj->getPoint(reference, Sketcher::PointPos::start),
+                axisStart,
+                axisDirection
+            );
+            const Base::Vector3d targetEnd = mirrorPointAboutLine(
+                Obj->getPoint(reference, Sketcher::PointPos::end),
+                axisStart,
+                axisDirection
+            );
+            // Clone the moving element so that its id, construction flag and
+            // other metadata are kept, and only replace its endpoints.
+            std::unique_ptr<Part::Geometry> displaced(Obj->getGeometry(moving)->clone());
+            static_cast<Part::GeomLineSegment*>(displaced.get())->setPoints(targetStart, targetEnd);
+            Obj->setGeometry(moving, displaced.get());
+        }
+
+        // One constraint per corresponding endpoint pair keeps the two elements
+        // mirror images of each other about the symmetry line.
+        Gui::cmdAppObjectArgs(
+            Obj,
+            "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d))",
+            reference,
+            static_cast<int>(Sketcher::PointPos::start),
+            moving,
+            static_cast<int>(Sketcher::PointPos::start),
+            GeoId3);
+        Gui::cmdAppObjectArgs(
+            Obj,
+            "addConstraint(Sketcher.Constraint('Symmetric',%d,%d,%d,%d,%d))",
+            reference,
+            static_cast<int>(Sketcher::PointPos::end),
+            moving,
+            static_cast<int>(Sketcher::PointPos::end),
+            GeoId3);
         finishTransactionAndUpdate(this, Obj);
 
         return true;
