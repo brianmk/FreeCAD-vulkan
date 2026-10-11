@@ -138,6 +138,12 @@ private:
     std::vector<MAP_pD_pD> reductionmaps;  // for simplification of equality constraints
 
     int dofs;
+    // A negative dofs marks a sketch as over-constrained. diagnose() reaches that verdict when
+    // the constraint equations are rank-deficient and none of the candidates could be certified
+    // as redundant. That verdict is a heuristic: initSolution() verifies it with the solver, as
+    // soon as the reduced sub-systems the solve uses are available.
+    bool pendingOverconstrainedVerification;
+    int dofsIfVerifiedConsistent;
     std::set<Constraint*> redundant;
     VEC_I conflictingTags, redundantTags, partiallyRedundantTags;
 
