@@ -52,6 +52,11 @@ public:
     App::PropertyAngle Angle;
     App::PropertyLinkSub NeutralPlane;
     App::PropertyLinkSub PullDirection;
+    /** Optional sketch (or any planar profile) that splits the faces listed in
+     *  Base. Only the part of a base face that lies inside the profile's
+     *  enclosed region is drafted.
+     */
+    App::PropertyLinkSub Profile;
     App::PropertyBool Reversed;
 
     /** @name methods override feature */
@@ -84,6 +89,21 @@ private:
         App::Property* prop
     ) override;
     static const App::PropertyAngle::Constraints floatAngle;
+
+    /** Split the base faces with the Profile and return the resulting shape.
+     *
+     *  @param baseShape: the untransformed base shape the faces belong to.
+     *  @param faces: the faces selected through Base, in baseShape.
+     *  @param draftFaces: replaced with the sub-faces of the split shape that
+     *         lie inside the profile's region, i.e. the faces to draft.
+     *
+     *  @return the split base shape (a copy of baseShape if there is no Profile)
+     */
+    Part::TopoShape splitBaseFaces(
+        const Part::TopoShape& baseShape,
+        const std::vector<Part::TopoShape>& faces,
+        std::vector<Part::TopoShape>& draftFaces
+    ) const;
 
     DraftComputeProps computeProps;
 };

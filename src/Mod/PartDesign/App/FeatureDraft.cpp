@@ -25,8 +25,15 @@
 
 
 #include <BRepOffsetAPI_DraftAngle.hxx>
+#include <BRepAlgoAPI_Common.hxx>
+#include <BRepAlgoAPI_Splitter.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
+#include <TopTools_ListIteratorOfListOfShape.hxx>
+#include <TopTools_ListOfShape.hxx>
 #include <TopExp.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
@@ -40,15 +47,20 @@
 #include <gp_Dir.hxx>
 #include <gp_Lin.hxx>
 #include <gp_Pln.hxx>
+#include <gp_Trsf.hxx>
+#include <gp_Vec.hxx>
 
 
 #include <App/Datums.h>
+#include <App/GeoFeature.h>
 #include <App/Document.h>
 #include <Base/Console.h>
 #include <Base/Exception.h>
 #include <Base/Tools.h>
 #include <Mod/Part/App/Part2DObject.h>
+#include <Mod/Part/App/PartFeature.h>
 #include <Mod/Part/App/TopoShape.h>
+#include <Mod/Part/App/TopoShapeOpCode.h>
 
 #include "FeatureDraft.h"
 #include "DatumLine.h"
@@ -56,6 +68,66 @@
 
 
 using namespace PartDesign;
+
+namespace
+{
+
+/// Surface area of a shape, used to tell whether a split face is covered by the profile
+double getArea(const TopoDS_Shape& shape)
+{
+    GProp_GProps props;
+    BRepGProp::SurfaceProperties(shape, props);
+    return props.Mass();
+}
+
+/// Returns the plane of a planar face, false for anything else
+bool getPlane(const TopoDS_Shape& shape, gp_Pln& plane)
+{
+    if (shape.IsNull() || shape.ShapeType() != TopAbs_FACE) {
+        return false;
+    }
+
+    BRepAdaptor_Surface adapt(TopoDS::Face(shape));
+    if (adapt.GetType() != GeomAbs_Plane) {
+        return false;
+    }
+
+    plane = adapt.Plane();
+    return true;
+}
+
+/// True if the whole face lies inside one of the regions
+bool isInsideRegions(const TopoDS_Shape& face, const std::vector<TopoDS_Shape>& regions)
+{
+    const double faceArea = getArea(face);
+    if (faceArea <= Precision::Confusion()) {
+        return false;
+    }
+
+    for (const auto& region : regions) {
+        BRepAlgoAPI_Common common;
+        TopTools_ListOfShape arguments;
+        TopTools_ListOfShape tools;
+        arguments.Append(face);
+        tools.Append(region);
+        common.SetArguments(arguments);
+        common.SetTools(tools);
+        common.Build();
+
+        if (!common.IsDone() || common.Shape().IsNull()) {
+            continue;
+        }
+
+        // The face lies inside the region if their intersection is the face itself
+        if (std::abs(getArea(common.Shape()) - faceArea) <= 1e-6 * faceArea) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+}  // namespace
 
 
 PROPERTY_SOURCE(PartDesign::Draft, PartDesign::DressUp)
@@ -74,6 +146,15 @@ Draft::Draft()
         "Draft",
         (App::PropertyType)(App::Prop_None),
         "PullDirection"
+    );
+    ADD_PROPERTY_TYPE(
+        Profile,
+        (nullptr),
+        "Draft",
+        (App::PropertyType)(App::Prop_None),
+        "Sketch or planar profile used to split the base face(s).\n"
+        "Only the part of a base face lying inside the profile's enclosed region is drafted.\n"
+        "Leave empty to draft the whole selected face(s)."
     );
     ADD_PROPERTY(Reversed, (0));
 }
@@ -94,7 +175,7 @@ void Draft::handleChangedPropertyType(Base::XMLReader& reader, const char* TypeN
 short Draft::mustExecute() const
 {
     if (Placement.isTouched() || Angle.isTouched() || NeutralPlane.isTouched()
-        || PullDirection.isTouched() || Reversed.isTouched()) {
+        || PullDirection.isTouched() || Profile.isTouched() || Reversed.isTouched()) {
         return 1;
     }
     return DressUp::mustExecute();
@@ -321,9 +402,25 @@ App::DocumentObjectExecReturn* Draft::execute()
     baseShape.setTransform(Base::Matrix4D());
     try {
         std::vector<TopoShape> faces = getFaces(baseShape);
+        // Without a profile these are the selected faces themselves
+        std::vector<TopoShape> draftFaces = faces;
+
+        // A profile splits the selected faces. Only the resulting sub-faces that
+        // lie inside the profile's region are drafted.
+        Part::TopoShape splitShape(baseShape);
+        if (Profile.getValue()) {
+            splitShape = splitBaseFaces(baseShape, faces, draftFaces);
+        }
 
         TopoShape shape({}, getDocument()->getStringHasher());
-        shape.makeElementDraft(baseShape, faces, pullDirection, angle, neutralPlane, reversed);
+        shape.makeElementDraft(
+            splitShape,
+            draftFaces,
+            pullDirection,
+            angle,
+            neutralPlane,
+            reversed
+        );
 
         if (shape.isNull()) {
             return new App::DocumentObjectExecReturn(
@@ -342,7 +439,148 @@ App::DocumentObjectExecReturn* Draft::execute()
         return App::DocumentObject::StdReturn;
     }
     catch (Standard_Failure& e) {
-
-        return new App::DocumentObjectExecReturn(e.GetMessageString());
+        std::string message = e.GetMessageString();
+        if (message.empty()) {
+            // several OCC draft failures carry no message at all
+            message = e.DynamicType()->Name();
+        }
+        return new App::DocumentObjectExecReturn(message);
     }
+}
+
+Part::TopoShape Draft::splitBaseFaces(
+    const Part::TopoShape& baseShape,
+    const std::vector<Part::TopoShape>& faces,
+    std::vector<Part::TopoShape>& draftFaces
+) const
+{
+    App::DocumentObject* profileObject = Profile.getValue();
+    if (!profileObject) {
+        return baseShape;
+    }
+
+    if (!profileObject->isDerivedFrom<Part::Feature>()) {
+        throw Base::TypeError("Profile must be a Part feature, for example a sketch");
+    }
+
+    auto baseObject = getBaseObject();
+    if (!baseObject) {
+        throw Base::RuntimeError("No base object for the profile");
+    }
+
+    // Bring the profile into the coordinate system of the base shape. The shape
+    // returned by Part::Feature::Shape carries the object's own placement, so it
+    // is removed first and the placement relative to the base object is applied.
+    Part::TopoShape profileShape = static_cast<Part::Feature*>(profileObject)->Shape.getShape();
+    const auto& subValues = Profile.getSubValues();
+    if (!subValues.empty() && !subValues.front().empty()) {
+        profileShape = profileShape.getSubTopoShape(subValues.front().c_str());
+    }
+    if (profileShape.isNull()) {
+        throw Base::ValueError("Profile shape is empty");
+    }
+
+    profileShape.setTransform(Base::Matrix4D());
+    {
+        Base::Matrix4D placement
+            = App::GeoFeature::getGlobalPlacement(baseObject).inverse().toMatrix();
+        placement *= App::GeoFeature::getGlobalPlacement(profileObject).toMatrix();
+        profileShape.transformShape(placement, false, true);
+    }
+
+    // The profile has to enclose at least one closed region
+    Part::TopoShape region({}, getDocument()->getStringHasher());
+    if (profileShape.hasSubShape(TopAbs_FACE)) {
+        region = profileShape;
+    }
+    else {
+        region.makeElementFace(profileShape);
+    }
+
+    auto regionFaces = region.getSubTopoShapes(TopAbs_FACE);
+    if (regionFaces.empty()) {
+        throw Base::ValueError("Profile does not enclose a region, use a closed sketch");
+    }
+
+    // Move the profile's region onto the plane of every base face and use the
+    // moved regions as splitting tools.
+    TopTools_ListOfShape tools;
+    std::vector<std::vector<TopoDS_Shape>> regionsPerFace;
+    regionsPerFace.reserve(faces.size());
+
+    for (const auto& face : faces) {
+        gp_Pln facePlane;
+        if (!getPlane(face.getShape(), facePlane)) {
+            throw Base::TypeError("Base face must be planar to be split by a profile");
+        }
+
+        const gp_Dir faceNormal = facePlane.Axis().Direction();
+        const double faceOffset = facePlane.Location().XYZ().Dot(faceNormal.XYZ());
+
+        std::vector<TopoDS_Shape> faceRegions;
+        for (const auto& regionFace : regionFaces) {
+            gp_Pln regionPlane;
+            if (!getPlane(regionFace.getShape(), regionPlane)) {
+                // only planar regions can be moved onto a planar base face
+                continue;
+            }
+
+            if (std::abs(faceNormal.Dot(regionPlane.Axis().Direction())) < 1.0 - 1e-9) {
+                // the region is not parallel to this face and cannot split it
+                continue;
+            }
+
+            const double regionOffset
+                = regionPlane.Location().XYZ().Dot(faceNormal.XYZ());
+            gp_Trsf translation;
+            translation.SetTranslation(gp_Vec(faceNormal.XYZ() * (faceOffset - regionOffset)));
+
+            TopoDS_Shape moved
+                = BRepBuilderAPI_Transform(regionFace.getShape(), translation, true).Shape();
+            faceRegions.push_back(moved);
+            tools.Append(moved);
+        }
+        regionsPerFace.push_back(std::move(faceRegions));
+    }
+
+    if (tools.IsEmpty()) {
+        throw Base::ValueError("Profile is not parallel to any of the selected faces");
+    }
+
+    // Split the base shape with the profile regions
+    BRepAlgoAPI_Splitter splitter;
+    TopTools_ListOfShape arguments;
+    arguments.Append(baseShape.getShape());
+    splitter.SetArguments(arguments);
+    splitter.SetTools(tools);
+    splitter.Build();
+
+    if (!splitter.IsDone() || splitter.Shape().IsNull()) {
+        throw Base::CADKernelError("Failed to split the base face with the profile");
+    }
+
+    Part::TopoShape result({}, getDocument()->getStringHasher());
+    result.makeElementShape(splitter, baseShape, Part::OpCodes::Split);
+
+    // Keep only the sub-faces of the split that lie inside the profile's region
+    std::vector<Part::TopoShape> insideFaces;
+    for (size_t i = 0; i < faces.size(); ++i) {
+        for (TopTools_ListIteratorOfListOfShape it(splitter.Modified(faces[i].getShape())); it.More();
+             it.Next()) {
+            if (it.Value().ShapeType() != TopAbs_FACE) {
+                continue;
+            }
+            if (isInsideRegions(it.Value(), regionsPerFace[i])) {
+                insideFaces.emplace_back(it.Value());
+            }
+        }
+    }
+
+    if (insideFaces.empty()) {
+        throw Base::ValueError("Profile does not cover any part of the base face");
+    }
+
+    draftFaces = std::move(insideFaces);
+
+    return result;
 }
