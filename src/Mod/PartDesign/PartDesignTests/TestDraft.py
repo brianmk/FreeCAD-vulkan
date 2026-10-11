@@ -81,11 +81,13 @@ class TestDraft(unittest.TestCase):
             self.Doc.recompute()
         self.assertAlmostEqual(self.Draft.Shape.Volume, 1500)
 
-    def testDraftOnFaceSplitBySketch(self):
-        # A sketch lying on the +X face of the box splits that face; only the
-        # part of the face covered by the sketch is drafted.  The lower half of
-        # the +X face (z from 0 to 10) is sketched and drafted about the split
-        # line (z = 10), which removes/adds a wedge of 0.5 * 10 * tan(10) * 10 * 20.
+    def buildBoxWithSplitSketch(self):
+        """Body with a 20mm box, a datum plane at z = 10 and a sketch covering
+        the lower half of the +X face (z from 0 to 10).
+
+        Drafting that half about the split line removes/adds a wedge of
+        0.5 * 10 * tan(10) * 10 * 20.
+        """
         self.Body = self.Doc.addObject("PartDesign::Body", "Body")
         self.Box = self.Doc.addObject("PartDesign::AdditiveBox", "Box")
         self.Body.addObject(self.Box)
@@ -121,6 +123,7 @@ class TestDraft(unittest.TestCase):
         self.Body.addObject(self.Sketch)
         self.Sketch.AttachmentSupport = [(self.Box, self.XFace)]
         self.Sketch.MapMode = "FlatFace"
+        self.Sketch.MakeInternals = True
         self.Doc.recompute()
         toLocal = self.Sketch.getGlobalPlacement().inverse()
         corners = [
@@ -135,14 +138,8 @@ class TestDraft(unittest.TestCase):
             )
         self.Doc.recompute()
 
-        self.Draft = self.Doc.addObject("PartDesign::Draft", "Draft")
-        self.Draft.Base = (self.Box, [self.XFace])
-        self.Draft.Profile = (self.Sketch, [""])
-        self.Draft.NeutralPlane = (self.Plane, [""])
-        self.Draft.Angle = 10.0
-        self.Body.addObject(self.Draft)
-        self.Doc.recompute()
-
+    def assertDraftedLowerHalf(self):
+        """Checks the result of drafting the lower half of the +X face."""
         self.assertNotIn("Invalid", self.Draft.State)
         self.assertTrue(self.Draft.Shape.isValid())
 
@@ -174,6 +171,65 @@ class TestDraft(unittest.TestCase):
         # volume of the drafted wedge, the sign depends on the pull direction
         wedge = 1000.0 * math.tan(math.radians(10.0))
         self.assertAlmostEqual(abs(self.Draft.Shape.Volume - 8000.0), wedge, places=3)
+
+    def testDraftOnFaceSplitBySketch(self):
+        # The sketch is given through the Profile property, the base face is
+        # selected as usual.
+        self.buildBoxWithSplitSketch()
+
+        self.Draft = self.Doc.addObject("PartDesign::Draft", "Draft")
+        self.Draft.Base = (self.Box, [self.XFace])
+        self.Draft.Profile = (self.Sketch, [""])
+        self.Draft.NeutralPlane = (self.Plane, [""])
+        self.Draft.Angle = 10.0
+        self.Body.addObject(self.Draft)
+        self.Doc.recompute()
+
+        self.assertDraftedLowerHalf()
+
+    def testDraftWithSketchInBase(self):
+        # The sketch is selected as a whole in Base: the draft splits and drafts
+        # the face of the solid below the sketch.
+        self.buildBoxWithSplitSketch()
+
+        self.Draft = self.Doc.addObject("PartDesign::Draft", "Draft")
+        self.Draft.Base = (self.Sketch, [""])
+        self.Draft.NeutralPlane = (self.Plane, [""])
+        self.Draft.Angle = 10.0
+        self.Body.addObject(self.Draft)
+        self.Doc.recompute()
+
+        self.assertEqual(self.Draft.Base[0], self.Sketch)
+        self.assertDraftedLowerHalf()
+
+    def testDraftWithSketchInternalFaceInBase(self):
+        # A sketch's internal face (what the 3D view offers for picking) can be
+        # selected in Base as well.
+        self.buildBoxWithSplitSketch()
+
+        self.Draft = self.Doc.addObject("PartDesign::Draft", "Draft")
+        self.Draft.Base = (self.Sketch, ["InternalFace1"])
+        self.Draft.NeutralPlane = (self.Plane, [""])
+        self.Draft.Angle = 10.0
+        self.Body.addObject(self.Draft)
+        self.Doc.recompute()
+
+        self.assertEqual(self.Draft.Base[0], self.Sketch)
+        self.assertDraftedLowerHalf()
+
+    def testDraftWithMappedSketchInternalFaceInBase(self):
+        # Same as above with the mapped ("?") element name used in references
+        self.buildBoxWithSplitSketch()
+
+        self.Draft = self.Doc.addObject("PartDesign::Draft", "Draft")
+        self.Draft.Base = (self.Sketch, ["?InternalFace1"])
+        self.Draft.NeutralPlane = (self.Plane, [""])
+        self.Draft.Angle = 10.0
+        self.Body.addObject(self.Draft)
+        self.Doc.recompute()
+
+        self.assertEqual(self.Draft.Base[0], self.Sketch)
+        self.assertDraftedLowerHalf()
 
     def tearDown(self):
         # closing doc

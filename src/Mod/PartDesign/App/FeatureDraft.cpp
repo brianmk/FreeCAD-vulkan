@@ -50,6 +50,8 @@
 #include <gp_Trsf.hxx>
 #include <gp_Vec.hxx>
 
+#include <limits>
+
 
 #include <App/Datums.h>
 #include <App/GeoFeature.h>
@@ -63,6 +65,7 @@
 #include <Mod/Part/App/TopoShapeOpCode.h>
 
 #include "FeatureDraft.h"
+#include "Body.h"
 #include "DatumLine.h"
 #include "DatumPlane.h"
 
@@ -96,6 +99,25 @@ bool getPlane(const TopoDS_Shape& shape, gp_Pln& plane)
     return true;
 }
 
+/// Area of the intersection of two shapes, zero when they do not intersect
+double getIntersectionArea(const TopoDS_Shape& shape, const TopoDS_Shape& region)
+{
+    BRepAlgoAPI_Common common;
+    TopTools_ListOfShape arguments;
+    TopTools_ListOfShape tools;
+    arguments.Append(shape);
+    tools.Append(region);
+    common.SetArguments(arguments);
+    common.SetTools(tools);
+    common.Build();
+
+    if (!common.IsDone() || common.Shape().IsNull()) {
+        return 0.0;
+    }
+
+    return getArea(common.Shape());
+}
+
 /// True if the whole face lies inside one of the regions
 bool isInsideRegions(const TopoDS_Shape& face, const std::vector<TopoDS_Shape>& regions)
 {
@@ -105,26 +127,35 @@ bool isInsideRegions(const TopoDS_Shape& face, const std::vector<TopoDS_Shape>& 
     }
 
     for (const auto& region : regions) {
-        BRepAlgoAPI_Common common;
-        TopTools_ListOfShape arguments;
-        TopTools_ListOfShape tools;
-        arguments.Append(face);
-        tools.Append(region);
-        common.SetArguments(arguments);
-        common.SetTools(tools);
-        common.Build();
-
-        if (!common.IsDone() || common.Shape().IsNull()) {
-            continue;
-        }
-
         // The face lies inside the region if their intersection is the face itself
-        if (std::abs(getArea(common.Shape()) - faceArea) <= 1e-6 * faceArea) {
+        if (std::abs(getIntersectionArea(face, region) - faceArea) <= 1e-6 * faceArea) {
             return true;
         }
     }
 
     return false;
+}
+
+/// True if the object is a 2D shape (a sketch) rather than a solid
+bool isProfileObject(const App::DocumentObject* object)
+{
+    if (!object || !object->isDerivedFrom<Part::Feature>()) {
+        return false;
+    }
+
+    if (object->isDerivedFrom<Part::Part2DObject>()) {
+        return true;
+    }
+
+    const auto& shape = static_cast<const Part::Feature*>(object)->Shape.getShape();
+    return !shape.isNull() && !shape.hasSubShape(TopAbs_SOLID);
+}
+
+/// True if the object provides a solid shape
+bool hasSolidShape(const App::DocumentObject* object)
+{
+    return object && object->isDerivedFrom<Part::Feature>()
+        && static_cast<const Part::Feature*>(object)->Shape.getShape().hasSubShape(TopAbs_SOLID);
 }
 
 }  // namespace
@@ -184,13 +215,50 @@ short Draft::mustExecute() const
 App::DocumentObjectExecReturn* Draft::execute()
 {
     // Get parameters
-    // Base shape
+    // Base shape.
+    // A 2D object (a sketch) in Base is used as the profile that splits the
+    // solid feature below it, so the base shape is that feature instead.
+    App::DocumentObject* baseLink = Base.getValue();
+    const bool profileInBase = !Profile.getValue() && isProfileObject(baseLink);
+
+    Part::Feature* baseObject = nullptr;
     Part::TopoShape TopShape;
-    try {
-        TopShape = getBaseTopoShape();
+    if (profileInBase) {
+        baseObject = getBaseSolidObject();
+        if (!baseObject) {
+            return new App::DocumentObjectExecReturn(
+                QT_TRANSLATE_NOOP("Exception", "No solid feature below the profile")
+            );
+        }
+        TopShape = baseObject->Shape.getShape();
+        if (!TopShape.hasSubShape(TopAbs_SOLID)) {
+            return new App::DocumentObjectExecReturn(
+                QT_TRANSLATE_NOOP("Exception", "Base feature's shape is not a solid")
+            );
+        }
     }
-    catch (Base::Exception& e) {
-        return new App::DocumentObjectExecReturn(e.what());
+    else {
+        try {
+            TopShape = getBaseTopoShape();
+        }
+        catch (Base::Exception& e) {
+            return new App::DocumentObjectExecReturn(e.what());
+        }
+        baseObject = getBaseObject();
+    }
+
+    // create an untransformed copy of the base shape
+    Part::TopoShape baseShape(TopShape);
+    baseShape.setTransform(Base::Matrix4D());
+
+    // Frame in which the base shape is expressed.  When a 2D object in Base acts
+    // as the profile, the placement of the solid feature below it is used.
+    gp_Trsf invBaseTrsf;
+    if (profileInBase && baseObject) {
+        invBaseTrsf = TopoShape::convert(baseObject->Placement.getValue().inverse().toMatrix());
+    }
+    else {
+        invBaseTrsf = this->getLocation().Inverted().Transformation();
     }
 
     // Faces where draft should be applied
@@ -199,10 +267,28 @@ App::DocumentObjectExecReturn* Draft::execute()
     std::vector<std::string> SubVals = Base.getSubValuesStartsWith("Face");
 
     // If no element is selected, then we use a copy of previous feature.
-    if (SubVals.empty()) {
+    if (!profileInBase && SubVals.empty()) {
         this->positionByBaseFeature();
         this->Shape.setValue(TopShape);
         return App::DocumentObject::StdReturn;
+    }
+
+    // With a profile the faces to draft are the ones below the profile's region
+    Part::TopoShape region;
+    std::vector<TopoShape> profileFaces;
+    if (profileInBase) {
+        try {
+            region = getProfileRegion(baseObject, baseLink, Base.getSubValues());
+            profileFaces = getFacesUnderProfile(baseShape, region);
+        }
+        catch (Base::Exception& e) {
+            return new App::DocumentObjectExecReturn(e.what());
+        }
+        if (profileFaces.empty()) {
+            return new App::DocumentObjectExecReturn(
+                QT_TRANSLATE_NOOP("Exception", "No base face found below the profile")
+            );
+        }
     }
 
     // Draft angle
@@ -254,8 +340,7 @@ App::DocumentObjectExecReturn* Draft::execute()
             );
         }
 
-        TopLoc_Location invObjLoc = this->getLocation().Inverted();
-        pullDirection.Transform(invObjLoc.Transformation());
+        pullDirection.Transform(invBaseTrsf);
     }
 
     // Neutral plane
@@ -264,7 +349,14 @@ App::DocumentObjectExecReturn* Draft::execute()
     if (!refPlane) {
         // Try to guess a neutral plane from the first selected face
         // Get edges of first selected face
-        TopoDS_Shape face = TopShape.getSubShape(SubVals[0].c_str());
+        TopoDS_Shape face;
+        if (profileInBase) {
+            // the faces are already in the frame used below, do not transform again
+            face = profileFaces.front().getShape();
+        }
+        else {
+            face = TopShape.getSubShape(SubVals[0].c_str());
+        }
         TopTools_IndexedMapOfShape mapOfEdges;
         TopExp::MapShapes(face, TopAbs_EDGE, mapOfEdges);
         bool found = false;
@@ -379,8 +471,7 @@ App::DocumentObjectExecReturn* Draft::execute()
             throw Base::TypeError("Neutral plane reference must be face of a feature or a datum plane");
         }
 
-        TopLoc_Location invObjLoc = this->getLocation().Inverted();
-        neutralPlane.Transform(invObjLoc.Transformation());
+        neutralPlane.Transform(invBaseTrsf);
     }
 
     if (!refDirection) {
@@ -397,19 +488,23 @@ App::DocumentObjectExecReturn* Draft::execute()
     computeProps = {pullDirection, neutralPlane};
 
     this->positionByBaseFeature();
-    // create an untransformed copy of the base shape
-    Part::TopoShape baseShape(TopShape);
-    baseShape.setTransform(Base::Matrix4D());
+    if (profileInBase && baseObject) {
+        // BaseFeature may still point at the profile in documents saved before
+        // the profile was moved out of it, so take the placement from the solid
+        this->Placement.setValue(baseObject->Placement.getValue());
+    }
     try {
-        std::vector<TopoShape> faces = getFaces(baseShape);
+        // Faces to draft: the ones below a profile, or the faces selected in Base
+        std::vector<TopoShape> faces = profileInBase ? profileFaces : getFaces(baseShape);
         // Without a profile these are the selected faces themselves
         std::vector<TopoShape> draftFaces = faces;
 
         // A profile splits the selected faces. Only the resulting sub-faces that
         // lie inside the profile's region are drafted.
         Part::TopoShape splitShape(baseShape);
-        if (Profile.getValue()) {
-            splitShape = splitBaseFaces(baseShape, faces, draftFaces);
+        if (profileInBase || Profile.getValue()) {
+            splitShape
+                = splitBaseFaces(baseShape, region, faces, baseObject, draftFaces);
         }
 
         TopoShape shape({}, getDocument()->getStringHasher());
@@ -448,45 +543,70 @@ App::DocumentObjectExecReturn* Draft::execute()
     }
 }
 
-Part::TopoShape Draft::splitBaseFaces(
-    const Part::TopoShape& baseShape,
-    const std::vector<Part::TopoShape>& faces,
-    std::vector<Part::TopoShape>& draftFaces
+Part::Feature* Draft::getBaseSolidObject() const
+{
+    if (hasSolidShape(BaseFeature.getValue())) {
+        return static_cast<Part::Feature*>(BaseFeature.getValue());
+    }
+
+    // BaseFeature may point at a profile instead of the feature the draft is
+    // applied to, so fall back to the closest solid feature before this one.
+    Body* body = getFeatureBody();
+    if (!body) {
+        return nullptr;
+    }
+
+    Part::Feature* previous = nullptr;
+    for (auto* feature : body->Group.getValues()) {
+        if (feature == this) {
+            break;
+        }
+        if (hasSolidShape(feature)) {
+            previous = static_cast<Part::Feature*>(feature);
+        }
+    }
+
+    return previous;
+}
+
+Part::TopoShape Draft::getProfileRegion(
+    Part::Feature* baseObject,
+    App::DocumentObject* profileObject,
+    const std::vector<std::string>& subValues
 ) const
 {
-    App::DocumentObject* profileObject = Profile.getValue();
-    if (!profileObject) {
-        return baseShape;
-    }
-
-    if (!profileObject->isDerivedFrom<Part::Feature>()) {
+    if (!profileObject || !profileObject->isDerivedFrom<Part::Feature>()) {
         throw Base::TypeError("Profile must be a Part feature, for example a sketch");
     }
-
-    auto baseObject = getBaseObject();
     if (!baseObject) {
         throw Base::RuntimeError("No base object for the profile");
     }
 
-    // Bring the profile into the coordinate system of the base shape. The shape
-    // returned by Part::Feature::Shape carries the object's own placement, so it
-    // is removed first and the placement relative to the base object is applied.
-    Part::TopoShape profileShape = static_cast<Part::Feature*>(profileObject)->Shape.getShape();
-    const auto& subValues = Profile.getSubValues();
-    if (!subValues.empty() && !subValues.front().empty()) {
-        profileShape = profileShape.getSubTopoShape(subValues.front().c_str());
+    // The profile in global coordinates.  A sub-element name (for example a
+    // sketch's InternalFace) is resolved by Part::Feature::getTopoShape().
+    const char* sub = (!subValues.empty() && !subValues.front().empty())
+        ? subValues.front().c_str()
+        : nullptr;
+    auto options = Part::ShapeOption::NeedSubElement | Part::ShapeOption::ResolveLink
+        | Part::ShapeOption::Transform;
+    Part::TopoShape profileShape = Part::Feature::getTopoShape(profileObject, options, sub);
+    if (!profileShape.hasSubShape(TopAbs_FACE)) {
+        // not a (sub-)face, use the whole profile shape instead
+        profileShape = Part::Feature::getTopoShape(
+            profileObject,
+            Part::ShapeOption::ResolveLink | Part::ShapeOption::Transform
+        );
     }
     if (profileShape.isNull()) {
         throw Base::ValueError("Profile shape is empty");
     }
 
-    profileShape.setTransform(Base::Matrix4D());
-    {
-        Base::Matrix4D placement
-            = App::GeoFeature::getGlobalPlacement(baseObject).inverse().toMatrix();
-        placement *= App::GeoFeature::getGlobalPlacement(profileObject).toMatrix();
-        profileShape.transformShape(placement, false, true);
-    }
+    // Into the local frame of the base object
+    profileShape.transformShape(
+        App::GeoFeature::getGlobalPlacement(baseObject).inverse().toMatrix(),
+        false,
+        true
+    );
 
     // The profile has to enclose at least one closed region
     Part::TopoShape region({}, getDocument()->getStringHasher());
@@ -495,6 +615,98 @@ Part::TopoShape Draft::splitBaseFaces(
     }
     else {
         region.makeElementFace(profileShape);
+    }
+
+    if (!region.hasSubShape(TopAbs_FACE)) {
+        throw Base::ValueError("Profile does not enclose a region, use a closed sketch");
+    }
+
+    return region;
+}
+
+std::vector<Part::TopoShape> Draft::getFacesUnderProfile(
+    const Part::TopoShape& baseShape,
+    const Part::TopoShape& region
+) const
+{
+    std::vector<Part::TopoShape> result;
+    if (region.isNull()) {
+        return result;
+    }
+
+    gp_Pln regionPlane;
+    bool haveRegionPlane = false;
+    for (const auto& regionFace : region.getSubTopoShapes(TopAbs_FACE)) {
+        if (getPlane(regionFace.getShape(), regionPlane)) {
+            haveRegionPlane = true;
+            break;
+        }
+    }
+    if (!haveRegionPlane) {
+        return result;
+    }
+
+    const gp_Dir regionNormal = regionPlane.Axis().Direction();
+    const double regionOffset = regionPlane.Location().XYZ().Dot(regionNormal.XYZ());
+
+    // Among the faces parallel to the region, the ones closest to it that really
+    // overlap it are below the profile.
+    double closest = std::numeric_limits<double>::max();
+    std::vector<std::pair<double, Part::TopoShape>> candidates;
+
+    for (const auto& face : baseShape.getSubTopoShapes(TopAbs_FACE)) {
+        gp_Pln facePlane;
+        if (!getPlane(face.getShape(), facePlane)) {
+            continue;
+        }
+        if (std::abs(facePlane.Axis().Direction().Dot(regionNormal)) < 1.0 - 1e-9) {
+            continue;
+        }
+
+        const double faceOffset = facePlane.Location().XYZ().Dot(regionNormal.XYZ());
+        const double distance = std::abs(faceOffset - regionOffset);
+
+        gp_Trsf translation;
+        translation.SetTranslation(gp_Vec(regionNormal.XYZ() * (faceOffset - regionOffset)));
+        TopoDS_Shape moved
+            = BRepBuilderAPI_Transform(region.getShape(), translation, true).Shape();
+
+        if (getIntersectionArea(face.getShape(), moved) <= Precision::Confusion()) {
+            continue;
+        }
+
+        closest = std::min(closest, distance);
+        candidates.emplace_back(distance, face);
+    }
+
+    for (const auto& [distance, face] : candidates) {
+        if (distance <= closest + Precision::Confusion()) {
+            result.push_back(face);
+        }
+    }
+
+    return result;
+}
+
+Part::TopoShape Draft::splitBaseFaces(
+    const Part::TopoShape& baseShape,
+    const Part::TopoShape& givenRegion,
+    const std::vector<Part::TopoShape>& faces,
+    Part::Feature* givenBaseObject,
+    std::vector<Part::TopoShape>& draftFaces
+) const
+{
+    Part::Feature* baseObject = givenBaseObject;
+    if (!baseObject) {
+        baseObject = getBaseObject();
+    }
+
+    Part::TopoShape region = givenRegion;
+    if (region.isNull()) {
+        if (!Profile.getValue()) {
+            return baseShape;
+        }
+        region = getProfileRegion(baseObject, Profile.getValue(), Profile.getSubValues());
     }
 
     auto regionFaces = region.getSubTopoShapes(TopAbs_FACE);
