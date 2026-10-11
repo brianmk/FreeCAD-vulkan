@@ -267,9 +267,12 @@ View3DInventor::View3DInventor(
     rendererLabel->setToolTip(tr("Active 3D viewport renderer"));
     stack->installEventFilter(this);
     // A page switch (GL <-> Vulkan) raises the new page, which would cover the
-    // label; re-raise it on every current-page change.
+    // label; re-raise it and refresh the active-backend text on every
+    // current-page change.  Keying the text off the actual current page (not
+    // the requested render mode) is what guarantees "Vulkan" only ever shows
+    // while the Vulkan surface is the one displayed.
     connect(stack, &QStackedWidget::currentChanged, this, [this] {
-        repositionRendererLabel();
+        updateRendererLabel();
     });
     updateRendererLabel();
 #endif
@@ -417,7 +420,7 @@ void View3DInventor::updateRendererLabel()
         return;
     }
 #ifdef FREECAD_USE_VULKAN
-    const bool vulkan = (_renderMode != ViewRenderMode::RasterCoin);
+    const bool vulkan = _vulkanAdapter && _vulkanAdapter->isVulkanViewportVisible();
 #else
     const bool vulkan = false;
 #endif
