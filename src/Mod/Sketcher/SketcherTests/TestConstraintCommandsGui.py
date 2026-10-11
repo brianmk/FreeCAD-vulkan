@@ -610,7 +610,8 @@ class TestConstraintCommandsGui(SketcherGuiTestCase):
         )
         self.doc.recompute()
 
-        self.select("Vertex1", "Vertex4", "Vertex2")
+        # Vertex3 is the start of Edge2: lines expose a start and an end vertex.
+        self.select("Vertex1", "Vertex3", "Vertex2")
         Gui.runCommand("Sketcher_ConstrainSymmetric")
 
         self.assertEqual(self.sketch.ConstraintCount, 1)
@@ -629,7 +630,8 @@ class TestConstraintCommandsGui(SketcherGuiTestCase):
         )
         self.doc.recompute()
 
-        self.select("Edge1", "Vertex4")
+        # Vertex3 is the start of Edge2.
+        self.select("Edge1", "Vertex3")
         Gui.runCommand("Sketcher_ConstrainSymmetric")
 
         self.assertEqual(self.sketch.ConstraintCount, 1)
@@ -828,9 +830,9 @@ class TestConstraintCommandsGui(SketcherGuiTestCase):
         )  # Edge3 is the symmetry line
         self.doc.recompute()
 
-        # Vertex2 is Edge1's end, Vertex3 its midpoint; Edge2's vertices start at
-        # Vertex4 (lines expose start, end and midpoint).
-        self.select("Vertex2", "Vertex4", "Edge3")
+        # Vertex2 is Edge1's end; Edge2's vertices start at Vertex3 (lines expose
+        # a start and an end vertex).
+        self.select("Vertex2", "Vertex3", "Edge3")
         Gui.runCommand("Sketcher_ConstrainSymmetric")
 
         self.assertEqual(
@@ -857,7 +859,9 @@ class TestConstraintCommandsGui(SketcherGuiTestCase):
         )  # Edge3 provides the free vertex that becomes the centre
         self.doc.recompute()
 
-        self.select("Vertex2", "Vertex4", "Vertex7")
+        # Vertex3 is Edge2's start and Vertex5 is Edge3's start, the free vertex
+        # that becomes the centre.
+        self.select("Vertex2", "Vertex3", "Vertex5")
         Gui.runCommand("Sketcher_ConstrainSymmetric")
 
         self.assertEqual(
