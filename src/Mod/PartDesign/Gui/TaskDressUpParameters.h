@@ -115,7 +115,8 @@ protected:
         none,
         refSel,
         plane,
-        line
+        line,
+        profile
     };
     void setSelectionMode(selectionModes mode);
     virtual void setButtons(const selectionModes mode) = 0;
