@@ -1164,7 +1164,10 @@ void NaviCubeImplementation::setHilite(PickId hilite)
         if (soNaviCube) {
             soNaviCube->hiliteId = static_cast<int>(hiliteId);
         }
-        viewer->getSoRenderManager()->scheduleRedraw();
+        // Wake the display surface as well: the GL render-manager redraw never
+        // reaches the display-only Vulkan widget, so a hover-highlight change
+        // would otherwise never be drawn under Vulkan.
+        requestRedraw(false);
     }
 }
 
@@ -1231,7 +1234,7 @@ bool NaviCubeImplementation::mouseMoved(short x, short y)
 
     if (hovering != this->hovering) {
         this->hovering = hovering;
-        viewer->getSoRenderManager()->scheduleRedraw();
+        requestRedraw(false);
     }
 
     if (!dragStarted) {
@@ -1257,7 +1260,7 @@ bool NaviCubeImplementation::mouseMoved(short x, short y)
             relPos[0] = std::min(std::max(newX, 0.0f), 1.0f);
             relPos[1] = std::min(std::max(newY, 0.0f), 1.0f);
 
-            viewer->getSoRenderManager()->scheduleRedraw();
+            requestRedraw(false);
         }
         return true;
     }
