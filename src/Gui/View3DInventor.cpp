@@ -403,16 +403,6 @@ void View3DInventor::requestVulkanRender()
     }
 }
 
-// Declared (and moc-registered as a slot) unconditionally, so its definition
-// must also be unconditional: the adapter's resyncViewport() has a no-op body
-// without FREECAD_USE_VULKAN, exactly like requestVulkanRender() above.
-void View3DInventor::resyncVulkanViewport()
-{
-    if (_vulkanAdapter) {
-        _vulkanAdapter->resyncViewport();
-    }
-}
-
 #ifdef FREECAD_VIEWPORT_RENDERER_LABEL
 void View3DInventor::updateRendererLabel()
 {
@@ -479,10 +469,9 @@ void View3DInventor::setRenderMode(ViewRenderMode mode)
     if (auto grp = App::GetApplication().GetParameterGroupByPath(
             "User parameter:BaseApp/Preferences/View")) {
         grp->SetInt("VulkanRenderMode", static_cast<int>(mode));
-        // Refresh the in-memory Vulkan settings so getWireframe()/the status
-        // bar mirror the updated preferences; this seeds the canonical
-        // VulkanViewSettings (including renderMode) so pushSettings() derives
-        // the raster gate from the single source.
+        // Refresh the in-memory Vulkan settings so getWireframe() and the status
+        // bar mirror the updated preferences (edge overlay / points / LOD, not the
+        // render mode: that lives in _renderMode and the pref written just above).
         if (_viewer) {
             _viewer->applyVulkanSettings();
         }

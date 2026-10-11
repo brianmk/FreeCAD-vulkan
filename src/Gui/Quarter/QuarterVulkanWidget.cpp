@@ -25,18 +25,14 @@
 #include <QVersionNumber>
 #include <QVBoxLayout>
 
-#include <QApplication>
 #include <QDir>
 #include <QEvent>
 #include <QFile>
-#include <QKeyEvent>
 #include <QMutex>
-#include <QMouseEvent>
 #include <QPointer>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QTimer>
-#include <QWheelEvent>
 #ifdef HAVE_QT6_GUI_PRIVATE
 #include <QtGui/qpa/qwindowsysteminterface.h>
 #endif
@@ -547,8 +543,8 @@ private:
         m_manager.setRenderTarget(&m_target);
     }
 
-    // Log once per swapchain recreation (not per frame) to avoid console
-    // spam now that the renderer requests a new frame continuously.
+    // Log once per swapchain recreation (not per frame): rendering is demand-driven,
+    // but a burst of requests arrives while the camera moves.
     void logSwapchainState(int index, const QSize & size,
                            VkSampleCountFlagBits samples)
     {
@@ -1460,9 +1456,8 @@ SbColor4f QuarterVulkanWidget::getBackgroundColor() const
 void QuarterVulkanWidget::setClearEnabled(bool clearwindow, bool clearzbuffer)
 {
     // QVulkanWindow's default render pass always clears its attachments
-    // (LOAD_OP_CLEAR), so frame clears cannot be disabled on the Vulkan
-    // path.  Kept for API parity with QuarterWidget; warn once if a caller
-    // requests anything else than the fixed behavior.
+    // (LOAD_OP_CLEAR), so frame clears cannot be disabled on the Vulkan path.
+    // Warn once on the first call; the request is always ignored.
     Q_UNUSED(clearwindow)
     Q_UNUSED(clearzbuffer)
     static bool warned = false;

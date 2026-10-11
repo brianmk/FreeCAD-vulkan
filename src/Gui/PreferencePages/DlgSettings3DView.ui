@@ -594,7 +594,7 @@ Set to 0 to redraw as fast as the graphics driver allows.</string>
       <string>Vulkan rendering (experimental)</string>
      </property>
      <property name="toolTip">
-      <string>These options affect only the Vulkan viewport renderer and are ignored by the standard OpenGL renderer.  Requires a FreeCAD build with FREECAD_USE_VULKAN and the UseVulkanRenderer preference enabled.</string>
+      <string>These options affect only the Vulkan viewport renderer and are ignored by the standard OpenGL renderer.  They have no effect in a build without FREECAD_USE_VULKAN (the settings are still stored), nor while a view uses the OpenGL renderer.</string>
      </property>
      <layout class="QVBoxLayout" name="verticalLayoutVulkan">
       <item>

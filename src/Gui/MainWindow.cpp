@@ -1504,8 +1504,8 @@ void MainWindow::addWindow(MDIView* view)
     connect(view, &MDIView::message, this, &MainWindow::showMessage);
     connect(this, &MainWindow::windowStateChanged, view, &MDIView::windowStateChanged);
 #ifdef FREECAD_USE_VULKAN
-    // The render mode can auto-fall-back to raster when the hardware lacks ray
-    // tracing; keep the status-bar selector (and edge-overlay button) in step.
+    // Keep the status-bar selector (and the edge-overlay button) in step when the
+    // view's render mode changes, including a change driven by the preference.
     if (const auto* v3 = qobject_cast<View3DInventor*>(view)) {
         connect(v3, &View3DInventor::renderModeChanged,
                 this, &MainWindow::syncViewModeCombo);

@@ -165,7 +165,6 @@ public Q_SLOTS:
     /// brand-new document can otherwise keep a stale region (so hover
     /// preselection misses) until the render mode is re-applied -- the effect
     /// a manual renderer switch has.  No-op without a Vulkan viewport.
-    void resyncVulkanViewport();
 
 #ifdef FREECAD_USE_VULKAN
     /// Whether the model's feature-edge lines are drawn in the Vulkan

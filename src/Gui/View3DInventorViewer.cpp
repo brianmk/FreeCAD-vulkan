@@ -2080,7 +2080,7 @@ void View3DInventorViewer::applyVulkanSettings()
     }
 
     // Single source of truth: VulkanViewSettings::load() reads the whole
-    // Vulkan display + path-tracing preference set (key + type mapped beside
+    // Vulkan display preference set (key + type mapped beside
     // the struct fields), so adding a setting updates one place instead of
     // letting this method and the pref-change observer drift apart.
     vulkanSettings_.load(hGrp);

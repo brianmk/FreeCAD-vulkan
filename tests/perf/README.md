@@ -4,11 +4,15 @@ Runs the same workloads against the three standard arms and renders a
 comparison graph, so a fork change can be judged against the real upstream
 baseline (not only the fork's GL-vs-Vulkan):
 
-| arm    | binary | renderer |
-|--------|--------|----------|
-| `base` | `/home/phantom/dev/FreeCAD_base/FreeCAD/build/release/bin/FreeCAD` | upstream FreeCAD, **no** Vulkan (system Coin / GL) |
-| `gl`   | `/home/phantom/dev/FreeCAD-Integrate/build-freecad-off/bin/FreeCAD` | fork, `FREECAD_USE_VULKAN=OFF` |
-| `vk`   | `/home/phantom/dev/FreeCAD-Integrate/build-freecad/bin/FreeCAD` | fork, Vulkan raster |
+| arm    | binary (default) | renderer |
+|--------|------------------|----------|
+| `base` | `$FCP_BASE_BIN` (no default; point it at an upstream FreeCAD) | upstream FreeCAD, **no** Vulkan (system Coin / GL) |
+| `gl`   | `$FCP_GL_BUILD` / `../build-freecad-off` | fork, `FREECAD_USE_VULKAN=OFF` |
+| `vk`   | `$FCP_VK_BUILD` / `../build-freecad` | fork, Vulkan raster |
+
+The defaults are relative to `$FCP_REPO` (this checkout, by default), so the suite works from any
+clone once the three builds exist; override `FCP_BASE_BIN`, `FCP_GL_BUILD` and `FCP_VK_BUILD` for
+other layouts.
 
 `base` has no fork-only API, so the *same* `probe.py` runs on all three arms
 with everything fork-specific guarded by `hasattr` (`setRenderMode`,
@@ -52,8 +56,9 @@ Work spec is `scene:work`:
 
 - The C++ benches are best-of-3 and run **before** the GUI cases; the
   short culled-pick measurement is otherwise distorted by GUI teardown load.
-- Frame timing is wall-clock from the probe (the Release builds compile out the
-  `[RTDBG]` timing hooks). `vk` forces a frame via
+- Frame timing is wall-clock from the probe. The `[RTDBG]` timing hooks are runtime-gated by
+  `COIN_VULKAN_FRAME_TIMING` (not compiled out in Release), so a timing run must set it. `vk`
+  forces a frame via
   `requestVulkanRender()`+`getVulkanFrameCount()`; `base`/`gl` use
   `redraw()`+`graphicsView().repaint()`.
 - Each arm gets its own `FREECAD_USER_HOME` under `results/` so user config and

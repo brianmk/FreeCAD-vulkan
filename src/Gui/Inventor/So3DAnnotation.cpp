@@ -195,13 +195,18 @@ void So3DAnnotation::GLRenderOffPath(SoGLRenderAction* /* action */)
 void So3DAnnotation::IRRender(SoIRRenderAction* action)
 {
     // On the OpenGL path annotations are deferred through SoDelayedAnnotationsElement
-    // and replayed later with the depth buffer cleared, so the subtree always draws on
-    // top of the scene (while still depth-testing against itself).  The retained-IR
-    // path has no delayed replay: render the subtree inline and then promote the
-    // commands it recorded to the OVERLAY pass, which the raster backend draws last,
-    // on top.  This mirrors SoFCSelection/SoRasterOverlay.  Without it, for example a
-    // PartDesign pattern's semi-transparent removed-volume preview is depth-rejected
-    // by the opaque solid it is embedded in, so it never appears.
+    // and replayed later, after one glClear(GL_DEPTH_BUFFER_BIT) for the whole group
+    // (View3DInventorViewer::renderDelayedAnnotations), so the subtree composites over
+    // the scene while still depth-testing against itself.  The retained-IR path has no
+    // delayed replay: render the subtree inline, then mark the commands it recorded as
+    // annotation overlay commands (isAnnotation) and scope them to the full frame.  The
+    // raster backend draws that group last and clears the depth buffer once before it,
+    // giving the GL behaviour; promotion to the OVERLAY pass alone would not, because a
+    // full-frame overlay keeps depth-testing against the scene, and clearing the frame
+    // depth earlier would also drop the scene depth the selection highlights need.
+    // Without this, for example a PartDesign pattern's semi-transparent removed-volume
+    // preview is depth-rejected by the opaque solid it is embedded in, so it never
+    // appears.
     if (!action) {
         return;
     }
@@ -230,6 +235,10 @@ void So3DAnnotation::IRRender(SoIRRenderAction* action)
     for (int i = firstCommand; i < count; ++i) {
         SoRenderCommand& command = list.getCommand(i);
         command.pass = SO_RENDERPASS_OVERLAY;
+        // The raster backend draws annotation commands last with the depth buffer
+        // cleared first, which is what the GL delayed replay below gives them.  Depth
+        // testing stays on so the subtree still occludes itself.
+        command.isAnnotation = TRUE;
         command.state.raster.scissorEnabled = TRUE;
         command.state.raster.scissorX = vx;
         command.state.raster.scissorY = vy;

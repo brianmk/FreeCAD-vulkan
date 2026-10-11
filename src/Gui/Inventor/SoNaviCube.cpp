@@ -1420,14 +1420,17 @@ void SoNaviCube::IRRender(SoIRRenderAction* action)
     // hidden faces (and their labels) bleed through the translucent shell.
     // Declare CLOCKWISE for the IR traversal only; the GL path keeps
     // COUNTERCLOCKWISE.
+    SoShapeHints::VertexOrdering savedOrdering = SoShapeHints::UNKNOWN_ORDERING;
     if (cubeHints) {
+        savedOrdering = static_cast<SoShapeHints::VertexOrdering>(
+            cubeHints->vertexOrdering.getValue());
         cubeHints->vertexOrdering = SoShapeHints::CLOCKWISE;
     }
 
     sceneRoot->IRRender(action);
 
     if (cubeHints) {
-        cubeHints->vertexOrdering = SoShapeHints::COUNTERCLOCKWISE;
+        cubeHints->vertexOrdering = savedOrdering;
     }
 
     state->pop();

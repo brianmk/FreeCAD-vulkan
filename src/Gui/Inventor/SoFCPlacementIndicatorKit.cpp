@@ -40,6 +40,9 @@
 
 #include "SoFCPlacementIndicatorKit.h"
 
+// SoShapeScale (via SoAxisCrossKit) and the annotation kit are part of this kit's
+// own subtree, so their headers are needed for complete types even though no symbol
+// from them is named here.
 #include "So3DAnnotation.h"
 #include "SoAxisCrossKit.h"
 
@@ -104,7 +107,8 @@ void SoFCPlacementIndicatorKit::notify(SoNotList* l)
 {
     SoField* field = l->getLastField();
 
-    if (field == &parts || field == &axes || field == &axisLength || field == &axisLabels) {
+    if (field == &parts || field == &axes || field == &axisLength || field == &axisLabels
+        || field == &coloredAxis) {
         // certainly this is not the fastest way to recompute the geometry as it does recreate
         // everything from the scratch. It is however very easy to implement and this node should
         // not really change too often so the performance penalty is better than making code that

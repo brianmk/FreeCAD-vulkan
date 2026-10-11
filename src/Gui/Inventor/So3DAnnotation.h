@@ -96,11 +96,19 @@ private:
 
 /*! @brief 3D Annotation Node - Annotation with depth buffer
  *
- * This class is just like SoAnnotation with the difference that it does not disable
- * the depth buffer instead it clears it and renders on top of everything with proper
- * depth control.
+ * Like SoAnnotation, but instead of disabling the depth buffer it keeps depth testing
+ * (so the subtree occludes itself) and makes the renderer composite the subtree over
+ * the scene.
  *
- * It should be used with caution as it does clear the depth buffer for each annotation!
+ * OpenGL path: the subtree is deferred and replayed by
+ * View3DInventorViewer::renderDelayedAnnotations(), which clears the depth buffer once
+ * for the whole group before replaying all pending annotations.
+ *
+ * Retained-IR path (Vulkan): So3DAnnotation::IRRender() renders the subtree inline,
+ * marks its commands as annotation overlay commands and lets the raster backend draw
+ * them last, again after one depth clear for the group.
+ *
+ * Either way the depth clear is per group, not per annotation.
  */
 class GuiExport So3DAnnotation: public SoSeparator
 {

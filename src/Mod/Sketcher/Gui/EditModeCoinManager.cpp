@@ -1684,13 +1684,11 @@ void EditModeCoinManager::updateAxesLength(const Base::BoundBox2d& bb)
         SbVec3f(0.0f, bb.MaxY, zCrossH)
     );
 
-    // The axes are plain SoLineSets fed by a sibling SoCoordinate3.  SoShape's
-    // retained-IR tessellation cache is invalidated only by a shape field
-    // change (SoShape::notify()); a sibling coordinate write does not notify
-    // it, so the Vulkan path would keep replaying the previous axis geometry
-    // even after a re-record.  Touch the line sets so their cached tessellation
-    // is rebuilt.  The GL path reads the coordinate element every frame and has
-    // no such cache, so this is a no-op there.
+    // The axes are plain SoLineSets fed by a sibling SoCoordinate3.  The retained-IR
+    // tessellation cache now keys on the coordinate element too (SoShape validates
+    // irCoordNodeId), so a sibling coordinate write is picked up on its own; touching
+    // the line sets makes that immediate and is belt-and-braces.  Cheap, and the GL
+    // path (which reads the coordinates every frame) is unaffected.
     editModeScenegraphNodes.RootCrossHSet->touch();
     editModeScenegraphNodes.RootCrossVSet->touch();
     editModeScenegraphNodes.RootCrossSetOccludedH->touch();

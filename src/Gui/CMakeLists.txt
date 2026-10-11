@@ -139,9 +139,6 @@ if(FREECAD_USE_VULKAN)
     # CMAKE_BUILD_TYPE) so multi-config generators still define them.
     target_compile_definitions(FreeCADGui PRIVATE
         "$<$<OR:$<BOOL:${FREECAD_USE_VULKAN_DEBUG_HOOKS}>,$<CONFIG:Debug>>:FREECAD_VULKAN_DEBUG_HOOKS=1>")
-    target_include_directories(FreeCADGui SYSTEM PRIVATE
-        ${QtGui_INCLUDE_DIRS}
-    )
     # QuarterVulkanWidget.cpp includes the Qt QPA header
     # <QtGui/qpa/qwindowsysteminterface.h> (Qt 6 MouseEvent/Expose sync helpers).
     # qpa/ headers live in the QT_VERSION-specific private include dir exposed

@@ -18,8 +18,6 @@ VulkanViewSettings::load(const ParameterGrp::handle & hGrp)
     if (!hGrp) {
         return;
     }
-    this->renderMode = hGrp->GetInt("VulkanRenderMode", 1);
-
     // VulkanWireframe backs the status-bar "show model edges" toggle: true
     // (the historical default look) shows the BRep feature edges, false hides
     // them.  Default true so an unset preference keeps the edges visible.

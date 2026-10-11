@@ -9,7 +9,6 @@
 #include "InteractionSurface.h"
 
 #include <memory>
-#include <string>
 
 class QStackedWidget;
 class QTimer;
@@ -29,11 +28,12 @@ class View3DInventorViewer;
  *  The Vulkan widget is display-only: navigation, picking and preference
  *  handling stay on the (hidden) OpenGL viewer.  This adapter keeps the two
  *  sides in sync: it pushes scene-graph/camera/background state into the
- *  Vulkan widget, forwards its input events to the GL viewer, mirrors the
- *  GL viewer's cursor shape onto the visible Vulkan surface and keeps the
- *  GL viewport region in sync with the Vulkan swapchain size.  All wiring
- *  is done in the constructor; the connections use this object as context,
- *  so they are torn down automatically when the view is destroyed.
+ *  Vulkan widget, forwards its input events to the GL viewer, routes the cursor
+ *  through View3DInventorViewer::setCursorTarget() and keeps the GL viewport
+ *  region in sync with the Vulkan swapchain size.  All wiring is done in the
+ *  constructor; the connections use this object as context, so they are torn
+ *  down when the adapter is destroyed (View3DInventor deletes it before the
+ *  viewer).
  *
  *  Like Coin's SoRenderManager (which watches the scene with a root
  *  SoNodeSensor whose callback calls scheduleRedraw()), the adapter installs
@@ -45,8 +45,8 @@ class View3DInventorViewer;
  *  change would leave the surface frozen (most visibly during a camera
  *  animation, which mutates the camera on a timer with no SoEvent).
  *
- *  Only compiled and used when FREECAD_USE_VULKAN is enabled; every method
- *  is a no-op otherwise.
+ *  Always compiled (the class exists in every build so the render-mode plumbing
+ *  links); with FREECAD_USE_VULKAN unset every method is a no-op.
  */
 class VulkanViewportAdapter : public QObject, public InteractionSurface
 {
@@ -96,7 +96,6 @@ public:
     /// mode is re-applied -- the same effect a manual renderer switch has --
     /// which leaves hover preselection dead until then.  Idempotent; safe to
     /// call whenever the layout or scene may have changed.
-    void resyncViewport();
 
 Q_SIGNALS:
 
@@ -205,7 +204,7 @@ private:
     /// normalized coordinates mismatched against the surface, so picking
     /// misses.  The surface is the single source of truth, so this is
     /// re-applied on every size change and on any GL-widget resize.
-    void applySurfaceViewportToGL(const QSize& surfaceSize);
+    void applySurfaceViewportToGL();
 
     /// (Re)attach the scene-graph and camera change sensors to the viewer's
     /// current render manager.  Safe to call repeatedly; re-attaches only when
@@ -261,6 +260,10 @@ private:
     //! The controller's base surface: the GL viewer, which owns the
     //! camera/scene/event manager.  When this adapter is the controller's
     //! active surface it forwards every non-presentation call here.
+    //! `_viewer` viewed as its InteractionSurface base: the interface methods are
+    //! public there but protected/private on the concrete viewer, so the controller
+    //! glue must call them through this alias.  Never null (ctor-initialised from
+    //! `_viewer`), so the `if (_glSurface)` guards around the calls are defensive.
     InteractionSurface* _glSurface = nullptr;
     SIM::Coin3D::Quarter::QuarterVulkanWidget* _vulkanViewer = nullptr;
     //! True once the Vulkan page has been made current at least once.  The

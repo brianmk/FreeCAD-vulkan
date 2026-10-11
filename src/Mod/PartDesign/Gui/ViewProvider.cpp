@@ -38,7 +38,6 @@
 #include <Gui/Control.h>
 #include <Gui/Document.h>
 #include <Gui/Selection/SoFCUnifiedSelection.h>
-#include <Gui/Inventor/So3DAnnotation.h>
 #include <Gui/MainWindow.h>
 #include <Gui/Utilities.h>
 #include <Mod/PartDesign/App/Body.h>

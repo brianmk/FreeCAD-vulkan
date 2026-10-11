@@ -100,6 +100,15 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cMake")
 CompilerChecksAndSetups()
 ConfigureCMakeVariables()
 InitializeFreeCADBuildOptions()
+
+# Fail here rather than deep inside src/Gui: the retained-IR API the viewport needs
+# only exists in the bundled Coin, and with an external/system Coin the Vulkan page
+# would configure and then not even compile.
+if(FREECAD_USE_VULKAN AND FREECAD_USE_EXTERNAL_COIN_PIVY)
+    message(FATAL_ERROR
+        "FREECAD_USE_VULKAN=ON requires the bundled Coin/Pivy; "
+        "set -DFREECAD_USE_EXTERNAL_COIN_PIVY=OFF (or -DFREECAD_USE_VULKAN=OFF).")
+endif()
 CheckInterModuleDependencies()
 FreeCADLibpackChecks()
 SetupDoxygen()

@@ -273,9 +273,16 @@ EventFilter::eventFilter(QObject * obj, QEvent * qevent)
         && !PRIVATE(this)->host->eventsGrabbed()) {
       const quint64 ts = me->timestamp();
       if (ts != 0) {
-        QElapsedTimer clock;
-        clock.start();
-        const qint64 age = clock.msecsSinceReference() - static_cast<qint64>(ts);
+        // Compare against a reference timer started once for the process: a
+        // freshly started QElapsedTimer reports ~0 ms since its own reference, so
+        // the age below would be huge and negative and the drop could never fire.
+        // QInputEvent::timestamp() shares this monotonic clock domain.
+        static QElapsedTimer s_inputClock = []() {
+          QElapsedTimer t;
+          t.start();
+          return t;
+        }();
+        const qint64 age = s_inputClock.msecsSinceReference() - static_cast<qint64>(ts);
         // Also guards a clock-domain mismatch or a synthetic timestamp: only a
         // plausible, genuinely old age is dropped.
         if (age > staleMs && age < 3600000) {
