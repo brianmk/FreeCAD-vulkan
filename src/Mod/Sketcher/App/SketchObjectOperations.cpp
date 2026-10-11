@@ -2550,7 +2550,8 @@ int SketchObject::addCopy(
                     newconstrVals.push_back(constNew);
                     continue;
                 }
-                if (getGeometry(constr->First)->is<Part::GeomLineSegment>()) {
+                const Part::Geometry* constrGeo = getGeometry(constr->First);
+                if (constrGeo && constrGeo->is<Part::GeomLineSegment>()) {
                     // Angles on a single Element are mapped to parallel
                     // constraints in clone mode
                     Constraint* constNew = constr->copy();

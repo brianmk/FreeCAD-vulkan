@@ -1327,7 +1327,12 @@ void PythonConsole::overrideCursor(const QString& txt)
 
 void PythonConsole::contextMenuEvent(QContextMenuEvent* e)
 {
-    QMenu menu(this);
+    // Parent the popup to the top level window: the console lives in a dock, and
+    // a dock-owned native (non-top-level) QWidgetWindow makes Qt's
+    // QMenuPrivate::transientParentWindow() hand QWindow::setTransientParent()
+    // a window it rejects with "QWidgetWindow(...) must be a top level window."
+    // (see the same fix in ReportOutput::contextMenuEvent()).
+    QMenu menu(window());
     QAction* a;
     bool mayPasteHere = cursorBeyond(this->textCursor(), this->inputBegin());
 

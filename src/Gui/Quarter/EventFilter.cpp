@@ -265,7 +265,12 @@ EventFilter::eventFilter(QObject * obj, QEvent * qevent)
     // obsolete when dispatched.  Consume a stale pure-hover move without
     // picking so the queue drains to the latest position; its position is
     // remembered for the trailing pick that runs once the pointer stops.
-    if (isMove && staleMs > 0 && me->buttons() == Qt::NoButton) {
+    // A move that an active tool/edit handler is consuming
+    // (host->eventsGrabbed()) drives a live preview and must never be dropped,
+    // or the preview stops tracking the cursor -- only pure-hover moves are
+    // coalesced.
+    if (isMove && staleMs > 0 && me->buttons() == Qt::NoButton
+        && !PRIVATE(this)->host->eventsGrabbed()) {
       const quint64 ts = me->timestamp();
       if (ts != 0) {
         QElapsedTimer clock;

@@ -42,6 +42,16 @@ public:
     virtual SbVec2s inputWindowSize() const = 0;
     //! Deliver a translated Coin event into the interaction pipeline.
     virtual bool processSoEvent(const SoEvent* event) = 0;
+
+    //! True while an active tool/edit handler is consuming the events.  Such a
+    //! move drives a live preview and must not be discarded by pure-hover
+    //! coalescing.  The host reports it either from the scene's modal grabber or
+    //! from edit mode, since some handlers (Sketcher) consume events via
+    //! SoEventCallback::setHandled() without ever setting a grabber.
+    virtual bool eventsGrabbed() const
+    {
+        return false;
+    }
 };
 
 }  // namespace Quarter
