@@ -90,18 +90,55 @@ private:
     ) override;
     static const App::PropertyAngle::Constraints floatAngle;
 
-    /** Split the base faces with the Profile and return the resulting shape.
+    /** The solid feature the draft is applied to.
+     *
+     *  Normally this is BaseFeature.  When Base holds a 2D object (a sketch used
+     *  as the profile) BaseFeature may point at that profile, so the closest
+     *  solid feature before this one in the body is used instead.
+     */
+    Part::Feature* getBaseSolidObject() const;
+
+    /** The enclosed region face(s) of a profile, in the local coordinates of the
+     *  base object.
+     *
+     *  @param baseObject: the feature whose local frame is used.
+     *  @param profileObject: a sketch or another Part feature.  A sub-element
+     *         name such as a sketch's InternalFaceN is resolved.
+     *  @param subValues: the profile's sub-element names, may be empty.
+     */
+    Part::TopoShape getProfileRegion(
+        Part::Feature* baseObject,
+        App::DocumentObject* profileObject,
+        const std::vector<std::string>& subValues
+    ) const;
+
+    /** The faces of baseShape that lie below the given region.
+     *
+     *  Among the faces parallel to the region, the ones closest to it that
+     *  really overlap it are returned, i.e. "the face under the sketch".
+     */
+    std::vector<Part::TopoShape> getFacesUnderProfile(
+        const Part::TopoShape& baseShape,
+        const Part::TopoShape& region
+    ) const;
+
+    /** Split the base faces with a profile region and return the resulting shape.
      *
      *  @param baseShape: the untransformed base shape the faces belong to.
-     *  @param faces: the faces selected through Base, in baseShape.
+     *  @param region: the profile's region; when null it is built from Profile.
+     *  @param faces: the faces to split, in baseShape.
+     *  @param baseObject: the feature baseShape belongs to, used to place the
+     *         profile.
      *  @param draftFaces: replaced with the sub-faces of the split shape that
-     *         lie inside the profile's region, i.e. the faces to draft.
+     *         lie inside the region, i.e. the faces to draft.
      *
-     *  @return the split base shape (a copy of baseShape if there is no Profile)
+     *  @return the split base shape (a copy of baseShape if there is no region)
      */
     Part::TopoShape splitBaseFaces(
         const Part::TopoShape& baseShape,
+        const Part::TopoShape& region,
         const std::vector<Part::TopoShape>& faces,
+        Part::Feature* baseObject,
         std::vector<Part::TopoShape>& draftFaces
     ) const;
 

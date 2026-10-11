@@ -40,6 +40,7 @@
 #include <Base/Console.h>
 #include <App/Document.h>
 #include <Base/Exception.h>
+#include <Mod/Part/App/Part2DObject.h>
 #include "Mod/Part/App/TopoShapeMapper.h"
 
 FC_LOG_LEVEL_INIT("PartDesign", true, true)
@@ -358,7 +359,12 @@ std::vector<TopoShape> DressUp::getFaces(const TopoShape& shape)
 void DressUp::onChanged(const App::Property* prop)
 {
     if (prop == &Base) {
-        if (BaseFeature.getValue() && Base.getValue() != BaseFeature.getValue()) {
+        // A 2D object in Base (a sketch used as the profile that splits the
+        // dressed face) must not become the base feature: the dress-up is still
+        // applied to the solid below it.
+        const bool baseIs2D
+            = Base.getValue() && Base.getValue()->isDerivedFrom<Part::Part2DObject>();
+        if (BaseFeature.getValue() && Base.getValue() != BaseFeature.getValue() && !baseIs2D) {
             BaseFeature.setValue(Base.getValue());
         }
     }
