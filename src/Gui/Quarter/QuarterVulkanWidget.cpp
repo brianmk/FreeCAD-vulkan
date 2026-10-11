@@ -864,6 +864,21 @@ QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent)
                          &QuarterVulkanWidget::pollInjectFile);
         injectTimer->start();
     }
+
+    // Debug-only presented-frame capture.  The harness collects
+    // /tmp/vk_frame_<n>.png after a run, but nothing wrote them on this path:
+    // QWidget::grab() cannot see the native child window, so only the Vulkan
+    // window itself can read back what was presented (QVulkanWindow::grab()).
+    // A timer keeps it off the render loop.  Compiled out of release builds
+    // unless FREECAD_USE_VULKAN_DEBUG_HOOKS is set.
+    if (qEnvironmentVariableIsSet("FC_VULKAN_DUMP_FRAME")) {
+        dumpTimer = new QTimer(this);
+        dumpTimer->setInterval(120);
+        QObject::connect(dumpTimer, &QTimer::timeout, this,
+                         &QuarterVulkanWidget::dumpPresentedFrame);
+        dumpTimer->start();
+        vkLog("frame dump enabled (FC_VULKAN_DUMP_FRAME): /tmp/vk_frame_%%d.png");
+    }
 #endif
 }
 
@@ -1347,6 +1362,27 @@ bool QuarterVulkanWidget::processSoEvent(const SoEvent * event)
 }
 
 #ifdef FREECAD_VULKAN_DEBUG_HOOKS
+void QuarterVulkanWidget::dumpPresentedFrame()
+{
+    if (!d->window) {
+        return;
+    }
+
+    // QVulkanWindow::grab() copies the currently presented swapchain image
+    // (it waits for the device, so a debug build only).  It returns a null
+    // image while the swapchain is not usable yet.
+    static int frame = 0;
+    const QImage image = d->window->grab();
+    if (image.isNull()) {
+        return;
+    }
+
+    const QString path = QStringLiteral("/tmp/vk_frame_%1.png").arg(frame++);
+    if (!image.save(path)) {
+        vkWarn("frame dump: cannot write %s", qPrintable(path));
+    }
+}
+
 void QuarterVulkanWidget::pollInjectFile()
 {
     if (d->injectPath.isEmpty() || !d->window) {
