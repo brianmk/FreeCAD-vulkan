@@ -24,6 +24,8 @@
 #include <Inventor/nodes/SoCamera.h>
 #include <Inventor/nodes/SoDirectionalLight.h>
 #include <Inventor/nodes/SoEnvironment.h>
+#include <Inventor/nodes/SoOrthographicCamera.h>
+#include <Inventor/nodes/SoPerspectiveCamera.h>
 #include <Inventor/nodes/SoPointLight.h>
 #include <Inventor/nodes/SoSpotLight.h>
 #include <Inventor/SoRenderManager.h>
@@ -551,8 +553,102 @@ void VulkanViewportAdapter::cameraChangedCB(void* data, SoSensor* /*sensor*/)
         }
     }
     auto* self = static_cast<VulkanViewportAdapter*>(data);
-    self->noteCameraMoved();
+    self->noteCameraChanged();
     self->requestVulkanFrame();
+}
+
+void VulkanViewportAdapter::noteCameraChanged()
+{
+#ifdef FREECAD_USE_VULKAN
+    // The camera sensor is a node auditor, so it fires for *any* camera field
+    // write -- and two of those are not a camera move:
+    //  - the near/far auto-clipping rewrite (the GL viewer's
+    //    SoRenderManager::updateClippingPlanes(), reached through syncViewer(),
+    //    and the Vulkan manager's own mirror of it in setClippingPlanes()),
+    //    which lands on ordinary frames: a hover/preselection redraw, a
+    //    selection change, a scene edit, a preference push.  A hover moves no
+    //    camera at all, yet the notification looks identical to a real move.
+    //  - a camera-node swap on a projection-type change, which re-attaches the
+    //    sensor and is handled by resyncCameraAndDecorations().
+    // Interaction LOD is a *navigation* state, so only a real pose change may
+    // engage it.  Engaging it on the clipping rewrite kept the viewport in
+    // reduced quality for as long as ordinary frames were produced (every one
+    // of them re-armed the idle timer), which visibly dropped the width of
+    // every wide line -- most obviously the Sketcher grid's division lines --
+    // while the pointer moved, and only restored it once the frame stream
+    // stopped.  See also isWideLine()'s cost test, which keeps small wide-line
+    // sets out of the downgrade even during genuine navigation.
+    SoCamera* camera = nullptr;
+    if (_viewer) {
+        if (SoRenderManager* rm = _viewer->getSoRenderManager()) {
+            camera = rm->getCamera();
+        }
+    }
+    const bool poseChanged = cameraPoseChanged(camera);
+    if (poseChanged && std::getenv("FC_VULKAN_LOD_TRACE") != nullptr) {
+        static int _n = 0;
+        if (_n++ < 2000) {
+            fprintf(stderr,
+                    "[LODTRACE] cameraPose n=%d node=%p pos=(%.4f,%.4f,%.4f) "
+                    "rot=(%.4f,%.4f,%.4f,%.4f) focal=%.4f height=%.4f\n",
+                    _n, static_cast<const void*>(camera),
+                    _cameraPose.position[0], _cameraPose.position[1],
+                    _cameraPose.position[2],
+                    _cameraPose.orientation[0], _cameraPose.orientation[1],
+                    _cameraPose.orientation[2], _cameraPose.orientation[3],
+                    _cameraPose.focalDistance, _cameraPose.height);
+        }
+    }
+    if (poseChanged) {
+        noteCameraMoved();
+    }
+#endif
+}
+
+bool VulkanViewportAdapter::cameraPoseChanged(SoCamera* camera)
+{
+    const bool sameNode = camera != nullptr && camera == _cameraPoseNode;
+    CameraPose pose;
+    bool valid = false;
+    if (camera) {
+        const SbVec3f position = camera->position.getValue();
+        const SbRotation orientation = camera->orientation.getValue();
+        pose.position[0] = position[0];
+        pose.position[1] = position[1];
+        pose.position[2] = position[2];
+        orientation.getValue(pose.orientation[0],
+                             pose.orientation[1],
+                             pose.orientation[2],
+                             pose.orientation[3]);
+        pose.focalDistance = camera->focalDistance.getValue();
+        // The view volume's opening is part of the pose: the orthographic zoom
+        // writes `height`, while a perspective camera changes `focalDistance`
+        // (dolly/zoom) and `heightAngle` (field of view), so both types are
+        // covered for a zoom that leaves the position untouched.
+        if (auto* ortho = dynamic_cast<SoOrthographicCamera*>(camera)) {
+            pose.height = ortho->height.getValue();
+        }
+        else if (auto* perspective = dynamic_cast<SoPerspectiveCamera*>(camera)) {
+            pose.height = perspective->heightAngle.getValue();
+        }
+        valid = true;
+    }
+
+    const bool changed = !valid || !sameNode || !_cameraPoseValid
+        || pose.position[0] != _cameraPose.position[0]
+        || pose.position[1] != _cameraPose.position[1]
+        || pose.position[2] != _cameraPose.position[2]
+        || pose.orientation[0] != _cameraPose.orientation[0]
+        || pose.orientation[1] != _cameraPose.orientation[1]
+        || pose.orientation[2] != _cameraPose.orientation[2]
+        || pose.orientation[3] != _cameraPose.orientation[3]
+        || pose.focalDistance != _cameraPose.focalDistance
+        || pose.height != _cameraPose.height;
+
+    _cameraPoseNode = camera;
+    _cameraPose = pose;
+    _cameraPoseValid = valid;
+    return changed;
 }
 
 void VulkanViewportAdapter::noteCameraMoved()
@@ -563,10 +659,11 @@ void VulkanViewportAdapter::noteCameraMoved()
     }
     const VulkanViewSettings& settings = _viewer->getVulkanViewSettings();
     // Interaction LOD is opt-in via the VulkanInteractionLod preference
-    // (default on): while the camera moves, the raster backend draws wide lines
-    // as plain 1px GPU lines instead of expanding every edge segment into quads
-    // on the CPU (the dominant navigation cost on large edge sets).  When
-    // disabled, make sure any previously engaged state is dropped.
+    // (default on): while the camera moves, the raster backend draws large
+    // wide-line sets as plain 1px GPU lines instead of expanding every edge
+    // segment into quads on the CPU (the dominant navigation cost on
+    // edge-heavy scenes).  When disabled, make sure any previously engaged
+    // state is dropped.
     if (!settings.interactionLod) {
         setInteractionLod(false);
         return;
@@ -589,6 +686,16 @@ void VulkanViewportAdapter::setInteractionLod(bool active)
         return;
     }
     _interactionLod = active;
+    if (std::getenv("FC_VULKAN_LOD_TRACE") != nullptr) {
+        uint32_t frame = 0;
+#ifdef FREECAD_USE_VULKAN
+        if (_vulkanViewer) {
+            frame = _vulkanViewer->getRenderFrameCount();
+        }
+#endif
+        fprintf(stderr, "[LODTRACE] interactionLod=%d frame=%u\n",
+                active ? 1 : 0, frame);
+    }
 #ifdef FREECAD_USE_VULKAN
     if (_vulkanViewer) {
         // The widget's setter requests the frame that shows the new quality.
