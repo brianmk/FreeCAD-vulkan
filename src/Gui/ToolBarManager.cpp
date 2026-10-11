@@ -35,6 +35,8 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
+#include <memory>
 
 #include <boost/algorithm/string/predicate.hpp>
 
@@ -334,11 +336,22 @@ void ToolBarGrip::mouseMoveEvent(QMouseEvent* me)
     // we fake mouse events and send to toolbar. For some reason,
     // send/postEvent() does not work, only timer works.
     QPointer tb(toolbar);
-    QTimer::singleShot(0, [tb] {
+    // The continuation must not be dropped just because some widget holds the mouse
+    // grab at this instant: crossing a native child window (the Vulkan viewport) can
+    // give it one transiently, and giving up here left the toolbar floating at its
+    // undock position, no longer following the cursor while the button was still held.
+    // Re-check for a short while instead.
+    auto startDrag = std::make_shared<std::function<void(int)>>();
+    *startDrag = [tb, startDrag](int attempt) {
         auto modifiers = QApplication::queryKeyboardModifiers();
         auto buttons = QApplication::mouseButtons();
-        if (buttons != Qt::LeftButton || QWidget::mouseGrabber() || modifiers != Qt::NoModifier
-            || !tb) {
+        if (buttons != Qt::LeftButton || !tb || modifiers != Qt::NoModifier) {
+            return;
+        }
+        if (QWidget::mouseGrabber()) {
+            if (attempt < 20) {
+                QTimer::singleShot(10, [startDrag, attempt] { (*startDrag)(attempt + 1); });
+            }
             return;
         }
 
@@ -359,7 +372,8 @@ void ToolBarGrip::mouseMoveEvent(QMouseEvent* me)
             modifiers
         );
         QApplication::sendEvent(tb, &mouseMoveEvent);
-    });
+    };
+    QTimer::singleShot(0, [startDrag] { (*startDrag)(0); });
 }
 
 void ToolBarGrip::mousePressEvent(QMouseEvent*)
