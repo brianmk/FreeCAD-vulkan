@@ -13,6 +13,7 @@
 
 class QStackedWidget;
 class QTimer;
+class SoCamera;
 class SoNodeSensor;
 class SoSensor;
 
@@ -232,8 +233,20 @@ private:
     /// drag, a seek animation and the navcube/view-home animation alike
     /// without depending on the GL interaction callbacks (which never fire
     /// for the hidden display-only GL viewer).  Honours the
-    /// VulkanInteractionLod preference.
+    /// VulkanInteractionLod preference.  Call only for a real pose change
+    /// (see noteCameraChanged()).
     void noteCameraMoved();
+
+    /// Classify a camera-sensor notification and engage the interaction LOD
+    /// only when the camera pose actually changed.  The sensor fires for any
+    /// camera field write, including the near/far auto-clipping rewrite that
+    /// lands on ordinary frames; see the implementation.
+    void noteCameraChanged();
+
+    /// Compare \a camera's pose (position, orientation, focal distance, view
+    /// height) with the last one seen and cache the new pose.  Returns true on
+    /// the first call for a camera node and whenever the pose moved.
+    bool cameraPoseChanged(SoCamera* camera);
 
     /// Forward the interaction-LOD state to the Vulkan widget (only on a
     /// change).  A no-op without a Vulkan widget.
@@ -275,6 +288,21 @@ private:
     QTimer* _interactionTimer = nullptr;
     //! Current interaction-LOD state forwarded to the Vulkan widget.
     bool _interactionLod = false;
+    //! Pose signature of the camera at the last sensor notification.  The
+    //! sensor callback compares against this before treating a notification as
+    //! a camera move (see noteCameraChanged()).
+    struct CameraPose
+    {
+        float position[3] {0.0f, 0.0f, 0.0f};
+        float orientation[4] {0.0f, 0.0f, 0.0f, 1.0f};
+        float focalDistance {0.0f};
+        float height {0.0f};
+    };
+    SoCamera* _cameraPoseNode = nullptr;
+    CameraPose _cameraPose;
+    //! False until a camera pose has been recorded (the first notification for
+    //! a camera node counts as a move, so LOD engages rather than being missed).
+    bool _cameraPoseValid = false;
 };
 
 }  // namespace Gui

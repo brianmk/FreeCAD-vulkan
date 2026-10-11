@@ -2716,7 +2716,19 @@ void NavigationStyle::openPopupMenu(const SbVec2s& position)
     MenuItem view;
     Gui::Application::Instance->setupContextMenu("View", &view);
 
-    auto contextMenu = new QMenu(viewer->getGLWidget());
+    // A QMenu is a popup (top level) window and Qt derives its transient parent
+    // from the parent widget's window in QMenuPrivate::transientParentWindow().
+    // The GL widget is a native *child* of the viewer as soon as a Vulkan page
+    // exists -- QWidget::createWindowContainer() makes the viewer and all its
+    // ancestors native (QWindowContainerPrivate::updateUsesNativeWidgets() sees
+    // the QGraphicsView, and QWidget::create() propagates that upwards) -- so
+    // Qt's fallback QWidget::nativeParentWidget() hands it the viewer's native
+    // child window.  QWindow::setTransientParent() rejects that with
+    // "QWidgetWindow(...) must be a top level window." and drops the transient
+    // parent.  Parent the menu to the view's top level window instead, so the
+    // popup resolves to a real top level window and gets the transient parent
+    // it is supposed to have.
+    auto contextMenu = new QMenu(viewer->getGLWidget()->window());
     MenuManager::getInstance()->setupContextMenu(&view, *contextMenu);
     contextMenu->setAttribute(Qt::WA_DeleteOnClose);
 

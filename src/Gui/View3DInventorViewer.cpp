@@ -1914,6 +1914,11 @@ bool View3DInventorViewer::isEditingViewProvider() const
     return this->editViewProvider != nullptr;
 }
 
+bool View3DInventorViewer::isEditingHandlerActive() const
+{
+    return this->editViewProvider && this->editViewProvider->isEditHandlerActive();
+}
+
 /// return currently editing view provider
 ViewProvider* View3DInventorViewer::getEditingViewProvider() const
 {

@@ -624,6 +624,12 @@ public:
     /// Is the view provider selectable
     bool isSelectable() const override;
 
+    /// A sketch lies exactly on the face it is attached to, so its edges and
+    /// internal face are coincident with that face.  Claim a higher pick
+    /// priority than the default so the sketch is preselected/selected instead
+    /// of the solid when the two picks coincide (see ViewProviderDocumentObject).
+    int getPickPriority() const override;
+
     /// Observer message from the Selection
     void onSelectionChanged(const Gui::SelectionChanges& msg) override;
     //@}
@@ -769,6 +775,7 @@ protected:
     //@{
     bool setEdit(int ModNum) override;
     void unsetEdit(int ModNum) override;
+    bool isEditHandlerActive() const override;
     void setEditViewer(Gui::View3DInventorViewer*, int ModNum) override;
     void unsetEditViewer(Gui::View3DInventorViewer*) override;
     static void camSensCB(void* data, SoSensor*);        // camera sensor callback

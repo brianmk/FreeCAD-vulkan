@@ -57,6 +57,7 @@ struct Candidate
 {
     const void* owner {nullptr};
     int priority {0};
+    int ownerPriority {0};
     bool closeToFirst {false};
     bool isAnnotation {false};
     bool hasGate {false};

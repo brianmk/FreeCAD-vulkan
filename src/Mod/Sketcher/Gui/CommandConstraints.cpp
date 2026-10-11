@@ -493,7 +493,12 @@ void showNoConstraintBetweenFixedGeometry(const App::DocumentObject* obj)
 
 bool isGeoConcentricCompatible(const Part::Geometry* geo)
 {
-    return (isEllipse(*geo) || isArcOfEllipse(*geo) || isCircle(*geo) || isArcOfCircle(*geo));
+    // getGeometry() returns nullptr for external geometry ids (negative) and
+    // for out-of-range ids; the auto-constraint handler calls this while the
+    // selection is being built, so a nullptr here is a normal "not compatible"
+    // result rather than a reason to dereference null.
+    return geo
+        && (isEllipse(*geo) || isArcOfEllipse(*geo) || isCircle(*geo) || isArcOfCircle(*geo));
 }
 
 // Removes point-on-object constraints made redundant with certain constraints
@@ -516,7 +521,7 @@ bool removeRedundantPointOnObject(SketchObject* Obj, int GeoId1, int GeoId2, int
             // ONLY do this if it is a B-spline (or any other where point
             // on object is implied).
             const Part::Geometry* geom = Obj->getGeometry((*it)->Second);
-            if (isBSplineCurve(*geom))
+            if (geom && isBSplineCurve(*geom))
                 cidsToBeRemoved.push_back(cid);
         }
     }
@@ -1392,6 +1397,32 @@ protected:
      */
     std::vector<std::vector<SketcherGui::SelType>> allowedSelSequences;
 
+    // The view provider whose DrawSketchHandlerGenConstraint is driving this
+    // command, set by the handler immediately before applyConstraint().  The
+    // selSeq geometry ids always belong to this sketch, which is not
+    // necessarily the object currently in edit: a draw handler can be invoked
+    // from a selection made while a different sketch (or document) owns the
+    // edit session.  Resolving the sketch through this pointer instead of
+    // getInEdit() keeps the constraint on the sketch the user actually picked
+    // from and avoids indexing foreign ids into a smaller sketch (null
+    // geometry).
+    SketcherGui::ViewProviderSketch* drivingViewProvider = nullptr;
+
+public:
+    // The sketch to operate on: the one driving the active draw handler when
+    // set, otherwise whatever is currently in edit.  Never null unless there
+    // is no sketch in edit at all.
+    SketcherGui::ViewProviderSketch* activeViewProvider() const
+    {
+        if (drivingViewProvider) {
+            return drivingViewProvider;
+        }
+        Gui::Document* doc = getActiveGuiDocument();
+        return doc ? dynamic_cast<SketcherGui::ViewProviderSketch*>(doc->getInEdit())
+                   : nullptr;
+    }
+
+protected:
     virtual void applyConstraint(std::vector<SelIdPair>&, int)
     {}
     void activated(int /*iMsg*/) override;
@@ -2023,7 +2054,9 @@ protected:
         for (int token : ongoingSequences) {
             if ((cmd->allowedSelSequences).at(token).at(seqIndex) & selectionType) {
                 if (seqIndex == (cmd->allowedSelSequences).at(token).size() - 1) {
+                    cmd->drivingViewProvider = sketchgui;
                     cmd->applyConstraint(selSeq, token);
+                    cmd->drivingViewProvider = nullptr;
 
                     selSeq.clear();
                     resetOngoingSequences();
@@ -3342,7 +3375,8 @@ protected:
             if (availableConstraint == AvailableConstraint::SECOND) {
                 restartCommand(QT_TRANSLATE_NOOP("Command", "Add radius constraint"));
                 createRadiusDiameterConstrain(geoId, onSketchPos, false);
-                if (!isArcOfCircle(*Obj->getGeometry(geoId))) {
+                const Part::Geometry* geo = Obj->getGeometry(geoId);
+                if (!geo || !isArcOfCircle(*geo)) {
                     //This way if key is pressed again it goes back to FIRST
                     availableConstraint = AvailableConstraint::RESET;
                 }
@@ -4352,9 +4386,14 @@ void horVerActivated(CmdSketcherConstraint* cmd, std::string type)
 
 void horVerApplyConstraint(CmdSketcherConstraint* cmd, std::string type, std::vector<SelIdPair>& selSeq, int seqIndex)
 {
-    auto* sketchgui =
-        static_cast<SketcherGui::ViewProviderSketch*>(cmd->getActiveGuiDocument()->getInEdit());
+    auto* sketchgui = cmd->activeViewProvider();
+    if (!sketchgui) {
+        return;
+    }
     Sketcher::SketchObject* Obj = sketchgui->getSketchObject();
+    if (!Obj) {
+        return;
+    }
 
     switch (seqIndex) {
     case 0:// {Edge}
@@ -4761,9 +4800,14 @@ void CmdSketcherConstrainLock::applyConstraint(std::vector<SelIdPair>& selSeq, i
     switch (seqIndex) {
         case 0:// {Vertex}
             // Create the constraints
-            SketcherGui::ViewProviderSketch* sketchgui =
-                static_cast<SketcherGui::ViewProviderSketch*>(getActiveGuiDocument()->getInEdit());
+            SketcherGui::ViewProviderSketch* sketchgui = activeViewProvider();
+            if (!sketchgui) {
+                return;
+            }
             Sketcher::SketchObject* Obj = sketchgui->getSketchObject();
+            if (!Obj) {
+                return;
+            }
 
             // check if the edge already has a Block constraint
             bool pointfixed = false;
@@ -4951,10 +4995,15 @@ void CmdSketcherConstrainBlock::applyConstraint(std::vector<SelIdPair>& selSeq, 
         case 0:// {Edge}
         {
             // Create the constraints
-            SketcherGui::ViewProviderSketch* sketchgui =
-                static_cast<SketcherGui::ViewProviderSketch*>(getActiveGuiDocument()->getInEdit());
+            SketcherGui::ViewProviderSketch* sketchgui = activeViewProvider();
+            if (!sketchgui) {
+                return;
+            }
 
             auto Obj = sketchgui->getObject<Sketcher::SketchObject>();
+            if (!Obj) {
+                return;
+            }
 
             // check if the edge already has a Block constraint
             const std::vector<Sketcher::Constraint*>& vals = Obj->Constraints.getValues();
@@ -5441,9 +5490,14 @@ void CmdSketcherConstrainCoincidentUnified::applyConstraintPointOnObject(std::ve
         return;
     }
 
-    SketcherGui::ViewProviderSketch* sketchgui =
-        static_cast<SketcherGui::ViewProviderSketch*>(getActiveGuiDocument()->getInEdit());
+    SketcherGui::ViewProviderSketch* sketchgui = activeViewProvider();
+    if (!sketchgui) {
+        return;
+    }
     Sketcher::SketchObject* Obj = sketchgui->getSketchObject();
+    if (!Obj) {
+        return;
+    }
 
     openCommand(QT_TRANSLATE_NOOP("Command", "Add point on object constraint"));
     bool allOK = true;
@@ -5491,9 +5545,14 @@ void CmdSketcherConstrainCoincidentUnified::applyConstraintPointOnObject(std::ve
 
 void CmdSketcherConstrainCoincidentUnified::applyConstraintCoincident(std::vector<SelIdPair>& selSeq, int seqIndex)
 {
-    SketcherGui::ViewProviderSketch* sketchgui =
-        static_cast<SketcherGui::ViewProviderSketch*>(getActiveGuiDocument()->getInEdit());
+    SketcherGui::ViewProviderSketch* sketchgui = activeViewProvider();
+    if (!sketchgui) {
+        return;
+    }
     Sketcher::SketchObject* Obj = sketchgui->getSketchObject();
+    if (!Obj) {
+        return;
+    }
 
     int GeoId1 = selSeq.at(0).GeoId, GeoId2 = selSeq.at(1).GeoId;
     Sketcher::PointPos PosId1 = selSeq.at(0).PosId, PosId2 = selSeq.at(1).PosId;
@@ -6248,9 +6307,14 @@ void CmdSketcherConstrainDistance::activated(int iMsg)
 
 void CmdSketcherConstrainDistance::applyConstraint(std::vector<SelIdPair>& selSeq, int seqIndex)
 {
-    SketcherGui::ViewProviderSketch* sketchgui =
-        static_cast<SketcherGui::ViewProviderSketch*>(getActiveGuiDocument()->getInEdit());
+    SketcherGui::ViewProviderSketch* sketchgui = activeViewProvider();
+    if (!sketchgui) {
+        return;
+    }
     Sketcher::SketchObject* Obj = sketchgui->getSketchObject();
+    if (!Obj) {
+        return;
+    }
 
     int GeoId1 = GeoEnum::GeoUndef, GeoId2 = GeoEnum::GeoUndef;
     Sketcher::PointPos PosId1 = Sketcher::PointPos::none, PosId2 = Sketcher::PointPos::none;
@@ -6634,14 +6698,19 @@ void CmdSketcherConstrainDistanceX::activated(int iMsg)
     activateCoordinateDistanceConstraint(this, true);
 }
 
-static void applyCoordinateDistanceConstraint(Gui::Command* cmd,
+static void applyCoordinateDistanceConstraint(CmdSketcherConstraint* cmd,
                                               const std::vector<SelIdPair>& selSeq,
                                               int seqIndex,
                                               bool horizontal)
 {
-    SketcherGui::ViewProviderSketch* sketchgui =
-        static_cast<SketcherGui::ViewProviderSketch*>(cmd->getActiveGuiDocument()->getInEdit());
+    SketcherGui::ViewProviderSketch* sketchgui = cmd->activeViewProvider();
+    if (!sketchgui) {
+        return;
+    }
     Sketcher::SketchObject* Obj = sketchgui->getSketchObject();
+    if (!Obj) {
+        return;
+    }
 
     int GeoId1 = GeoEnum::GeoUndef, GeoId2 = GeoEnum::GeoUndef;
     Sketcher::PointPos PosId1 = Sketcher::PointPos::none, PosId2 = Sketcher::PointPos::none;
@@ -6881,9 +6950,14 @@ void CmdSketcherConstrainParallel::applyConstraint(std::vector<SelIdPair>& selSe
         case 2:// {SelEdge, SelExternalEdge}
         case 3:// {SelExternalEdge, SelEdge}
             // create the constraint
-            SketcherGui::ViewProviderSketch* sketchgui =
-                static_cast<SketcherGui::ViewProviderSketch*>(getActiveGuiDocument()->getInEdit());
+            SketcherGui::ViewProviderSketch* sketchgui = activeViewProvider();
+            if (!sketchgui) {
+                return;
+            }
             Sketcher::SketchObject* Obj = sketchgui->getSketchObject();
+            if (!Obj) {
+                return;
+            }
 
             int GeoId1 = selSeq.at(0).GeoId, GeoId2 = selSeq.at(1).GeoId;
 
@@ -7347,9 +7421,14 @@ void CmdSketcherConstrainPerpendicular::activated(int iMsg)
 void CmdSketcherConstrainPerpendicular::applyConstraint(std::vector<SelIdPair>& selSeq,
                                                         int seqIndex)
 {
-    SketcherGui::ViewProviderSketch* sketchgui =
-        static_cast<SketcherGui::ViewProviderSketch*>(getActiveGuiDocument()->getInEdit());
+    SketcherGui::ViewProviderSketch* sketchgui = activeViewProvider();
+    if (!sketchgui) {
+        return;
+    }
     Sketcher::SketchObject* Obj = sketchgui->getSketchObject();
+    if (!Obj) {
+        return;
+    }
 
     int GeoId1 = GeoEnum::GeoUndef, GeoId2 = GeoEnum::GeoUndef, GeoId3 = GeoEnum::GeoUndef;
     Sketcher::PointPos PosId1 = Sketcher::PointPos::none, PosId2 = Sketcher::PointPos::none,
@@ -8181,9 +8260,14 @@ void CmdSketcherConstrainTangent::activated(int iMsg)
 
 void CmdSketcherConstrainTangent::applyConstraint(std::vector<SelIdPair>& selSeq, int seqIndex)
 {
-    SketcherGui::ViewProviderSketch* sketchgui =
-        static_cast<SketcherGui::ViewProviderSketch*>(getActiveGuiDocument()->getInEdit());
+    SketcherGui::ViewProviderSketch* sketchgui = activeViewProvider();
+    if (!sketchgui) {
+        return;
+    }
     Sketcher::SketchObject* Obj = sketchgui->getSketchObject();
+    if (!Obj) {
+        return;
+    }
 
     int GeoId1 = GeoEnum::GeoUndef, GeoId2 = GeoEnum::GeoUndef, GeoId3 = GeoEnum::GeoUndef;
     Sketcher::PointPos PosId1 = Sketcher::PointPos::none, PosId2 = Sketcher::PointPos::none,
@@ -8750,14 +8834,19 @@ static void activateRadialDimension(CmdSketcherConstraint* cmd, RadialDimension 
     }
 }
 
-static void applyRadialDimension(Gui::Command* cmd,
+static void applyRadialDimension(CmdSketcherConstraint* cmd,
                                 const std::vector<SelIdPair>& selSeq,
                                 int seqIndex,
                                 RadialDimension dimension)
 {
-    SketcherGui::ViewProviderSketch* sketchgui =
-        static_cast<SketcherGui::ViewProviderSketch*>(cmd->getActiveGuiDocument()->getInEdit());
+    SketcherGui::ViewProviderSketch* sketchgui = cmd->activeViewProvider();
+    if (!sketchgui) {
+        return;
+    }
     Sketcher::SketchObject* Obj = sketchgui->getSketchObject();
+    if (!Obj) {
+        return;
+    }
 
     int GeoId = selSeq.at(0).GeoId;
     double radius = 0.0;
@@ -9370,9 +9459,14 @@ void CmdSketcherConstrainAngle::activated(int iMsg)
 
 void CmdSketcherConstrainAngle::applyConstraint(std::vector<SelIdPair>& selSeq, int seqIndex)
 {
-    SketcherGui::ViewProviderSketch* sketchgui =
-        static_cast<SketcherGui::ViewProviderSketch*>(getActiveGuiDocument()->getInEdit());
+    SketcherGui::ViewProviderSketch* sketchgui = activeViewProvider();
+    if (!sketchgui) {
+        return;
+    }
     Sketcher::SketchObject* Obj = sketchgui->getSketchObject();
+    if (!Obj) {
+        return;
+    }
 
     int GeoId1 = GeoEnum::GeoUndef, GeoId2 = GeoEnum::GeoUndef, GeoId3 = GeoEnum::GeoUndef;
     Sketcher::PointPos PosId1 = Sketcher::PointPos::none, PosId2 = Sketcher::PointPos::none,
@@ -9690,9 +9784,14 @@ void CmdSketcherConstrainEqual::activated(int iMsg)
 
 void CmdSketcherConstrainEqual::applyConstraint(std::vector<SelIdPair>& selSeq, int seqIndex)
 {
-    SketcherGui::ViewProviderSketch* sketchgui =
-        static_cast<SketcherGui::ViewProviderSketch*>(getActiveGuiDocument()->getInEdit());
+    SketcherGui::ViewProviderSketch* sketchgui = activeViewProvider();
+    if (!sketchgui) {
+        return;
+    }
     Sketcher::SketchObject* Obj = sketchgui->getSketchObject();
+    if (!Obj) {
+        return;
+    }
 
     int GeoId1 = GeoEnum::GeoUndef, GeoId2 = GeoEnum::GeoUndef;
 
@@ -10324,9 +10423,14 @@ void CmdSketcherConstrainSymmetric::activated(int iMsg)
 
 void CmdSketcherConstrainSymmetric::applyConstraint(std::vector<SelIdPair>& selSeq, int seqIndex)
 {
-    SketcherGui::ViewProviderSketch* sketchgui =
-        static_cast<SketcherGui::ViewProviderSketch*>(getActiveGuiDocument()->getInEdit());
+    SketcherGui::ViewProviderSketch* sketchgui = activeViewProvider();
+    if (!sketchgui) {
+        return;
+    }
     Sketcher::SketchObject* Obj = sketchgui->getSketchObject();
+    if (!Obj) {
+        return;
+    }
 
     int GeoId1 = GeoEnum::GeoUndef, GeoId2 = GeoEnum::GeoUndef, GeoId3 = GeoEnum::GeoUndef;
     Sketcher::PointPos PosId1 = Sketcher::PointPos::none, PosId2 = Sketcher::PointPos::none,

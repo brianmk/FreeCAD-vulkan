@@ -618,7 +618,18 @@ void ReportOutput::contextMenuEvent(QContextMenuEvent* e)
     bool bShowOnError = ReportOutputParameter::showOnError();
     bool bShowOnCritical = ReportOutputParameter::showOnCritical();
 
-    auto menu = new QMenu(this);
+    // A QMenu is a popup (top level) window, and Qt derives its transient parent
+    // from the parent widget's window in QMenuPrivate::transientParentWindow().
+    // The Report view is hosted in a dock, and as soon as that dock owns a
+    // native window (QWidgetWindow, e.g. after the viewport made its ancestors
+    // native, or after a float/re-dock cycle) the fallback
+    // QWidget::nativeParentWidget() hands Qt that native *child* window.
+    // QWindow::setTransientParent() rejects it with
+    // "QWidgetWindow(...) must be a top level window." and drops the transient
+    // parent.  Parent the menu to the top level window instead, so the popup
+    // resolves to a real top level window (same fix as the 3D-view context menu
+    // in NavigationStyle::openPopupMenu()).
+    auto menu = new QMenu(window());
     auto optionMenu = new QMenu(menu);
     optionMenu->setTitle(tr("Options"));
     menu->addMenu(optionMenu);
