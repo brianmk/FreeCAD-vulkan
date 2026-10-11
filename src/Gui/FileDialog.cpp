@@ -409,7 +409,7 @@ QStringList FileDialogInternal::nativeFileDialog(
     QString selectedQtFilter = (selectedFilterIndex >= 0) ? qtFilterList[selectedFilterIndex] : "";
     QStringList selected;
     if (mode == NativeFileDialogMode::OpenSingle) {
-        selected << QFileDialog::getOpenFileName(
+        const QString file = QFileDialog::getOpenFileName(
             parent,
             caption,
             startPath,
@@ -417,6 +417,13 @@ QStringList FileDialogInternal::nativeFileDialog(
             &selectedQtFilter,
             options
         );
+        // Cancelling returns an empty string, and appending it anyway would
+        // leave a one-element list whose entry is empty.  The cancellation test
+        // below is selected.isEmpty(), so the empty entry must not be added or
+        // a plain cancel would be reported as a filter mismatch.
+        if (!file.isEmpty()) {
+            selected << file;
+        }
     }
     else if (mode == NativeFileDialogMode::OpenMultiple) {
         selected << QFileDialog::getOpenFileNames(
@@ -429,7 +436,7 @@ QStringList FileDialogInternal::nativeFileDialog(
         );
     }
     else /* (mode == NativeFileDialogMode::Save) */ {
-        selected << QFileDialog::getSaveFileName(
+        const QString file = QFileDialog::getSaveFileName(
             parent,
             caption,
             startPath,
@@ -437,6 +444,11 @@ QStringList FileDialogInternal::nativeFileDialog(
             &selectedQtFilter,
             options
         );
+        // See the OpenSingle case: a cancelled save dialog returns an empty
+        // string, which must not become an entry of `selected`.
+        if (!file.isEmpty()) {
+            selected << file;
+        }
     }
     selectedFilterIndex = qtFilterList.indexOf(selectedQtFilter);
     if (selectedFilterIndex < 0 && selected.isEmpty()) {
