@@ -891,7 +891,7 @@ void View3DInventor::removeOverlayWidget()
 
 void View3DInventor::setOverrideCursor(const QCursor& aCursor)
 {
-    _viewer->getWidget()->setCursor(aCursor);
+    _viewer->getCursorWidget()->setCursor(aCursor);
 }
 
 void View3DInventor::restoreOverrideCursor()

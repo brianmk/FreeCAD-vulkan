@@ -63,7 +63,7 @@ void AbstractMouseSelection::releaseMouseModel(bool abort)
         // do termination of your mousemodel
         terminate(abort);
 
-        _pcView3D->getWidget()->setCursor(m_cPrevCursor);
+        _pcView3D->getCursorWidget()->setCursor(m_cPrevCursor);
         _pcView3D = nullptr;
     }
 }
@@ -177,7 +177,7 @@ void PolyPickerSelection::initialize()
 {
     QPixmap p(cursor_cut_scissors);
     QCursor cursor(p, 4, 4);
-    _pcView3D->getWidget()->setCursor(cursor);
+    _pcView3D->getCursorWidget()->setCursor(cursor);
 
     polyline.setViewer(_pcView3D);
 
@@ -266,7 +266,7 @@ int PolyPickerSelection::mouseButtonEvent(const SoMouseButtonEvent* const e, con
         switch (button) {
             case SoMouseButtonEvent::BUTTON2: {
                 QCursor cur = _pcView3D->getWidget()->cursor();
-                _pcView3D->getWidget()->setCursor(m_cPrevCursor);
+                _pcView3D->getCursorWidget()->setCursor(m_cPrevCursor);
 
                 // The pop-up menu should be shown when releasing mouse button because
                 // otherwise the navigation style doesn't get the UP event and gets into
@@ -277,7 +277,7 @@ int PolyPickerSelection::mouseButtonEvent(const SoMouseButtonEvent* const e, con
                     releaseMouseModel();
                 }
                 else if (id == Restart) {
-                    _pcView3D->getWidget()->setCursor(cur);
+                    _pcView3D->getCursorWidget()->setCursor(cur);
                 }
 
                 polyline.setWorking(false);
@@ -479,7 +479,7 @@ int FreehandSelection::mouseButtonEvent(const SoMouseButtonEvent* const e, const
                 break;
             case SoMouseButtonEvent::BUTTON2: {
                 QCursor cur = _pcView3D->getWidget()->cursor();
-                _pcView3D->getWidget()->setCursor(m_cPrevCursor);
+                _pcView3D->getCursorWidget()->setCursor(m_cPrevCursor);
 
                 // The pop-up menu should be shown when releasing mouse button because
                 // otherwise the navigation style doesn't get the UP event and gets into
@@ -490,7 +490,7 @@ int FreehandSelection::mouseButtonEvent(const SoMouseButtonEvent* const e, const
                     releaseMouseModel();
                 }
                 else if (id == Restart) {
-                    _pcView3D->getWidget()->setCursor(cur);
+                    _pcView3D->getCursorWidget()->setCursor(cur);
                 }
 
                 polyline.setWorking(false);
