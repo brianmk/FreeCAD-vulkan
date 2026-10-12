@@ -1,3 +1,57 @@
+# ---------------------------------------------------------------------------
+# Configure-time Coin IR checks
+#
+# FreeCAD's Vulkan viewport records IR commands and flags the annotation ones
+# with SoRenderCommand::isAnnotation (src/Gui/Inventor/So3DAnnotation.cpp); the
+# backend's annotation/overlay sweep consumes that flag.  The member was added
+# by brianmk/coin 738926470 ("Vulkan: annotate overlay commands, draw them with
+# a depth clear; drop dead code").  Revision 7912d9798, which an earlier fork
+# revision pinned, has the IR API but not the member, so FreeCAD configured
+# fine and only failed inside the compiler with
+#   error: 'struct SoRenderCommand' has no member named 'isAnnotation'
+#
+# HAVE_COIN_IR_RENDER_ACTION only proves that the SoIRRenderAction header
+# exists, so it cannot catch that.  FreeCADCheckCoinIRAnnotation() probes the
+# member itself and fails at configure time with the symbol name.
+#
+# Required bundled Coin revision (or a descendant).  Cache-internal so the
+# macros below, which run in the including scope, can always read it: this file
+# is included from the cMake/FreeCAD_Helpers subdirectory, so a plain set()
+# here would be forgotten before SetupCoinPivy() runs.
+set(FREECAD_COIN_IR_ANNOTATION_REVISION "73892647017188122384b0abdc343f2cee7ae58c"
+    CACHE INTERNAL "Bundled Coin revision that introduced SoRenderCommand::isAnnotation" FORCE)
+
+macro(FreeCADCheckCoinIRAnnotation _include_dirs _context)
+    include(CheckCXXSourceCompiles)
+    # Do not reuse a cached verdict: the Coin checkout can change between two
+    # configures of the same build directory, and a cached result would then
+    # describe a revision that is no longer checked out.
+    unset(HAVE_COIN_IR_ANNOTATION CACHE)
+    set(_freecad_coin_annotation_saved_includes "${CMAKE_REQUIRED_INCLUDES}")
+    set(CMAKE_REQUIRED_INCLUDES ${_include_dirs})
+    check_cxx_source_compiles("
+        #include <Inventor/rendering/SoRenderIR.h>
+        // So3DAnnotation.cpp writes this member; without it the build fails
+        // with \"SoRenderCommand has no member named 'isAnnotation'\".
+        void freecadCoinIRAnnotationProbe(SoRenderCommand& command) { command.isAnnotation = true; }
+        int main() { return 0; }
+    " HAVE_COIN_IR_ANNOTATION)
+    set(CMAKE_REQUIRED_INCLUDES "${_freecad_coin_annotation_saved_includes}")
+    if (HAVE_COIN_IR_ANNOTATION)
+        add_definitions(-DHAVE_COIN_IR_ANNOTATION)
+        message(STATUS "${_context}: SoRenderCommand::isAnnotation is available")
+    else ()
+        message(FATAL_ERROR
+            "${_context} is missing SoRenderCommand::isAnnotation.\n"
+            "FreeCAD writes that member in src/Gui/Inventor/So3DAnnotation.cpp (under "
+            "HAVE_COIN_IR_RENDER_ACTION), so this configuration cannot compile: the compiler "
+            "would report \"SoRenderCommand has no member named 'isAnnotation'\".\n"
+            "The bundled Coin must be ${FREECAD_COIN_IR_ANNOTATION_REVISION} (\"Vulkan: annotate "
+            "overlay commands, draw them with a depth clear; drop dead code\") or a descendant.\n"
+            "Probed with include directories: ${_include_dirs}")
+    endif ()
+endmacro()
+
 macro(SetupCoin3D)
     # -------------------------------- Coin3D --------------------------------
 
@@ -41,6 +95,10 @@ macro(SetupCoin3D)
     if (EXISTS "${COIN3D_INCLUDE_DIRS}/Inventor/actions/SoIRRenderAction.h")
         add_definitions(-DHAVE_COIN_IR_RENDER_ACTION)
         message(STATUS "Coin3D provides the IR render API (SoIRRenderAction)")
+        # Every HAVE_COIN_IR_RENDER_ACTION consumer also writes the annotation
+        # flag, so probe for it here as well.  External Coin normally has
+        # neither, in which case this branch is not entered at all.
+        FreeCADCheckCoinIRAnnotation("${COIN3D_INCLUDE_DIRS}" "External Coin3D")
     endif ()
 endmacro(SetupCoin3D)
 
@@ -154,6 +212,39 @@ macro(SetupBundledCoinPivy)
         endif ()
         message(STATUS "Bundled Coin will use ${FREECAD_COIN_VMA_SOURCE} for the Vulkan Memory Allocator")
     endif ()
+    # The bundled Coin is pinned by this repository's gitlink.  A submodule
+    # checkout that lags behind it (a bump that was not followed by
+    # `git submodule update`, or a build directory reused across branches)
+    # builds a Coin other than the one the tree pins, so report both revisions
+    # and stop when they disagree.  Skipped when there is no git checkout.
+    find_package(Git QUIET)
+    if (GIT_EXECUTABLE AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_SOURCE_DIR}" rev-parse "HEAD:src/3rdParty/coin"
+            OUTPUT_VARIABLE _freecad_coin_pinned_revision
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET RESULT_VARIABLE _freecad_coin_pinned_rc)
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_SOURCE_DIR}/src/3rdParty/coin" rev-parse HEAD
+            OUTPUT_VARIABLE _freecad_coin_checked_out_revision
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET RESULT_VARIABLE _freecad_coin_checked_out_rc)
+        if (_freecad_coin_pinned_rc EQUAL 0 AND _freecad_coin_checked_out_rc EQUAL 0)
+            message(STATUS
+                "Bundled Coin revision: pinned ${_freecad_coin_pinned_revision}, "
+                "checked out ${_freecad_coin_checked_out_revision}")
+            if (NOT _freecad_coin_pinned_revision STREQUAL _freecad_coin_checked_out_revision)
+                message(FATAL_ERROR
+                    "The bundled Coin submodule is not at the revision this tree pins.\n"
+                    "  pinned in the src/3rdParty/coin gitlink : ${_freecad_coin_pinned_revision}\n"
+                    "  checked out in src/3rdParty/coin      : ${_freecad_coin_checked_out_revision}\n"
+                    "Run: git submodule update --init src/3rdParty/coin")
+            endif ()
+        else ()
+            message(STATUS "Bundled Coin revision: no git checkout, skipping the pinned-revision check")
+        endif ()
+    endif ()
+
     add_subdirectory("${CMAKE_SOURCE_DIR}/src/3rdParty/coin" "${CMAKE_BINARY_DIR}/src/3rdParty/coin")
     if (NOT DEFINED COIN_VERSION OR COIN_VERSION STREQUAL "")
         message(FATAL_ERROR "Bundled Coin did not define COIN_VERSION")
@@ -161,8 +252,15 @@ macro(SetupBundledCoinPivy)
     # The bundled Coin always provides the retained IR render API used by
     # the Vulkan viewport.  The matching probe for external Coin lives in
     # SetupCoin3D() above; both gate FreeCAD's SoIRRenderAction consumers on
-    # HAVE_COIN_IR_RENDER_ACTION.
+    # HAVE_COIN_IR_RENDER_ACTION.  The IR API alone is not enough: FreeCAD also
+    # writes SoRenderCommand::isAnnotation, so probe for that member here and
+    # fail the configure (not the compiler) when the revision lacks it.  The
+    # bundled include directory is passed as well because Coin generates
+    # headers into the build tree.
     add_definitions(-DHAVE_COIN_IR_RENDER_ACTION)
+    FreeCADCheckCoinIRAnnotation(
+        "${CMAKE_SOURCE_DIR}/src/3rdParty/coin/include;${CMAKE_BINARY_DIR}/src/3rdParty/coin/include"
+        "Bundled Coin")
     set(COIN3D_VERSION "${COIN_VERSION}")
     # Match external Coin usage: FreeCAD targets should treat Coin headers as third-party headers.
     target_include_directories(Coin
