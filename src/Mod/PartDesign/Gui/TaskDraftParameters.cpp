@@ -95,6 +95,8 @@ TaskDraftParameters::TaskDraftParameters(ViewProviderDressUp* DressUpView, QWidg
             this, &TaskDraftParameters::onButtonPlane);
     connect(ui->buttonLine, &QToolButton::toggled,
             this, &TaskDraftParameters::onButtonLine);
+    connect(ui->buttonProfile, &QToolButton::toggled,
+            this, &TaskDraftParameters::onButtonProfile);
 
     // Create context menu
     createDeleteAction(ui->listWidgetReferences);
@@ -115,6 +117,8 @@ TaskDraftParameters::TaskDraftParameters(ViewProviderDressUp* DressUpView, QWidg
     ref = pcDraft->PullDirection.getValue();
     strings = pcDraft->PullDirection.getSubValues();
     ui->lineLine->setText(getRefStr(ref, strings));
+
+    updateProfileName();
 
     if (strings.size() == 0) {
         setSelectionMode(refSel);
@@ -173,6 +177,25 @@ void TaskDraftParameters::onSelectionChanged(const Gui::SelectionChanges& msg)
             hideOnError();
             setGizmoPositions();
         }
+        else if (selectionMode == profile) {
+            auto pcDraft = getObject<PartDesign::Draft>();
+            std::vector<std::string> subs;
+            App::DocumentObject* selObj = nullptr;
+            getReferencedSelection(pcDraft, msg, selObj, subs);
+            if (!selObj) {
+                return;
+            }
+            setupTransaction();
+            pcDraft->Profile.setValue(selObj, subs);
+            updateProfileName();
+
+            pcDraft->getDocument()->recomputeFeature(pcDraft);
+            // highlight existing references for possible further selections
+            getDressUpView()->highlightReferences(true);
+            // hide the draft if there was a computation error
+            hideOnError();
+            setGizmoPositions();
+        }
     }
     else if (msg.Type == Gui::SelectionChanges::ClrSelection) {
         // TODO: the gizmo position should be only recalculated when the feature associated
@@ -187,6 +210,7 @@ void TaskDraftParameters::setButtons(const selectionModes mode)
     ui->buttonRefSel->setChecked(mode == refSel);
     ui->buttonLine->setChecked(mode == line);
     ui->buttonPlane->setChecked(mode == plane);
+    ui->buttonProfile->setChecked(mode == profile);
 }
 
 void TaskDraftParameters::onButtonPlane(bool checked)
@@ -214,6 +238,30 @@ void TaskDraftParameters::onButtonLine(bool checked)
             new ReferenceSelection(this->getBase(), AllowSelection::EDGE | AllowSelection::PLANAR)
         );
     }
+}
+
+void TaskDraftParameters::onButtonProfile(bool checked)
+{
+    if (checked) {
+        setButtons(profile);
+        getViewObject()->showPreviousFeature(true);
+        selectionMode = profile;
+        Gui::Selection().clearSelection();
+        // a profile is a whole 2D object (a sketch) or a face of a shape
+        Gui::Selection().addSelectionGate(new ReferenceSelection(this->getBase(), AllowSelection::FACE));
+    }
+}
+
+void TaskDraftParameters::updateProfileName()
+{
+    auto pcDraft = getObject<PartDesign::Draft>();
+    if (!pcDraft) {
+        return;
+    }
+
+    App::DocumentObject* profile = pcDraft->Profile.getValue();
+    std::vector<std::string> strings = pcDraft->Profile.getSubValues();
+    ui->lineProfile->setText(getRefStr(profile, strings));
 }
 
 void TaskDraftParameters::onRefDeleted()

@@ -117,6 +117,7 @@ public:
     enum SelectionMode
     {
         None,
+        SelectProfile,
         SelectFace,
         SelectStartReference,
         SelectShape,
@@ -207,6 +208,7 @@ private:
     void onTaperChanged(double angle, Side side);
     void onSelectFaceToggle(bool checked, Side side);
     void onSelectStartReferenceToggle(bool checked);
+    void onSelectProfileToggle(bool checked);
 
     void onFaceName(const QString& text, Side side);
     void onAllFacesToggled(bool checked, Side side);
@@ -257,6 +259,8 @@ private:
     void selectedReferenceAxis(const Gui::SelectionChanges& msg);
     void selectedFace(const Gui::SelectionChanges& msg, SideController& side);
     void selectedStartReference(const Gui::SelectionChanges& msg);
+    void selectedProfile(const Gui::SelectionChanges& msg);
+    void updateProfileName();
     void selectedShape(const Gui::SelectionChanges& msg, SideController& side);
     void selectedShapeFace(const Gui::SelectionChanges& msg, SideController& side);
 

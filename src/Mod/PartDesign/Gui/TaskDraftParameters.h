@@ -61,6 +61,7 @@ private Q_SLOTS:
     void onReversedChanged(bool reversed);
     void onButtonPlane(bool checked);
     void onButtonLine(bool checked);
+    void onButtonProfile(bool checked);
     void onRefDeleted() override;
 
 protected:
@@ -75,6 +76,8 @@ private:
     Gui::RotationGizmo* angleGizmo = nullptr;
     void setupGizmos(ViewProvider* vp);
     void setGizmoPositions();
+    /// Show the name of the profile that splits the base face(s)
+    void updateProfileName();
 };
 
 /// simulation dialog for the TaskView

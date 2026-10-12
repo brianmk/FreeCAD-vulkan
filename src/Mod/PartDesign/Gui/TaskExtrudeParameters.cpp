@@ -114,6 +114,7 @@ void TaskExtrudeParameters::setupDialog()
     ui->startOffsetEdit->bind(extrude->StartOffset);
 
     updateStartReferenceName();
+    updateProfileName();
 
     // --- Per-Side Setup using the Helper ---
     setupSideDialog(m_side1);
@@ -225,6 +226,24 @@ void TaskExtrudeParameters::updateStartReferenceName()
         extrude->StartReference,
         tr("No start reference selected")
     );
+}
+
+void TaskExtrudeParameters::updateProfileName()
+{
+    auto extrude = getObject<PartDesign::ProfileBased>();
+    if (!extrude) {
+        ui->lineProfile->clear();
+        return;
+    }
+
+    App::DocumentObject* profile = extrude->Profile.getValue();
+    if (!profile) {
+        ui->lineProfile->clear();
+        ui->lineProfile->setPlaceholderText(tr("No profile selected"));
+        return;
+    }
+
+    ui->lineProfile->setText(make2DLabel(profile, extrude->Profile.getSubValues()));
 }
 
 void TaskExtrudeParameters::createSideControllers()
@@ -360,6 +379,9 @@ void TaskExtrudeParameters::connectSlots()
     connect(ui->buttonStartReference, &QAbstractButton::toggled, this, [this](bool checked) {
         onSelectStartReferenceToggle(checked);
     });
+    connect(ui->buttonProfileBase, &QAbstractButton::toggled, this, [this](bool checked) {
+        onSelectProfileToggle(checked);
+    });
 
     // clang-format off
     connect(ui->directionCB, qOverload<int>(&QComboBox::activated),
@@ -448,11 +470,16 @@ void TaskExtrudeParameters::setSelectionMode(SelectionMode mode, Side side)
     updateCheckedForSide(Side::First, ui->buttonFace, ui->buttonShape, ui->buttonShapeFace);
     updateCheckedForSide(Side::Second, ui->buttonFace2, ui->buttonShape2, ui->buttonShapeFace2);
     ui->buttonStartReference->setChecked(mode == SelectStartReference);
+    ui->buttonProfileBase->setChecked(mode == SelectProfile);
 
     selectionMode = mode;
     activeSelectionSide = side;
 
     switch (mode) {
+        case SelectProfile:
+            // A profile is a whole 2D object (a sketch) or a face of a shape.
+            onSelectReference(AllowSelection::FACE);
+            break;
         case SelectShape:
             onSelectReference(AllowSelection::WHOLE);
             Gui::Selection().addSelectionGate(new SelectionFilterGate("SELECT Part::Feature COUNT 1"));
@@ -508,6 +535,10 @@ void TaskExtrudeParameters::onSelectionChanged(const Gui::SelectionChanges& msg)
 
             case SelectStartReference:
                 selectedStartReference(msg);
+                break;
+
+            case SelectProfile:
+                selectedProfile(msg);
                 break;
 
             case SelectReferenceAxis:
@@ -615,6 +646,26 @@ void PartDesignGui::TaskExtrudeParameters::selectedStartReference(const Gui::Sel
     updateStartReferenceName();
 
     setSelectionMode(None);
+    setGizmoPositions();
+}
+
+void PartDesignGui::TaskExtrudeParameters::selectedProfile(const Gui::SelectionChanges& msg)
+{
+    auto extrude = getObject<PartDesign::ProfileBased>();
+    if (!extrude) {
+        return;
+    }
+
+    // Re-point the feature at the picked sketch/face.  This is also the way out of a profile whose
+    // sub-element no longer exists (for example a sketch's internal face that the sketch edit
+    // removed), which otherwise leaves the feature invalid with a dangling "?InternalFaceN" link.
+    onAddSelection(msg, extrude->Profile);
+    updateProfileName();
+
+    setSelectionMode(None);
+    tryRecomputeFeature();
+    // The extrusion direction follows the profile, so the axes list is rebuilt as well.
+    fillDirectionCombo();
     setGizmoPositions();
 }
 
@@ -1178,6 +1229,19 @@ void TaskExtrudeParameters::onSelectStartReferenceToggle(const bool checked)
     else {
         ui->buttonStartReference->setText(tr("Pick Reference"));
         ui->lineStartReference->setPlaceholderText(tr("No start reference selected"));
+    }
+}
+
+void TaskExtrudeParameters::onSelectProfileToggle(const bool checked)
+{
+    if (checked) {
+        ui->buttonProfileBase->setText(tr("Cancel"));
+        ui->lineProfile->setPlaceholderText(tr("Select a sketch or a face..."));
+        setSelectionMode(SelectProfile);
+    }
+    else {
+        ui->buttonProfileBase->setText(tr("Select"));
+        updateProfileName();
     }
 }
 

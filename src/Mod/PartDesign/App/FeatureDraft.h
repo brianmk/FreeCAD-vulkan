@@ -26,6 +26,8 @@
 
 #pragma once
 
+#include <gp_Trsf.hxx>
+#include <TopoDS_Shape.hxx>
 #include <gp_Pln.hxx>
 #include <gp_Dir.hxx>
 
@@ -52,6 +54,11 @@ public:
     App::PropertyAngle Angle;
     App::PropertyLinkSub NeutralPlane;
     App::PropertyLinkSub PullDirection;
+    /** Optional sketch (or any planar profile) that splits the faces listed in
+     *  Base. Only the part of a base face that lies inside the profile's
+     *  enclosed region is drafted.
+     */
+    App::PropertyLinkSub Profile;
     App::PropertyBool Reversed;
 
     /** @name methods override feature */
@@ -84,6 +91,82 @@ private:
         App::Property* prop
     ) override;
     static const App::PropertyAngle::Constraints floatAngle;
+
+    /** The neutral plane of the draft.
+     *
+     *  Either taken from the NeutralPlane property, or guessed from the face
+     *  that is really drafted.  After a split the drafted face is a sub-face of
+     *  the selected one, so a plane guessed from the whole face can miss it.
+     */
+    /** The neutral plane from the NeutralPlane property. */
+    gp_Pln getExplicitNeutralPlane(
+        App::DocumentObject* refDirection,
+        const gp_Dir& pullDirection,
+        const gp_Trsf& invBaseTrsf
+    ) const;
+
+    /** Neutral planes to try when NeutralPlane is not set: one per edge of the
+     *  drafted face, the edges created by a split first.  The OCC draft only
+     *  accepts some hinges, so the caller tries them in turn.
+     */
+    std::vector<gp_Pln> getNeutralPlaneCandidates(
+        const TopoDS_Shape& draftFace,
+        const std::vector<Part::TopoShape>& originalFaces
+    ) const;
+
+    /** The solid feature the draft is applied to.
+     *
+     *  Normally this is BaseFeature.  When Base holds a 2D object (a sketch used
+     *  as the profile) BaseFeature may point at that profile, so the closest
+     *  solid feature before this one in the body is used instead.
+     */
+    Part::Feature* getBaseSolidObject() const;
+
+    /** The enclosed region face(s) of a profile, in the local coordinates of the
+     *  base object.
+     *
+     *  @param baseObject: the feature whose local frame is used.
+     *  @param profileObject: a sketch or another Part feature.  A sub-element
+     *         name such as a sketch's InternalFaceN is resolved.
+     *  @param subValues: the profile's sub-element names, may be empty.
+     */
+    Part::TopoShape getProfileRegion(
+        Part::Feature* baseObject,
+        App::DocumentObject* profileObject,
+        const std::vector<std::string>& subValues
+    ) const;
+
+    /** The faces of baseShape that lie below the given region.
+     *
+     *  Among the faces parallel to the region, the ones closest to it that
+     *  really overlap it are returned, i.e. "the face under the sketch".
+     */
+    std::vector<Part::TopoShape> getFacesUnderProfile(
+        const Part::TopoShape& baseShape,
+        const Part::TopoShape& region,
+        const App::DocumentObject* profileObject,
+        const Part::Feature* baseObject
+    ) const;
+
+    /** Split the base faces with a profile region and return the resulting shape.
+     *
+     *  @param baseShape: the untransformed base shape the faces belong to.
+     *  @param region: the profile's region; when null it is built from Profile.
+     *  @param faces: the faces to split, in baseShape.
+     *  @param baseObject: the feature baseShape belongs to, used to place the
+     *         profile.
+     *  @param draftFaces: replaced with the sub-faces of the split shape that
+     *         lie inside the region, i.e. the faces to draft.
+     *
+     *  @return the split base shape (a copy of baseShape if there is no region)
+     */
+    Part::TopoShape splitBaseFaces(
+        const Part::TopoShape& baseShape,
+        const Part::TopoShape& region,
+        const std::vector<Part::TopoShape>& faces,
+        Part::Feature* baseObject,
+        std::vector<Part::TopoShape>& draftFaces
+    ) const;
 
     DraftComputeProps computeProps;
 };
