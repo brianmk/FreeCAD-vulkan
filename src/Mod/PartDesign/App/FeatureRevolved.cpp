@@ -516,25 +516,21 @@ App::DocumentObjectExecReturn* Revolved::tryExecuteRevolved(Part::RevolMode revo
     // the revolve direction and is far below any modelling tolerance.
     bool nudged = false;
     if (TopoShape(this->Shape.getValue()).countNonManifoldEdges() > 0) {
-        for (const auto& offset : getProfileNudgeOffsets()) {
-            TopoShape nudgedTool = result;
-            gp_Trsf shift;
-            shift.SetTranslation(gp_Vec(offset.x, offset.y, offset.z));
-            nudgedTool.move(shift);
-
+        TopoShape nudgedTool = result;
+        if (growToolInProfilePlane(nudgedTool)) {
             try {
                 setResult(base, nudgedTool);
+                if (TopoShape(this->Shape.getValue()).countNonManifoldEdges() == 0) {
+                    nudged = true;
+                }
+                else {
+                    // not manifold either: keep the original result and warn below
+                    setResult(base, result);
+                }
             }
             catch (const Base::Exception&) {
                 setResult(base, result);
-                continue;
             }
-            if (TopoShape(this->Shape.getValue()).countNonManifoldEdges() == 0) {
-                nudged = true;
-                break;
-            }
-            // not manifold either: keep the original result and warn below
-            setResult(base, result);
         }
     }
 

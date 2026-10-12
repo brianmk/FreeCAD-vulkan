@@ -25,6 +25,8 @@
 #include <limits>
 
 #include <BRepAlgo.hxx>
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
 #include <BRepFilletAPI_MakeChamfer.hxx>
 #include <TopExp.hxx>
 #include <TopoDS.hxx>
@@ -33,6 +35,8 @@
 #include <TopTools_ListOfShape.hxx>
 #include <ShapeFix_Shape.hxx>
 #include <ShapeFix_ShapeTolerance.hxx>
+
+#include <sstream>
 #include <Standard_Version.hxx>
 
 
@@ -56,6 +60,36 @@ const char* ChamferTypeEnums[] = {"Equal distance", "Two distances", "Distance a
 const App::PropertyQuantityConstraint::Constraints Chamfer::floatSize
     = {0.0, std::numeric_limits<float>::max(), 0.1};
 const App::PropertyAngle::Constraints Chamfer::floatAngle = {0.0, 180.0, 1.0};
+
+namespace {
+
+/** Why a chamfer result has to be refused, or an empty string when it is usable.
+ *
+ * A chamfer with sizes that are too large for the edge can leave a face with a
+ * non-positive area (or a duplicated face) in a shape BRepCheck still calls
+ * valid.  Accepting that would hand the user a solid that looks up to date but
+ * that later operations (fillet, chamfer, export) fail on, so report it here
+ * while the sizes that caused it are still known.
+ */
+std::string invalidChamferReason(const Part::TopoShape& shape)
+{
+    for (const auto& face : shape.getSubTopoShapes(TopAbs_FACE)) {
+        GProp_GProps props;
+        BRepGProp::SurfaceProperties(face.getShape(), props);
+        const double area = props.Mass();
+        if (area <= Precision::Confusion()) {
+            std::ostringstream ss;
+            ss << "face with non-positive area " << area;
+            return ss.str();
+        }
+    }
+    if (!shape.isValid()) {
+        return "the shape is not valid";
+    }
+    return {};
+}
+
+}  // namespace
 
 static App::DocumentObjectExecReturn* validateParameters(
     int chamferType,
@@ -187,6 +221,23 @@ App::DocumentObjectExecReturn* Chamfer::execute()
                 Precision::Confusion(),
                 TopAbs_SHAPE
             );
+
+            // The tolerance fix is a best effort: when the result is still broken
+            // - or contains a face with a non-positive area - do not store it.
+            const std::string reason = invalidChamferReason(shape);
+            if (!reason.empty()) {
+                std::ostringstream message;
+                message << "Chamfer produced an invalid shape (" << reason << "): the ";
+                if (static_cast<Part::ChamferType>(chamferType) == Part::ChamferType::distanceAngle) {
+                    message << "size " << Size.getValue() << " mm / angle " << Angle.getValue()
+                            << " deg are too large for this edge - reduce them or check the edge.";
+                }
+                else {
+                    message << "sizes " << Size.getValue() << " mm / " << Size2.getValue()
+                            << " mm are too large for this edge - reduce them or check the edge.";
+                }
+                return new App::DocumentObjectExecReturn(message.str());
+            }
         }
 
         // store shape before refinement
