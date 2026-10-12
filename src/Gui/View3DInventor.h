@@ -192,6 +192,16 @@ protected Q_SLOTS:
 private:
     void applySettings();
 
+#ifdef FREECAD_USE_VULKAN
+    /// Create the Vulkan viewport adapter on first use and wire it to the
+    /// viewer (idempotent).  Called from setRenderMode(), which is the single
+    /// trigger for the Vulkan viewport, so a view created in the classic
+    /// Coin/OpenGL mode still gets an adapter when a Vulkan raster mode is
+    /// selected.  Keeping it out of the constructor means a view that never
+    /// selects a Vulkan mode never creates a Vulkan device.
+    void ensureVulkanAdapter();
+#endif
+
 #ifdef FREECAD_VIEWPORT_RENDERER_LABEL
     //! Refresh the corner renderer label from the current render mode.
     void updateRendererLabel();
