@@ -41,8 +41,8 @@
 
 #ifdef HAVE_COIN_IR_RENDER_ACTION
 # include <Inventor/actions/SoIRRenderAction.h>
-# include <Inventor/elements/SoViewportRegionElement.h>
 # include <Inventor/rendering/SoRenderIR.h>
+# include <Gui/Inventor/SoOverlayPromotion.h>
 #endif
 
 using namespace Gui;
@@ -216,34 +216,12 @@ void So3DAnnotation::IRRender(SoIRRenderAction* action)
 
     inherited::IRRender(action);
 
-    const int count = list.getNumCommands();
-    if (count <= firstCommand) {
-        return;
-    }
-
-    SoState* state = action->getState();
-    const SbViewportRegion vp = SoViewportRegionElement::get(state);
-    const short vx = static_cast<short>(
-        std::max(0, static_cast<int>(vp.getViewportOriginPixels()[0])));
-    const short vy = static_cast<short>(
-        std::max(0, static_cast<int>(vp.getViewportOriginPixels()[1])));
-    const short vw = static_cast<short>(
-        std::max(1, static_cast<int>(vp.getViewportSizePixels()[0])));
-    const short vh = static_cast<short>(
-        std::max(1, static_cast<int>(vp.getViewportSizePixels()[1])));
-
-    for (int i = firstCommand; i < count; ++i) {
-        SoRenderCommand& command = list.getCommand(i);
-        command.pass = SO_RENDERPASS_OVERLAY;
-        // The raster backend draws annotation commands last with the depth buffer
-        // cleared first, which is what the GL delayed replay below gives them.  Depth
-        // testing stays on so the subtree still occludes itself.
-        command.isAnnotation = TRUE;
-        command.state.raster.scissorEnabled = TRUE;
-        command.state.raster.scissorX = vx;
-        command.state.raster.scissorY = vy;
-        command.state.raster.scissorWidth = vw;
-        command.state.raster.scissorHeight = vh;
-    }
+    // Mark the commands the subtree just recorded as annotation overlay
+    // commands.  Gui::promoteCommandsToOverlay switches them to the OVERLAY
+    // pass, scopes them to the full frame and sets isAnnotation, which is what
+    // makes the raster backend draw this group last with one depth clear in
+    // front of it.  Depth testing stays on, so the subtree still occludes
+    // itself.
+    Gui::promoteCommandsToOverlay(list, firstCommand, action->getState(), /*annotation*/ true);
 }
 #endif

@@ -26,10 +26,9 @@
 #include <cstdlib>
 
 #ifdef HAVE_COIN_IR_RENDER_ACTION
-#include <algorithm>
 #include <Inventor/actions/SoIRRenderAction.h>
-#include <Inventor/elements/SoViewportRegionElement.h>
 #include <Inventor/rendering/SoRenderIR.h>
+#include <Gui/Inventor/SoOverlayPromotion.h>
 #endif
 
 using namespace Gui;
@@ -65,26 +64,9 @@ void SoRasterOverlay::IRRender(SoIRRenderAction* action)
 
     inherited::IRRender(action);
 
-    // The overlay backend ignores unscissored overlays, so scope the promoted
-    // commands to the full viewport (mirroring SoFCSelection's highlight
-    // promotion). The command's pass is switched to OVERLAY so the subtree is
-    // rasterized in the overlay pass on top of the main scene.
-    SoState* state = action->getState();
-    const SbViewportRegion vp = SoViewportRegionElement::get(state);
-    const short vx = std::max(0, static_cast<int>(vp.getViewportOriginPixels()[0]));
-    const short vy = std::max(0, static_cast<int>(vp.getViewportOriginPixels()[1]));
-    const short vw = std::max(1, static_cast<int>(vp.getViewportSizePixels()[0]));
-    const short vh = std::max(1, static_cast<int>(vp.getViewportSizePixels()[1]));
-
-    const int count = list.getNumCommands();
-    for (int i = firstCommand; i < count; ++i) {
-        SoRenderCommand& cmd = list.getCommand(i);
-        cmd.pass = SO_RENDERPASS_OVERLAY;
-        cmd.state.raster.scissorEnabled = TRUE;
-        cmd.state.raster.scissorX = vx;
-        cmd.state.raster.scissorY = vy;
-        cmd.state.raster.scissorWidth = vw;
-        cmd.state.raster.scissorHeight = vh;
-    }
+    // The overlay backend ignores unscissored overlays, so the promoted
+    // commands are scoped to the full viewport and switched to the OVERLAY
+    // pass, where the subtree is rasterized on top of the main scene.
+    Gui::promoteCommandsToOverlay(list, firstCommand, action->getState());
 }
 #endif
