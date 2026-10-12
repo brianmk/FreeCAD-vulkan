@@ -22,26 +22,13 @@
  *                                                                         *
  ***************************************************************************/
 
-#include <cmath>
 #include <limits>
 
 #include <BRepAlgo.hxx>
-#include <BRepAdaptor_Curve.hxx>
-#include <BRepAdaptor_Surface.hxx>
-#include <BRepBuilderAPI_MakeFace.hxx>
-#include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepFilletAPI_MakeChamfer.hxx>
-#include <BRepGProp.hxx>
-#include <BRepPrimAPI_MakePrism.hxx>
-#include <BRep_Builder.hxx>
-#include <GProp_GProps.hxx>
-#include <Precision.hxx>
 #include <TopExp.hxx>
-#include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
-#include <TopoDS_Compound.hxx>
 #include <TopoDS_Edge.hxx>
-#include <TopoDS_Face.hxx>
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <ShapeFix_Shape.hxx>
@@ -49,13 +36,11 @@
 #include <Standard_Version.hxx>
 
 
-#include <Base/Console.h>
 #include <Base/Exception.h>
 #include <Base/Reader.h>
 #include <Base/Tools.h>
 #include <Mod/Part/App/SignalException.h>
 #include <Mod/Part/App/TopoShape.h>
-#include <Mod/Part/App/TopoShapeOpCode.h>
 
 #include "FeatureChamfer.h"
 
@@ -134,245 +119,6 @@ short Chamfer::mustExecute() const
     return DressUp::mustExecute();
 }
 
-namespace {
-
-// ---------------------------------------------------------------------------
-// Wedge-cut fallback for chamfers that OCCT refuses.
-//
-// OCCT's ChFi3d corner builder cannot process an edge whose end vertex touches
-// a non-manifold edge (one shared by more than two faces).  A boolean cut can
-// leave such an edge behind when its boundary coincides exactly with existing
-// geometry, and BRepCheck does not flag it, so the solid still looks valid.  In
-// that situation ChFi3d raises the opaque "ChFi3d_Builder:only 2 faces" or
-// crashes inside ChFi3d_Builder::IntersectMoreCorner.
-//
-// Such an edge can still be chamfered the way a user would model it by hand:
-// subtract a prism whose cross-section is the chamfer triangle.  Only straight
-// edges between two planar faces are handled; for anything else the caller keeps
-// the original OCCT error.
-// ---------------------------------------------------------------------------
-
-struct WedgeLegs
-{
-    gp_Pnt start;
-    gp_Dir direction;
-    double length = 0.0;
-    gp_Dir leg0;
-    gp_Dir leg1;
-    double size0 = 0.0;
-    double size1 = 0.0;
-};
-
-double shapeVolume(const TopoDS_Shape& shape)
-{
-    GProp_GProps props;
-    BRepGProp::VolumeProperties(shape, props);
-    return props.Mass();
-}
-
-// in-plane direction from the edge into the interior of a planar face
-bool interiorDirection(const TopoDS_Face& face, const gp_Pnt& origin, const gp_Dir& axis, gp_Dir& out)
-{
-    GProp_GProps props;
-    BRepGProp::SurfaceProperties(face, props);
-    gp_Vec dir(origin, props.CentreOfMass());
-    dir -= gp_Vec(axis) * dir.Dot(gp_Vec(axis));
-    if (dir.SquareMagnitude() < Precision::SquareConfusion()) {
-        return false;
-    }
-    out = gp_Dir(dir);
-    return true;
-}
-
-bool wedgeLegs(const TopoDS_Edge& edge,
-               const TopoDS_Face& face0,
-               const TopoDS_Face& face1,
-               double size0,
-               double size1,
-               WedgeLegs& legs)
-{
-    if (BRep_Tool::Degenerated(edge)) {
-        return false;
-    }
-    BRepAdaptor_Curve curve(edge);
-    if (curve.GetType() != GeomAbs_Line) {
-        return false;
-    }
-    for (const TopoDS_Face& face : {face0, face1}) {
-        BRepAdaptor_Surface surface(face, Standard_False);
-        if (surface.GetType() != GeomAbs_Plane) {
-            return false;
-        }
-    }
-    legs.start = curve.Value(curve.FirstParameter());
-    const gp_Pnt end = curve.Value(curve.LastParameter());
-    legs.length = legs.start.Distance(end);
-    if (legs.length < Precision::Confusion()) {
-        return false;
-    }
-    legs.direction = gp_Dir(gp_Vec(legs.start, end));
-    if (!interiorDirection(face0, legs.start, legs.direction, legs.leg0)
-        || !interiorDirection(face1, legs.start, legs.direction, legs.leg1)) {
-        return false;
-    }
-    legs.size0 = size0;
-    legs.size1 = size1;
-    return true;
-}
-
-TopoDS_Shape wedgeTool(const WedgeLegs& legs, int sign0, int sign1)
-{
-    // Keep the tool's end faces off the solid's own faces: coincident end faces
-    // would introduce exactly the kind of sliver this fallback exists to dodge.
-    const double ext = std::max(legs.length, 1.0) * 1e-3;
-    const gp_Pnt start = legs.start.Translated(gp_Vec(legs.direction) * -ext);
-    BRepBuilderAPI_MakePolygon polygon;
-    polygon.Add(start);
-    polygon.Add(start.Translated(gp_Vec(legs.leg0) * (legs.size0 * sign0)));
-    polygon.Add(start.Translated(gp_Vec(legs.leg1) * (legs.size1 * sign1)));
-    polygon.Close();
-    BRepBuilderAPI_MakeFace face(polygon.Wire());
-    if (!face.IsDone()) {
-        return {};
-    }
-    return BRepPrimAPI_MakePrism(face.Face(), gp_Vec(legs.direction) * (legs.length + 2 * ext));
-}
-
-//! True when an end vertex of one of \a edges touches an edge shared by more than
-//! two faces.  ChFi3d cannot chamfer such a corner (it raises "only 2 faces" or
-//! crashes), so the wedge fallback is used instead of asking OCCT at all.
-bool hasNonManifoldCorner(const Part::TopoShape& shape,
-                          const std::vector<Part::TopoShape>& edges)
-{
-    TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
-    TopExp::MapShapesAndAncestors(shape.getShape(), TopAbs_EDGE, TopAbs_FACE, edgeFaces);
-    TopTools_IndexedDataMapOfShapeListOfShape vertexEdges;
-    TopExp::MapShapesAndAncestors(shape.getShape(), TopAbs_VERTEX, TopAbs_EDGE, vertexEdges);
-
-    for (const auto& edgeShape : edges) {
-        if (edgeShape.isNull() || edgeShape.getShape().ShapeType() != TopAbs_EDGE) {
-            continue;
-        }
-        for (TopExp_Explorer vx(edgeShape.getShape(), TopAbs_VERTEX); vx.More(); vx.Next()) {
-            if (!vertexEdges.Contains(vx.Current())) {
-                continue;
-            }
-            for (TopTools_ListIteratorOfListOfShape it(vertexEdges.FindFromKey(vx.Current()));
-                 it.More();
-                 it.Next()) {
-                if (edgeFaces.Contains(it.Value())
-                    && edgeFaces.FindFromKey(it.Value()).Extent() > 2) {
-                    return true;
-                }
-            }
-        }
-    }
-    return false;
-}
-
-Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
-                                    const std::vector<Part::TopoShape>& edges,
-                                    Part::ChamferType type,
-                                    double size,
-                                    double size2,
-                                    bool flip)
-{
-    double size0 = size;
-    double size1 = size;
-    if (type == Part::ChamferType::twoDistances) {
-        size1 = size2;
-        if (flip) {
-            std::swap(size0, size1);
-        }
-    }
-    else if (type == Part::ChamferType::distanceAngle) {
-        // Chamfer::execute() hands the angle (in degrees) over in size2
-        const double radians = Base::toRadians(size2);
-        if (std::abs(std::tan(radians)) < Precision::Confusion()) {
-            return Part::TopoShape(0);
-        }
-        size1 = size * std::tan(radians);
-        if (flip) {
-            std::swap(size0, size1);
-        }
-    }
-    if (size0 <= Precision::Confusion() || size1 <= Precision::Confusion()) {
-        return Part::TopoShape(0);
-    }
-
-    TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
-    TopExp::MapShapesAndAncestors(base.getShape(), TopAbs_EDGE, TopAbs_FACE, edgeFaces);
-
-    const double baseVolume = shapeVolume(base.getShape());
-    BRep_Builder builder;
-    TopoDS_Compound compound;
-    builder.MakeCompound(compound);
-    int used = 0;
-    for (const auto& edgeShape : edges) {
-        if (edgeShape.isNull() || edgeShape.getShape().ShapeType() != TopAbs_EDGE) {
-            return Part::TopoShape(0);
-        }
-        const TopoDS_Edge& edge = TopoDS::Edge(edgeShape.getShape());
-        if (!edgeFaces.Contains(edge) || edgeFaces.FindFromKey(edge).Extent() != 2) {
-            return Part::TopoShape(0);
-        }
-        WedgeLegs legs;
-        if (!wedgeLegs(
-                edge,
-                TopoDS::Face(edgeFaces.FindFromKey(edge).First()),
-                TopoDS::Face(edgeFaces.FindFromKey(edge).Last()),
-                size0,
-                size1,
-                legs
-            )) {
-            return Part::TopoShape(0);
-        }
-        // Pick the triangle orientation that really removes a chamfer wedge: the
-        // faces' interior directions give the two candidate legs, the material
-        // side decides their signs.
-        const double expected = 0.5 * size0 * size1 * legs.length;
-        double bestError = std::numeric_limits<double>::max();
-        TopoDS_Shape best;
-        for (int sign0 : {-1, 1}) {
-            for (int sign1 : {-1, 1}) {
-                const TopoDS_Shape tool = wedgeTool(legs, sign0, sign1);
-                if (tool.IsNull()) {
-                    continue;
-                }
-                Part::TopoShape toolShape(0);
-                toolShape.setShape(tool);
-                const Part::TopoShape candidate = base.makeElementCut(
-                    toolShape,
-                    Part::OpCodes::Chamfer
-                );
-                if (candidate.isNull()) {
-                    continue;
-                }
-                const double removed = baseVolume - shapeVolume(candidate.getShape());
-                const double error = std::abs(removed - expected);
-                if (error < bestError) {
-                    bestError = error;
-                    best = tool;
-                }
-            }
-        }
-        if (best.IsNull() || bestError > expected * 0.5) {
-            return Part::TopoShape(0);  // no orientation removes a chamfer wedge
-        }
-        builder.Add(compound, best);
-        ++used;
-    }
-    if (used == 0) {
-        return Part::TopoShape(0);
-    }
-
-    Part::TopoShape toolShape(0);
-    toolShape.setShape(compound);
-    return base.makeElementCut(toolShape, Part::OpCodes::Chamfer);
-}
-
-}  // namespace
-
 App::DocumentObjectExecReturn* Chamfer::execute()
 {
     if (onlyHaveRefined()) {
@@ -413,9 +159,18 @@ App::DocumentObjectExecReturn* Chamfer::execute()
     if (static_cast<Part::ChamferType>(chamferType) == Part::ChamferType::distanceAngle) {
         size2 = angle;
     }
-    // Shared post-processing of a candidate chamfer shape, and the fallback used
-    // when OCCT's ChFi3d refuses the edges.
-    auto finish = [&](TopoShape shape) -> App::DocumentObjectExecReturn* {
+    try {
+        TopoShape shape(0);
+        Part::SignalException sig;
+        shape.makeElementChamfer(
+            TopShape,
+            edges,
+            static_cast<Part::ChamferType>(chamferType),
+            size,
+            size2,
+            nullptr,
+            flipDirection ? Part::Flip::flip : Part::Flip::none
+        );
         if (shape.isNull()) {
             return new App::DocumentObjectExecReturn(
                 QT_TRANSLATE_NOOP("Exception", "Failed to create chamfer")
@@ -447,78 +202,11 @@ App::DocumentObjectExecReturn* Chamfer::execute()
         shape = getSolid(shape);
         this->Shape.setValue(shape);
         return App::DocumentObject::StdReturn;
-    };
-    // Returns true when the wedge fallback produced the result.  Note that
-    // App::DocumentObject::StdReturn is a null pointer, so success has to be
-    // tested against that sentinel, never by testing the pointer itself.
-    auto tryWedge = [&](App::DocumentObjectExecReturn*& result) -> bool {
-        TopoShape wedged = chamferEdgesByWedge(
-            TopShape,
-            edges,
-            static_cast<Part::ChamferType>(chamferType),
-            size,
-            size2,
-            flipDirection
-        );
-        if (wedged.isNull()) {
-            return false;  // not a case the fallback can handle: keep the OCC error
-        }
-        Base::Console().warning(
-            "{}: a corner of the chamfered edge touches a non-manifold edge, which OCCT's "
-            "fillet/chamfer cannot process; subtracted a wedge instead. The chamfer has sharp "
-            "ends and no corner blend.\n",
-            this->getFullName()
-        );
-        result = finish(wedged);
-        return true;
-    };
-    // Detect the non-manifold corner up front: asking OCCT is pointless there (it
-    // only fails, and for some edges it crashes).
-    if (hasNonManifoldCorner(TopShape, edges)) {
-        App::DocumentObjectExecReturn* wedged = App::DocumentObject::StdReturn;
-        if (tryWedge(wedged)) {
-            return wedged;
-        }
-    }
-    try {
-        TopoShape shape(0);
-        Part::SignalException sig;
-        shape.makeElementChamfer(
-            TopShape,
-            edges,
-            static_cast<Part::ChamferType>(chamferType),
-            size,
-            size2,
-            nullptr,
-            flipDirection ? Part::Flip::flip : Part::Flip::none
-        );
-        if (shape.isNull()) {
-            App::DocumentObjectExecReturn* wedged = App::DocumentObject::StdReturn;
-            if (tryWedge(wedged)) {
-                return wedged;
-            }
-        }
-        return finish(shape);
-    }
-    catch (Base::Exception& e) {
-        App::DocumentObjectExecReturn* wedged = App::DocumentObject::StdReturn;
-        if (tryWedge(wedged)) {
-            return wedged;
-        }
-        return new App::DocumentObjectExecReturn(e.what());
     }
     catch (Standard_Failure& e) {
-        App::DocumentObjectExecReturn* wedged = App::DocumentObject::StdReturn;
-        if (tryWedge(wedged)) {
-            return wedged;
-        }
         return new App::DocumentObjectExecReturn(e.GetMessageString());
     }
     catch (...) {
-        App::DocumentObjectExecReturn* wedged = App::DocumentObject::StdReturn;
-        if (tryWedge(wedged)) {
-            return wedged;
-        }
         return new App::DocumentObjectExecReturn(
             QT_TRANSLATE_NOOP("Exception", "Chamfer failed: OCC kernel error in chamfer computation")
         );

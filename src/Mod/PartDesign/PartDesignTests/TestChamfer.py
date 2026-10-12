@@ -24,58 +24,11 @@
 import unittest
 
 import FreeCAD
-import Part
 
 
 class TestChamfer(unittest.TestCase):
     def setUp(self):
         self.Doc = FreeCAD.newDocument("PartDesignTestChamfer")
-
-    def testChamferNonManifoldCornerUsesWedgeFallback(self):
-        # A boolean can leave an edge shared by more than two faces behind when
-        # its boundary coincides exactly with existing geometry, and BRepCheck
-        # does not flag it.  OCCT's ChFi3d then refuses any edge whose end vertex
-        # touches that edge ("ChFi3d_Builder:only 2 faces"), and for some of them
-        # it crashes.  Such edges must still be chamferable: the feature has to
-        # fall back to subtracting a wedge prism.
-        a = Part.makeBox(10, 10, 10)
-        b = Part.makeBox(10, 10, 10).translate(FreeCAD.Vector(10, 10, 0))
-        c = Part.makeBox(10, 10, 10).translate(FreeCAD.Vector(0, 0, 10))
-        fused = a.fuse(b).fuse(c)
-        self.assertTrue(fused.isValid())
-
-        nonManifold = [
-            edge for edge in fused.Edges if len(fused.ancestorsOfType(edge, Part.Face)) > 2
-        ]
-        self.assertEqual(len(nonManifold), 1)
-        touching = [v.Point for edge in nonManifold for v in edge.Vertexes]
-        candidates = [
-            index + 1
-            for index, edge in enumerate(fused.Edges)
-            if len(fused.ancestorsOfType(edge, Part.Face)) == 2
-            and any((v.Point - p).Length < 1e-6 for v in edge.Vertexes for p in touching)
-        ]
-        self.assertNotEqual(candidates, [])
-
-        base = self.Doc.addObject("Part::Feature", "Base")
-        base.Shape = fused
-        body = self.Doc.addObject("PartDesign::Body", "Body")
-        body.BaseFeature = base
-        self.Doc.recompute()
-
-        edgeName = "Edge%d" % candidates[0]
-        edge = fused.getElement(edgeName)
-        size = 0.5
-        chamfer = body.newObject("PartDesign::Chamfer", "Chamfer")
-        chamfer.Base = (base, [edgeName])
-        chamfer.Size = size
-        self.Doc.recompute()
-
-        self.assertNotIn("Invalid", chamfer.State)
-        self.assertTrue(chamfer.Shape.isValid())
-        removed = fused.Volume - chamfer.Shape.Volume
-        expected = 0.5 * size * size * edge.Length
-        self.assertAlmostEqual(removed, expected, delta=expected * 0.05)
 
     def testChamferCubeToOctahedron(self):
         self.Body = self.Doc.addObject("PartDesign::Body", "Body")
