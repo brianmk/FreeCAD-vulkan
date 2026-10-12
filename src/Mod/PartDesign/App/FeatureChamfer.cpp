@@ -671,6 +671,12 @@ App::DocumentObjectExecReturn* Chamfer::execute()
         size2 = angle;
     }
     try {
+        // Clear the shape first: a chamfer that cannot be built must not keep
+        // displaying the solid it produced last time (the user's stale, wrong-side
+        // wedge stayed on screen after the recompute started failing).
+        this->Shape.setValue(Part::TopoShape());
+        this->rawShape = Part::TopoShape();
+
         //! Builds the chamfer with the distances on the face `flip` selects.
         //! `swapSizes` exchanges the two distances: OCC measures the first one on
         //! the reference face, so handing the distances to the other face means
@@ -1034,12 +1040,19 @@ App::DocumentObjectExecReturn* Chamfer::execute()
         }
 
         if (shape.isNull()) {
-            if (failure.empty()) {
-                return new App::DocumentObjectExecReturn(
-                    QT_TRANSLATE_NOOP("Exception", "Failed to create chamfer")
-                );
+            // Never hand back a bare kernel message (the user's "no shape and no
+            // refusal message"), and never leave the previous shape on screen: an
+            // invalid chamfer that keeps displaying the last solid is exactly how
+            // a wrong-side wedge stays visible after it stopped being recomputed.
+            this->Shape.setValue(Part::TopoShape());
+            this->rawShape = Part::TopoShape();
+            std::ostringstream message;
+            message << "Chamfer could not be built on this edge";
+            if (!failure.empty()) {
+                message << " (" << failure << ")";
             }
-            return new App::DocumentObjectExecReturn(failure);
+            message << " - check the edge, or reduce the distances.";
+            return new App::DocumentObjectExecReturn(message.str());
         }
 
         // A result that leaves the solid alone must not be reported as a chamfer.

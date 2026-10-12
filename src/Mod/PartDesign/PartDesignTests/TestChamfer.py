@@ -310,6 +310,53 @@ class TestChamfer(unittest.TestCase):
         # both size orders on the reference edge
         self.assertEqual(matched, 2)
 
+    def testChamferOnAThrownEdgeRefusesVisibly(self):
+        # Edge10 in the user's model: a 22 mm concave edge whose one face reaches
+        # only 2 mm, with Two distances 17 / 1.0.  OCCT throws on it; the feature
+        # used to die with a bare "BRep_API: command not done", no shape and no
+        # explanation, and an earlier shape stayed on screen.  Now it must either
+        # build the valley wedge or refuse with a reason, and never leave geometry
+        # behind.
+        self.Body = self.Doc.addObject("PartDesign::Body", "Body")
+        pad, pocket = self._addPocket(pad_size=40.0, pocket_size=(22.0, 28.0), depth=2.0)
+        base = pocket.Shape
+        edge = next(
+            i + 1
+            for i, candidate in enumerate(base.Edges)
+            if abs(candidate.Length - 22.0) < 1e-6
+            and any(
+                abs(face.CenterOfMass.z - 8.0) < 1e-6
+                for face in base.ancestorsOfType(candidate, Part.Face)
+            )
+        )
+        feature = self.Doc.addObject("PartDesign::Chamfer", "ThrownEdge")
+        self.Body.addObject(feature)
+        feature.Base = (pocket, ["Edge%d" % edge])
+        feature.ChamferType = 1  # Two distances
+
+        # 17 / 1.0 fits both faces (17 <= 28, 1.0 <= 2.0): the valley wedge
+        feature.Size = 17.0
+        feature.Size2 = 1.0
+        self.Doc.recompute()
+        self.assertNotIn("Invalid", feature.State)
+        self.assertTrue(feature.Shape.isValid())
+        self.assertAlmostEqual(
+            feature.Shape.Volume - base.Volume, 0.5 * 17.0 * 1.0 * 22.0, delta=1e-3
+        )
+
+        # 2.5 does not fit the 2 mm face: refuse, and drop the shape built above
+        feature.Size2 = 2.5
+        self.Doc.recompute()
+        self.assertIn("Invalid", feature.State)
+        self.assertTrue(feature.Shape.isNull())
+
+        # a distance beyond every face is refused the same way
+        feature.Size = 100.0
+        feature.Size2 = 1.0
+        self.Doc.recompute()
+        self.assertIn("Invalid", feature.State)
+        self.assertTrue(feature.Shape.isNull())
+
     def tearDown(self):
         # closing doc
         FreeCAD.closeDocument("PartDesignTestChamfer")
