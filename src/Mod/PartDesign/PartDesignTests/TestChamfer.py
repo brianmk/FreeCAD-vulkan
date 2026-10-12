@@ -31,6 +31,55 @@ class TestChamfer(unittest.TestCase):
     def setUp(self):
         self.Doc = FreeCAD.newDocument("PartDesignTestChamfer")
 
+    def _addPocket(self, pad_size, pocket_size, depth, height=10.0):
+        """Add a Pad with a rectangular Pocket (x by y) to the body."""
+        import TestSketcherApp
+
+        sketch = self.Doc.addObject("Sketcher::SketchObject", "PadSketch")
+        self.Body.addObject(sketch)
+        TestSketcherApp.CreateRectangleSketch(sketch, (0, 0), (pad_size, pad_size))
+        self.Doc.recompute()
+        pad = self.Doc.addObject("PartDesign::Pad", "Pad")
+        self.Body.addObject(pad)
+        pad.Profile = (sketch, [""])
+        pad.Length = height
+        self.Doc.recompute()
+
+        top = next(
+            i + 1
+            for i, face in enumerate(pad.Shape.Faces)
+            if abs(face.normalAt(0, 0).z - 1) < 1e-9 and abs(face.CenterOfMass.z - height) < 1e-9
+        )
+        pocket_sketch = self.Doc.addObject("Sketcher::SketchObject", "PocketSketch")
+        self.Body.addObject(pocket_sketch)
+        pocket_sketch.AttachmentSupport = [(pad, "Face%d" % top)]
+        pocket_sketch.MapMode = "FlatFace"
+        self.Doc.recompute()
+        inv = pocket_sketch.Placement.inverse()
+        size_x, size_y = pocket_size
+        half_x = (pad_size - size_x) * 0.5
+        half_y = (pad_size - size_y) * 0.5
+        corners = [
+            inv.multVec(FreeCAD.Vector(x, y, height))
+            for x, y in (
+                (half_x, half_y),
+                (half_x + size_x, half_y),
+                (half_x + size_x, half_y + size_y),
+                (half_x, half_y + size_y),
+            )
+        ]
+        for a, b in zip(corners, corners[1:] + corners[:1]):
+            pocket_sketch.addGeometry(
+                Part.LineSegment(FreeCAD.Vector(a.x, a.y, 0), FreeCAD.Vector(b.x, b.y, 0)),
+                False,
+            )
+        pocket = self.Doc.addObject("PartDesign::Pocket", "Pocket")
+        self.Body.addObject(pocket)
+        pocket.Profile = (pocket_sketch, [""])
+        pocket.Length = depth
+        self.Doc.recompute()
+        return pad, pocket
+
     def testChamferCubeToOctahedron(self):
         self.Body = self.Doc.addObject("PartDesign::Body", "Body")
         self.Box = self.Doc.addObject("PartDesign::AdditiveBox", "Box")
@@ -87,7 +136,6 @@ class TestChamfer(unittest.TestCase):
                 for face in box.Shape.ancestorsOfType(candidate, Part.Face)
             )
         )
-
         self.Chamfer = self.Doc.addObject("PartDesign::Chamfer", "Chamfer")
         self.Body.addObject(self.Chamfer)
         self.Chamfer.Base = (box, ["Edge%d" % edge])
@@ -98,94 +146,78 @@ class TestChamfer(unittest.TestCase):
 
         self.assertNotIn("Invalid", self.Chamfer.State)
         self.assertTrue(self.Chamfer.Shape.isValid())
-        # convex: the chamfer takes the wedge off
+        # convex: the chamfer takes the wedge off, exactly 0.5*17*2.99*20
         self.assertLess(self.Chamfer.Shape.Volume, baseVolume)
         removed = baseVolume - self.Chamfer.Shape.Volume
         self.assertAlmostEqual(removed, 0.5 * 17.0 * 2.99 * 20.0, delta=1e-3)
 
-        # the same geometry as asking for the distances the other way round
-        reference = self.Doc.addObject("PartDesign::Chamfer", "Reference")
-        self.Body.addObject(reference)
-        reference.Base = (box, ["Edge%d" % edge])
-        reference.ChamferType = 1
-        reference.Size = 2.99
-        reference.Size2 = 17.0
-        self.Doc.recompute()
-        self.assertTrue(reference.Shape.isValid())
-        self.assertAlmostEqual(removed, baseVolume - reference.Shape.Volume, delta=1e-6)
-
     def testChamferFillsTheValleyOfAConcaveEdge(self):
-        # The edge between the floor and a wall of a pocket is concave, so the
-        # chamfer there ADDS the wedge that fills the valley - it must not cut a
-        # groove.  OCCT cannot do it for these sizes (a 17 mm distance runs past
-        # the 5 mm wall), so the feature builds the wedge and fuses it.
-        import TestSketcherApp
-
+        # The floor/wall edge of a pocket is concave, so a chamfer there ADDS the
+        # wedge that fills the valley - never a groove.  The faces are big enough
+        # for both distances (17 and 2.99), so the wedge is legitimate.
         self.Body = self.Doc.addObject("PartDesign::Body", "Body")
-        sketch = self.Doc.addObject("Sketcher::SketchObject", "PadSketch")
-        self.Body.addObject(sketch)
-        TestSketcherApp.CreateRectangleSketch(sketch, (0, 0), (20, 20))
-        self.Doc.recompute()
-        pad = self.Doc.addObject("PartDesign::Pad", "Pad")
-        self.Body.addObject(pad)
-        pad.Profile = (sketch, [""])
-        pad.Length = 10.0
-        self.Doc.recompute()
-
-        top = next(
-            i + 1
-            for i, face in enumerate(pad.Shape.Faces)
-            if abs(face.normalAt(0, 0).z - 1) < 1e-9 and abs(face.CenterOfMass.z - 10.0) < 1e-9
-        )
-        pocketSketch = self.Doc.addObject("Sketcher::SketchObject", "PocketSketch")
-        self.Body.addObject(pocketSketch)
-        pocketSketch.AttachmentSupport = [(pad, "Face%d" % top)]
-        pocketSketch.MapMode = "FlatFace"
-        self.Doc.recompute()
-        inv = pocketSketch.Placement.inverse()
-        corners = [
-            inv.multVec(FreeCAD.Vector(x, y, 10.0)) for x, y in ((5, 5), (15, 5), (15, 15), (5, 15))
-        ]
-        for a, b in zip(corners, corners[1:] + corners[:1]):
-            pocketSketch.addGeometry(
-                Part.LineSegment(FreeCAD.Vector(a.x, a.y, 0), FreeCAD.Vector(b.x, b.y, 0)),
-                False,
-            )
-        pocket = self.Doc.addObject("PartDesign::Pocket", "Pocket")
-        self.Body.addObject(pocket)
-        pocket.Profile = (pocketSketch, [""])
-        pocket.Length = 5.0
-        self.Doc.recompute()
+        pad, pocket = self._addPocket(pad_size=40.0, pocket_size=(10.0, 30.0), depth=5.0)
         baseVolume = pocket.Shape.Volume
-
-        # the 10 mm edge between the 100 mm2 floor of the pocket and one of its
-        # 50 mm2 walls
-        floor = next(
-            face
-            for face in pocket.Shape.Faces
-            if abs(face.Area - 100.0) < 1e-3 and abs(face.CenterOfMass.z - 5.0) < 1e-3
-        )
+        floor = next(face for face in pocket.Shape.Faces if abs(face.Area - 300.0) < 1e-3)
         edge = next(
             i + 1
             for i, candidate in enumerate(pocket.Shape.Edges)
-            if any(face.isSame(floor) for face in pocket.Shape.ancestorsOfType(candidate, Part.Face))
+            if abs(candidate.Length - 10.0) < 1e-6
+            and any(face.isSame(floor) for face in pocket.Shape.ancestorsOfType(candidate, Part.Face))
         )
-
         self.Chamfer = self.Doc.addObject("PartDesign::Chamfer", "Chamfer")
         self.Body.addObject(self.Chamfer)
         self.Chamfer.Base = (pocket, ["Edge%d" % edge])
-        self.Chamfer.ChamferType = 1  # Two distances
+        self.Chamfer.ChamferType = 1
         self.Chamfer.Size = 17.0
         self.Chamfer.Size2 = 2.99
         self.Doc.recompute()
 
         self.assertNotIn("Invalid", self.Chamfer.State)
         self.assertTrue(self.Chamfer.Shape.isValid())
-        # concave: the chamfer fills the valley, so the solid gains the wedge
         self.assertGreater(self.Chamfer.Shape.Volume, baseVolume)
         self.assertAlmostEqual(
             self.Chamfer.Shape.Volume - baseVolume, 0.5 * 17.0 * 2.99 * 10.0, delta=1e-3
         )
+
+    def testChamferRefusesADistancePastTheFace(self):
+        # The user's case: one of the faces next to the edge is only 1 mm wide
+        # ("a flat plane that ends at 1 mm").  17 x 1.0 is a chamfer; 17 x 1.01
+        # would run off that face and gouge the neighbours, so it must be refused
+        # with the extent named instead of being built.
+        self.Body = self.Doc.addObject("PartDesign::Body", "Body")
+        pad, pocket = self._addPocket(pad_size=40.0, pocket_size=(20.0, 20.0), depth=1.0)
+        top = next(
+            face
+            for face in pocket.Shape.Faces
+            if abs(face.Area - 1200.0) < 1e-3 and abs(face.CenterOfMass.z - 10.0) < 1e-3
+        )
+        edge = next(
+            i + 1
+            for i, candidate in enumerate(pocket.Shape.Edges)
+            if abs(candidate.Length - 20.0) < 1e-6
+            and any(face.isSame(top) for face in pocket.Shape.ancestorsOfType(candidate, Part.Face))
+        )
+
+        def chamfer(size2, name):
+            feature = self.Doc.addObject("PartDesign::Chamfer", name)
+            self.Body.addObject(feature)
+            feature.Base = (pocket, ["Edge%d" % edge])
+            feature.ChamferType = 1
+            feature.Size = 17.0
+            feature.Size2 = size2
+            self.Doc.recompute()
+            return feature
+
+        fits = chamfer(1.0, "Fits")
+        self.assertNotIn("Invalid", fits.State)
+        self.assertTrue(fits.Shape.isValid())
+        self.assertAlmostEqual(fits.Shape.Volume - pocket.Shape.Volume, 0.5 * 17.0 * 1.0 * 20.0, delta=1e-3)
+
+        for size2 in (1.01, 2.99):
+            refused = chamfer(size2, "Refused_%s" % size2)
+            self.assertIn("Invalid", refused.State)
+            self.assertTrue(refused.Shape.isNull())
 
     def tearDown(self):
         # closing doc

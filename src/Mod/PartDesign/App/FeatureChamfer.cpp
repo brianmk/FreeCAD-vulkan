@@ -168,6 +168,36 @@ bool planarFaceNormal(const TopoDS_Face& face, gp_Dir& normal)
     return true;
 }
 
+//! How far the face reaches in plane away from the edge, measured along \a leg
+//! (the in-plane direction from the edge into that face).  A chamfer distance
+//! measured on this face must not exceed it: past the reach the tool runs off
+//! the face and cuts through whatever lies beyond, which is not a bevel any
+//! more.  NB: a boolean can store a geometrically straight edge or a planar face
+//! as a B-spline (the user's Pocket002.Edge80 is a GeomBSplineCurve with a 3.6e-15
+//! chord deviation), which is why the checks here are geometric and never look
+//! at GeomAbs_Line/GeomAbs_Plane.
+bool faceReach(const TopoDS_Face& face, const gp_Pnt& start, const gp_Dir& leg, double& reach)
+{
+    double best = -std::numeric_limits<double>::max();
+    bool any = false;
+    for (TopExp_Explorer it(face, TopAbs_VERTEX); it.More(); it.Next()) {
+        const gp_Pnt point = BRep_Tool::Pnt(TopoDS::Vertex(it.Current()));
+        best = std::max(best, std::abs(gp_Vec(start, point).Dot(gp_Vec(leg))));
+        any = true;
+    }
+    for (TopExp_Explorer it(face, TopAbs_EDGE); it.More(); it.Next()) {
+        BRepAdaptor_Curve curve(TopoDS::Edge(it.Current()));
+        const gp_Pnt point = curve.Value((curve.FirstParameter() + curve.LastParameter()) * 0.5);
+        best = std::max(best, std::abs(gp_Vec(start, point).Dot(gp_Vec(leg))));
+        any = true;
+    }
+    if (!any) {
+        return false;
+    }
+    reach = best;
+    return true;
+}
+
 //! End points of a straight edge.  A boolean often leaves an edge that is
 //! geometrically a line but stored as a B-spline, so the curve type is not
 //! checked; a curve that deviates from its chord by more than a ten-thousandth
@@ -286,6 +316,27 @@ bool triangleIsInside(const Part::TopoShape& base, const gp_Pnt& a, const gp_Pnt
 
 //! Volume of the wedge a chamfer of these sizes takes off each straight edge
 //! between two planar faces: 0.5 * size0 * size1 * length.
+//! True when the region the chamfer changed stays inside \a allowed.  A wedge
+//! built with the wrong legs or on the wrong side of the edge changes geometry
+//! far away from it, which is exactly the artefact the user reported.
+bool changedRegionIsLocal(const Part::TopoShape& base,
+                          const Part::TopoShape& candidate,
+                          double removed,
+                          const Base::BoundBox3d& allowed)
+{
+    const Part::TopoShape changed = removed > 0.0 ? base.makeElementCut(candidate)
+                                                  : candidate.makeElementCut(base);
+    if (changed.isNull()) {
+        return true;  // cannot tell: do not block an otherwise fine chamfer
+    }
+    const Base::BoundBox3d box = changed.getBoundBox();
+    if (!box.IsValid()) {
+        return true;
+    }
+    return box.MinX >= allowed.MinX && box.MaxX <= allowed.MaxX && box.MinY >= allowed.MinY
+        && box.MaxY <= allowed.MaxY && box.MinZ >= allowed.MinZ && box.MaxZ <= allowed.MaxZ;
+}
+
 double chamferWedgeVolume(const Part::TopoShape& base,
                           const std::vector<Part::TopoShape>& edges,
                           double size0,
@@ -385,7 +436,8 @@ Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
                                     double size,
                                     double size2,
                                     bool flip,
-                                    double convexity)
+                                    double convexity,
+                                    double noopFloor)
 {
     // Both assignments of the two distances are tried: OCC measures the first
     // one on the face the caller picked, and for this fallback it does not
@@ -440,7 +492,11 @@ Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
         // concave edge most of the tool stands in the open, so the result gains
         // far less than that (0.5*17*2.99*34.83 = 885 mm3 against the measured
         // 186 mm3 on the user's Pocket002.Edge80).
-        double bestError = std::numeric_limits<double>::max();
+        // Reference behaviour (ManualChamfer): the distances keep the order the
+        // faces are given in, the triangle is chosen by the SIDE of the edge and
+        // the first candidate that is valid and moves the volume the right way
+        // wins.  Matching volumes per edge was what produced wildly different
+        // wedges on neighbouring edges of the same face.
         TopoDS_Shape best;
         for (const auto& [size0, size1] : assignments) {
             WedgeLegs legs;
@@ -454,9 +510,8 @@ Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
                 )) {
                 return Part::TopoShape(0);
             }
-            const double expected = 0.5 * size0 * size1 * legs.length;
-            for (int sign0 : {-1, 1}) {
-                for (int sign1 : {-1, 1}) {
+            for (int sign0 : {1, -1}) {
+                for (int sign1 : {1, -1}) {
                     const gp_Pnt corner0
                         = legs.start.Translated(gp_Vec(legs.leg0) * (legs.size0 * sign0));
                     const gp_Pnt corner1
@@ -477,12 +532,21 @@ Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
                         continue;
                     }
                     const double change = baseVolume - shapeVolume(candidate.getShape());
-                    const double error = std::abs(change - convexity * expected);
-                    if (error < bestError) {
-                        bestError = error;
-                        best = tool;
+                    if (std::abs(change) < noopFloor) {
+                        continue;
                     }
+                    if (convexity > 0.0 ? change <= 0.0 : change >= 0.0) {
+                        continue;  // wrong direction for this edge
+                    }
+                    best = tool;
+                    break;
                 }
+                if (!best.IsNull()) {
+                    break;
+                }
+            }
+            if (!best.IsNull()) {
+                break;
             }
         }
         if (best.IsNull()) {
@@ -685,20 +749,199 @@ App::DocumentObjectExecReturn* Chamfer::execute()
         // into a groove, or the other way round.
         const double convexity = chamferConvexity(TopShape, edges);
         const double expectedWedge = chamferWedgeVolume(TopShape, edges, size, wedgeSize1);
+        // A result that barely moves the volume is not a chamfer, it is a no-op
+        // that still gets reported as a success (the user's Edge3/Edge16 changed
+        // the solid by 0.0000 and 0.0005 mm3).  A concave chamfer adds whatever
+        // the tool covers rather than the analytic wedge, so for it only this
+        // floor applies, not a magnitude match.
+        const double noopFloor = std::max(1e-6, 0.01 * expectedWedge);
+        // The chamfer may only change geometry next to the edge it belongs to;
+        // anything further away is the artefact the user sees.
+        Base::BoundBox3d allowedRegion;
+        for (const auto& edgeShape : edges) {
+            const Base::BoundBox3d box = edgeShape.getBoundBox();
+            if (box.IsValid()) {
+                allowedRegion.Add(box);
+            }
+        }
+        if (allowedRegion.IsValid()) {
+            allowedRegion.Enlarge(std::max(size, wedgeSize1));
+        }
+        // An edge far shorter than the chamfer itself (the user's Footprint has
+        // 1.6e-5 mm slivers left by booleans) cannot carry it: any boolean on it
+        // is noise, reported as a +0.0005 mm3 "success".
+        const double shortest = std::min(size, wedgeSize1);
+        for (const auto& edgeShape : edges) {
+            if (edgeShape.isNull() || edgeShape.getShape().ShapeType() != TopAbs_EDGE) {
+                continue;
+            }
+            gp_Pnt edgeStart;
+            gp_Pnt edgeEnd;
+            if (!straightEdgeEnds(TopoDS::Edge(edgeShape.getShape()), edgeStart, edgeEnd)) {
+                continue;
+            }
+            const double edgeLength = edgeStart.Distance(edgeEnd);
+            if (edgeLength < 1e-3 * shortest) {
+                std::ostringstream message;
+                message << "this edge is only " << edgeLength
+                        << " mm long, far shorter than the " << Size.getValue() << " mm / "
+                        << Size2.getValue() << " mm chamfer - check the edge.";
+                return new App::DocumentObjectExecReturn(message.str());
+            }
+        }
         const double baseVolume = shapeVolume(TopShape.getShape());
+        bool sawNoop = false;
         auto removedBy = [&](const TopoShape& candidate) {
             return baseVolume - shapeVolume(candidate.getShape());
         };
+        // A distance is measured on one of the two faces next to the edge, so it
+        // must fit in that face's in-plane reach; otherwise the result is a
+        // gouge across the neighbouring faces, not a chamfer.  Measure every
+        // selected edge's two faces once (in the order OCCT picks them: the
+        // first ancestor, or the last one with Flip direction) and check each
+        // assignment against them.
+        std::vector<std::pair<double, double>> reachPairs;
+        std::vector<bool> reachKnown;
+        {
+            TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+            TopExp::MapShapesAndAncestors(
+                TopShape.getShape(),
+                TopAbs_EDGE,
+                TopAbs_FACE,
+                edgeFaces
+            );
+            for (const auto& edgeShape : edges) {
+                double firstReach = 0.0;
+                double lastReach = 0.0;
+                bool known = false;
+                if (!edgeShape.isNull() && edgeShape.getShape().ShapeType() == TopAbs_EDGE) {
+                    const TopoDS_Edge& edge = TopoDS::Edge(edgeShape.getShape());
+                    gp_Pnt start;
+                    gp_Pnt end;
+                    if (edgeFaces.Contains(edge) && edgeFaces.FindFromKey(edge).Extent() == 2
+                        && straightEdgeEnds(edge, start, end)) {
+                        const gp_Dir axis(gp_Vec(start, end));
+                        gp_Dir legFirst;
+                        gp_Dir legLast;
+                        known
+                            = interiorDirection(
+                                  TopoDS::Face(edgeFaces.FindFromKey(edge).First()),
+                                  start,
+                                  axis,
+                                  legFirst
+                              )
+                            && interiorDirection(
+                                TopoDS::Face(edgeFaces.FindFromKey(edge).Last()),
+                                start,
+                                axis,
+                                legLast
+                            )
+                            && faceReach(
+                                TopoDS::Face(edgeFaces.FindFromKey(edge).First()),
+                                start,
+                                legFirst,
+                                firstReach
+                            )
+                            && faceReach(
+                                TopoDS::Face(edgeFaces.FindFromKey(edge).Last()),
+                                start,
+                                legLast,
+                                lastReach
+                            );
+                    }
+                }
+                reachPairs.emplace_back(firstReach, lastReach);
+                reachKnown.push_back(known);
+            }
+        }
+        constexpr double reachMargin = 1e-3;
+        //! Does (sizeA measured on the reference face, sizeB on the other) fit
+        //! every selected edge?
+        auto assignmentFits = [&](bool flip, bool swap, double sizeA, double sizeB) {
+            const double onReference = swap ? sizeB : sizeA;
+            const double onOther = swap ? sizeA : sizeB;
+            for (std::size_t i = 0; i < reachPairs.size(); ++i) {
+                if (!reachKnown[i]) {
+                    continue;  // cannot tell: do not block the user
+                }
+                const double referenceReach = flip ? reachPairs[i].second : reachPairs[i].first;
+                const double otherReach = flip ? reachPairs[i].first : reachPairs[i].second;
+                if (onReference > referenceReach + reachMargin
+                    || onOther > otherReach + reachMargin) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        //! The assignment that misses fitting by the least, for the message.
+        std::string reachRefusal;
+        {
+            double bestExcess = std::numeric_limits<double>::max();
+            for (bool flip : {flipDirection, !flipDirection}) {
+                for (bool swap : {false, true}) {
+                    if (swap && !twoDistances) {
+                        continue;
+                    }
+                    const double onReference = swap ? wedgeSize1 : size;
+                    const double onOther = swap ? size : wedgeSize1;
+                    bool blocked = false;
+                    double worst = 0.0;
+                    double worstReach = 0.0;
+                    double worstDistance = 0.0;
+                    for (std::size_t i = 0; i < reachPairs.size(); ++i) {
+                        if (!reachKnown[i]) {
+                            continue;
+                        }
+                        const double referenceReach
+                            = flip ? reachPairs[i].second : reachPairs[i].first;
+                        const double otherReach
+                            = flip ? reachPairs[i].first : reachPairs[i].second;
+                        for (const auto& [distance, reach] :
+                             {std::pair<double, double> {onReference, referenceReach},
+                              std::pair<double, double> {onOther, otherReach}}) {
+                            const double excess = distance - reach;
+                            if (excess > reachMargin) {
+                                blocked = true;
+                                if (excess > worst) {
+                                    worst = excess;
+                                    worstReach = reach;
+                                    worstDistance = distance;
+                                }
+                            }
+                        }
+                    }
+                    if (blocked && worst < bestExcess) {
+                        bestExcess = worst;
+                        std::ostringstream message;
+                        message << "the face next to this edge ends " << worstReach
+                                << " mm away, so a " << worstDistance
+                                << " mm chamfer would cut through it - reduce the distance or "
+                                   "extend the geometry.";
+                        reachRefusal = message.str();
+                    }
+                }
+            }
+        }
+
         auto acceptable = [&](const TopoShape& candidate) {
-            if (!usable(candidate)) {
+            if (!usable(candidate) || !isSingleSolidRuleSatisfied(candidate.getShape())) {
                 return false;
             }
             const double removed = removedBy(candidate);
-            if (convexity < 0.0) {
-                return removed < -Precision::Confusion();  // concave: fills the valley
+            if (std::abs(removed) < noopFloor) {
+                sawNoop = true;  // changes nothing: not a chamfer
+                return false;
             }
-            // convex, or convexity unknown: never grow the solid
-            return removed > Precision::Confusion();
+            if (convexity < 0.0) {
+                if (removed >= -Precision::Confusion()) {
+                    return false;  // concave: fills the valley
+                }
+            }
+            else if (removed <= Precision::Confusion()) {
+                return false;  // convex, or convexity unknown: never grow the solid
+            }
+            return allowedRegion.IsValid() ? changedRegionIsLocal(TopShape, candidate, removed, allowedRegion)
+                                           : true;
         };
 
         // 2. The same chamfer with the distances on the other adjacent face.
@@ -733,6 +976,9 @@ App::DocumentObjectExecReturn* Chamfer::execute()
                     if (!acceptable(other)) {
                         continue;
                     }
+                    if (!assignmentFits(attempts[i].first, attempts[i].second, size, wedgeSize1)) {
+                        continue;  // the distances do not fit the faces: no bevel
+                    }
                     const double error = std::abs(removedBy(other) - expected);
                     if (error < bestError) {
                         bestError = error;
@@ -759,7 +1005,18 @@ App::DocumentObjectExecReturn* Chamfer::execute()
         //    here (the guard above returns early), and it is exact when a
         //    distance fits neither adjacent face - see chamferEdgesByWedge().
         bool wedgeRetry = false;
-        if (!acceptable(shape)) {
+        // The wedge is built between the two faces in the order OCCT picks them,
+        // so it is only legitimate when one of its two assignments fits both
+        // faces; otherwise every option would run off a face - refuse instead of
+        // gouging the neighbouring geometry.
+        const bool wedgeFits = assignmentFits(false, false, size, wedgeSize1)
+            || (twoDistances && assignmentFits(false, true, size, wedgeSize1));
+        if (!acceptable(shape) && !wedgeFits) {
+            if (!reachRefusal.empty()) {
+                return new App::DocumentObjectExecReturn(reachRefusal);
+            }
+        }
+        if (!acceptable(shape) && wedgeFits) {
             TopoShape wedged = chamferEdgesByWedge(
                 TopShape,
                 edges,
@@ -767,7 +1024,8 @@ App::DocumentObjectExecReturn* Chamfer::execute()
                 size,
                 size2,
                 flipDirection,
-                convexity
+                convexity,
+                noopFloor
             );
             if (acceptable(wedged)) {
                 shape = wedged;
@@ -782,6 +1040,23 @@ App::DocumentObjectExecReturn* Chamfer::execute()
                 );
             }
             return new App::DocumentObjectExecReturn(failure);
+        }
+
+        // A result that leaves the solid alone must not be reported as a chamfer.
+        if (sawNoop && !acceptable(shape)) {
+            std::ostringstream message;
+            message << "Chamfer does not change the solid on this edge (no-op): the ";
+            if (static_cast<Part::ChamferType>(chamferType) == Part::ChamferType::distanceAngle) {
+                message << "size " << Size.getValue() << " mm / angle " << Angle.getValue()
+                        << " deg leave the geometry as it is - check the edge, or use sizes that "
+                           "reach past the faces.";
+            }
+            else {
+                message << "sizes " << Size.getValue() << " mm / " << Size2.getValue()
+                        << " mm leave the geometry as it is - check the edge, or use sizes that "
+                           "reach past the faces.";
+            }
+            return new App::DocumentObjectExecReturn(message.str());
         }
 
         // Neither face assignment nor a wedge cut produced a usable solid: refuse
@@ -809,12 +1084,24 @@ App::DocumentObjectExecReturn* Chamfer::execute()
             );
         }
         if (wedgeRetry) {
-            Base::Console().warning(
-                "{}: OCCT cannot represent the requested sizes on this edge (a distance runs past "
-                "the adjacent face); built the equivalent wedge cut instead - the chamfer has sharp "
-                "ends and no corner blend.\n",
-                getFullName()
-            );
+            // a convex edge has the wedge taken off, a concave one has its valley
+            // filled with it
+            if (convexity < 0.0) {
+                Base::Console().warning(
+                    "{}: OCCT cannot build this chamfer (the distances fit the adjacent faces); "
+                    "filled the valley with the equivalent wedge instead - the chamfer has sharp "
+                    "ends and no corner blend.\n",
+                    getFullName()
+                );
+            }
+            else {
+                Base::Console().warning(
+                    "{}: OCCT cannot build this chamfer (the distances fit the adjacent faces); "
+                    "built the equivalent wedge cut instead - the chamfer has sharp ends and no "
+                    "corner blend.\n",
+                    getFullName()
+                );
+            }
         }
 
         // store shape before refinement
