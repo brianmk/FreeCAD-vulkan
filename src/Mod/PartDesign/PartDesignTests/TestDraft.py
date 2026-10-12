@@ -231,6 +231,36 @@ class TestDraft(unittest.TestCase):
         self.assertEqual(self.Draft.Base[0], self.Sketch)
         self.assertDraftedLowerHalf()
 
+    def testDraftWithSketchInBaseAndProfile(self):
+        # A sketch left in Base after the Profile was picked (the state that used
+        # to fail with "Base feature's shape is not a solid") still works, and
+        # the Profile is used as the region.
+        self.buildBoxWithSplitSketch()
+
+        self.Draft = self.Doc.addObject("PartDesign::Draft", "Draft")
+        self.Draft.Base = (self.Sketch, ["InternalFace1"])
+        self.Draft.Profile = (self.Sketch, [""])
+        self.Draft.NeutralPlane = (self.Plane, [""])
+        self.Draft.Angle = 10.0
+        self.Body.addObject(self.Draft)
+        self.Doc.recompute()
+
+        self.assertEqual(self.Draft.Profile[0], self.Sketch)
+        self.assertDraftedLowerHalf()
+
+    def testDraftWithProfileOnly(self):
+        # Nothing in Base, only the Profile: the face below it is found
+        self.buildBoxWithSplitSketch()
+
+        self.Draft = self.Doc.addObject("PartDesign::Draft", "Draft")
+        self.Draft.Profile = (self.Sketch, [""])
+        self.Draft.NeutralPlane = (self.Plane, [""])
+        self.Draft.Angle = 10.0
+        self.Body.addObject(self.Draft)
+        self.Doc.recompute()
+
+        self.assertDraftedLowerHalf()
+
     def tearDown(self):
         # closing doc
         FreeCAD.closeDocument("PartDesignTestDraft")

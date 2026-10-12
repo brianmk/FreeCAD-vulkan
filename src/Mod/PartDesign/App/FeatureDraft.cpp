@@ -215,12 +215,27 @@ short Draft::mustExecute() const
 App::DocumentObjectExecReturn* Draft::execute()
 {
     // Get parameters
-    // Base shape.
-    // A 2D object (a sketch) in Base is used as the profile that splits the
-    // solid feature below it, so the base shape is that feature instead.
+    // The profile is either the Profile property, or - when Base itself holds a
+    // 2D object (a sketch picked in the 3D view) - that object.
     App::DocumentObject* baseLink = Base.getValue();
-    const bool profileInBase = !Profile.getValue() && isProfileObject(baseLink);
+    App::DocumentObject* profileLink = Profile.getValue();
 
+    const bool baseIs2D = isProfileObject(baseLink);
+    // "FaceN" sub-elements of a solid feature are what Base normally holds
+    const bool baseHasFaces = !Base.getSubValuesStartsWith("Face").empty();
+
+    App::DocumentObject* profileObject = profileLink;
+    std::vector<std::string> profileSubs = Profile.getSubValues();
+    if (!profileObject && baseIs2D) {
+        profileObject = baseLink;
+        profileSubs = Base.getSubValues();
+    }
+
+    // Without a base face the face below the profile's region is drafted
+    const bool profileInBase
+        = profileObject && isProfileObject(profileObject) && (baseIs2D || !baseHasFaces);
+
+    // Base shape.  With a profile the draft is applied to the solid below it.
     Part::Feature* baseObject = nullptr;
     Part::TopoShape TopShape;
     if (profileInBase) {
@@ -276,15 +291,17 @@ App::DocumentObjectExecReturn* Draft::execute()
     // With a profile the faces to draft are the ones below the profile's region
     Part::TopoShape region;
     std::vector<TopoShape> profileFaces;
-    if (profileInBase) {
+    if (profileObject) {
         try {
-            region = getProfileRegion(baseObject, baseLink, Base.getSubValues());
-            profileFaces = getFacesUnderProfile(baseShape, region);
+            region = getProfileRegion(baseObject, profileObject, profileSubs);
+            if (profileInBase) {
+                profileFaces = getFacesUnderProfile(baseShape, region);
+            }
         }
         catch (Base::Exception& e) {
             return new App::DocumentObjectExecReturn(e.what());
         }
-        if (profileFaces.empty()) {
+        if (profileInBase && profileFaces.empty()) {
             return new App::DocumentObjectExecReturn(
                 QT_TRANSLATE_NOOP("Exception", "No base face found below the profile")
             );
@@ -502,9 +519,8 @@ App::DocumentObjectExecReturn* Draft::execute()
         // A profile splits the selected faces. Only the resulting sub-faces that
         // lie inside the profile's region are drafted.
         Part::TopoShape splitShape(baseShape);
-        if (profileInBase || Profile.getValue()) {
-            splitShape
-                = splitBaseFaces(baseShape, region, faces, baseObject, draftFaces);
+        if (!region.isNull()) {
+            splitShape = splitBaseFaces(baseShape, region, faces, baseObject, draftFaces);
         }
 
         TopoShape shape({}, getDocument()->getStringHasher());
@@ -703,10 +719,7 @@ Part::TopoShape Draft::splitBaseFaces(
 
     Part::TopoShape region = givenRegion;
     if (region.isNull()) {
-        if (!Profile.getValue()) {
-            return baseShape;
-        }
-        region = getProfileRegion(baseObject, Profile.getValue(), Profile.getSubValues());
+        return baseShape;
     }
 
     auto regionFaces = region.getSubTopoShapes(TopAbs_FACE);
