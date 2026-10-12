@@ -165,20 +165,40 @@ class TestChamfer(unittest.TestCase):
             if abs(candidate.Length - 10.0) < 1e-6
             and any(face.isSame(floor) for face in pocket.Shape.ancestorsOfType(candidate, Part.Face))
         )
-        self.Chamfer = self.Doc.addObject("PartDesign::Chamfer", "Chamfer")
-        self.Body.addObject(self.Chamfer)
-        self.Chamfer.Base = (pocket, ["Edge%d" % edge])
-        self.Chamfer.ChamferType = 1
-        self.Chamfer.Size = 17.0
-        self.Chamfer.Size2 = 2.99
-        self.Doc.recompute()
+        # both size orders must produce the same wedge (the user's reference
+        # Chamfer001 uses 2.99 / 17 on a concave edge of this shape)
+        for index, (size, size2) in enumerate(((17.0, 2.99), (2.99, 17.0))):
+            name = "Chamfer%s" % index
+            feature = self.Doc.addObject("PartDesign::Chamfer", name)
+            self.Body.addObject(feature)
+            feature.Base = (pocket, ["Edge%d" % edge])
+            feature.ChamferType = 1  # Two distances
+            feature.Size = size
+            feature.Size2 = size2
+            self.Doc.recompute()
 
-        self.assertNotIn("Invalid", self.Chamfer.State)
-        self.assertTrue(self.Chamfer.Shape.isValid())
-        self.assertGreater(self.Chamfer.Shape.Volume, baseVolume)
-        self.assertAlmostEqual(
-            self.Chamfer.Shape.Volume - baseVolume, 0.5 * 17.0 * 2.99 * 10.0, delta=1e-3
-        )
+            self.assertNotIn("Invalid", feature.State)
+            self.assertTrue(feature.Shape.isValid())
+            self.assertGreater(feature.Shape.Volume, baseVolume)
+            change = feature.Shape.Volume - baseVolume
+            self.assertAlmostEqual(change, 0.5 * 17.0 * 2.99 * 10.0, delta=1e-3)
+
+            # the changed region must sit next to the edge, not somewhere else
+            changed = feature.Shape.cut(pocket.Shape)
+            bounds = changed.BoundBox
+            limit = pocket.Shape.Edges[edge - 1].BoundBox
+            for low, high, margin in (
+                (bounds.XMin, limit.XMin - 17.0, "X"),
+                (bounds.YMin, limit.YMin - 17.0, "Y"),
+                (bounds.ZMin, limit.ZMin - 17.0, "Z"),
+            ):
+                self.assertGreaterEqual(low, high - 1e-3)
+            for low, high, margin in (
+                (bounds.XMax, limit.XMax + 17.0, "X"),
+                (bounds.YMax, limit.YMax + 17.0, "Y"),
+                (bounds.ZMax, limit.ZMax + 17.0, "Z"),
+            ):
+                self.assertLessEqual(low, high + 1e-3)
 
     def testChamferRefusesADistancePastTheFace(self):
         # The user's case: one of the faces next to the edge is only 1 mm wide
