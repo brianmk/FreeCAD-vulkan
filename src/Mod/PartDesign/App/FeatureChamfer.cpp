@@ -39,17 +39,14 @@
 #include <BRep_Tool.hxx>
 #include <TopoDS_Compound.hxx>
 #include <GProp_GProps.hxx>
-#include <BRepFilletAPI_MakeChamfer.hxx>
 #include <TopExp.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <TopTools_ListOfShape.hxx>
-#include <ShapeFix_Shape.hxx>
 #include <ShapeFix_ShapeTolerance.hxx>
 
 #include <sstream>
-#include <Standard_Version.hxx>
 
 
 #include <Base/Exception.h>
@@ -320,17 +317,6 @@ double chamferConvexity(const Part::TopoShape& base, const std::vector<Part::Top
     return convexity;
 }
 
-//! True when the centroid of the triangle a-b-c lies inside \a base.
-bool triangleIsInside(const Part::TopoShape& base, const gp_Pnt& a, const gp_Pnt& b, const gp_Pnt& c)
-{
-    const gp_Pnt centroid((a.XYZ() + b.XYZ() + c.XYZ()) / 3.0);
-    BRepClass3d_SolidClassifier classifier(base.getShape());
-    classifier.Perform(centroid, Precision::Confusion());
-    return classifier.State() == TopAbs_IN;
-}
-
-//! Volume of the wedge a chamfer of these sizes takes off each straight edge
-//! between two planar faces: 0.5 * size0 * size1 * length.
 //! True when the region the chamfer changed stays inside \a allowed.  A wedge
 //! built with the wrong legs or on the wrong side of the edge changes geometry
 //! far away from it, which is exactly the artefact the user reported.
@@ -455,8 +441,12 @@ bool changedRegionFollowsTheFaces(const Part::TopoShape& changed,
     return true;
 }
 
-double chamferWedgeVolume(const Part::TopoShape& base,
-                          const std::vector<Part::TopoShape>& edges,
+//! The wedge volume a chamfer of these sizes removes from each straight edge:
+//! 0.5 * size0 * size1 * length, summed over the edges, and zero as soon as one
+//! of them is not a straight edge.  It only sizes the no-op floor the result has
+//! to clear; it is not a magnitude the result has to match (a concave chamfer
+//! fills the valley, so it adds less than this).
+double chamferWedgeVolume(const std::vector<Part::TopoShape>& edges,
                           double size0,
                           double size1)
 {
@@ -493,8 +483,7 @@ double shapeVolume(const TopoDS_Shape& shape)
     return props.Mass();
 }
 
-//! In-plane direction from the edge into the interior of a planar face.
-
+//! Start, direction, in-plane legs and sizes of the wedge for one edge.
 bool wedgeLegs(const TopoDS_Edge& edge,
                const TopoDS_Face& face0,
                const TopoDS_Face& face1,
@@ -525,11 +514,9 @@ bool wedgeLegs(const TopoDS_Edge& edge,
     return true;
 }
 
-//! The wedge prism for one edge.  It spans the edge *exactly*: overshooting the
-//! ends would cut into whatever lies beyond them (a through-all variant removed
-//! 2819 mm3 where the chamfer removes 1270.75).
-//! The prism over one edge: a triangle at \a base with both legs on the same
-//! side (\a legSign), extruded exactly along the edge (never past its ends).
+//! The wedge prism over one edge: a triangle at \a base with both legs on the
+//! same side (\a legSign), extruded exactly along the edge.  It spans the edge
+//! *exactly* - overshooting its ends would cut into whatever lies beyond them.
 TopoDS_Shape wedgeTool(const WedgeLegs& legs, int legSign, const gp_Pnt& base, const gp_Dir& direction)
 {
     BRepBuilderAPI_MakePolygon polygon;
@@ -543,10 +530,6 @@ TopoDS_Shape wedgeTool(const WedgeLegs& legs, int legSign, const gp_Pnt& base, c
     }
     return BRepPrimAPI_MakePrism(face.Face(), gp_Vec(direction) * legs.length);
 }
-
-//! Volume of the wedge a chamfer of these sizes takes off each straight edge
-//! between two planar faces: 0.5 * size0 * size1 * length.  This is the volume
-//! the result must lose - a chamfer only ever takes material off.
 
 //! Chamfers each edge by subtracting a wedge prism, and returns the cut shape
 //! (or a null shape when that is not possible).
@@ -607,24 +590,12 @@ Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
             return Part::TopoShape(0);
         }
         // Pick the triangle by the side of the edge: a convex edge is chamfered
-        // by subtracting the triangle whose centroid lies inside the material, a
-        // concave one by fusing the one whose centroid lies in the void.  The
-        // analytic volume 0.5*size0*size1*length only breaks ties - for a
-        // concave edge most of the tool stands in the open, so the result gains
-        // far less than that (0.5*17*2.99*34.83 = 885 mm3 against the measured
-        // 186 mm3 on the user's Pocket002.Edge80).
-        // Reference behaviour (ManualChamfer): the distances keep the order the
-        // faces are given in, the triangle is chosen by the SIDE of the edge and
-        // the first candidate that is valid and moves the volume the right way
-        // wins.  Matching volumes per edge was what produced wildly different
-        // wedges on neighbouring edges of the same face.
-        // Every face/distance assignment is tried, so as soon as OCCT succeeds for
-        // one of them the reference chamfer is used and no wedge is needed; the
-        // wedge only appears when OCCT fails outright on all of them.
-        // Build the wedge directly: the triangle's legs run from the edge along
-        // each face - in front of both faces it is the valley wedge a concave
-        // edge needs (fused), behind both the prism a convex edge needs (cut).
-        // The reflected triangle is never a candidate.
+        // by subtracting the triangle behind both faces, a concave one by fusing
+        // the triangle in front of both (the valley wedge).  The distances keep
+        // the order the faces are given in (ManualChamfer reference) and the
+        // first candidate that is valid, moves the volume the right way and
+        // stays inside the face planes wins; the reflected triangle is never a
+        // candidate.
         //
         // BRepAlgoAPI is called directly: TopoShape::fuse/makeElementFuse run the
         // result through makeShell/element handling and returned only the tool
@@ -904,7 +875,7 @@ App::DocumentObjectExecReturn* Chamfer::execute()
         // assignment and must not be accepted - it would turn "fill the valley"
         // into a groove, or the other way round.
         const double convexity = chamferConvexity(TopShape, edges);
-        const double expectedWedge = chamferWedgeVolume(TopShape, edges, size, wedgeSize1);
+        const double expectedWedge = chamferWedgeVolume(edges, size, wedgeSize1);
         // A result that barely moves the volume is not a chamfer, it is a no-op
         // that still gets reported as a success (the user's Edge3/Edge16 changed
         // the solid by 0.0000 and 0.0005 mm3).  A concave chamfer adds whatever
