@@ -9,7 +9,7 @@ import FreeCADGui
 import Part
 import Sketcher
 import SketcherGui
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 
 class SketcherGuiTestCases(unittest.TestCase):
@@ -278,6 +278,62 @@ class SketcherGuiTestCases(unittest.TestCase):
         self.assertGreater(len(vertex_offsets), 0, detail)
         self.assertEqual(marker_kind, "vertex", detail)
         self.assertEqual(unexpected_probe_results, [], detail)
+
+    def send_mouse_move(self, widget, pos):
+        event = QtGui.QMouseEvent(
+            QtCore.QEvent.MouseMove,
+            QtCore.QPointF(pos),
+            QtCore.QPointF(widget.mapToGlobal(pos)),
+            QtCore.Qt.NoButton,
+            QtCore.Qt.NoButton,
+            QtCore.Qt.NoModifier,
+        )
+        QtWidgets.QApplication.sendEvent(widget, event)
+        self.pump_gui_events()
+
+    def testPreselectionIsRemovedWhenThePointerLeavesGeometry(self):
+        # The preselection this view provider publishes was not removed when the pointer moved
+        # off the geometry: the element stayed preselected over a large part of the viewport,
+        # unchanged by zoom (reported with the Vulkan renderer).
+        line_id = self.sketch.addGeometry(
+            Part.LineSegment(
+                FreeCAD.Vector(0.0, 10.0, 0.0),
+                FreeCAD.Vector(20.0, 10.0, 0.0),
+            ),
+            False,
+        )
+        self.doc.recompute()
+        self.pump_gui_events()
+        self.configure_view_state(self.view)
+
+        widget = self.view.graphicsView().viewport()
+        on_line = tuple(
+            int(value) for value in self.view.getPointOnViewport(FreeCAD.Vector(10.0, 10.0, 0.0))
+        )
+        away_world = FreeCAD.Vector(10.0, 4.0, 0.0)
+        away = tuple(int(value) for value in self.view.getPointOnViewport(away_world))
+        self.assertFalse(
+            SketcherGui.getActiveSketchPreselection(away),
+            "the test point must be away from any sketch element",
+        )
+
+        def to_qpoint(coin):
+            _, height = self.view.getSize()
+            return QtCore.QPoint(int(coin[0]), int(height - coin[1] - 1))
+
+        self.send_mouse_move(widget, to_qpoint(on_line))
+        info = FreeCADGui.Selection.getPreselection()
+        self.assertIsNotNone(info, "hovering the line must preselect it")
+        self.assertIn(f"Edge{line_id + 1}", info.SubElementNames)
+
+        self.send_mouse_move(widget, to_qpoint(away))
+        after = FreeCADGui.Selection.getPreselection()
+        after_names = [name for name in (after.SubElementNames if after else []) if name]
+        self.assertEqual(
+            after_names,
+            [],
+            "moving the pointer off the geometry must remove the preselection",
+        )
 
     def testCurveWinsOverOverlappingDistanceDimensionLine(self):
         start_point = FreeCAD.Vector(80.0, 100.0, 0.0)

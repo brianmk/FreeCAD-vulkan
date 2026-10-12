@@ -168,13 +168,20 @@ SketchSolveStatus SketchObject::solve(bool updateGeoAfterSolving /*=true*/)
     // achieved.
     if (status == SketchSolveStatus::Success) {
         FullyConstrained.setValue(lastDoF == 0);
-        if (updateGeoAfterSolving) {
-            // set the newly solved geometry
-            std::vector<Part::Geometry*> geomlist = solvedSketch.extractGeometry();
-            Part::PropertyGeometryList tmp;
-            tmp.setValues(std::move(geomlist));
-            Geometry.moveValues(std::move(tmp));
-        }
+    }
+
+    // Redundant constraints are consistent by definition: the solver removes them from the system
+    // it solves (see Sketch::initSolution) and solves the remaining constraints successfully.
+    // That solution must still be applied, otherwise a constraint that only requires moving
+    // geometry (for example a Colinear constraint between two lines that are already parallel)
+    // appears to do nothing at all, while the sketch is reported as redundant.
+    if ((status == SketchSolveStatus::Success || status == SketchSolveStatus::RedundantConstraints)
+        && updateGeoAfterSolving) {
+        // set the newly solved geometry
+        std::vector<Part::Geometry*> geomlist = solvedSketch.extractGeometry();
+        Part::PropertyGeometryList tmp;
+        tmp.setValues(std::move(geomlist));
+        Geometry.moveValues(std::move(tmp));
     }
 
     signalSolverUpdate();
@@ -214,8 +221,14 @@ SketchSolveStatus SketchObject::setDatum(int ConstrId, double Datum)
 
     const auto status = solve();
 
-    if (status != SketchSolveStatus::Success)
+    if (status != SketchSolveStatus::Success) {
         this->Constraints.getValues()[ConstrId]->setValue(oldDatum);// newVals is a shell now
+        if (status == SketchSolveStatus::RedundantConstraints) {
+            // solve() applies the geometry of the (redundancy-reduced) system it solved, so solve
+            // again for the geometry to match the restored datum.
+            solve();
+        }
+    }
 
     return status;
 }
