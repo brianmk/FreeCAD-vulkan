@@ -459,7 +459,13 @@ class TestPocket(unittest.TestCase):
         # tool removes a hair more material: perimeter x depth x nudge ~ 2.4e-3
         # mm3 here, 8e-8 of the part.  What it must never do is leave a ledge -
         # a translation used to, as faces below 1e-3 mm2.
-        self.assertLess(abs(pocket.Shape.Volume - preNudge.Volume), 5e-3)
+        # The nudge must not visibly change the part, so the bound is a fraction of
+        # its volume rather than an absolute number: the retry escalates, and
+        # clearing a sliver of length L needs a nudge of about L / 2.6 (measured on
+        # Pocket002's 2.580e-05 mm slivers - 1e-5 leaves them at 2.580e-05, 1e-4
+        # grows them to 2.580e-04, 1e-3 removes them), so the cost scales with the
+        # nudge instead of staying below a fixed 5e-3 mm3.
+        self.assertLessEqual(abs(pocket.Shape.Volume - preNudge.Volume), 1e-5 * preNudge.Volume)
         self.assertEqual([f for f in pocket.Shape.Faces if f.Area < 1e-3], [])
 
     def testPocketInsetProfileStaysManifold(self):
