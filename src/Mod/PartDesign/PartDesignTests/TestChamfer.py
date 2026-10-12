@@ -21,6 +21,7 @@
 # *                                                                         *
 # ***************************************************************************
 
+import os
 import unittest
 
 import FreeCAD
@@ -238,6 +239,76 @@ class TestChamfer(unittest.TestCase):
             refused = chamfer(size2, "Refused_%s" % size2)
             self.assertIn("Invalid", refused.State)
             self.assertTrue(refused.Shape.isNull())
+
+    def testConcaveWedgeMatchesTheUserReference(self):
+        # The user's Chamfer001 is the definition of "correct" for the concave
+        # wedge path.  Fixtures/local_reference_edge.brep is the 60 mm
+        # neighbourhood of that edge (Pocket.Edge125, 34.8281 mm concave, faces
+        # reaching 17.0552 / 3.0000): Two distances 2.99 / 17 must add
+        # 591.0591 mm3 in the region (-63.720,-57.979,-21.000)-(-47.631,-33.101,1.000),
+        # in either order.  This pins the reference without depending on the
+        # user's document (whose chain collapses without Chamfer001).
+        fixture = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "Fixtures", "local_reference_edge.brep"
+        )
+        if not os.path.isfile(fixture):
+            self.skipTest("local_reference_edge.brep fixture is not available")
+
+        self.Body = self.Doc.addObject("PartDesign::Body", "Body")
+        part = self.Doc.addObject("Part::Feature", "ReferenceEdge")
+        part.Shape = Part.read(fixture)
+        self.Body.BaseFeature = part
+        self.Doc.recompute()
+        base = self.Body.Shape
+        self.assertAlmostEqual(base.Volume, 72492.2023, delta=1e-3)
+        self.assertTrue(base.isValid())
+
+        # The fixture holds two edges with that signature (the reference edge and
+        # its mirror image), so pin whichever one reproduces the reference.
+        candidates = [
+            i + 1
+            for i, candidate in enumerate(base.Edges)
+            if abs(candidate.Length - 34.8281) < 1e-3
+            and sorted(
+                round(face.Area, 2) for face in base.ancestorsOfType(candidate, Part.Face)
+            )
+            == [104.48, 297.0]
+        ]
+        self.assertTrue(candidates, "the reference edge is missing from the fixture")
+
+        matched = 0
+        for index in candidates:
+            for size, size2 in ((2.99, 17.0), (17.0, 2.99)):
+                name = "Reference_%s_%s_%s" % (index, size, size2)
+                feature = self.Doc.addObject("PartDesign::Chamfer", name)
+                self.Body.addObject(feature)
+                feature.Base = (self.Body.BaseFeature, ["Edge%d" % index])
+                feature.ChamferType = 1  # Two distances
+                feature.Size = size
+                feature.Size2 = size2
+                self.Doc.recompute()
+                if feature.Shape.isNull() or "Invalid" in feature.State:
+                    continue
+                change = feature.Shape.Volume - base.Volume
+                if abs(change - 591.0591) >= 1e-3:
+                    continue
+
+                self.assertTrue(feature.Shape.isValid())
+                self.assertEqual(len(feature.Shape.Solids), 1)
+                bounds = feature.Shape.cut(base).BoundBox
+                for got, expected in (
+                    (bounds.XMin, -63.720),
+                    (bounds.YMin, -57.979),
+                    (bounds.ZMin, -21.000),
+                    (bounds.XMax, -47.631),
+                    (bounds.YMax, -33.101),
+                    (bounds.ZMax, 1.000),
+                ):
+                    self.assertAlmostEqual(got, expected, delta=1e-3)
+                matched += 1
+
+        # both size orders on the reference edge
+        self.assertEqual(matched, 2)
 
     def tearDown(self):
         # closing doc
