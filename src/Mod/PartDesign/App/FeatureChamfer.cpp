@@ -30,6 +30,9 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
+#include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAlgoAPI_Fuse.hxx>
+#include <GeomAPI_ProjectPointOnSurf.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRep_Builder.hxx>
@@ -230,17 +233,29 @@ bool straightEdgeEnds(const TopoDS_Edge& edge, gp_Pnt& start, gp_Pnt& end)
     return true;
 }
 
-//! In-plane direction from the edge into the interior of a face.
+//! In-plane direction from the edge into the interior of a face, taken from the
+//! boundary vertex with the largest perpendicular offset from the edge.  A face
+//! running parallel to the edge has its centre of mass in the plane through the
+//! edge, so the projection collapses and the direction - with the reach and the
+//! wedge triangle - becomes unreliable on exactly the valley edges this is for.
 bool interiorDirection(const TopoDS_Face& face, const gp_Pnt& origin, const gp_Dir& axis, gp_Dir& out)
 {
-    GProp_GProps props;
-    BRepGProp::SurfaceProperties(face, props);
-    gp_Vec dir(origin, props.CentreOfMass());
-    dir -= gp_Vec(axis) * dir.Dot(gp_Vec(axis));
-    if (dir.SquareMagnitude() < Precision::SquareConfusion()) {
+    double bestOffset = -1.0;
+    gp_Vec bestDirection;
+    for (TopExp_Explorer it(face, TopAbs_VERTEX); it.More(); it.Next()) {
+        const gp_Pnt point = BRep_Tool::Pnt(TopoDS::Vertex(it.Current()));
+        gp_Vec dir(origin, point);
+        dir -= gp_Vec(axis) * dir.Dot(gp_Vec(axis));
+        const double offset = dir.Magnitude();
+        if (offset > bestOffset) {
+            bestOffset = offset;
+            bestDirection = dir;
+        }
+    }
+    if (bestOffset <= Precision::Confusion()) {
         return false;
     }
-    out = gp_Dir(dir);
+    out = gp_Dir(bestDirection);
     return true;
 }
 
@@ -337,6 +352,109 @@ bool changedRegionIsLocal(const Part::TopoShape& base,
         && box.MaxY <= allowed.MaxY && box.MinZ >= allowed.MinZ && box.MaxZ <= allowed.MaxZ;
 }
 
+//! The two face planes that meet at an edge.
+struct EdgePlanes
+{
+    gp_Pnt origin;
+    gp_Dir normal0;
+    gp_Dir normal1;
+    bool known = false;
+};
+
+//! Outward normal of a face at a point on the edge: the surface normal there
+//! (exact for any surface type, including a planar face a boolean stored as a
+//! B-spline) oriented by the face's orientation in the shell.
+bool outwardFaceNormal(const TopoDS_Face& face, const gp_Pnt& origin, gp_Dir& normal)
+{
+    BRepAdaptor_Surface surface(face, Standard_False);
+    GeomAPI_ProjectPointOnSurf projector(origin, surface.Surface().Surface());
+    if (!projector.IsDone() || projector.NbPoints() < 1) {
+        return false;
+    }
+    double u = 0.0;
+    double v = 0.0;
+    projector.LowerDistanceParameters(u, v);
+    gp_Pnt point;
+    gp_Vec du;
+    gp_Vec dv;
+    surface.D1(u, v, point, du, dv);
+    const gp_Vec cross = du.Crossed(dv);
+    if (cross.Magnitude() < Precision::Confusion()) {
+        return false;
+    }
+    normal = gp_Dir(cross);
+    if (face.Orientation() == TopAbs_REVERSED) {
+        normal.Reverse();
+    }
+    return true;
+}
+
+EdgePlanes edgePlanes(const Part::TopoShape& base, const TopoShape& edgeShape)
+{
+    EdgePlanes planes;
+    if (edgeShape.isNull() || edgeShape.getShape().ShapeType() != TopAbs_EDGE) {
+        return planes;
+    }
+    TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+    TopExp::MapShapesAndAncestors(base.getShape(), TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+    const TopoDS_Edge& edge = TopoDS::Edge(edgeShape.getShape());
+    if (!edgeFaces.Contains(edge) || edgeFaces.FindFromKey(edge).Extent() != 2) {
+        return planes;
+    }
+    gp_Pnt start;
+    gp_Pnt end;
+    if (!straightEdgeEnds(edge, start, end)) {
+        return planes;
+    }
+    planes.origin = start;
+    planes.known
+        = outwardFaceNormal(TopoDS::Face(edgeFaces.FindFromKey(edge).First()), start, planes.normal0)
+        && outwardFaceNormal(
+            TopoDS::Face(edgeFaces.FindFromKey(edge).Last()),
+            start,
+            planes.normal1
+        );
+    return planes;
+}
+
+//! The region the chamfer changed: what it took off, or what it added.  A plain
+//! cut is used rather than makeElementCut, which returned the whole solid here.
+Part::TopoShape changedRegion(const Part::TopoShape& base,
+                              const Part::TopoShape& candidate,
+                              double removed)
+{
+    const TopoDS_Shape part = removed > 0.0 ? base.cut(candidate.getShape())
+                                            : candidate.cut(base.getShape());
+    Part::TopoShape result(0);
+    result.setShape(part);
+    return result;
+}
+
+//! Every vertex of the region the chamfer changed must lie in front of both face
+//! planes when material was added (a wedge filling the valley between them) and
+//! behind both when material was taken off (a wedge cut out of the solid).  A
+//! mirrored wedge crosses a plane and is refused here: that is the upside-down
+//! wedge the user saw on inner edges.
+bool changedRegionFollowsTheFaces(const Part::TopoShape& changed,
+                                  const EdgePlanes& planes,
+                                  bool added)
+{
+    if (!planes.known || changed.isNull()) {
+        return true;  // cannot tell: do not block an otherwise fine chamfer
+    }
+    const double tolerance = 1e-6;
+    for (TopExp_Explorer it(changed.getShape(), TopAbs_VERTEX); it.More(); it.Next()) {
+        const gp_Pnt point = BRep_Tool::Pnt(TopoDS::Vertex(it.Current()));
+        for (const gp_Dir& normal : {planes.normal0, planes.normal1}) {
+            const double offset = gp_Vec(planes.origin, point).Dot(gp_Vec(normal));
+            if (added ? offset < -tolerance : offset > tolerance) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 double chamferWedgeVolume(const Part::TopoShape& base,
                           const std::vector<Part::TopoShape>& edges,
                           double size0,
@@ -410,18 +528,20 @@ bool wedgeLegs(const TopoDS_Edge& edge,
 //! The wedge prism for one edge.  It spans the edge *exactly*: overshooting the
 //! ends would cut into whatever lies beyond them (a through-all variant removed
 //! 2819 mm3 where the chamfer removes 1270.75).
-TopoDS_Shape wedgeTool(const WedgeLegs& legs, int sign0, int sign1)
+//! The prism over one edge: a triangle at \a base with both legs on the same
+//! side (\a legSign), extruded exactly along the edge (never past its ends).
+TopoDS_Shape wedgeTool(const WedgeLegs& legs, int legSign, const gp_Pnt& base, const gp_Dir& direction)
 {
     BRepBuilderAPI_MakePolygon polygon;
-    polygon.Add(legs.start);
-    polygon.Add(legs.start.Translated(gp_Vec(legs.leg0) * (legs.size0 * sign0)));
-    polygon.Add(legs.start.Translated(gp_Vec(legs.leg1) * (legs.size1 * sign1)));
+    polygon.Add(base);
+    polygon.Add(base.Translated(gp_Vec(legs.leg0) * (legs.size0 * legSign)));
+    polygon.Add(base.Translated(gp_Vec(legs.leg1) * (legs.size1 * legSign)));
     polygon.Close();
     BRepBuilderAPI_MakeFace face(polygon.Wire());
     if (!face.IsDone()) {
         return {};
     }
-    return BRepPrimAPI_MakePrism(face.Face(), gp_Vec(legs.direction) * legs.length);
+    return BRepPrimAPI_MakePrism(face.Face(), gp_Vec(direction) * legs.length);
 }
 
 //! Volume of the wedge a chamfer of these sizes takes off each straight edge
@@ -437,7 +557,8 @@ Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
                                     double size2,
                                     bool flip,
                                     double convexity,
-                                    double noopFloor)
+                                    double noopFloor,
+                                    const EdgePlanes& planes)
 {
     // Both assignments of the two distances are tried: OCC measures the first
     // one on the face the caller picked, and for this fallback it does not
@@ -497,7 +618,17 @@ Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
         // the first candidate that is valid and moves the volume the right way
         // wins.  Matching volumes per edge was what produced wildly different
         // wedges on neighbouring edges of the same face.
+        // Build the wedge directly: the triangle's legs run from the edge along
+        // each face - in front of both faces it is the valley wedge a concave
+        // edge needs (fused), behind both the prism a convex edge needs (cut).
+        // The reflected triangle is never a candidate.
+        //
+        // BRepAlgoAPI is called directly: TopoShape::fuse/makeElementFuse run the
+        // result through makeShell/element handling and returned only the tool
+        // (combined volume = the prism, 885.16 mm3), so the union never happened.
+        const bool concave = convexity < 0.0;
         TopoDS_Shape best;
+        Part::TopoShape bestResult;
         for (const auto& [size0, size1] : assignments) {
             WedgeLegs legs;
             if (!wedgeLegs(
@@ -510,47 +641,63 @@ Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
                 )) {
                 return Part::TopoShape(0);
             }
-            for (int sign0 : {1, -1}) {
-                for (int sign1 : {1, -1}) {
-                    const gp_Pnt corner0
-                        = legs.start.Translated(gp_Vec(legs.leg0) * (legs.size0 * sign0));
-                    const gp_Pnt corner1
-                        = legs.start.Translated(gp_Vec(legs.leg1) * (legs.size1 * sign1));
-                    if (triangleIsInside(base, legs.start, corner0, corner1) != (convexity > 0.0)) {
-                        continue;  // wrong side of the edge
-                    }
-                    const TopoDS_Shape tool = wedgeTool(legs, sign0, sign1);
-                    if (tool.IsNull()) {
-                        continue;
-                    }
-                    Part::TopoShape toolShape(0);
-                    toolShape.setShape(tool);
-                    const Part::TopoShape candidate = convexity > 0.0
-                        ? base.makeElementCut(toolShape, Part::OpCodes::Chamfer)
-                        : base.makeElementFuse(toolShape, Part::OpCodes::Chamfer);
-                    if (candidate.isNull()) {
-                        continue;
-                    }
-                    const double change = baseVolume - shapeVolume(candidate.getShape());
-                    if (std::abs(change) < noopFloor) {
-                        continue;
-                    }
-                    if (convexity > 0.0 ? change <= 0.0 : change >= 0.0) {
-                        continue;  // wrong direction for this edge
-                    }
-                    best = tool;
-                    break;
+            const int legSign = concave ? 1 : -1;
+            for (int atEnd : {0, 1}) {
+                const gp_Pnt baseVertex = atEnd == 0
+                    ? legs.start
+                    : legs.start.Translated(gp_Vec(legs.direction) * legs.length);
+                const gp_Dir direction = atEnd == 0 ? legs.direction
+                                                    : gp_Dir(-gp_Vec(legs.direction));
+                const TopoDS_Shape tool = wedgeTool(legs, legSign, baseVertex, direction);
+                if (tool.IsNull()) {
+                    continue;
                 }
-                if (!best.IsNull()) {
-                    break;
+                TopoDS_Shape combined;
+                if (concave) {
+                    BRepAlgoAPI_Fuse fuseOp(base.getShape(), tool);
+                    if (!fuseOp.IsDone()) {
+                        continue;
+                    }
+                    combined = fuseOp.Shape();
                 }
+                else {
+                    BRepAlgoAPI_Cut cutOp(base.getShape(), tool);
+                    if (!cutOp.IsDone()) {
+                        continue;
+                    }
+                    combined = cutOp.Shape();
+                }
+                Part::TopoShape candidate(0);
+                candidate.setShape(combined);
+                if (candidate.isNull()) {
+                    continue;
+                }
+                const double change = baseVolume - shapeVolume(candidate.getShape());
+                if (std::abs(change) < noopFloor) {
+                    continue;  // no-op
+                }
+                if (concave ? change >= 0.0 : change <= 0.0) {
+                    continue;  // wrong direction for this edge
+                }
+                const Part::TopoShape changedPart = changedRegion(base, candidate, change);
+                if (!changedRegionFollowsTheFaces(changedPart, planes, change < 0.0)) {
+                    continue;  // mirrored: the region crosses a face plane
+                }
+                best = tool;
+                bestResult = candidate;
+                break;
             }
             if (!best.IsNull()) {
                 break;
             }
         }
         if (best.IsNull()) {
-            return Part::TopoShape(0);  // nothing on the side of the edge the chamfer needs
+            return Part::TopoShape(0);  // no side-correct wedge on this edge
+        }
+        if (edges.size() == 1) {
+            // One edge: the per-edge boolean is already the answer.  Re-fusing it
+            // as a compound tool invalidated the result that passed the side check.
+            return bestResult;
         }
         builder.Add(compound, best);
         ++used;
@@ -773,6 +920,11 @@ App::DocumentObjectExecReturn* Chamfer::execute()
         if (allowedRegion.IsValid()) {
             allowedRegion.Enlarge(std::max(size, wedgeSize1));
         }
+        // Which side of the edge the chamfer may change: its two face planes.
+        // Multi-edge chamfers are not checked this way (a vertex near one edge
+        // need not be in front of another edge's faces).
+        const bool planesKnown = edges.size() == 1;
+        const EdgePlanes planes = planesKnown ? edgePlanes(TopShape, edges.front()) : EdgePlanes();
         // An edge far shorter than the chamfer itself (the user's Footprint has
         // 1.6e-5 mm slivers left by booleans) cannot carry it: any boolean on it
         // is noise, reported as a +0.0005 mm3 "success".
@@ -946,6 +1098,12 @@ App::DocumentObjectExecReturn* Chamfer::execute()
             else if (removed <= Precision::Confusion()) {
                 return false;  // convex, or convexity unknown: never grow the solid
             }
+            // The side of an OCCT result is established by the sign check above
+            // (a mirrored chamfer moves the volume the other way).  The plane-offset
+            // rule is applied to the wedge path, where the side is our own choice -
+            // applying it to OCCT results rejected valid chamfers whose changed
+            // region was a hair behind a plane after the boolean.
+            (void)planesKnown;
             return allowedRegion.IsValid() ? changedRegionIsLocal(TopShape, candidate, removed, allowedRegion)
                                            : true;
         };
@@ -1031,7 +1189,8 @@ App::DocumentObjectExecReturn* Chamfer::execute()
                 size2,
                 flipDirection,
                 convexity,
-                noopFloor
+                noopFloor,
+                planes
             );
             if (acceptable(wedged)) {
                 shape = wedged;
@@ -1097,20 +1256,24 @@ App::DocumentObjectExecReturn* Chamfer::execute()
             );
         }
         if (wedgeRetry) {
-            // a convex edge has the wedge taken off, a concave one has its valley
-            // filled with it
+            // A convex edge has the wedge taken off, a concave one has its valley
+            // filled.  Be honest about how it differs from OCCT's chamfer: the
+            // wedge has sharp ends rather than a corner blend, and it can be a few
+            // percent larger (about 5 % on the user's Pocket002.Edge80), because
+            // OCCT trims its chamfer at the ends where this one does not.
             if (convexity < 0.0) {
                 Base::Console().warning(
                     "{}: OCCT cannot build this chamfer (the distances fit the adjacent faces); "
-                    "filled the valley with the equivalent wedge instead - the chamfer has sharp "
-                    "ends and no corner blend.\n",
+                    "filled the valley with an equivalent wedge instead - it has sharp ends "
+                    "rather than a corner blend and can be a few percent larger than OCCT's "
+                    "chamfer.\n",
                     getFullName()
                 );
             }
             else {
                 Base::Console().warning(
                     "{}: OCCT cannot build this chamfer (the distances fit the adjacent faces); "
-                    "built the equivalent wedge cut instead - the chamfer has sharp ends and no "
+                    "built an equivalent wedge cut instead - it has sharp ends rather than a "
                     "corner blend.\n",
                     getFullName()
                 );

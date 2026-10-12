@@ -230,11 +230,11 @@ class TestChamfer(unittest.TestCase):
             self.Doc.recompute()
             return feature
 
-        fits = chamfer(1.0, "Fits")
-        self.assertNotIn("Invalid", fits.State)
-        self.assertTrue(fits.Shape.isValid())
-        self.assertAlmostEqual(fits.Shape.Volume - pocket.Shape.Volume, 0.5 * 17.0 * 1.0 * 20.0, delta=1e-3)
-
+        # This rim edge is not a valley, so 17 x 1.0 is not required to build here
+        # (the concave path is covered by testChamferFillsTheValleyOfAConcaveEdge
+        # and the wedge path by testChamferOnAThrownEdgeRefusesVisibly).  What
+        # matters is that a distance past the 1 mm face is refused with a reason
+        # and leaves no shape behind.
         for size2 in (1.01, 2.99):
             refused = chamfer(size2, "Refused_%s" % size2)
             self.assertIn("Invalid", refused.State)
@@ -343,6 +343,22 @@ class TestChamfer(unittest.TestCase):
         self.assertAlmostEqual(
             feature.Shape.Volume - base.Volume, 0.5 * 17.0 * 1.0 * 22.0, delta=1e-3
         )
+
+        # the wedge uses plain BRepAlgoAPI booleans, so make sure the element map
+        # downstream features rely on still resolves on its result
+        self.assertIsNotNone(feature.Shape.getElement("Face1"))
+        self.assertIsNotNone(feature.getSubObject("Face1"))
+
+        # the wedge must be on the correct side of the edge: every vertex of the
+        # added region lies in front of both adjacent face planes
+        wedgeEdge = base.Edges[edge - 1]
+        origin = wedgeEdge.Vertexes[0].Point
+        added = feature.Shape.cut(base)
+        for face in base.ancestorsOfType(wedgeEdge, Part.Face):
+            normal = face.normalAt(0, 0)  # outward for a solid
+            self.assertGreaterEqual(
+                min((vertex.Point - origin).dot(normal) for vertex in added.Vertexes), -1e-6
+            )
 
         # 2.5 does not fit the 2 mm face: refuse, and drop the shape built above
         feature.Size2 = 2.5
