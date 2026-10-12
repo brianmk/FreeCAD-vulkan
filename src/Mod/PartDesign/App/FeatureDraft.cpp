@@ -431,6 +431,9 @@ App::DocumentObjectExecReturn* Draft::execute()
             if (error.empty()) {
                 error = "Failed to draft the selected faces";
             }
+            else {
+                error = "Failed to draft the selected faces: " + error;
+            }
             return new App::DocumentObjectExecReturn(error);
         }
 
