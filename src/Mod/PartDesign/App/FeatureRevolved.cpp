@@ -508,6 +508,95 @@ App::DocumentObjectExecReturn* Revolved::tryExecuteRevolved(Part::RevolMode revo
 
     setResult(base, result);
 
+    // A profile edge or vertex that lies exactly on existing geometry can make the
+    // boolean leave an edge shared by more than two faces.  BRepCheck does not
+    // report that (the shape stays "valid") but OCCT's fillet/chamfer corner
+    // builder cannot process it, so retry the revolve once with the tool nudged
+    // *inside the profile plane* by a sub-micron amount.  The nudge is never along
+    // the revolve direction and is far below any modelling tolerance.
+    bool nudged = false;
+    if (TopoShape(this->Shape.getValue()).countNonManifoldEdges() > 0) {
+        TopoShape nudgedTool = result;
+        if (growToolInProfilePlane(nudgedTool)) {
+            try {
+                setResult(base, nudgedTool);
+                if (TopoShape(this->Shape.getValue()).countNonManifoldEdges() == 0) {
+                    nudged = true;
+                }
+                else {
+                    // not manifold either: keep the original result and warn below
+                    setResult(base, result);
+                }
+            }
+            catch (const Base::Exception&) {
+                setResult(base, result);
+            }
+        }
+    }
+
+    // Pass 2: sliver-only clean-up, after the merged non-manifold retry above.
+    bool sliversNudged = false;
+    double sliverNudge = 0.0;
+    int sliversBefore = 0;
+    int sliversAfter = 0;
+    {
+        const TopoShape pass1(this->Shape.getValue());
+        const int nonManifoldPass1 = pass1.countNonManifoldEdges();
+        sliversBefore = (int)findDegenerateEdges(pass1).size();
+        if (sliversBefore > 0) {
+            for (double nudge : {1e-4, 1e-3}) {
+                TopoShape nudgedTool = result;
+                if (!growToolInProfilePlane(nudgedTool, nudge)) {
+                    break;
+                }
+                try {
+                    setResult(base, nudgedTool);
+                }
+                catch (const Base::Exception&) {
+                    setResult(base, result);
+                    continue;
+                }
+                const TopoShape candidate(this->Shape.getValue());
+                const int slivers = (int)findDegenerateEdges(candidate).size();
+                if (slivers <= sliversBefore
+                    && candidate.countNonManifoldEdges() <= nonManifoldPass1) {
+                    sliversNudged = true;
+                    sliverNudge = nudge;
+                    sliversAfter = slivers;
+                    break;
+                }
+                setResult(base, result);
+            }
+        }
+    }
+
+    if (sliversNudged) {
+        Base::Console().warning(
+            "{}: the boolean left {} edges shorter than 1e-3 mm (sub-micron slivers where the "
+            "profile grazes existing geometry, which make any later chamfer invalid); the revolve "
+            "was retried with the profile nudged by {} mm, leaving {}.\n",
+            getFullName(),
+            sliversBefore,
+            sliverNudge,
+            sliversAfter
+        );
+    }
+
+    if (nudged) {
+        Base::Console().warning(
+            "{}: the profile lay exactly on existing geometry, which made the "
+            "boolean leave a non-manifold edge; the revolve was retried with the "
+            "profile nudged by {} mm. This is a sub-micron change.\n",
+            getFullName(),
+            PROFILE_NUDGE
+        );
+    }
+    else {
+        // Still non-manifold (no retry helped): say what is wrong instead of
+        // leaving it for a later fillet/chamfer to fail on.
+        warnAboutNonManifoldEdges(TopoShape(this->Shape.getValue()));
+    }
+
     // eventually disable some settings that are not valid for the current method
     updateProperties();
 
