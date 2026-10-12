@@ -3101,6 +3101,20 @@ bool ViewProviderSketch::detectAndShowPreselection(
              || preselection.blockedPreselection) {
         resetPreselectPoint();
         preselection.blockedPreselection = false;
+        // The preselection this view provider publishes with setPreselect() must be removed from
+        // the global selection state as well. The 3D view's selection node only clears the
+        // preselection it highlighted itself (SoFCUnifiedSelection::setPreselect()), so a sketch
+        // sub-element preselection stayed set once the pointer left the geometry: the element
+        // remained preselected over a large part of the viewport, unchanged by zoom. This was
+        // most visible with the Vulkan renderer, where the selection node's own pick hits less
+        // often.
+        //
+        // rmvPreselect() also restores the cursor when a selection gate is active (the same pop
+        // done below), which the sketch tools rely on for their bitmap cursor. Without a gate no
+        // cursor is touched, so the preselection can be removed here.
+        if (Mode != STATUS_SKETCH_UseHandler && !Gui::Selection().hasSelectionGate(nullptr)) {
+            Gui::Selection().rmvPreselect();
+        }
         updateToolTip(); // Clear tooltip when no point picked
         // when no point is preselected, the cursor will stay as Qt::ForbiddenCursor
         // because the code hasn't entered SelectionSingleton::setPreselect
