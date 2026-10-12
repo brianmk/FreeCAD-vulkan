@@ -438,19 +438,35 @@ class TestPocket(unittest.TestCase):
         doc.recompute()
         return pocket2
 
-    def testPocketGrazingProfileLeavesNonManifoldEdge(self):
-        # The tool boundary lies exactly on an existing edge, so the cut leaves an
-        # edge shared by three faces.  BRepCheck does not flag it (the solid stays
-        # valid), which is exactly why the feature has to warn about it.
+    def testPocketGrazingProfileIsNudgedToManifold(self):
+        # The profile's corner lies exactly on an existing edge, which used to make
+        # the cut leave an edge shared by three faces (BRepCheck does not flag it).
+        # The feature retries the boolean once with the profile nudged inside the
+        # sketch plane, so the result is manifold again.  AddSubShape holds the
+        # tool the retry started from, so cutting it from the base reproduces the
+        # pre-nudge result: it must still show the defect, and the nudged result
+        # must not have moved any measurable amount.
         pocket = self._buildGrazingPocket(graze=True)
         self.assertTrue(pocket.Shape.isValid())
         self.assertIsNone(pocket.Shape.check(True))
-        self.assertEqual(pocket.Shape.countNonManifoldEdges(), 1)
+        self.assertEqual(pocket.Shape.countNonManifoldEdges(), 0)
+
+        base = self.Doc.getObject("Pocket1").Shape
+        preNudge = base.cut(pocket.AddSubShape)
+        self.assertEqual(preNudge.countNonManifoldEdges(), 1)
+        self.assertLess(abs(pocket.Shape.Volume - preNudge.Volume), 1e-3)
 
     def testPocketInsetProfileStaysManifold(self):
+        # A profile that does not lie on existing geometry must be left alone: no
+        # retry, no nudge, and exactly the volume of the unmodified boolean.
         pocket = self._buildGrazingPocket(graze=False)
         self.assertTrue(pocket.Shape.isValid())
         self.assertEqual(pocket.Shape.countNonManifoldEdges(), 0)
+
+        base = self.Doc.getObject("Pocket1").Shape
+        unmodified = base.cut(pocket.AddSubShape)
+        self.assertEqual(unmodified.countNonManifoldEdges(), 0)
+        self.assertAlmostEqual(pocket.Shape.Volume, unmodified.Volume, delta=1e-6)
 
     def testPocketNonManifoldWarningIsPrinted(self):
         # Base::Console observers are C++ only, so run the same reproducer in a
@@ -469,6 +485,18 @@ class TestPocket(unittest.TestCase):
             proc = subprocess.run(
                 [sys.executable, script], capture_output=True, text=True, timeout=300, env=env
             )
+        output = proc.stdout + proc.stderr
+        # both cases end manifold: the grazing one because the profile was nudged,
+        # the inset one because it never needed it
+        self.assertIn("CLEAN_NONMANIFOLD=0", output, output)
+        self.assertIn("NONMANIFOLD=0", output, output)
+        # the nudge warning fired for the grazing profile only
+        warning = "the profile lay exactly on existing geometry"
+        self.assertEqual(output.count(warning), 1, output)
+        self.assertIn("the cut was retried with the profile nudged by", output, output)
+        self.assertIn("This is a sub-micron change", output, output)
+        # the old "left it non-manifold" warning must not appear
+        self.assertNotIn("the result has", output, output)
     def tearDown(self):
         # closing doc
         FreeCAD.closeDocument("PartDesignTestPocket")

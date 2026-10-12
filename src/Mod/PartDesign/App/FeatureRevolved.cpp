@@ -508,6 +508,51 @@ App::DocumentObjectExecReturn* Revolved::tryExecuteRevolved(Part::RevolMode revo
 
     setResult(base, result);
 
+    // A profile edge or vertex that lies exactly on existing geometry can make the
+    // boolean leave an edge shared by more than two faces.  BRepCheck does not
+    // report that (the shape stays "valid") but OCCT's fillet/chamfer corner
+    // builder cannot process it, so retry the revolve once with the tool nudged
+    // *inside the profile plane* by a sub-micron amount.  The nudge is never along
+    // the revolve direction and is far below any modelling tolerance.
+    bool nudged = false;
+    if (TopoShape(this->Shape.getValue()).countNonManifoldEdges() > 0) {
+        for (const auto& offset : getProfileNudgeOffsets()) {
+            TopoShape nudgedTool = result;
+            gp_Trsf shift;
+            shift.SetTranslation(gp_Vec(offset.x, offset.y, offset.z));
+            nudgedTool.move(shift);
+
+            try {
+                setResult(base, nudgedTool);
+            }
+            catch (const Base::Exception&) {
+                setResult(base, result);
+                continue;
+            }
+            if (TopoShape(this->Shape.getValue()).countNonManifoldEdges() == 0) {
+                nudged = true;
+                break;
+            }
+            // not manifold either: keep the original result and warn below
+            setResult(base, result);
+        }
+    }
+
+    if (nudged) {
+        Base::Console().warning(
+            "{}: the profile lay exactly on existing geometry, which made the "
+            "boolean leave a non-manifold edge; the revolve was retried with the "
+            "profile nudged by {} mm. This is a sub-micron change.\n",
+            getFullName(),
+            PROFILE_NUDGE
+        );
+    }
+    else {
+        // Still non-manifold (no retry helped): say what is wrong instead of
+        // leaving it for a later fillet/chamfer to fail on.
+        warnAboutNonManifoldEdges(TopoShape(this->Shape.getValue()));
+    }
+
     // eventually disable some settings that are not valid for the current method
     updateProperties();
 
@@ -539,8 +584,6 @@ void Revolved::setResult(const TopoShape& base, const TopoShape& revolved)
     }
     result = getSolid(result);
     this->Shape.setValue(result);
-    // see ProfileBased::warnAboutNonManifoldEdges()
-    warnAboutNonManifoldEdges(result);
 }
 
 TopoShape Revolved::tryToRevolveToFace(

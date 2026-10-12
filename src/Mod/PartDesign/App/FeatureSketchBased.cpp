@@ -1686,3 +1686,25 @@ void ProfileBased::warnAboutNonManifoldEdges(const TopoShape& shape) const
         nonManifoldEdges
     );
 }
+
+std::vector<Base::Vector3d> ProfileBased::getProfileNudgeOffsets() const
+{
+    Base::Vector3d normal = getProfileNormal();
+    if (normal.Length() < Precision::Confusion()) {
+        normal = Base::Vector3d(0, 0, 1);
+    }
+    normal.Normalize();
+
+    // Any orthonormal basis of the profile plane will do: the profile has to
+    // move off an edge it lies on, and only a direction exactly parallel to that
+    // edge would keep the coincidence.
+    Base::Vector3d u = normal.Cross(Base::Vector3d(0, 0, 1));
+    if (u.Length() < 1e-9) {
+        u = normal.Cross(Base::Vector3d(0, 1, 0));
+    }
+    u.Normalize();
+    Base::Vector3d v = normal.Cross(u);
+    v.Normalize();
+
+    return {u * PROFILE_NUDGE, v * PROFILE_NUDGE, (u + v) * PROFILE_NUDGE};
+}

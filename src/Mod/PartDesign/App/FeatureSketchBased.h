@@ -250,6 +250,25 @@ protected:
      */
     void warnAboutNonManifoldEdges(const TopoShape& shape) const;
 
+    /** How far a tool is nudged inside the profile plane when a boolean leaves
+     * non-manifold edges.
+     *
+     * 1e-5 mm is the magnitude measured to clear the result of a profile that
+     * coincides exactly with existing geometry (1e-6 mm works as well, 1e-7 mm
+     * and below do not) and is far below any modelling tolerance: on a 31344 mm3
+     * part it changes the volume by ~4e-4 mm3.
+     */
+    static constexpr double PROFILE_NUDGE = 1e-5;
+
+    /** Candidate directions for the nudge above, in the profile plane.
+     *
+     * The profile normal (extrusion/revolve direction) is excluded: nudging
+     * along it would leave a skin on a ThroughAll cut.  Three directions are
+     * offered because an edge the profile lies on can be parallel to one of the
+     * first two, in which case the diagonal moves off it.
+     */
+    std::vector<Base::Vector3d> getProfileNudgeOffsets() const;
+
 private:
     bool isParallelPlane(const TopoDS_Shape&, const TopoDS_Shape&) const;
     bool isEqualGeometry(const TopoDS_Shape&, const TopoDS_Shape&) const;
