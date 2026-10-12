@@ -478,6 +478,8 @@ System::System()
     , subSystemsAux(0)
     , reference(0)
     , dofs(0)
+    , pendingOverconstrainedVerification(false)
+    , dofsIfVerifiedConsistent(0)
     , hasUnknowns(false)
     , hasDiagnosis(false)
     , isInit(false)
@@ -1876,6 +1878,45 @@ void System::initSolution(Algorithm alg)
     }
 
     isInit = true;
+
+    // A negative dofs is how diagnose() reports an over-constrained sketch, and SketchObject
+    // then refuses to solve it. diagnose() reaches that verdict when the constraint equations are
+    // rank-deficient and its popularity contest could not certify any of them as redundant. That
+    // probe is a numerical procedure which can fail to converge - for example with large or
+    // slightly inexact geometry - even for a constraint set that has a perfectly good solution.
+    //
+    // A conflict, on the other hand, means the equations are mutually inconsistent, so that no
+    // zero-residual solution exists. That can be checked directly with the solver, and the reduced
+    // sub-systems built above are exactly the ones a normal solve uses, so verifying here costs
+    // one solve and only for sketches diagnosed as over-constrained. If the solver satisfies every
+    // driving constraint, the dependent equations are redundant rather than conflicting.
+    if (pendingOverconstrainedVerification) {
+        pendingOverconstrainedVerification = false;
+
+        solve(alg, /*isRedundantsolving=*/false);
+        applySolution();
+
+        bool satisfied = true;
+        for (auto* constr : clist) {
+            if (!constr->isDriving()) {
+                continue;
+            }
+            double err = constr->error();
+            if (err * err >= convergence) {
+                satisfied = false;
+                break;
+            }
+        }
+
+        // Do not leave the geometry of the verification solve behind: initSolution() only sets the
+        // system up, the actual solve happens later.
+        restoreReference();
+
+        if (satisfied) {
+            dofs = dofsIfVerifiedConsistent;
+            conflictingTags.clear();
+        }
+    }
 }
 
 void System::saveReference()
@@ -4783,6 +4824,7 @@ int System::diagnose(Algorithm alg)
     //         two high priority constraints. For this reason, tagging
     //         constraints with 0 should be used carefully.
     hasDiagnosis = false;
+    pendingOverconstrainedVerification = false;
     if (!hasUnknowns) {
         dofs = -1;
         return dofs;
@@ -4976,6 +5018,13 @@ int System::diagnose(Algorithm alg)
             );
             if (paramsNum == rank && nonredundantconstrNum > rank) {  // over-constrained
                 dofs = paramsNum - nonredundantconstrNum;
+                // The over-constrained verdict above is a heuristic: it is taken when the
+                // popularity contest could not certify any of the rank-deficient equations as
+                // redundant. A rank deficiency alone does not prove the equations are mutually
+                // inconsistent, so initSolution() verifies the verdict with the solver once the
+                // reduced sub-systems are built (see the comment there).
+                pendingOverconstrainedVerification = true;
+                dofsIfVerifiedConsistent = paramsNum - rank;
             }
         }
 
@@ -5057,6 +5106,13 @@ int System::diagnose(Algorithm alg)
             if (paramsNum == rank && nonredundantconstrNum > rank) {
                 // over-constrained
                 dofs = paramsNum - nonredundantconstrNum;
+                // The over-constrained verdict above is a heuristic: it is taken when the
+                // popularity contest could not certify any of the rank-deficient equations as
+                // redundant. A rank deficiency alone does not prove the equations are mutually
+                // inconsistent, so initSolution() verifies the verdict with the solver once the
+                // reduced sub-systems are built (see the comment there).
+                pendingOverconstrainedVerification = true;
+                dofsIfVerifiedConsistent = paramsNum - rank;
             }
         }
 

@@ -1230,6 +1230,96 @@ class TestSketcherSolver(unittest.TestCase):
         self.assertIn("constraint ids:", message)
         self.assertAlmostEqual(redundant.getDatum(diameter), 6.0, delta=Precision.confusion())
 
+    def _colinearParallelBoxesSketch(self, offset, lockY=False):
+        """A fully constrained box and a second box constrained only along X.
+
+        Both are made of four independent line segments, as drawn by the user. The second box is
+        free to move in Y, so making its bottom line colinear with the bottom line of the first
+        box only requires translating it in Y. With lockY the second box is fixed in Y as well,
+        which makes the colinear relation unsatisfiable.
+        """
+        sketch = self.Doc.addObject("Sketcher::SketchObject", "ColinearSketch")
+
+        def addBox(x0, y0, x1, y1):
+            g = sketch.GeometryCount
+            sketch.addGeometry(Part.LineSegment(vec(x0, y0), vec(x1, y0)), False)
+            sketch.addGeometry(Part.LineSegment(vec(x1, y0), vec(x1, y1)), False)
+            sketch.addGeometry(Part.LineSegment(vec(x1, y1), vec(x0, y1)), False)
+            sketch.addGeometry(Part.LineSegment(vec(x0, y1), vec(x0, y0)), False)
+            sketch.addConstraint(Sketcher.Constraint("Coincident", g, 2, g + 1, 1))
+            sketch.addConstraint(Sketcher.Constraint("Coincident", g + 1, 2, g + 2, 1))
+            sketch.addConstraint(Sketcher.Constraint("Coincident", g + 2, 2, g + 3, 1))
+            sketch.addConstraint(Sketcher.Constraint("Coincident", g + 3, 2, g, 1))
+            sketch.addConstraint(Sketcher.Constraint("Horizontal", g))
+            sketch.addConstraint(Sketcher.Constraint("Horizontal", g + 2))
+            sketch.addConstraint(Sketcher.Constraint("Vertical", g + 1))
+            sketch.addConstraint(Sketcher.Constraint("Vertical", g + 3))
+            sketch.addConstraint(Sketcher.Constraint("Distance", g, 1, g, 2, x1 - x0))
+            sketch.addConstraint(Sketcher.Constraint("Distance", g + 1, 1, g + 1, 2, y1 - y0))
+            return g
+
+        boxA = addBox(0.0, 0.0, 10.0, 10.0)
+        sketch.addConstraint(Sketcher.Constraint("DistanceX", boxA, 1, 0.0))
+        sketch.addConstraint(Sketcher.Constraint("DistanceY", boxA, 1, 0.0))
+        boxB = addBox(0.0, offset, 10.0, offset + 10.0)
+        sketch.addConstraint(Sketcher.Constraint("DistanceX", boxB, 1, 0.0))
+        if lockY:
+            sketch.addConstraint(Sketcher.Constraint("DistanceY", boxB, 1, offset))
+        self.assertSuccessfulSolve(sketch, "the two boxes are consistent before the colinear")
+        return sketch, boxA, boxB
+
+    def _assertColinearBottomLines(self, sketch, boxA, boxB, delta):
+        # The colinear relation is consistent - the second box only has to move in Y - so it must
+        # never be reported as over-constrained or conflicting.
+        self.assertNotIn(
+            sketch.solve(),
+            (-4, -3),
+            "Colinear between two parallel lines was reported as over-constrained/conflicting",
+        )
+        self.assertAlmostEqual(
+            sketch.Geometry[boxB].StartPoint.y,
+            sketch.Geometry[boxA].StartPoint.y,
+            delta=delta,
+            msg="the second line did not move onto the first one",
+        )
+        self.assertAlmostEqual(
+            sketch.Geometry[boxB].EndPoint.y,
+            sketch.Geometry[boxA].EndPoint.y,
+            delta=delta,
+            msg="the second line did not move onto the first one",
+        )
+
+    def testColinearBetweenParallelLinesMovesTheLooseLine(self):
+        # https://github.com/FreeCAD/FreeCAD discussion: a Colinear (Tangent between two lines)
+        # between a fully constrained box and a box constrained only along X used to be reported as
+        # redundant/over-constrained, and the loose line was left where it was.
+        sketch, boxA, boxB = self._colinearParallelBoxesSketch(20.0)
+        sketch.addConstraint(Sketcher.Constraint("Tangent", boxA, boxB))
+        self._assertColinearBottomLines(sketch, boxA, boxB, Precision.confusion())
+
+    def testColinearBetweenParallelLinesFarFromOrigin(self):
+        # Same construction away from the origin: the rank-deficiency diagnosis used to mistake the
+        # consistent (redundant) equations for a conflict and report the sketch as over-constrained
+        # without solving it at all, so the line never moved.
+        sketch, boxA, boxB = self._colinearParallelBoxesSketch(10000.0)
+        sketch.addConstraint(Sketcher.Constraint("Tangent", boxA, boxB))
+        self._assertColinearBottomLines(sketch, boxA, boxB, 1e-3)
+
+    def testColinearBetweenLinesFixedInYStillConflicts(self):
+        # The verification that a rank-deficient sketch is consistent must not turn a genuine
+        # conflict into a success: here the second box is locked in Y as well, so the two lines can
+        # never become colinear.
+        sketch, boxA, boxB = self._colinearParallelBoxesSketch(20.0, lockY=True)
+        sketch.addConstraint(Sketcher.Constraint("Tangent", boxA, boxB))
+        self.assertIn(
+            sketch.solve(),
+            (-4, -3),
+            "colinear between lines that cannot become colinear must be reported as a conflict",
+        )
+        self.assertAlmostEqual(
+            sketch.Geometry[boxB].StartPoint.y, 20.0, delta=Precision.confusion()
+        )
+
     def assertSuccessfulSolve(self, sketch, msg=None):
         status = sketch.solve()
         # TODO: can we get the solver's messages somehow to improve the message?
