@@ -875,23 +875,16 @@ App::DocumentObjectExecReturn* FeatureExtrude::buildExtrusion(ExtrudeOptions opt
         // be left with a skin) and is far below any modelling tolerance.
         bool nudged = false;
         if (resultShape.countNonManifoldEdges() > 0) {
-            for (const auto& offset : getProfileNudgeOffsets()) {
-                TopoShape nudgedTool = prism;
-                gp_Trsf shift;
-                shift.SetTranslation(gp_Vec(offset.x, offset.y, offset.z));
-                nudgedTool.move(shift);
-
+            TopoShape nudgedTool = prism;
+            if (growToolInProfilePlane(nudgedTool)) {
                 const TopoShape original = resultShape;
-                if (!buildResult(nudgedTool).empty()) {
-                    resultShape = original;
-                    continue;
-                }
-                if (resultShape.countNonManifoldEdges() == 0) {
+                if (buildResult(nudgedTool).empty() && resultShape.countNonManifoldEdges() == 0) {
                     nudged = true;
-                    break;
                 }
-                // not manifold either: keep the original result and warn below
-                resultShape = original;
+                else {
+                    // not manifold either: keep the original result and warn below
+                    resultShape = original;
+                }
             }
         }
 

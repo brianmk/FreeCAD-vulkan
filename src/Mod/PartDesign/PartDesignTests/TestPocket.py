@@ -454,7 +454,13 @@ class TestPocket(unittest.TestCase):
         base = self.Doc.getObject("Pocket1").Shape
         preNudge = base.cut(pocket.AddSubShape)
         self.assertEqual(preNudge.countNonManifoldEdges(), 1)
-        self.assertLess(abs(pocket.Shape.Volume - preNudge.Volume), 1e-3)
+
+        # The nudge is grow-only (the profile is scaled inside its plane), so the
+        # tool removes a hair more material: perimeter x depth x nudge ~ 2.4e-3
+        # mm3 here, 8e-8 of the part.  What it must never do is leave a ledge -
+        # a translation used to, as faces below 1e-3 mm2.
+        self.assertLess(abs(pocket.Shape.Volume - preNudge.Volume), 5e-3)
+        self.assertEqual([f for f in pocket.Shape.Faces if f.Area < 1e-3], [])
 
     def testPocketInsetProfileStaysManifold(self):
         # A profile that does not lie on existing geometry must be left alone: no

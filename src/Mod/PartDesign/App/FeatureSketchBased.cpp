@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <optional>
 #include <ranges>
@@ -36,6 +37,7 @@
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepGProp.hxx>
 #include <BRepGProp_Face.hxx>
@@ -1687,24 +1689,111 @@ void ProfileBased::warnAboutNonManifoldEdges(const TopoShape& shape) const
     );
 }
 
-std::vector<Base::Vector3d> ProfileBased::getProfileNudgeOffsets() const
+bool ProfileBased::growToolInProfilePlane(TopoShape& tool) const
 {
+    TopoShape profile;
+    try {
+        profile = getTopoShapeVerifiedFace();
+    }
+    catch (const Base::Exception&) {
+        return false;
+    }
+    if (profile.isNull() || !profile.hasSubShape(TopAbs_FACE)) {
+        return false;
+    }
+
+    // Smallest distance from a point to the profile boundary.  Scaling about a
+    // point with a positive r_min moves every boundary point outward by at least
+    // PROFILE_NUDGE, whatever direction the boundary runs in.
+    auto distanceToBoundary = [&profile](const Base::Vector3d& point) {
+        double rMin = std::numeric_limits<double>::max();
+        const TopoDS_Vertex vertex = BRepBuilderAPI_MakeVertex(gp_Pnt(point.x, point.y, point.z));
+        for (const auto& edge : profile.getSubTopoShapes(TopAbs_EDGE)) {
+            BRepExtrema_DistShapeShape distance(vertex, edge.getShape());
+            if (!distance.IsDone() || distance.Value() <= 0.0) {
+                continue;
+            }
+            rMin = std::min(rMin, distance.Value());
+        }
+        return rMin;
+    };
+
+    // Candidate centres: the centre of mass of each face (largest first - the
+    // bounding box centre can sit exactly on the boundary, as it does for the
+    // profile of the pocket that motivated this), then the bounding box centre.
+    std::vector<std::pair<double, Base::Vector3d>> faceCentres;
+    for (const auto& face : profile.getSubTopoShapes(TopAbs_FACE)) {
+        GProp_GProps props;
+        BRepGProp::SurfaceProperties(face.getShape(), props);
+        const gp_Pnt centre = props.CentreOfMass();
+        faceCentres.emplace_back(props.Mass(), Base::Vector3d(centre.X(), centre.Y(), centre.Z()));
+    }
+    std::sort(faceCentres.begin(), faceCentres.end(), [](const auto& a, const auto& b) {
+        return a.first > b.first;
+    });
+
+    std::vector<Base::Vector3d> candidates;
+    for (const auto& [area, centre] : faceCentres) {
+        candidates.push_back(centre);
+    }
+    const Base::BoundBox3d box = profile.getBoundBox();
+    if (box.IsValid()) {
+        candidates.push_back(box.GetCenter());
+    }
+
+    double rMin = 0.0;
+    Base::Vector3d centre;
+    bool found = false;
+    for (const auto& candidate : candidates) {
+        rMin = distanceToBoundary(candidate);
+        if (std::isfinite(rMin) && rMin > Precision::Confusion()) {
+            centre = candidate;
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        return false;
+    }
+    const double factor = 1.0 + PROFILE_NUDGE / rMin;
+
+    // Scale in the profile plane only: rotate the plane frame onto XY, scale
+    // x/y, rotate back.  The plane normal - the extrusion or revolve direction -
+    // is left alone.
     Base::Vector3d normal = getProfileNormal();
     if (normal.Length() < Precision::Confusion()) {
-        normal = Base::Vector3d(0, 0, 1);
+        return false;
     }
     normal.Normalize();
-
-    // Any orthonormal basis of the profile plane will do: the profile has to
-    // move off an edge it lies on, and only a direction exactly parallel to that
-    // edge would keep the coincidence.
     Base::Vector3d u = normal.Cross(Base::Vector3d(0, 0, 1));
     if (u.Length() < 1e-9) {
         u = normal.Cross(Base::Vector3d(0, 1, 0));
     }
     u.Normalize();
-    Base::Vector3d v = normal.Cross(u);
-    v.Normalize();
 
-    return {u * PROFILE_NUDGE, v * PROFILE_NUDGE, (u + v) * PROFILE_NUDGE};
+    const gp_Ax3 plane(gp_Pnt(0, 0, 0), gp_Dir(normal.x, normal.y, normal.z), gp_Dir(u.x, u.y, u.z));
+    const gp_Ax3 world(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1), gp_Dir(1, 0, 0));
+    gp_Trsf toPlane;
+    toPlane.SetTransformation(world, plane);
+    gp_Trsf toWorld;
+    toWorld.SetTransformation(plane, world);
+
+    double centreX = centre.x;
+    double centreY = centre.y;
+    double centreZ = centre.z;
+    toPlane.Transforms(centreX, centreY, centreZ);
+    gp_Trsf toOrigin;
+    toOrigin.SetTranslation(gp_Vec(-centreX, -centreY, -centreZ));
+    gp_Trsf backHome;
+    backHome.SetTranslation(gp_Vec(centreX, centreY, centreZ));
+
+    Base::Matrix4D inPlaneScale;
+    inPlaneScale.scale(factor, factor, 1.0);
+
+    tool.move(toPlane);
+    tool.move(toOrigin);
+    tool.transformGeometry(inPlaneScale);
+    tool.move(backHome);
+    tool.move(toWorld);
+    return true;
 }

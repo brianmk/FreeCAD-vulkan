@@ -260,14 +260,20 @@ protected:
      */
     static constexpr double PROFILE_NUDGE = 1e-5;
 
-    /** Candidate directions for the nudge above, in the profile plane.
+    /** Grows a tool inside the profile plane, for the retry above.
      *
-     * The profile normal (extrusion/revolve direction) is excluded: nudging
-     * along it would leave a skin on a ThroughAll cut.  Three directions are
-     * offered because an edge the profile lies on can be parallel to one of the
-     * first two, in which case the diagonal moves off it.
+     * The tool is scaled about the profile centre by ``1 + PROFILE_NUDGE /
+     * r_min``, where ``r_min`` is the smallest distance from that centre to the
+     * profile boundary: every boundary point then moves outward by at least
+     * PROFILE_NUDGE, so the tool grows instead of retreating (a translation
+     * would leave a sub-micron ledge where it pulled back) and it can never be
+     * left with a skin.  The profile normal (extrusion/revolve direction) is
+     * left untouched, straight edges stay straight.
+     *
+     * Returns false when the profile - or a meaningful r_min - cannot be
+     * determined; the caller then keeps the un-nudged result.
      */
-    std::vector<Base::Vector3d> getProfileNudgeOffsets() const;
+    bool growToolInProfilePlane(TopoShape& tool) const;
 
 private:
     bool isParallelPlane(const TopoDS_Shape&, const TopoDS_Shape&) const;
