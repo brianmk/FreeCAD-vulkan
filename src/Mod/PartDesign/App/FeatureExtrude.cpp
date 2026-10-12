@@ -801,73 +801,168 @@ App::DocumentObjectExecReturn* FeatureExtrude::buildExtrusion(ExtrudeOptions opt
         // set the additive shape property for later usage in e.g. pattern
         this->AddSubShape.setValue(prism);
 
+        // Computes the final result of the feature for a given tool and returns
+        // an error message (empty on success).  Split out of this method so that a
+        // non-manifold result can be retried with the tool nudged, see below.
+        TopoShape resultShape;
+        auto buildResult = [&](const TopoShape& tool) -> std::string {
+            if (base.shapeType(true) <= TopAbs_SOLID && fuse) {
+                // Let's call algorithm computing a fuse operation:
+                TopoShape result(0, getDocument()->getStringHasher());
+                try {
+                    result.makeElementBoolean(
+                        getBooleanMaker(),
+                        {base, tool},
+                        nullptr,
+                        FuzzyTolerance.getValue()
+                    );
+                }
+                catch (Standard_Failure&) {
+                    return QT_TRANSLATE_NOOP("Exception", "Fusion with base feature failed");
+                }
+                // we have to get the solids (fuse sometimes creates compounds)
+                TopoShape solRes = this->getSolid(result);
+                // lets check if the result is a solid
+                if (solRes.isNull()) {
+                    return QT_TRANSLATE_NOOP("Exception", "Resulting shape is not a solid");
+                }
+
+                // store shape before refinement
+                this->rawShape = result;
+                solRes = refineShapeIfActive(result);
+
+                if (!isSingleSolidRuleSatisfied(solRes.getShape())) {
+                    return QT_TRANSLATE_NOOP(
+                        "Exception",
+                        "Result has multiple solids: enable 'Allow Compound' in the active body."
+                    );
+                }
+                resultShape = getSolid(solRes);
+                return {};
+            }
+
+            TopoShape shape = tool;
+            if (shape.hasSubShape(TopAbs_SOLID) && shape.countSubShapes(TopAbs_SOLID) > 1) {
+                shape.makeElementFuse(shape.getSubTopoShapes(TopAbs_SOLID));
+            }
+
+            // store shape before refinement
+            this->rawShape = shape;
+            shape = refineShapeIfActive(shape);
+            if (!isSingleSolidRuleSatisfied(shape.getShape())) {
+                return QT_TRANSLATE_NOOP(
+                    "Exception",
+                    "Result has multiple solids: enable 'Allow Compound' in the active body."
+                );
+            }
+            resultShape = shape.hasSubShape(TopAbs_SOLID) ? getSolid(shape) : shape;
+            return {};
+        };
+
         if (base.shapeType(true) <= TopAbs_SOLID && fuse) {
             prism.Tag = -this->getID();
-
-            // Let's call algorithm computing a fuse operation:
-            TopoShape result(0, getDocument()->getStringHasher());
-            try {
-                result.makeElementBoolean(
-                    getBooleanMaker(),
-                    {base, prism},
-                    nullptr,
-                    FuzzyTolerance.getValue()
-                );
-            }
-            catch (Standard_Failure&) {
-                return new App::DocumentObjectExecReturn(
-                    QT_TRANSLATE_NOOP("Exception", "Fusion with base feature failed")
-                );
-            }
-            // we have to get the solids (fuse sometimes creates compounds)
-            auto solRes = this->getSolid(result);
-            // lets check if the result is a solid
-            if (solRes.isNull()) {
-                return new App::DocumentObjectExecReturn(
-                    QT_TRANSLATE_NOOP("Exception", "Resulting shape is not a solid")
-                );
-            }
-
-            // store shape before refinement
-            this->rawShape = result;
-            solRes = refineShapeIfActive(result);
-
-            if (!isSingleSolidRuleSatisfied(solRes.getShape())) {
-                return new App::DocumentObjectExecReturn(QT_TRANSLATE_NOOP(
-                    "Exception",
-                    "Result has multiple solids: enable 'Allow Compound' in the active body."
-                ));
-            }
-            this->Shape.setValue(getSolid(solRes));
         }
-        else if (prism.hasSubShape(TopAbs_SOLID)) {
-            if (prism.countSubShapes(TopAbs_SOLID) > 1) {
-                prism.makeElementFuse(prism.getSubTopoShapes(TopAbs_SOLID));
-            }
+        if (std::string error = buildResult(prism); !error.empty()) {
+            return new App::DocumentObjectExecReturn(error);
+        }
 
-            // store shape before refinement
-            this->rawShape = prism;
-            prism = refineShapeIfActive(prism);
-            if (!isSingleSolidRuleSatisfied(prism.getShape())) {
-                return new App::DocumentObjectExecReturn(QT_TRANSLATE_NOOP(
-                    "Exception",
-                    "Result has multiple solids: enable 'Allow Compound' in the active body."
-                ));
+        // A profile edge or vertex that lies exactly on existing geometry can make
+        // the boolean leave an edge shared by more than two faces.  BRepCheck does
+        // not report that (the shape stays "valid") but OCCT's fillet/chamfer
+        // corner builder cannot process it, so retry the boolean once with the
+        // tool nudged *inside the profile plane* by a sub-micron amount.  The
+        // nudge is never along the extrusion direction (a ThroughAll cut must not
+        // be left with a skin) and is far below any modelling tolerance.
+        bool nudged = false;
+        if (resultShape.countNonManifoldEdges() > 0) {
+            TopoShape nudgedTool = prism;
+            if (growToolInProfilePlane(nudgedTool)) {
+                const TopoShape original = resultShape;
+                if (buildResult(nudgedTool).empty() && resultShape.countNonManifoldEdges() == 0) {
+                    nudged = true;
+                }
+                else {
+                    // not manifold either: keep the original result and warn below
+                    resultShape = original;
+                }
             }
-            prism = getSolid(prism);
-            this->Shape.setValue(prism);
+        }
+
+        // Pass 2: sliver-only clean-up, after the merged non-manifold retry above
+        // (that pass is deliberately untouched).  It only fires when sub-1e-3 edges
+        // remain and only accepts a nudge that leaves no more of them and does not
+        // make the non-manifold count worse.
+        bool sliversNudged = false;
+        double sliverNudge = 0.0;
+        int sliversBefore = 0;
+        int sliversAfter = 0;
+        {
+            TopoShape best;
+            const int nonManifoldPass1 = resultShape.countNonManifoldEdges();
+            sliversBefore = (int)findDegenerateEdges(resultShape).size();
+            if (sliversBefore > 0) {
+                const TopoShape original = resultShape;
+                for (double nudge : {1e-4, 1e-3}) {
+                    TopoShape nudgedTool = prism;
+                    if (!growToolInProfilePlane(nudgedTool, nudge)) {
+                        break;
+                    }
+                    const std::string failure = buildResult(nudgedTool);
+                    const int slivers = (int)findDegenerateEdges(resultShape).size();
+                    // The slivers scale with the nudge, so a nudge can leave the same
+                    // *count* while growing them - keep the candidate with the fewest
+                    // and keep escalating until they are gone (or the nudges run out).
+                    // Only a nudge that removes *all* of them is worth its volume
+                    // cost: a partial reduction merely grows the remaining slivers
+                    // (they scale with the nudge) and would still invalidate any
+                    // later chamfer.
+                    if (failure.empty() && slivers == 0
+                        && resultShape.countNonManifoldEdges() <= nonManifoldPass1) {
+                        best = resultShape;
+                        sliversNudged = true;
+                        sliverNudge = nudge;
+                        sliversAfter = slivers;
+                        resultShape = original;
+                        if (slivers == 0) {
+                            break;
+                        }
+                        continue;
+                    }
+                    resultShape = original;
+                }
+            }
+            if (sliversNudged) {
+                resultShape = best;
+            }
+        }
+
+        this->Shape.setValue(resultShape);
+
+        if (sliversNudged) {
+            Base::Console().warning(
+                "{}: the boolean left {} edges shorter than 1e-3 mm (sub-micron slivers where the "
+                "profile grazes existing geometry, which make any later chamfer invalid); the cut "
+                "was retried with the profile nudged by {} mm, leaving {}.\n",
+                getFullName(),
+                sliversBefore,
+                sliverNudge,
+                sliversAfter
+            );
+        }
+
+        if (nudged) {
+            Base::Console().warning(
+                "{}: the profile lay exactly on existing geometry, which made the "
+                "boolean leave a non-manifold edge; the cut was retried with the "
+                "profile nudged by {} mm. This is a sub-micron change.\n",
+                getFullName(),
+                PROFILE_NUDGE
+            );
         }
         else {
-            // store shape before refinement
-            this->rawShape = prism;
-            prism = refineShapeIfActive(prism);
-            if (!isSingleSolidRuleSatisfied(prism.getShape())) {
-                return new App::DocumentObjectExecReturn(QT_TRANSLATE_NOOP(
-                    "Exception",
-                    "Result has multiple solids: enable 'Allow Compound' in the active body."
-                ));
-            }
-            this->Shape.setValue(prism);
+            // Still non-manifold (no retry helped): say what is wrong instead of
+            // leaving it for a later fillet/chamfer to fail on.
+            warnAboutNonManifoldEdges(this->Shape.getValue());
         }
 
         // eventually disable some settings that are not valid for the current method

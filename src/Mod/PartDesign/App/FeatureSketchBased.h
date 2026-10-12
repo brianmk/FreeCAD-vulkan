@@ -241,6 +241,52 @@ protected:
     void onChanged(const App::Property* prop) override;
     void onBaseFeatureRerouted(App::DocumentObject* oldBase, App::DocumentObject* newBase) override;
 
+    /** Warn when a boolean result contains non-manifold edges.
+     *
+     * An edge shared by more than two faces can survive a boolean unnoticed
+     * (BRepCheck_Analyzer does not flag it, so isValid() stays true) but makes
+     * OCCT's fillet/chamfer corner builder fail later.  It usually means a
+     * profile edge or vertex lies exactly on existing geometry.
+     */
+    void warnAboutNonManifoldEdges(const TopoShape& shape) const;
+
+    /** How far a tool is nudged inside the profile plane when a boolean leaves
+     * non-manifold edges.
+     *
+     * 1e-5 mm is the magnitude measured to clear the result of a profile that
+     * coincides exactly with existing geometry (1e-6 mm works as well, 1e-7 mm
+     * and below do not) and is far below any modelling tolerance: on a 31344 mm3
+     * part it changes the volume by ~4e-4 mm3.
+     */
+    static constexpr double PROFILE_NUDGE = 1e-5;
+
+    /** Grows a tool inside the profile plane, for the retry above.
+     *
+     * The tool is scaled about the profile centre by ``1 + PROFILE_NUDGE /
+     * r_min``, where ``r_min`` is the smallest distance from that centre to the
+     * profile boundary: every boundary point then moves outward by at least
+     * PROFILE_NUDGE, so the tool grows instead of retreating (a translation
+     * would leave a sub-micron ledge where it pulled back) and it can never be
+     * left with a skin.  The profile normal (extrusion/revolve direction) is
+     * left untouched, straight edges stay straight.
+     *
+     * Returns false when the profile - or a meaningful r_min - cannot be
+     * determined; the caller then keeps the un-nudged result.
+     */
+    bool growToolInProfilePlane(TopoShape& tool, double nudge = PROFILE_NUDGE) const;
+
+    /** Edges of \a shape that are too short to be real geometry.
+     *
+     * A boolean can leave sub-micron slivers where its boundary grazes existing
+     * geometry - the user's Pocket002 has six between 1.3e-5 and 3.2e-5 mm - and
+     * every later boolean on such a corner emits a folded face, so a chamfer there
+     * can never be valid.  An edge counts as degenerate when it is shorter than
+     * both the given limit and 100 times the tolerance of its vertices, so genuine
+     * tiny features with large tolerances are left alone; degenerated (seam)
+     * edges are skipped.
+     */
+    static std::vector<TopoShape> findDegenerateEdges(const TopoShape& shape, double limit = 1e-3);
+
 private:
     bool isParallelPlane(const TopoDS_Shape&, const TopoDS_Shape&) const;
     bool isEqualGeometry(const TopoDS_Shape&, const TopoDS_Shape&) const;

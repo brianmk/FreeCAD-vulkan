@@ -529,6 +529,14 @@ public:
     bool isNull() const;
     bool isValid() const;
     bool isEmpty() const;
+    /// Number of edges shared by more than two faces.
+    ///
+    /// A manifold solid has exactly two faces per edge; an edge with a single
+    /// adjacent face is legitimate (a cylinder or cone seam edge) and is not
+    /// counted.  A boolean operation can leave such an edge behind without
+    /// BRepCheck noticing (isValid() stays true), and OCCT's fillet/chamfer
+    /// corner builder cannot process it.
+    int countNonManifoldEdges() const;
     bool analyze(bool runBopCheck, std::ostream&) const;
     bool isClosed() const;
     bool isCoplanar(const TopoShape& other, double tol = -1) const;
