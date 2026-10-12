@@ -618,6 +618,9 @@ Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
         // the first candidate that is valid and moves the volume the right way
         // wins.  Matching volumes per edge was what produced wildly different
         // wedges on neighbouring edges of the same face.
+        // Every face/distance assignment is tried, so as soon as OCCT succeeds for
+        // one of them the reference chamfer is used and no wedge is needed; the
+        // wedge only appears when OCCT fails outright on all of them.
         // Build the wedge directly: the triangle's legs run from the edge along
         // each face - in front of both faces it is the valley wedge a concave
         // edge needs (fused), behind both the prism a convex edge needs (cut).
@@ -1257,24 +1260,27 @@ App::DocumentObjectExecReturn* Chamfer::execute()
         }
         if (wedgeRetry) {
             // A convex edge has the wedge taken off, a concave one has its valley
-            // filled.  Be honest about how it differs from OCCT's chamfer: the
-            // wedge has sharp ends rather than a corner blend, and it can be a few
-            // percent larger (about 5 % on the user's Pocket002.Edge80), because
-            // OCCT trims its chamfer at the ends where this one does not.
+            // filled.  Be honest about how it differs from OCCT's chamfer: OCCT
+            // trims its chamfer at the ends, while the wedge has sharp ends, so the
+            // wedge can be substantially larger - not "a few percent".  Measured at
+            // 17 x 2.99 on the user's Pocket002 valley: 873.4 mm3 of wedge against
+            // the 591.1 mm3 reference chamfer (+48 %); on the local reference
+            // fixture OCCT succeeds and the wedge is not used at all.
             if (convexity < 0.0) {
                 Base::Console().warning(
                     "{}: OCCT cannot build this chamfer (the distances fit the adjacent faces); "
                     "filled the valley with an equivalent wedge instead - it has sharp ends "
-                    "rather than a corner blend and can be a few percent larger than OCCT's "
-                    "chamfer.\n",
+                    "rather than the corner blend OCCT's chamfer has, so it can be "
+                    "substantially larger at the ends.\n",
                     getFullName()
                 );
             }
             else {
                 Base::Console().warning(
                     "{}: OCCT cannot build this chamfer (the distances fit the adjacent faces); "
-                    "built an equivalent wedge cut instead - it has sharp ends rather than a "
-                    "corner blend.\n",
+                    "built an equivalent wedge cut instead - it has sharp ends rather than the "
+                    "corner blend OCCT's chamfer has, so it can be substantially larger at the "
+                    "ends.\n",
                     getFullName()
                 );
             }
