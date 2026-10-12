@@ -913,22 +913,45 @@ PyObject* SketchObjectPy::setDatum(PyObject* args)
         return nullptr;
     } while (false);
 
-    const auto status = this->getSketchObjectPtr()->setDatum(Index, Datum);
+    const auto sketch = this->getSketchObjectPtr();
+    const auto status = sketch->setDatum(Index, Datum);
     if (status != SketchSolveStatus::Success) {
+        // The status names come from the solver, not from the value the user typed: a datum is
+        // rejected because the sketch would become redundant, conflicting or over-constrained.
+        // Report that (and which constraints are involved) instead of blaming the value itself.
+        auto appendConstraintIds = [](std::stringstream& out, const std::vector<int>& ids) {
+            if (ids.empty()) {
+                return;
+            }
+            out << " (constraint ids: ";
+            for (size_t i = 0; i < ids.size(); ++i) {
+                if (i > 0) {
+                    out << ", ";
+                }
+                out << ids[i];
+            }
+            out << ")";
+        };
         std::stringstream str;
         switch (status) {
             case SketchSolveStatus::SolverError:
-                str << "Invalid constraint index: " << Index;
+                str << "Cannot set the datum for the constraint with index " << Index
+                    << ": it is not a dimensional constraint, or the solver failed";
                 break;
             case SketchSolveStatus::ConflictingConstraints:
                 str << "Cannot set the datum because the sketch contains conflicting constraints";
+                appendConstraintIds(str, sketch->getLastConflicting());
                 break;
             case SketchSolveStatus::RedundantConstraints:
                 str << "Datum " << Quantity.getUserString() << " for the constraint with index "
-                    << Index << " is invalid";
+                    << Index << " is invalid because the sketch would have redundant constraints";
+                appendConstraintIds(str, sketch->getLastRedundant());
                 break;
             case SketchSolveStatus::Overconstrained:
-                str << "Negative datum values are not valid for the constraint with index " << Index;
+                str << "Datum " << Quantity.getUserString() << " for the constraint with index "
+                    << Index
+                    << " is invalid because negative values are not allowed for this constraint or "
+                       "the datum would over-constrain the sketch";
                 break;
             case SketchSolveStatus::MalformedConstraints:
                 str << "Zero is not a valid datum for the constraint with index " << Index;

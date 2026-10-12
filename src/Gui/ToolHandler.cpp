@@ -276,7 +276,9 @@ QWidget* ToolHandler::getCursorWidget()
 {
     Gui::View3DInventorViewer* viewer = getViewer();
     if (viewer) {
-        return viewer->getWidget();
+        // Not getWidget(): under the Vulkan viewport the GL widget is hidden and the visible
+        // surface is the viewer's cursor target (the Vulkan container).
+        return viewer->getCursorWidget();
     }
     return nullptr;
 }
