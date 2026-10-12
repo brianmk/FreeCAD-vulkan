@@ -235,10 +235,29 @@ class TestChamfer(unittest.TestCase):
         # and the wedge path by testChamferOnAThrownEdgeRefusesVisibly).  What
         # matters is that a distance past the 1 mm face is refused with a reason
         # and leaves no shape behind.
+        messages = {}
         for size2 in (1.01, 2.99):
             refused = chamfer(size2, "Refused_%s" % size2)
             self.assertIn("Invalid", refused.State)
             self.assertTrue(refused.Shape.isNull())
+            messages[size2] = refused.getStatusString()
+
+        # These refusals come from the reach rule, so they keep its wording: the
+        # face that is too short and the distance that runs past it are named, and
+        # the invalid-result hint must not take their place (the base is clean).
+        self.assertIn(
+            "the face next to this edge ends 1 mm away, so a 1.01 mm chamfer would cut through "
+            "it - reduce the distance or extend the geometry.",
+            messages[1.01],
+        )
+        self.assertIn(
+            "the face next to this edge ends 1 mm away, so a 2.99 mm chamfer would cut through "
+            "it - reduce the distance or extend the geometry.",
+            messages[2.99],
+        )
+        for text in messages.values():
+            self.assertNotIn("produced an invalid shape", text)
+            self.assertNotIn("too large", text)
 
     def testConcaveWedgeMatchesTheUserReference(self):
         # The user's Chamfer001 is the definition of "correct" for the concave
@@ -365,6 +384,10 @@ class TestChamfer(unittest.TestCase):
         self.Doc.recompute()
         self.assertIn("Invalid", feature.State)
         self.assertTrue(feature.Shape.isNull())
+        self.assertIn(
+            "the face next to this edge ends 2 mm away, so a 2.5 mm chamfer would cut through it",
+            feature.getStatusString(),
+        )
 
         # a distance beyond every face is refused the same way
         feature.Size = 100.0
@@ -372,6 +395,69 @@ class TestChamfer(unittest.TestCase):
         self.Doc.recompute()
         self.assertIn("Invalid", feature.State)
         self.assertTrue(feature.Shape.isNull())
+        self.assertIn(
+            "the face next to this edge ends 28 mm away, so a 100 mm chamfer would cut through it",
+            feature.getStatusString(),
+        )
+
+    def testChamferRefusalOnASliverBaseNamesTheBase(self):
+        # The user's case: Two distances 2 mm / 1 mm on the valley edge whose
+        # faces reach 17.0552 and 3.0 mm.  The sizes *fit*, so the reach rule
+        # passed, but their Pocket was stale and still carried four sub-micron
+        # edges (1.29e-05 .. 2.23e-05 mm; 129 edges instead of the 123 the sliver
+        # retry produces), so every chamfer result on that corner folded a face.
+        # The refusal used to read "the sizes 2 mm / 1 mm are too large for this
+        # edge", which is wrong and sent them hunting the sizes; it has to name
+        # the base instead.  Fixtures/local_reference_edge.brep is that geometry
+        # (the neighbourhood of Pocket.Edge125) and still holds six edges shorter
+        # than 1e-3 mm, so the message is pinned on a real sliver base.
+        fixture = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "Fixtures", "local_reference_edge.brep"
+        )
+        if not os.path.isfile(fixture):
+            self.skipTest("local_reference_edge.brep fixture is not available")
+
+        self.Body = self.Doc.addObject("PartDesign::Body", "Body")
+        part = self.Doc.addObject("Part::Feature", "SliverBase")
+        part.Shape = Part.read(fixture)
+        self.Body.BaseFeature = part
+        self.Doc.recompute()
+        base = self.Body.Shape
+        slivers = sum(1 for edge in base.Edges if edge.Length < 1e-3)
+        self.assertGreater(slivers, 0, "the fixture must carry the slivers of the user's case")
+
+        # two edges have that length (the reference and its mirror); one of them
+        # folds a face with the fitting sizes, the other fails in OCCT outright
+        candidates = [
+            index + 1 for index, edge in enumerate(base.Edges) if abs(edge.Length - 19.5637) < 1e-3
+        ]
+        self.assertTrue(candidates, "the fixture no longer holds the edge this case is about")
+
+        invalidResult = []
+        for index in candidates:
+            feature = self.Doc.addObject("PartDesign::Chamfer", "Sliver_%d" % index)
+            self.Body.addObject(feature)
+            feature.Base = (self.Body.BaseFeature, ["Edge%d" % index])
+            feature.ChamferType = 1  # Two distances
+            feature.Size = 2.0
+            feature.Size2 = 1.0
+            self.Doc.recompute()
+            self.assertIn("Invalid", feature.State)
+            self.assertTrue(feature.Shape.isNull())
+            text = feature.getStatusString()
+            if "produced an invalid shape" in text:
+                invalidResult.append(text)
+
+        self.assertTrue(invalidResult, "the sliver base must refuse the fitting sizes")
+        for text in invalidResult:
+            # the base is named, with its sliver count...
+            self.assertIn(
+                "The base feature still has %d edges shorter than 1e-3 mm" % slivers, text
+            )
+            self.assertIn("recompute it (the boolean sliver retry)", text)
+            # ...and the sizes are explicitly not the problem
+            self.assertIn("the sizes 2 mm / 1 mm fit the adjacent faces", text)
+            self.assertNotIn("too large", text)
 
     def tearDown(self):
         # closing doc

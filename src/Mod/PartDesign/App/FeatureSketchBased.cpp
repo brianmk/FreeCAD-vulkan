@@ -1692,34 +1692,9 @@ void ProfileBased::warnAboutNonManifoldEdges(const TopoShape& shape) const
 
 std::vector<TopoShape> ProfileBased::findDegenerateEdges(const TopoShape& shape, double limit)
 {
-    std::vector<TopoShape> degenerate;
-    if (shape.isNull()) {
-        return degenerate;
-    }
-    for (const auto& edge : shape.getSubTopoShapes(TopAbs_EDGE)) {
-        const TopoDS_Shape& edgeShape = edge.getShape();
-        if (edgeShape.IsNull() || edgeShape.ShapeType() != TopAbs_EDGE) {
-            continue;
-        }
-        const TopoDS_Edge& topoEdge = TopoDS::Edge(edgeShape);
-        GProp_GProps props;
-        BRepGProp::LinearProperties(edgeShape, props);
-        const double length = props.Mass();
-        double tolerance = 0.0;
-        for (TopExp_Explorer it(topoEdge, TopAbs_VERTEX); it.More(); it.Next()) {
-            tolerance = std::max(tolerance, BRep_Tool::Tolerance(TopoDS::Vertex(it.Current())));
-        }
-        if (BRep_Tool::Degenerated(topoEdge) && length <= tolerance) {
-            // a genuine pole/seam edge of zero length, not a sliver: real slivers
-            // are also flagged degenerated (they are 2.6e-5 mm against a 5e-6 mm
-            // tolerance here), so only skip what is shorter than its own tolerance
-            continue;
-        }
-        if (length < std::max(limit, 100.0 * tolerance)) {
-            degenerate.push_back(edge);
-        }
-    }
-    return degenerate;
+    // The detector lives in TopoShape so Chamfer - a sibling of ProfileBased under
+    // FeatureAddSub - can use the same criterion for its refusal message.
+    return shape.getDegenerateEdges(limit);
 }
 
 bool ProfileBased::growToolInProfilePlane(TopoShape& tool, double nudge) const

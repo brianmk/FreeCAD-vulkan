@@ -61,6 +61,8 @@
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepFilletAPI_MakeChamfer.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
 #include <BRepLib.hxx>
 #include <BRepOffsetAPI_DraftAngle.hxx>
 #include <BRepOffsetAPI_MakeFilling.hxx>
@@ -4254,6 +4256,38 @@ void assertManifoldAroundRoundedEdges(const TopoShape& shape, const std::vector<
 int TopoShape::countNonManifoldEdges() const
 {
     return static_cast<int>(findNonManifoldEdges(getShape()).size());
+}
+
+std::vector<TopoShape> TopoShape::getDegenerateEdges(double limit) const
+{
+    std::vector<TopoShape> degenerate;
+    if (isNull()) {
+        return degenerate;
+    }
+    for (const auto& edge : getSubTopoShapes(TopAbs_EDGE)) {
+        const TopoDS_Shape& edgeShape = edge.getShape();
+        if (edgeShape.IsNull() || edgeShape.ShapeType() != TopAbs_EDGE) {
+            continue;
+        }
+        const TopoDS_Edge& topoEdge = TopoDS::Edge(edgeShape);
+        GProp_GProps props;
+        BRepGProp::LinearProperties(edgeShape, props);
+        const double length = props.Mass();
+        double tolerance = 0.0;
+        for (TopExp_Explorer it(topoEdge, TopAbs_VERTEX); it.More(); it.Next()) {
+            tolerance = std::max(tolerance, BRep_Tool::Tolerance(TopoDS::Vertex(it.Current())));
+        }
+        if (BRep_Tool::Degenerated(topoEdge) && length <= tolerance) {
+            // a genuine pole/seam edge of zero length, not a sliver: real slivers
+            // are also flagged degenerated (they are 2.6e-5 mm against a 5e-6 mm
+            // tolerance here), so only skip what is shorter than its own tolerance
+            continue;
+        }
+        if (length < std::max(limit, 100.0 * tolerance)) {
+            degenerate.push_back(edge);
+        }
+    }
+    return degenerate;
 }
 
 TopoShape& TopoShape::makeElementFillet(
