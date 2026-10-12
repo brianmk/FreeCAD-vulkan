@@ -1696,9 +1696,7 @@ std::vector<TopoShape> ProfileBased::findDegenerateEdges(const TopoShape& shape,
     if (shape.isNull()) {
         return degenerate;
     }
-    int seen = 0;
     for (const auto& edge : shape.getSubTopoShapes(TopAbs_EDGE)) {
-        ++seen;
         const TopoDS_Shape& edgeShape = edge.getShape();
         if (edgeShape.IsNull() || edgeShape.ShapeType() != TopAbs_EDGE) {
             continue;
@@ -1720,12 +1718,7 @@ std::vector<TopoShape> ProfileBased::findDegenerateEdges(const TopoShape& shape,
         if (length < std::max(limit, 100.0 * tolerance)) {
             degenerate.push_back(edge);
         }
-        if (length < 1e-3) {
-            fprintf(stderr, "DS sliver? len=%.3e tol=%.3e degenerated=%d kept=%d\n", length, tolerance,
-                    (int)BRep_Tool::Degenerated(topoEdge), (int)(length < std::max(limit, 100.0 * tolerance)));
-        }
     }
-    fprintf(stderr, "DS shape edges=%d degenerate=%d\n", seen, (int)degenerate.size());
     return degenerate;
 }
 

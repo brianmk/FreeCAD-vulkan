@@ -910,12 +910,10 @@ App::DocumentObjectExecReturn* FeatureExtrude::buildExtrusion(ExtrudeOptions opt
                     const std::string failure = buildResult(nudgedTool);
                     const int slivers = (int)findDegenerateEdges(resultShape).size();
                     // The slivers scale with the nudge, so a nudge can leave the same
-                    // *count* while growing them - keep the candidate with the fewest
-                    // and keep escalating until they are gone (or the nudges run out).
-                    // Only a nudge that removes *all* of them is worth its volume
-                    // cost: a partial reduction merely grows the remaining slivers
-                    // (they scale with the nudge) and would still invalidate any
-                    // later chamfer.
+                    // *count* while growing them.  Only a nudge that removes *all* of
+                    // them is worth its volume cost: a partial reduction merely grows
+                    // the remaining slivers (they scale with the nudge) and would still
+                    // invalidate any later chamfer.
                     if (failure.empty() && slivers == 0
                         && resultShape.countNonManifoldEdges() <= nonManifoldPass1) {
                         best = resultShape;
@@ -923,10 +921,7 @@ App::DocumentObjectExecReturn* FeatureExtrude::buildExtrusion(ExtrudeOptions opt
                         sliverNudge = nudge;
                         sliversAfter = slivers;
                         resultShape = original;
-                        if (slivers == 0) {
-                            break;
-                        }
-                        continue;
+                        break;
                     }
                     resultShape = original;
                 }
