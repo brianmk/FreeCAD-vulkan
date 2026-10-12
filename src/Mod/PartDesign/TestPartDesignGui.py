@@ -440,3 +440,95 @@ class TestDatumPlane(unittest.TestCase):
         )
 
         self.assertEqual(packed_color, color)
+
+
+class PadProfilePicker(unittest.TestCase):
+    """The Pad/Pocket task box must be able to re-point the profile.
+
+    Editing a sketch changes the names of its internal faces, which leaves a
+    feature whose profile referenced one of them invalid with a dangling
+    '?InternalFaceN' link.  The task box is where the user goes to fix that, so
+    it has to offer the profile and commit the picked figure.
+    """
+
+    def setUp(self):
+        self.Doc = FreeCAD.newDocument("PadProfilePicker")
+
+    def tearDown(self):
+        FreeCAD.closeDocument(self.Doc.Name)
+
+    @staticmethod
+    def _rectangleWithSplit(sketch, splitX=15.0):
+        sketch.addGeometry(
+            [
+                Part.LineSegment(App.Vector(0, 0, 0), App.Vector(30, 0, 0)),
+                Part.LineSegment(App.Vector(30, 0, 0), App.Vector(30, 20, 0)),
+                Part.LineSegment(App.Vector(30, 20, 0), App.Vector(0, 20, 0)),
+                Part.LineSegment(App.Vector(0, 20, 0), App.Vector(0, 0, 0)),
+            ],
+            False,
+        )
+        sketch.addConstraint(
+            [
+                Sketcher.Constraint("Coincident", 0, 2, 1, 1),
+                Sketcher.Constraint("Coincident", 1, 2, 2, 1),
+                Sketcher.Constraint("Coincident", 2, 2, 3, 1),
+                Sketcher.Constraint("Coincident", 3, 2, 0, 1),
+            ]
+        )
+        sketch.addGeometry(
+            [Part.LineSegment(App.Vector(splitX, 0, 0), App.Vector(splitX, 20, 0))],
+            False,
+        )
+        sketch.addConstraint(
+            [
+                Sketcher.Constraint("PointOnObject", 4, 1, 0),
+                Sketcher.Constraint("PointOnObject", 4, 2, 2),
+                Sketcher.Constraint("Block", 4),
+            ]
+        )
+
+    def test_repairDanglingProfileFromTaskPanel(self):
+        FreeCAD.Console.PrintMessage("Testing the profile picker of the pad task box\n")
+
+        body = self.Doc.addObject("PartDesign::Body", "Body")
+        sketch = body.newObject("Sketcher::SketchObject", "Sketch")
+        self._rectangleWithSplit(sketch)
+        self.Doc.recompute()
+
+        pad = body.newObject("PartDesign::Pad", "Pad")
+        pad.Profile = (sketch, ["InternalFace2"])
+        pad.Length = 5.0
+        self.Doc.recompute()
+        self.assertAlmostEqual(pad.Shape.Volume, 1500.0, places=3)
+
+        # The sketcher edit removes the split line: the face the pad refers to is gone and the
+        # profile link goes dangling, which is the state the user has to be able to repair.
+        sketch.delGeometry(4)
+        self.Doc.recompute()
+        self.assertEqual(list(pad.Profile[1]), ["?InternalFace2"])
+        self.assertIn("Invalid", str(pad.State))
+
+        # Draw the replacement figure and repair the profile from the pad's task box.
+        self._rectangleWithSplit(sketch, splitX=10.0)
+        self.Doc.recompute()
+
+        Gui.ActiveDocument.setEdit(pad.Name)
+        QtCore.QCoreApplication.processEvents()
+        button = Gui.getMainWindow().findChild(QtGui.QToolButton, "buttonProfileBase")
+        self.assertIsNotNone(button, "the Pad task box has no Profile picker")
+        if button is None:
+            Gui.Control.closeDialog()
+            return
+
+        button.setChecked(True)
+        QtCore.QCoreApplication.processEvents()
+        Gui.Selection.addSelection(sketch, "InternalFace1")
+        QtCore.QCoreApplication.processEvents()
+
+        self.assertEqual(list(pad.Profile[1]), ["InternalFace1"])
+        self.assertNotIn("Invalid", str(pad.State))
+        self.assertGreater(pad.Shape.Volume, 0.0)
+
+        Gui.Control.closeDialog()
+        QtCore.QCoreApplication.processEvents()
