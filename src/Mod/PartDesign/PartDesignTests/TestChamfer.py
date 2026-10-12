@@ -24,6 +24,7 @@
 import unittest
 
 import FreeCAD
+import Part
 
 
 class TestChamfer(unittest.TestCase):
@@ -62,14 +63,62 @@ class TestChamfer(unittest.TestCase):
         self.assertEqual(len(self.MajorFaces), 9)
 
     def testTwoDistancesFitTheOtherFace(self):
-        # A distance that does not fit the face the edge was selected from makes
-        # OCCT fold that face past its boundary (a negative-area face) or fail.
-        # The same chamfer is expressible with the distances on the other
-        # adjacent face, which is what the feature now falls back to: for the
-        # user's model that is TopoShape::makeChamfer(2.99, 17.0, {edge}).
-        # Here the wall of the pocket is only `depth` high, so a 17 mm distance
-        # cannot be measured on it.
-        import Part
+        # A 17 mm distance does not fit the 10 mm side of this box: OCCT folds
+        # that face past its boundary or fails.  The same chamfer is expressible
+        # with the distances on the other adjacent face, which is what the
+        # feature falls back to - and it must REMOVE material, never add a wedge.
+        self.Body = self.Doc.addObject("PartDesign::Body", "Body")
+        box = self.Doc.addObject("PartDesign::AdditiveBox", "Box")
+        self.Body.addObject(box)
+        box.Length = 20.0
+        box.Width = 20.0
+        box.Height = 10.0
+        self.Doc.recompute()
+        baseVolume = box.Shape.Volume
+        top = next(
+            i + 1 for i, face in enumerate(box.Shape.Faces) if abs(face.normalAt(0, 0).z - 1) < 1e-9
+        )
+        edge = next(
+            i + 1
+            for i, candidate in enumerate(box.Shape.Edges)
+            if abs(candidate.Length - 20.0) < 1e-6
+            and any(
+                face.isSame(box.Shape.Faces[top - 1])
+                for face in box.Shape.ancestorsOfType(candidate, Part.Face)
+            )
+        )
+
+        self.Chamfer = self.Doc.addObject("PartDesign::Chamfer", "Chamfer")
+        self.Body.addObject(self.Chamfer)
+        self.Chamfer.Base = (box, ["Edge%d" % edge])
+        self.Chamfer.ChamferType = 1  # Two distances
+        self.Chamfer.Size = 17.0
+        self.Chamfer.Size2 = 2.99
+        self.Doc.recompute()
+
+        self.assertNotIn("Invalid", self.Chamfer.State)
+        self.assertTrue(self.Chamfer.Shape.isValid())
+        # convex: the chamfer takes the wedge off
+        self.assertLess(self.Chamfer.Shape.Volume, baseVolume)
+        removed = baseVolume - self.Chamfer.Shape.Volume
+        self.assertAlmostEqual(removed, 0.5 * 17.0 * 2.99 * 20.0, delta=1e-3)
+
+        # the same geometry as asking for the distances the other way round
+        reference = self.Doc.addObject("PartDesign::Chamfer", "Reference")
+        self.Body.addObject(reference)
+        reference.Base = (box, ["Edge%d" % edge])
+        reference.ChamferType = 1
+        reference.Size = 2.99
+        reference.Size2 = 17.0
+        self.Doc.recompute()
+        self.assertTrue(reference.Shape.isValid())
+        self.assertAlmostEqual(removed, baseVolume - reference.Shape.Volume, delta=1e-6)
+
+    def testChamferFillsTheValleyOfAConcaveEdge(self):
+        # The edge between the floor and a wall of a pocket is concave, so the
+        # chamfer there ADDS the wedge that fills the valley - it must not cut a
+        # groove.  OCCT cannot do it for these sizes (a 17 mm distance runs past
+        # the 5 mm wall), so the feature builds the wedge and fuses it.
         import TestSketcherApp
 
         self.Body = self.Doc.addObject("PartDesign::Body", "Body")
@@ -107,17 +156,20 @@ class TestChamfer(unittest.TestCase):
         pocket.Profile = (pocketSketch, [""])
         pocket.Length = 5.0
         self.Doc.recompute()
+        baseVolume = pocket.Shape.Volume
 
-        # the 20 mm edge between the wall (5 mm high) and the floor of the pocket
+        # the 10 mm edge between the 100 mm2 floor of the pocket and one of its
+        # 50 mm2 walls
+        floor = next(
+            face
+            for face in pocket.Shape.Faces
+            if abs(face.Area - 100.0) < 1e-3 and abs(face.CenterOfMass.z - 5.0) < 1e-3
+        )
         edge = next(
             i + 1
             for i, candidate in enumerate(pocket.Shape.Edges)
-            if candidate.Curve.TypeId == "Part::GeomLine"
-            and abs(candidate.Length - 20.0) < 1e-6
-            and any(abs(f.normalAt(0, 0).z) > 0.9
-                    for f in pocket.Shape.ancestorsOfType(candidate, Part.Face))
+            if any(face.isSame(floor) for face in pocket.Shape.ancestorsOfType(candidate, Part.Face))
         )
-        baseVolume = pocket.Shape.Volume
 
         self.Chamfer = self.Doc.addObject("PartDesign::Chamfer", "Chamfer")
         self.Body.addObject(self.Chamfer)
@@ -129,18 +181,11 @@ class TestChamfer(unittest.TestCase):
 
         self.assertNotIn("Invalid", self.Chamfer.State)
         self.assertTrue(self.Chamfer.Shape.isValid())
-        otherFace = self.Chamfer.Shape.Volume - baseVolume
-
-        # the same geometry as asking for the distances the other way round
-        reference = self.Doc.addObject("PartDesign::Chamfer", "Reference")
-        self.Body.addObject(reference)
-        reference.Base = (pocket, ["Edge%d" % edge])
-        reference.ChamferType = 1
-        reference.Size = 2.99
-        reference.Size2 = 17.0
-        self.Doc.recompute()
-        self.assertTrue(reference.Shape.isValid())
-        self.assertAlmostEqual(otherFace, reference.Shape.Volume - baseVolume, delta=1e-6)
+        # concave: the chamfer fills the valley, so the solid gains the wedge
+        self.assertGreater(self.Chamfer.Shape.Volume, baseVolume)
+        self.assertAlmostEqual(
+            self.Chamfer.Shape.Volume - baseVolume, 0.5 * 17.0 * 2.99 * 10.0, delta=1e-3
+        )
 
     def tearDown(self):
         # closing doc

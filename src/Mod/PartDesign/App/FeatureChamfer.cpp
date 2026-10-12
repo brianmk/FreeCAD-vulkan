@@ -29,6 +29,7 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRep_Builder.hxx>
@@ -113,6 +114,198 @@ std::string invalidChamferReason(const Part::TopoShape& shape)
 // original error.
 // ---------------------------------------------------------------------------
 
+//! Normal of a planar face, whatever surface type it is stored as: a boolean can
+//! leave a planar face as a B-spline surface, exactly as it does for edges.
+//! False when the face is not planar to within a millionth of its own size.
+bool planarFaceNormal(const TopoDS_Face& face, gp_Dir& normal)
+{
+    BRepAdaptor_Surface surface(face, Standard_False);
+    if (surface.GetType() == GeomAbs_Plane) {
+        normal = surface.Plane().Axis().Direction();
+        return true;
+    }
+    std::vector<gp_Pnt> points;
+    for (TopExp_Explorer it(face, TopAbs_VERTEX); it.More(); it.Next()) {
+        points.push_back(BRep_Tool::Pnt(TopoDS::Vertex(it.Current())));
+    }
+    if (points.size() < 3) {
+        return false;
+    }
+    double size = 0.0;
+    bool found = false;
+    for (std::size_t i = 1; !found && i + 1 < points.size(); ++i) {
+        const gp_Vec a(points[0], points[i]);
+        const gp_Vec b(points[0], points[i + 1]);
+        const gp_Vec cross = a.Crossed(b);
+        if (cross.Magnitude() > Precision::Confusion()) {
+            normal = gp_Dir(cross);
+            size = std::max(a.Magnitude(), b.Magnitude());
+            found = true;
+        }
+    }
+    if (!found) {
+        return false;
+    }
+    const double tolerance = std::max(Precision::Confusion(), size * 1e-4);
+    for (const auto& point : points) {
+        if (std::abs(gp_Vec(points[0], point).Dot(gp_Vec(normal))) > tolerance) {
+            return false;
+        }
+    }
+    // the vertices can be coplanar on a curved face: sample the surface as well
+    const double u0 = surface.FirstUParameter();
+    const double u1 = surface.LastUParameter();
+    const double v0 = surface.FirstVParameter();
+    const double v1 = surface.LastVParameter();
+    for (double su : {0.25, 0.5, 0.75}) {
+        for (double sv : {0.25, 0.5, 0.75}) {
+            const gp_Pnt point = surface.Value(u0 + (u1 - u0) * su, v0 + (v1 - v0) * sv);
+            if (std::abs(gp_Vec(points[0], point).Dot(gp_Vec(normal))) > tolerance) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+//! End points of a straight edge.  A boolean often leaves an edge that is
+//! geometrically a line but stored as a B-spline, so the curve type is not
+//! checked; a curve that deviates from its chord by more than a ten-thousandth
+//! of its length is rejected (the wedge prism is built on that chord).
+bool straightEdgeEnds(const TopoDS_Edge& edge, gp_Pnt& start, gp_Pnt& end)
+{
+    if (BRep_Tool::Degenerated(edge)) {
+        return false;
+    }
+    BRepAdaptor_Curve curve(edge);
+    start = curve.Value(curve.FirstParameter());
+    end = curve.Value(curve.LastParameter());
+    const double length = start.Distance(end);
+    if (length < Precision::Confusion()) {
+        return false;
+    }
+    if (curve.GetType() == GeomAbs_Line) {
+        return true;
+    }
+    const double tolerance = std::max(Precision::Confusion(), length * 1e-4);
+    const double first = curve.FirstParameter();
+    const double last = curve.LastParameter();
+    for (double t : {0.25, 0.5, 0.75}) {
+        const gp_Pnt onCurve = curve.Value(first + (last - first) * t);
+        const gp_Pnt onChord = start.Translated(gp_Vec(start, end) * t);
+        if (onCurve.Distance(onChord) > tolerance) {
+            return false;
+        }
+    }
+    return true;
+}
+
+//! In-plane direction from the edge into the interior of a face.
+bool interiorDirection(const TopoDS_Face& face, const gp_Pnt& origin, const gp_Dir& axis, gp_Dir& out)
+{
+    GProp_GProps props;
+    BRepGProp::SurfaceProperties(face, props);
+    gp_Vec dir(origin, props.CentreOfMass());
+    dir -= gp_Vec(axis) * dir.Dot(gp_Vec(axis));
+    if (dir.SquareMagnitude() < Precision::SquareConfusion()) {
+        return false;
+    }
+    out = gp_Dir(dir);
+    return true;
+}
+
+//! +1 for a convex edge (a chamfer takes material off), -1 for a concave one (a
+//! chamfer fills the valley) and 0 when that cannot be told.
+//!
+//! Offset the edge midpoint along the sum of the two in-plane directions towards
+//! each adjacent face's interior: inside the solid means the faces bound the
+//! material (convex), in the void means they bound a valley (concave).  The
+//! face-normal bisector does *not* separate the two - it points into the void
+//! either way.
+double chamferConvexity(const Part::TopoShape& base, const std::vector<Part::TopoShape>& edges)
+{
+    TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+    TopExp::MapShapesAndAncestors(base.getShape(), TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+
+    double convexity = 0.0;
+    for (const auto& edgeShape : edges) {
+        if (edgeShape.isNull() || edgeShape.getShape().ShapeType() != TopAbs_EDGE) {
+            return 0.0;
+        }
+        const TopoDS_Edge& edge = TopoDS::Edge(edgeShape.getShape());
+        if (!edgeFaces.Contains(edge) || edgeFaces.FindFromKey(edge).Extent() != 2) {
+            return 0.0;
+        }
+        gp_Pnt start;
+        gp_Pnt end;
+        if (!straightEdgeEnds(edge, start, end)) {
+            return 0.0;
+        }
+        const gp_Dir axis(gp_Vec(start, end));
+        gp_Dir leg0;
+        gp_Dir leg1;
+        if (!interiorDirection(TopoDS::Face(edgeFaces.FindFromKey(edge).First()), start, axis, leg0)
+            || !interiorDirection(
+                TopoDS::Face(edgeFaces.FindFromKey(edge).Last()),
+                start,
+                axis,
+                leg1
+            )) {
+            return 0.0;
+        }
+        const gp_Pnt midpoint((start.XYZ() + end.XYZ()) * 0.5);
+        const gp_Pnt probe = midpoint.Translated(gp_Vec(leg0) * 1e-4 + gp_Vec(leg1) * 1e-4);
+        BRepClass3d_SolidClassifier classifier(base.getShape());
+        classifier.Perform(probe, Precision::Confusion());
+        double sign = 0.0;
+        if (classifier.State() == TopAbs_IN) {
+            sign = 1.0;
+        }
+        else if (classifier.State() == TopAbs_OUT) {
+            sign = -1.0;
+        }
+        else {
+            return 0.0;
+        }
+        if (convexity != 0.0 && convexity != sign) {
+            return 0.0;  // the selected edges disagree
+        }
+        convexity = sign;
+    }
+    return convexity;
+}
+
+//! True when the centroid of the triangle a-b-c lies inside \a base.
+bool triangleIsInside(const Part::TopoShape& base, const gp_Pnt& a, const gp_Pnt& b, const gp_Pnt& c)
+{
+    const gp_Pnt centroid((a.XYZ() + b.XYZ() + c.XYZ()) / 3.0);
+    BRepClass3d_SolidClassifier classifier(base.getShape());
+    classifier.Perform(centroid, Precision::Confusion());
+    return classifier.State() == TopAbs_IN;
+}
+
+//! Volume of the wedge a chamfer of these sizes takes off each straight edge
+//! between two planar faces: 0.5 * size0 * size1 * length.
+double chamferWedgeVolume(const Part::TopoShape& base,
+                          const std::vector<Part::TopoShape>& edges,
+                          double size0,
+                          double size1)
+{
+    double volume = 0.0;
+    for (const auto& edgeShape : edges) {
+        if (edgeShape.isNull() || edgeShape.getShape().ShapeType() != TopAbs_EDGE) {
+            return 0.0;
+        }
+        gp_Pnt start;
+        gp_Pnt end;
+        if (!straightEdgeEnds(TopoDS::Edge(edgeShape.getShape()), start, end)) {
+            return 0.0;
+        }
+        volume += 0.5 * size0 * size1 * start.Distance(end);
+    }
+    return volume;
+}
+
 struct WedgeLegs
 {
     gp_Pnt start;
@@ -132,18 +325,6 @@ double shapeVolume(const TopoDS_Shape& shape)
 }
 
 //! In-plane direction from the edge into the interior of a planar face.
-bool interiorDirection(const TopoDS_Face& face, const gp_Pnt& origin, const gp_Dir& axis, gp_Dir& out)
-{
-    GProp_GProps props;
-    BRepGProp::SurfaceProperties(face, props);
-    gp_Vec dir(origin, props.CentreOfMass());
-    dir -= gp_Vec(axis) * dir.Dot(gp_Vec(axis));
-    if (dir.SquareMagnitude() < Precision::SquareConfusion()) {
-        return false;
-    }
-    out = gp_Dir(dir);
-    return true;
-}
 
 bool wedgeLegs(const TopoDS_Edge& edge,
                const TopoDS_Face& face0,
@@ -152,25 +333,19 @@ bool wedgeLegs(const TopoDS_Edge& edge,
                double size1,
                WedgeLegs& legs)
 {
-    if (BRep_Tool::Degenerated(edge)) {
-        return false;
-    }
-    BRepAdaptor_Curve curve(edge);
-    if (curve.GetType() != GeomAbs_Line) {
+    gp_Pnt start;
+    gp_Pnt end;
+    if (!straightEdgeEnds(edge, start, end)) {
         return false;
     }
     for (const TopoDS_Face& face : {face0, face1}) {
-        BRepAdaptor_Surface surface(face, Standard_False);
-        if (surface.GetType() != GeomAbs_Plane) {
+        gp_Dir normal;
+        if (!planarFaceNormal(face, normal)) {
             return false;
         }
     }
-    legs.start = curve.Value(curve.FirstParameter());
-    const gp_Pnt end = curve.Value(curve.LastParameter());
-    legs.length = legs.start.Distance(end);
-    if (legs.length < Precision::Confusion()) {
-        return false;
-    }
+    legs.start = start;
+    legs.length = start.Distance(end);
     legs.direction = gp_Dir(gp_Vec(legs.start, end));
     if (!interiorDirection(face0, legs.start, legs.direction, legs.leg0)
         || !interiorDirection(face1, legs.start, legs.direction, legs.leg1)) {
@@ -198,6 +373,10 @@ TopoDS_Shape wedgeTool(const WedgeLegs& legs, int sign0, int sign1)
     return BRepPrimAPI_MakePrism(face.Face(), gp_Vec(legs.direction) * legs.length);
 }
 
+//! Volume of the wedge a chamfer of these sizes takes off each straight edge
+//! between two planar faces: 0.5 * size0 * size1 * length.  This is the volume
+//! the result must lose - a chamfer only ever takes material off.
+
 //! Chamfers each edge by subtracting a wedge prism, and returns the cut shape
 //! (or a null shape when that is not possible).
 Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
@@ -205,12 +384,12 @@ Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
                                     Part::ChamferType type,
                                     double size,
                                     double size2,
-                                    bool flip)
+                                    bool flip,
+                                    double convexity)
 {
     // Both assignments of the two distances are tried: OCC measures the first
-    // one on the face the caller picked, and for this fallback it does not matter
-    // which face that is - the orientation search below keeps whichever really
-    // removes a wedge (0.5 * size0 * size1 * length is the same either way).
+    // one on the face the caller picked, and for this fallback it does not
+    // matter which face that is.
     std::vector<std::pair<double, double>> assignments;
     if (type == Part::ChamferType::twoDistances) {
         assignments = {{size, size2}, {size2, size}};
@@ -234,6 +413,9 @@ Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
             return Part::TopoShape(0);
         }
     }
+    if (convexity == 0.0) {
+        convexity = 1.0;  // unknown: never grow the solid
+    }
 
     TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
     TopExp::MapShapesAndAncestors(base.getShape(), TopAbs_EDGE, TopAbs_FACE, edgeFaces);
@@ -251,8 +433,14 @@ Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
         if (!edgeFaces.Contains(edge) || edgeFaces.FindFromKey(edge).Extent() != 2) {
             return Part::TopoShape(0);
         }
+        // Pick the triangle by the side of the edge: a convex edge is chamfered
+        // by subtracting the triangle whose centroid lies inside the material, a
+        // concave one by fusing the one whose centroid lies in the void.  The
+        // analytic volume 0.5*size0*size1*length only breaks ties - for a
+        // concave edge most of the tool stands in the open, so the result gains
+        // far less than that (0.5*17*2.99*34.83 = 885 mm3 against the measured
+        // 186 mm3 on the user's Pocket002.Edge80).
         double bestError = std::numeric_limits<double>::max();
-        double bestExpected = 0.0;
         TopoDS_Shape best;
         for (const auto& [size0, size1] : assignments) {
             WedgeLegs legs;
@@ -266,37 +454,39 @@ Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
                 )) {
                 return Part::TopoShape(0);
             }
-            // Pick the triangle orientation that really removes a chamfer wedge:
-            // the faces' interior directions give the two candidate legs, the
-            // material side decides their signs.
             const double expected = 0.5 * size0 * size1 * legs.length;
             for (int sign0 : {-1, 1}) {
                 for (int sign1 : {-1, 1}) {
+                    const gp_Pnt corner0
+                        = legs.start.Translated(gp_Vec(legs.leg0) * (legs.size0 * sign0));
+                    const gp_Pnt corner1
+                        = legs.start.Translated(gp_Vec(legs.leg1) * (legs.size1 * sign1));
+                    if (triangleIsInside(base, legs.start, corner0, corner1) != (convexity > 0.0)) {
+                        continue;  // wrong side of the edge
+                    }
                     const TopoDS_Shape tool = wedgeTool(legs, sign0, sign1);
                     if (tool.IsNull()) {
                         continue;
                     }
                     Part::TopoShape toolShape(0);
                     toolShape.setShape(tool);
-                    const Part::TopoShape candidate = base.makeElementCut(
-                        toolShape,
-                        Part::OpCodes::Chamfer
-                    );
+                    const Part::TopoShape candidate = convexity > 0.0
+                        ? base.makeElementCut(toolShape, Part::OpCodes::Chamfer)
+                        : base.makeElementFuse(toolShape, Part::OpCodes::Chamfer);
                     if (candidate.isNull()) {
                         continue;
                     }
-                    const double removed = baseVolume - shapeVolume(candidate.getShape());
-                    const double error = std::abs(removed - expected);
+                    const double change = baseVolume - shapeVolume(candidate.getShape());
+                    const double error = std::abs(change - convexity * expected);
                     if (error < bestError) {
                         bestError = error;
-                        bestExpected = expected;
                         best = tool;
                     }
                 }
             }
         }
-        if (best.IsNull() || bestError > bestExpected * 0.5) {
-            return Part::TopoShape(0);  // no orientation removes a chamfer wedge
+        if (best.IsNull()) {
+            return Part::TopoShape(0);  // nothing on the side of the edge the chamfer needs
         }
         builder.Add(compound, best);
         ++used;
@@ -307,7 +497,9 @@ Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
 
     Part::TopoShape toolShape(0);
     toolShape.setShape(compound);
-    return base.makeElementCut(toolShape, Part::OpCodes::Chamfer);
+    // a concave edge fills the valley, so the wedge is added rather than cut
+    return convexity > 0.0 ? base.makeElementCut(toolShape, Part::OpCodes::Chamfer)
+                           : base.makeElementFuse(toolShape, Part::OpCodes::Chamfer);
 }
 
 }  // namespace
@@ -477,6 +669,38 @@ App::DocumentObjectExecReturn* Chamfer::execute()
             );
         }
 
+        const bool twoDistances
+            = static_cast<Part::ChamferType>(chamferType) == Part::ChamferType::twoDistances;
+        double wedgeSize1 = size;
+        if (twoDistances) {
+            wedgeSize1 = size2;
+        }
+        else if (static_cast<Part::ChamferType>(chamferType) == Part::ChamferType::distanceAngle) {
+            wedgeSize1 = size * std::tan(Base::toRadians(size2));
+        }
+        // A chamfer takes material off a convex edge and fills the valley of a
+        // concave one (the user's 50 mm edge is concave: 17/2.99 adds 1270.75).
+        // A candidate that does the opposite comes from the wrong face
+        // assignment and must not be accepted - it would turn "fill the valley"
+        // into a groove, or the other way round.
+        const double convexity = chamferConvexity(TopShape, edges);
+        const double expectedWedge = chamferWedgeVolume(TopShape, edges, size, wedgeSize1);
+        const double baseVolume = shapeVolume(TopShape.getShape());
+        auto removedBy = [&](const TopoShape& candidate) {
+            return baseVolume - shapeVolume(candidate.getShape());
+        };
+        auto acceptable = [&](const TopoShape& candidate) {
+            if (!usable(candidate)) {
+                return false;
+            }
+            const double removed = removedBy(candidate);
+            if (convexity < 0.0) {
+                return removed < -Precision::Confusion();  // concave: fills the valley
+            }
+            // convex, or convexity unknown: never grow the solid
+            return removed > Precision::Confusion();
+        };
+
         // 2. The same chamfer with the distances on the other adjacent face.
         //    OCCT measures the first distance on the reference face and pins it
         //    there, so a distance that does not fit that face makes OCCT fold the
@@ -486,9 +710,7 @@ App::DocumentObjectExecReturn* Chamfer::execute()
         //    TopoShape::makeChamfer(2.99, 17.0, {edge}) expresses), are tried in
         //    turn; the first usable result wins.
         bool otherFaceRetry = false;
-        if (!usable(shape)) {
-            const bool twoDistances
-                = static_cast<Part::ChamferType>(chamferType) == Part::ChamferType::twoDistances;
+        if (!acceptable(shape)) {
             std::vector<std::pair<bool, bool>> attempts;
             attempts.emplace_back(flipDirection, false);
             if (twoDistances) {
@@ -498,15 +720,23 @@ App::DocumentObjectExecReturn* Chamfer::execute()
             if (twoDistances) {
                 attempts.emplace_back(!flipDirection, true);
             }
-            // the first entry is what was asked for and has already been tried
+            // the first entry is what was asked for and has already been tried;
+            // the sign is the direction a chamfer has to move the volume in
+            // among the rest, the one whose removed volume is closest to the
+            // analytic wedge is the chamfer the user asked for
+            const double expected = (convexity < 0.0 ? -1.0 : 1.0) * expectedWedge;
+            double bestError = std::numeric_limits<double>::max();
+            TopoShape best;
             for (std::size_t i = 1; i < attempts.size(); ++i) {
                 try {
                     TopoShape other = buildChamfer(attempts[i].first, attempts[i].second);
-                    if (usable(other)) {
-                        shape = other;
-                        otherFaceRetry = true;
-                        failure.clear();
-                        break;
+                    if (!acceptable(other)) {
+                        continue;
+                    }
+                    const double error = std::abs(removedBy(other) - expected);
+                    if (error < bestError) {
+                        bestError = error;
+                        best = other;
                     }
                 }
                 catch (Standard_Failure& e) {
@@ -518,22 +748,28 @@ App::DocumentObjectExecReturn* Chamfer::execute()
                     return new App::DocumentObjectExecReturn(e.what());
                 }
             }
+            if (!best.isNull()) {
+                shape = best;
+                otherFaceRetry = true;
+                failure.clear();
+            }
         }
 
         // 3. Last resort: the equivalent wedge cut.  Only OCCT failures end up
         //    here (the guard above returns early), and it is exact when a
         //    distance fits neither adjacent face - see chamferEdgesByWedge().
         bool wedgeRetry = false;
-        if (!usable(shape)) {
+        if (!acceptable(shape)) {
             TopoShape wedged = chamferEdgesByWedge(
                 TopShape,
                 edges,
                 static_cast<Part::ChamferType>(chamferType),
                 size,
                 size2,
-                flipDirection
+                flipDirection,
+                convexity
             );
-            if (usable(wedged)) {
+            if (acceptable(wedged)) {
                 shape = wedged;
                 wedgeRetry = true;
             }
