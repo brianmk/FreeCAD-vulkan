@@ -96,6 +96,28 @@ class PartTestCases(unittest.TestCase):
         self.assertEqual(len(box.makeChamfer(1.0, [box.Edges[0]]).Faces), 7)
         self.assertEqual(len(box.makeFillet(1.0, [box.Edges[0]]).Faces), 7)
 
+    def testCountNonManifoldEdges(self):
+        # Two boxes touching along one edge fuse into a shape that BRepCheck still
+        # calls valid, but the shared edge has four adjacent faces.  The count has
+        # to see it, while a clean solid and a cylinder - whose seam edge has a
+        # single adjacent face - both report zero.
+        box = Part.makeBox(10, 10, 10)
+        other = Part.makeBox(10, 10, 10).translate(App.Vector(10, 10, 0))
+        fused = box.fuse(other)
+        self.assertTrue(fused.isValid())
+        self.assertEqual(fused.countNonManifoldEdges(), 1)
+
+        clean = box.fuse(Part.makeBox(10, 10, 10).translate(App.Vector(20, 0, 0)))
+        self.assertTrue(clean.isValid())
+        self.assertEqual(clean.countNonManifoldEdges(), 0)
+
+        self.assertEqual(box.countNonManifoldEdges(), 0)
+        self.assertEqual(Part.makeCylinder(5, 10).countNonManifoldEdges(), 0)
+
+        cylinder = self.Doc.addObject("Part::Cylinder", "Cylinder")
+        self.Doc.recompute()
+        self.assertEqual(cylinder.Shape.countNonManifoldEdges(), 0)
+
     def testIssue2985(self):
         v1 = App.Vector(0.0, 0.0, 0.0)
         v2 = App.Vector(10.0, 0.0, 0.0)

@@ -4150,14 +4150,39 @@ TopoShape& TopoShape::removeElementShape(const TopoShape& shape, const std::vect
 
 namespace {
 
-// OCCT's ChFi3d_Builder corner machinery assumes a manifold shape.  When an end
-// vertex of a filleted/chamfered edge touches an edge shared by more than two
-// faces it either raises the opaque "ChFi3d_Builder:only 2 faces" from
-// ChFi3d_Builder::FaceTangency, or dereferences null inside
-// ChFi3d_Builder::IntersectMoreCorner and crashes the process.  Such an edge can
-// survive a boolean operation unnoticed (BRepCheck_Analyzer does not flag it), so
-// detect the topology here and say what is actually wrong instead of passing it
-// on to OCCT.
+//! Edges shared by more than two faces, with their adjacent-face count.
+//!
+//! OCCT's ChFi3d_Builder corner machinery assumes a manifold shape.  When an end
+//! vertex of a filleted/chamfered edge touches an edge shared by more than two
+//! faces it either raises the opaque "ChFi3d_Builder:only 2 faces" from
+//! ChFi3d_Builder::FaceTangency, or dereferences null inside
+//! ChFi3d_Builder::IntersectMoreCorner and crashes the process.  Such an edge can
+//! survive a boolean operation unnoticed (BRepCheck_Analyzer does not flag it), so
+//! detect the topology here and say what is actually wrong instead of passing it
+//! on to OCCT.  The same walk backs TopoShape::countNonManifoldEdges().
+//!
+//! Edges with a *single* adjacent face are deliberately not reported: a cylinder
+//! or cone seam edge has one (the face wraps around it) and is perfectly valid.
+std::vector<std::pair<TopoDS_Shape, int>> findNonManifoldEdges(const TopoDS_Shape& shape)
+{
+    std::vector<std::pair<TopoDS_Shape, int>> result;
+    if (shape.IsNull()) {
+        return result;
+    }
+
+    TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+    TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+    for (int i = 1; i <= edgeFaces.Extent(); ++i) {
+        const int faceCount = edgeFaces.FindFromIndex(i).Extent();
+        if (faceCount > 2) {
+            result.emplace_back(edgeFaces.FindKey(i), faceCount);
+        }
+    }
+    return result;
+}
+
+//! See findNonManifoldEdges(): report the damaged topology before handing the
+//! shape to OCCT's fillet/chamfer corner builder.
 void assertManifoldAroundRoundedEdges(const TopoShape& shape, const std::vector<TopoShape>& edges)
 {
     const TopoDS_Shape& sh = shape.getShape();
@@ -4165,8 +4190,11 @@ void assertManifoldAroundRoundedEdges(const TopoShape& shape, const std::vector<
         return;
     }
 
-    TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
-    TopExp::MapShapesAndAncestors(sh, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+    const auto nonManifold = findNonManifoldEdges(sh);
+    if (nonManifold.empty()) {
+        return;
+    }
+
     TopTools_IndexedDataMapOfShapeListOfShape vertexEdges;
     TopExp::MapShapesAndAncestors(sh, TopAbs_VERTEX, TopAbs_EDGE, vertexEdges);
 
@@ -4182,11 +4210,14 @@ void assertManifoldAroundRoundedEdges(const TopoShape& shape, const std::vector<
             for (TopTools_ListIteratorOfListOfShape it(vertexEdges.FindFromKey(vertex)); it.More();
                  it.Next()) {
                 const TopoDS_Shape& incident = it.Value();
-                if (!edgeFaces.Contains(incident)) {
-                    continue;
+                int faceCount = 0;
+                for (const auto& [bad, count] : nonManifold) {
+                    if (bad.IsSame(incident)) {
+                        faceCount = count;
+                        break;
+                    }
                 }
-                const int faceCount = edgeFaces.FindFromKey(incident).Extent();
-                if (faceCount <= 2) {
+                if (faceCount == 0) {
                     continue;
                 }
                 // Report the offending edge by its end points: that is what the user
@@ -4219,6 +4250,11 @@ void assertManifoldAroundRoundedEdges(const TopoShape& shape, const std::vector<
 }
 
 }  // namespace
+
+int TopoShape::countNonManifoldEdges() const
+{
+    return static_cast<int>(findNonManifoldEdges(getShape()).size());
+}
 
 TopoShape& TopoShape::makeElementFillet(
     const TopoShape& shape,

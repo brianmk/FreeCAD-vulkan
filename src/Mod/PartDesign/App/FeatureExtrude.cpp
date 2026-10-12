@@ -870,6 +870,13 @@ App::DocumentObjectExecReturn* FeatureExtrude::buildExtrusion(ExtrudeOptions opt
             this->Shape.setValue(prism);
         }
 
+        // A boolean can leave non-manifold edges behind: an edge shared by more
+        // than two faces.  BRepCheck does not report that (the shape stays
+        // "valid"), but OCCT's fillet/chamfer corner builder cannot process it,
+        // so warn here, while the profile that produced it is what the user is
+        // editing, instead of leaving it for a later dress-up to fail on.
+        warnAboutNonManifoldEdges(this->Shape.getValue());
+
         // eventually disable some settings that are not valid for the current method
         updateProperties();
 
