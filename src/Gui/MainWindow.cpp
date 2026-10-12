@@ -556,7 +556,11 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
     // the Vulkan viewport in the pure raster path; the point overlay is
     // raster-only and the model edge overlay is honoured in every mode.
     d->viewModeCombo = new QComboBox(statusBar());
-    d->viewModeCombo->setObjectName(QStringLiteral("ViewRenderingMode"));
+    // No setObjectName() here: addStatusBarItem() below names the widget from
+    // the spec id, so this combo's object name is "viewModeCombo".  That is the
+    // name the fcprobe harness (vk_modelswitch_probe.py) looks the combo up
+    // with; setting any other name here is overwritten and only makes a
+    // findChild() on the other string fail silently.
     //: Status-bar view render-mode entry: the default raster rendering
     //: (classic Coin raster).
     d->viewModeCombo->addItem(tr("Interactive (raster Coin)"));
@@ -581,7 +585,8 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags f)
     // viewport.  Its checked state mirrors the active view and it is honoured
     // in every render mode.
     d->wireframeButton = new QToolButton(statusBar());
-    d->wireframeButton->setObjectName(QStringLiteral("WireframeButton"));
+    // Named "wireframeButton" by addStatusBarItem() below (spec id), for the
+    // same reason as the render-mode combo above; do not set another name here.
     d->wireframeButton->setCheckable(true);
     d->wireframeButton->setAutoRaise(true);
     d->wireframeButton->setIcon(BitmapFactory().iconFromTheme("DrawStyleFlatLines"));
