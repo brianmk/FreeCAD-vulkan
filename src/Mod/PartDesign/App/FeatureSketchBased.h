@@ -241,6 +241,15 @@ protected:
     void onChanged(const App::Property* prop) override;
     void onBaseFeatureRerouted(App::DocumentObject* oldBase, App::DocumentObject* newBase) override;
 
+    /** Warn when a boolean result contains non-manifold edges.
+     *
+     * An edge shared by more than two faces can survive a boolean unnoticed
+     * (BRepCheck_Analyzer does not flag it, so isValid() stays true) but makes
+     * OCCT's fillet/chamfer corner builder fail later.  It usually means a
+     * profile edge or vertex lies exactly on existing geometry.
+     */
+    void warnAboutNonManifoldEdges(const TopoShape& shape) const;
+
 private:
     bool isParallelPlane(const TopoDS_Shape&, const TopoDS_Shape&) const;
     bool isEqualGeometry(const TopoDS_Shape&, const TopoDS_Shape&) const;

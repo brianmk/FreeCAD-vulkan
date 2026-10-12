@@ -539,6 +539,8 @@ void Revolved::setResult(const TopoShape& base, const TopoShape& revolved)
     }
     result = getSolid(result);
     this->Shape.setValue(result);
+    // see ProfileBased::warnAboutNonManifoldEdges()
+    warnAboutNonManifoldEdges(result);
 }
 
 TopoShape Revolved::tryToRevolveToFace(

@@ -62,6 +62,7 @@
 
 #include <App/Document.h>
 #include <App/Datums.h>
+#include <Base/Console.h>
 #include <Base/Converter.h>
 #include <Base/Reader.h>
 #include <Base/Tools.h>
@@ -1667,4 +1668,21 @@ void ProfileBased::handleChangedPropertyName(
     else {
         PartDesign::FeatureAddSub::handleChangedPropertyName(reader, TypeName, PropName);
     }
+}
+
+void ProfileBased::warnAboutNonManifoldEdges(const TopoShape& shape) const
+{
+    const int nonManifoldEdges = shape.countNonManifoldEdges();
+    if (nonManifoldEdges <= 0) {
+        return;
+    }
+
+    Base::Console().warning(
+        "{}: the result has {} non-manifold edges (shared by more than 2 faces). "
+        "A profile edge or vertex probably lies exactly on existing geometry; "
+        "move it so it does not coincide. Fillet and chamfer on these edges "
+        "will fail.\n",
+        getFullName(),
+        nonManifoldEdges
+    );
 }
