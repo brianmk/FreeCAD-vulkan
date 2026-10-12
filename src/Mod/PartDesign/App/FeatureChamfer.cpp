@@ -1206,18 +1206,45 @@ App::DocumentObjectExecReturn* Chamfer::execute()
         }
 
         // Neither face assignment nor a wedge cut produced a usable solid: refuse
-        // it and name the sizes that caused it.
+        // it.  Blaming the sizes is only right when the reach rule actually
+        // rejected them.  A base feature that still carries the sub-micron edges a
+        // boolean left behind makes every chamfer on the affected corner fold a
+        // face, and there the sizes can fit the faces perfectly well: reported on
+        // a valley edge whose faces reach 17.0552 and 3.0 mm, refused as "the
+        // sizes 2 mm / 1 mm are too large" while the stale Pocket still held four
+        // edges of 1.29e-05 .. 2.23e-05 mm (129 edges instead of the 123 the
+        // sliver retry produces).  That hint sends the user looking at the sizes
+        // instead of at the base.  Say which of the two it is.
         if (!usable(shape)) {
             const std::string reason = invalidChamferReason(shape);
-            std::ostringstream message;
-            message << "Chamfer produced an invalid shape (" << reason << "): the ";
-            if (static_cast<Part::ChamferType>(chamferType) == Part::ChamferType::distanceAngle) {
-                message << "size " << Size.getValue() << " mm / angle " << Angle.getValue()
-                        << " deg are too large for this edge - reduce them or check the edge.";
+            const int baseSlivers = static_cast<int>(TopShape.getDegenerateEdges().size());
+            const bool angleType
+                = static_cast<Part::ChamferType>(chamferType) == Part::ChamferType::distanceAngle;
+            std::ostringstream sizes;
+            if (angleType) {
+                sizes << "size " << Size.getValue() << " mm / angle " << Angle.getValue() << " deg";
             }
             else {
-                message << "sizes " << Size.getValue() << " mm / " << Size2.getValue()
-                        << " mm are too large for this edge - reduce them or check the edge.";
+                sizes << "sizes " << Size.getValue() << " mm / " << Size2.getValue() << " mm";
+            }
+            std::ostringstream message;
+            message << "Chamfer produced an invalid shape (" << reason << "). ";
+            if (baseSlivers > 0) {
+                message << "The base feature still has " << baseSlivers
+                        << " edges shorter than 1e-3 mm - recompute it (the boolean sliver retry) "
+                           "and try again, or check the edge: the "
+                        << sizes.str()
+                        << (reachRefusal.empty() ? " fit the adjacent faces."
+                                                 : " do not fit every adjacent face either.");
+            }
+            else if (!reachRefusal.empty()) {
+                message << "The " << sizes.str()
+                        << " are too large for this edge - reduce them or check the edge.";
+            }
+            else {
+                message << "The " << sizes.str()
+                        << " do not give a valid chamfer on this edge - check the edge, or try "
+                           "different sizes.";
             }
             return new App::DocumentObjectExecReturn(message.str());
         }
