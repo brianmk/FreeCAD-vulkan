@@ -66,7 +66,21 @@ static inline void applyOverlayPrimitiveState(SoState* state, SoNode* node)
 }
 
 //! Depth interaction shared by all overlay primitive rendering.
-static inline void applyOverlayDepthState(SoState* state, OverlayDepthMode depthMode)
+//!
+//! ``nearDepthRange`` maps the command's NDC depth into a slightly reduced
+//! window-depth range, i.e. a decal that pulls the overlay toward the camera.
+//! A committed edge selection is coplanar with the two faces it separates, so
+//! at a 90 degree seam the line and the faces rasterize to the same depth and
+//! the line loses (or wins only half the pixels) - the same z-fighting the
+//! face overlay solves with SoPolygonOffsetElement, which GL ignores for lines
+//! and which the Vulkan backend only honours weakly.  Reducing the far end of
+//! the depth range is honoured by both backends (glDepthRange / the Vulkan
+//! dynamic viewport minDepth+maxDepth) and biases by a fixed fraction of the
+//! depth range, far below the depth difference of any real occluder, so a
+//! hidden edge stays hidden.
+static inline void applyOverlayDepthState(SoState* state,
+                                          OverlayDepthMode depthMode,
+                                          float nearDepthRange = 1.0f)
 {
     switch (depthMode) {
         case OverlayDepthMode::DrawOnTop:
@@ -84,7 +98,7 @@ static inline void applyOverlayDepthState(SoState* state, OverlayDepthMode depth
                 TRUE,
                 TRUE,
                 SoDepthBufferElement::LEQUAL,
-                SbVec2f(0.0f, 1.0f)
+                SbVec2f(0.0f, nearDepthRange)
             );
             return;
     }
@@ -296,7 +310,13 @@ static void renderOverlayLines(
     bindOverlayCoordinates(state, lineSet);
 
     applyOverlayPrimitiveState(state, lineSet);
-    applyOverlayDepthState(state, depthMode);
+    // A same-depth line/face seam is a knife edge: the decorated edge and the
+    // two faces it separates rasterize to the same depth value, so the line
+    // needs a decal range to stay visible under LEQUAL (see
+    // applyOverlayDepthState).  The offset is a fraction of the depth range, so
+    // the edge still disappears behind geometry that is really in front.
+    applyOverlayDepthState(state, depthMode,
+                           depthMode == OverlayDepthMode::RespectDepth ? 0.9999f : 1.0f);
 
     // Draw highlight/selection edges thicker than the base edges so they are
     // clearly visible on top of the model geometry (2x the current line width).
