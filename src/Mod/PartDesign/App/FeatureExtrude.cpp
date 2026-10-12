@@ -888,7 +888,67 @@ App::DocumentObjectExecReturn* FeatureExtrude::buildExtrusion(ExtrudeOptions opt
             }
         }
 
+        // Pass 2: sliver-only clean-up, after the merged non-manifold retry above
+        // (that pass is deliberately untouched).  It only fires when sub-1e-3 edges
+        // remain and only accepts a nudge that leaves no more of them and does not
+        // make the non-manifold count worse.
+        bool sliversNudged = false;
+        double sliverNudge = 0.0;
+        int sliversBefore = 0;
+        int sliversAfter = 0;
+        {
+            TopoShape best;
+            const int nonManifoldPass1 = resultShape.countNonManifoldEdges();
+            sliversBefore = (int)findDegenerateEdges(resultShape).size();
+            if (sliversBefore > 0) {
+                const TopoShape original = resultShape;
+                for (double nudge : {1e-4, 1e-3}) {
+                    TopoShape nudgedTool = prism;
+                    if (!growToolInProfilePlane(nudgedTool, nudge)) {
+                        break;
+                    }
+                    const std::string failure = buildResult(nudgedTool);
+                    const int slivers = (int)findDegenerateEdges(resultShape).size();
+                    // The slivers scale with the nudge, so a nudge can leave the same
+                    // *count* while growing them - keep the candidate with the fewest
+                    // and keep escalating until they are gone (or the nudges run out).
+                    // Only a nudge that removes *all* of them is worth its volume
+                    // cost: a partial reduction merely grows the remaining slivers
+                    // (they scale with the nudge) and would still invalidate any
+                    // later chamfer.
+                    if (failure.empty() && slivers == 0
+                        && resultShape.countNonManifoldEdges() <= nonManifoldPass1) {
+                        best = resultShape;
+                        sliversNudged = true;
+                        sliverNudge = nudge;
+                        sliversAfter = slivers;
+                        resultShape = original;
+                        if (slivers == 0) {
+                            break;
+                        }
+                        continue;
+                    }
+                    resultShape = original;
+                }
+            }
+            if (sliversNudged) {
+                resultShape = best;
+            }
+        }
+
         this->Shape.setValue(resultShape);
+
+        if (sliversNudged) {
+            Base::Console().warning(
+                "{}: the boolean left {} edges shorter than 1e-3 mm (sub-micron slivers where the "
+                "profile grazes existing geometry, which make any later chamfer invalid); the cut "
+                "was retried with the profile nudged by {} mm, leaving {}.\n",
+                getFullName(),
+                sliversBefore,
+                sliverNudge,
+                sliversAfter
+            );
+        }
 
         if (nudged) {
             Base::Console().warning(

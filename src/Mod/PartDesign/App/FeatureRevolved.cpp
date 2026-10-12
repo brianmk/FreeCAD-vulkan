@@ -534,6 +534,54 @@ App::DocumentObjectExecReturn* Revolved::tryExecuteRevolved(Part::RevolMode revo
         }
     }
 
+    // Pass 2: sliver-only clean-up, after the merged non-manifold retry above.
+    bool sliversNudged = false;
+    double sliverNudge = 0.0;
+    int sliversBefore = 0;
+    int sliversAfter = 0;
+    {
+        const TopoShape pass1(this->Shape.getValue());
+        const int nonManifoldPass1 = pass1.countNonManifoldEdges();
+        sliversBefore = (int)findDegenerateEdges(pass1).size();
+        if (sliversBefore > 0) {
+            for (double nudge : {1e-4, 1e-3}) {
+                TopoShape nudgedTool = result;
+                if (!growToolInProfilePlane(nudgedTool, nudge)) {
+                    break;
+                }
+                try {
+                    setResult(base, nudgedTool);
+                }
+                catch (const Base::Exception&) {
+                    setResult(base, result);
+                    continue;
+                }
+                const TopoShape candidate(this->Shape.getValue());
+                const int slivers = (int)findDegenerateEdges(candidate).size();
+                if (slivers <= sliversBefore
+                    && candidate.countNonManifoldEdges() <= nonManifoldPass1) {
+                    sliversNudged = true;
+                    sliverNudge = nudge;
+                    sliversAfter = slivers;
+                    break;
+                }
+                setResult(base, result);
+            }
+        }
+    }
+
+    if (sliversNudged) {
+        Base::Console().warning(
+            "{}: the boolean left {} edges shorter than 1e-3 mm (sub-micron slivers where the "
+            "profile grazes existing geometry, which make any later chamfer invalid); the revolve "
+            "was retried with the profile nudged by {} mm, leaving {}.\n",
+            getFullName(),
+            sliversBefore,
+            sliverNudge,
+            sliversAfter
+        );
+    }
+
     if (nudged) {
         Base::Console().warning(
             "{}: the profile lay exactly on existing geometry, which made the "

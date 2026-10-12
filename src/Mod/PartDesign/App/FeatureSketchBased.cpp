@@ -1689,7 +1689,47 @@ void ProfileBased::warnAboutNonManifoldEdges(const TopoShape& shape) const
     );
 }
 
-bool ProfileBased::growToolInProfilePlane(TopoShape& tool) const
+
+std::vector<TopoShape> ProfileBased::findDegenerateEdges(const TopoShape& shape, double limit)
+{
+    std::vector<TopoShape> degenerate;
+    if (shape.isNull()) {
+        return degenerate;
+    }
+    int seen = 0;
+    for (const auto& edge : shape.getSubTopoShapes(TopAbs_EDGE)) {
+        ++seen;
+        const TopoDS_Shape& edgeShape = edge.getShape();
+        if (edgeShape.IsNull() || edgeShape.ShapeType() != TopAbs_EDGE) {
+            continue;
+        }
+        const TopoDS_Edge& topoEdge = TopoDS::Edge(edgeShape);
+        GProp_GProps props;
+        BRepGProp::LinearProperties(edgeShape, props);
+        const double length = props.Mass();
+        double tolerance = 0.0;
+        for (TopExp_Explorer it(topoEdge, TopAbs_VERTEX); it.More(); it.Next()) {
+            tolerance = std::max(tolerance, BRep_Tool::Tolerance(TopoDS::Vertex(it.Current())));
+        }
+        if (BRep_Tool::Degenerated(topoEdge) && length <= tolerance) {
+            // a genuine pole/seam edge of zero length, not a sliver: real slivers
+            // are also flagged degenerated (they are 2.6e-5 mm against a 5e-6 mm
+            // tolerance here), so only skip what is shorter than its own tolerance
+            continue;
+        }
+        if (length < std::max(limit, 100.0 * tolerance)) {
+            degenerate.push_back(edge);
+        }
+        if (length < 1e-3) {
+            fprintf(stderr, "DS sliver? len=%.3e tol=%.3e degenerated=%d kept=%d\n", length, tolerance,
+                    (int)BRep_Tool::Degenerated(topoEdge), (int)(length < std::max(limit, 100.0 * tolerance)));
+        }
+    }
+    fprintf(stderr, "DS shape edges=%d degenerate=%d\n", seen, (int)degenerate.size());
+    return degenerate;
+}
+
+bool ProfileBased::growToolInProfilePlane(TopoShape& tool, double nudge) const
 {
     TopoShape profile;
     try {
@@ -1755,7 +1795,7 @@ bool ProfileBased::growToolInProfilePlane(TopoShape& tool) const
     if (!found) {
         return false;
     }
-    const double factor = 1.0 + PROFILE_NUDGE / rMin;
+    const double factor = 1.0 + nudge / rMin;
 
     // Scale in the profile plane only: rotate the plane frame onto XY, scale
     // x/y, rotate back.  The plane normal - the extrusion or revolve direction -
