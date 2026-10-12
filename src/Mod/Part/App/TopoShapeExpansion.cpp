@@ -79,7 +79,10 @@
 #include <ShapeBuild_ReShape.hxx>
 #include <ShapeConstruct_Curve.hxx>
 #include <ShapeUpgrade_ShellSewing.hxx>
+#include <TopExp.hxx>
 #include <TopTools_HSequenceOfShape.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
+#include <TopTools_ListIteratorOfListOfShape.hxx>
 #include <ShapeFix_Shape.hxx>
 #include <ShapeFix_ShapeTolerance.hxx>
 #include <gp_Pln.hxx>
@@ -4145,6 +4148,78 @@ TopoShape& TopoShape::removeElementShape(const TopoShape& shape, const std::vect
     return *this;
 }
 
+namespace {
+
+// OCCT's ChFi3d_Builder corner machinery assumes a manifold shape.  When an end
+// vertex of a filleted/chamfered edge touches an edge shared by more than two
+// faces it either raises the opaque "ChFi3d_Builder:only 2 faces" from
+// ChFi3d_Builder::FaceTangency, or dereferences null inside
+// ChFi3d_Builder::IntersectMoreCorner and crashes the process.  Such an edge can
+// survive a boolean operation unnoticed (BRepCheck_Analyzer does not flag it), so
+// detect the topology here and say what is actually wrong instead of passing it
+// on to OCCT.
+void assertManifoldAroundRoundedEdges(const TopoShape& shape, const std::vector<TopoShape>& edges)
+{
+    const TopoDS_Shape& sh = shape.getShape();
+    if (sh.IsNull()) {
+        return;
+    }
+
+    TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+    TopExp::MapShapesAndAncestors(sh, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+    TopTools_IndexedDataMapOfShapeListOfShape vertexEdges;
+    TopExp::MapShapesAndAncestors(sh, TopAbs_VERTEX, TopAbs_EDGE, vertexEdges);
+
+    for (const auto& e : edges) {
+        if (e.isNull() || e.getShape().ShapeType() != TopAbs_EDGE) {
+            continue;
+        }
+        for (TopExp_Explorer vx(e.getShape(), TopAbs_VERTEX); vx.More(); vx.Next()) {
+            const TopoDS_Shape& vertex = vx.Current();
+            if (!vertexEdges.Contains(vertex)) {
+                continue;
+            }
+            for (TopTools_ListIteratorOfListOfShape it(vertexEdges.FindFromKey(vertex)); it.More();
+                 it.Next()) {
+                const TopoDS_Shape& incident = it.Value();
+                if (!edgeFaces.Contains(incident)) {
+                    continue;
+                }
+                const int faceCount = edgeFaces.FindFromKey(incident).Extent();
+                if (faceCount <= 2) {
+                    continue;
+                }
+                // Report the offending edge by its end points: that is what the user
+                // needs to find the damaged corner in the 3D view.
+                TopoDS_Vertex v0;
+                TopoDS_Vertex v1;
+                TopExp::Vertices(TopoDS::Edge(incident), v0, v1);
+                std::string where;
+                if (!v0.IsNull() && !v1.IsNull()) {
+                    const gp_Pnt p0 = BRep_Tool::Pnt(v0);
+                    const gp_Pnt p1 = BRep_Tool::Pnt(v1);
+                    std::ostringstream ss;
+                    ss << " Offending edge: (" << p0.X() << ", " << p0.Y() << ", " << p0.Z()
+                       << ") to (" << p1.X() << ", " << p1.Y() << ", " << p1.Z() << ").";
+                    where = ss.str();
+                }
+                FC_THROWM(
+                    Base::CADKernelError,
+                    "cannot fillet or chamfer: the shape is not manifold near the selected edge. "
+                        << "An edge ending at the same vertex is shared by " << faceCount
+                        << " faces, but a valid solid has exactly 2; OCCT's fillet/chamfer corner "
+                           "builder cannot process that. Repair the feature that produced this "
+                           "geometry (usually a boolean cut whose boundary coincides with an "
+                           "existing edge)."
+                        << where
+                );
+            }
+        }
+    }
+}
+
+}  // namespace
+
 TopoShape& TopoShape::makeElementFillet(
     const TopoShape& shape,
     const std::vector<TopoShape>& edges,
@@ -4163,6 +4238,7 @@ TopoShape& TopoShape::makeElementFillet(
     if (edges.empty()) {
         FC_THROWM(NullShapeException, "Null input shape");
     }
+    assertManifoldAroundRoundedEdges(shape, edges);
     BRepFilletAPI_MakeFillet mkFillet(shape.getShape());
     for (auto& e : edges) {
         if (e.isNull()) {
@@ -4196,6 +4272,7 @@ TopoShape& TopoShape::makeElementChamfer(
     if (edges.empty()) {
         FC_THROWM(NullShapeException, "Null input shape");
     }
+    assertManifoldAroundRoundedEdges(shape, edges);
     BRepFilletAPI_MakeChamfer mkChamfer(shape.getShape());
     for (auto& e : edges) {
         const auto& edge = e.getShape();

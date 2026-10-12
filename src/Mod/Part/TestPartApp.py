@@ -68,6 +68,34 @@ class PartTestCases(unittest.TestCase):
         self.Doc.recompute()
         self.assertEqual(len(self.Box.Shape.Faces), 6)
 
+    def testChamferNonManifoldShapeReportsTopology(self):
+        # A boolean can produce geometry that OCCT's own validity check accepts but
+        # that is not manifold: here two boxes touching along a single edge fuse
+        # into a compound whose shared edge has four adjacent faces.  Fillet and
+        # chamfer used to fail deep inside ChFi3d_Builder with the opaque
+        # "ChFi3d_Builder:only 2 faces" (or crash in IntersectMoreCorner); they must
+        # now report the topology instead.
+        box = Part.makeBox(10, 10, 10)
+        other = Part.makeBox(10, 10, 10).translate(App.Vector(10, 10, 0))
+        fused = box.fuse(other)
+        self.assertTrue(fused.isValid())
+
+        nonManifold = [
+            edge for edge in fused.Edges if len(fused.ancestorsOfType(edge, Part.Face)) > 2
+        ]
+        self.assertEqual(len(nonManifold), 1)
+
+        for operation in ("makeChamfer", "makeFillet"):
+            with self.assertRaises(Exception) as context:
+                getattr(fused, operation)(1.0, [nonManifold[0]])
+            message = str(context.exception)
+            self.assertIn("not manifold", message)
+            self.assertNotIn("only 2 faces", message)
+
+        # the same operations must still work on a manifold shape
+        self.assertEqual(len(box.makeChamfer(1.0, [box.Edges[0]]).Faces), 7)
+        self.assertEqual(len(box.makeFillet(1.0, [box.Edges[0]]).Faces), 7)
+
     def testIssue2985(self):
         v1 = App.Vector(0.0, 0.0, 0.0)
         v2 = App.Vector(10.0, 0.0, 0.0)
