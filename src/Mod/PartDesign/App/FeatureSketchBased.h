@@ -277,13 +277,12 @@ protected:
 
     /** Edges of \a shape that are too short to be real geometry.
      *
-     * A boolean can leave sub-micron slivers where its boundary grazes existing
-     * geometry - the user's Pocket002 has six between 1.3e-5 and 3.2e-5 mm - and
-     * every later boolean on such a corner emits a folded face, so a chamfer there
-     * can never be valid.  An edge counts as degenerate when it is shorter than
-     * both the given limit and 100 times the tolerance of its vertices, so genuine
-     * tiny features with large tolerances are left alone; degenerated (seam)
-     * edges are skipped.
+     * The detector and its criterion (shorter than the limit and than 100 times
+     * the tolerance of the vertices) live in TopoShape::getDegenerateEdges(); this
+     * is the boolean retry's entry point to it.  Sub-micron slivers left by a
+     * boolean where its boundary grazes existing geometry make every later boolean
+     * on that corner emit a folded face, so the retry uses them to decide whether
+     * to nudge and retry.
      */
     static std::vector<TopoShape> findDegenerateEdges(const TopoShape& shape, double limit = 1e-3);
 
