@@ -29,6 +29,7 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRep_Builder.hxx>
@@ -196,6 +197,33 @@ TopoDS_Shape wedgeTool(const WedgeLegs& legs, int sign0, int sign1)
         return {};
     }
     return BRepPrimAPI_MakePrism(face.Face(), gp_Vec(legs.direction) * legs.length);
+}
+
+//! Volume of the wedge a chamfer of these sizes takes off each straight edge
+//! between two planar faces: 0.5 * size0 * size1 * length.  This is the volume
+//! the result must lose - a chamfer only ever takes material off.
+double chamferWedgeVolume(const Part::TopoShape& base,
+                          const std::vector<Part::TopoShape>& edges,
+                          double size0,
+                          double size1)
+{
+    double volume = 0.0;
+    for (const auto& edgeShape : edges) {
+        if (edgeShape.isNull() || edgeShape.getShape().ShapeType() != TopAbs_EDGE) {
+            return 0.0;
+        }
+        BRepAdaptor_Curve curve(TopoDS::Edge(edgeShape.getShape()));
+        if (curve.GetType() != GeomAbs_Line) {
+            return 0.0;
+        }
+        const double length = curve.Value(curve.FirstParameter())
+            .Distance(curve.Value(curve.LastParameter()));
+        if (length < Precision::Confusion()) {
+            return 0.0;
+        }
+        volume += 0.5 * size0 * size1 * length;
+    }
+    return volume;
 }
 
 //! Chamfers each edge by subtracting a wedge prism, and returns the cut shape
@@ -477,6 +505,28 @@ App::DocumentObjectExecReturn* Chamfer::execute()
             );
         }
 
+        const bool twoDistances
+            = static_cast<Part::ChamferType>(chamferType) == Part::ChamferType::twoDistances;
+        double wedgeSize1 = size;
+        if (twoDistances) {
+            wedgeSize1 = size2;
+        }
+        else if (static_cast<Part::ChamferType>(chamferType) == Part::ChamferType::distanceAngle) {
+            wedgeSize1 = size * std::tan(Base::toRadians(size2));
+        }
+        // A chamfer only ever takes material off.  A candidate that adds it is
+        // the concave-side chamfer OCCT produces from the wrong face assignment
+        // - it silently grows the solid by a whole wedge (the user's 50 mm edge:
+        // Pocket + 1270.75) - so it is not a chamfer the user asked for.
+        const double expectedWedge = chamferWedgeVolume(TopShape, edges, size, wedgeSize1);
+        const double baseVolume = shapeVolume(TopShape.getShape());
+        auto removedBy = [&](const TopoShape& candidate) {
+            return baseVolume - shapeVolume(candidate.getShape());
+        };
+        auto acceptable = [&](const TopoShape& candidate) {
+            return usable(candidate) && removedBy(candidate) > Precision::Confusion();
+        };
+
         // 2. The same chamfer with the distances on the other adjacent face.
         //    OCCT measures the first distance on the reference face and pins it
         //    there, so a distance that does not fit that face makes OCCT fold the
@@ -486,9 +536,7 @@ App::DocumentObjectExecReturn* Chamfer::execute()
         //    TopoShape::makeChamfer(2.99, 17.0, {edge}) expresses), are tried in
         //    turn; the first usable result wins.
         bool otherFaceRetry = false;
-        if (!usable(shape)) {
-            const bool twoDistances
-                = static_cast<Part::ChamferType>(chamferType) == Part::ChamferType::twoDistances;
+        if (!acceptable(shape)) {
             std::vector<std::pair<bool, bool>> attempts;
             attempts.emplace_back(flipDirection, false);
             if (twoDistances) {
@@ -498,15 +546,21 @@ App::DocumentObjectExecReturn* Chamfer::execute()
             if (twoDistances) {
                 attempts.emplace_back(!flipDirection, true);
             }
-            // the first entry is what was asked for and has already been tried
+            // the first entry is what was asked for and has already been tried;
+            // among the rest, the one whose removed volume is closest to the
+            // analytic wedge is the chamfer the user asked for
+            double bestError = std::numeric_limits<double>::max();
+            TopoShape best;
             for (std::size_t i = 1; i < attempts.size(); ++i) {
                 try {
                     TopoShape other = buildChamfer(attempts[i].first, attempts[i].second);
-                    if (usable(other)) {
-                        shape = other;
-                        otherFaceRetry = true;
-                        failure.clear();
-                        break;
+                    if (!acceptable(other)) {
+                        continue;
+                    }
+                    const double error = std::abs(removedBy(other) - expectedWedge);
+                    if (error < bestError) {
+                        bestError = error;
+                        best = other;
                     }
                 }
                 catch (Standard_Failure& e) {
@@ -518,13 +572,18 @@ App::DocumentObjectExecReturn* Chamfer::execute()
                     return new App::DocumentObjectExecReturn(e.what());
                 }
             }
+            if (!best.isNull()) {
+                shape = best;
+                otherFaceRetry = true;
+                failure.clear();
+            }
         }
 
         // 3. Last resort: the equivalent wedge cut.  Only OCCT failures end up
         //    here (the guard above returns early), and it is exact when a
         //    distance fits neither adjacent face - see chamferEdgesByWedge().
         bool wedgeRetry = false;
-        if (!usable(shape)) {
+        if (!acceptable(shape)) {
             TopoShape wedged = chamferEdgesByWedge(
                 TopShape,
                 edges,
@@ -533,7 +592,7 @@ App::DocumentObjectExecReturn* Chamfer::execute()
                 size2,
                 flipDirection
             );
-            if (usable(wedged)) {
+            if (acceptable(wedged)) {
                 shape = wedged;
                 wedgeRetry = true;
             }
