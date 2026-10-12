@@ -19,7 +19,7 @@
 # is included from the cMake/FreeCAD_Helpers subdirectory, so a plain set()
 # here would be forgotten before SetupCoinPivy() runs.
 set(FREECAD_COIN_IR_ANNOTATION_REVISION "73892647017188122384b0abdc343f2cee7ae58c"
-    CACHE INTERNAL "Bundled Coin revision that introduced SoRenderCommand::isAnnotation")
+    CACHE INTERNAL "Bundled Coin revision that introduced SoRenderCommand::isAnnotation" FORCE)
 
 macro(FreeCADCheckCoinIRAnnotation _include_dirs _context)
     include(CheckCXXSourceCompiles)
