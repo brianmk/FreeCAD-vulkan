@@ -36,6 +36,7 @@
 #ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/actions/SoIRRenderAction.h>
 #include <Inventor/rendering/SoRenderIR.h>
+#include <Gui/Inventor/SoOverlayPromotion.h>
 #endif
 #include <Inventor/elements/SoViewportRegionElement.h>
 #include <Inventor/actions/SoWriteAction.h>
@@ -2168,22 +2169,8 @@ bool SoFCSelectionRoot::_renderPrivateIR(SoIRRenderAction* action)
     // recorded belongs to a selected/highlighted object.  Promote it to the
     // OVERLAY pass so the cached base geometry stays stable and the highlight
     // is drawn as a layer on top.
-    if ((selPushed || hlPushed) && list.getNumCommands() > fcmd) {
-        const int count = list.getNumCommands();
-        SbViewportRegion vp = SoViewportRegionElement::get(state);
-        const short vx = std::max(0, (int)vp.getViewportOriginPixels()[0]);
-        const short vy = std::max(0, (int)vp.getViewportOriginPixels()[1]);
-        const short vw = std::max(1, (int)vp.getViewportSizePixels()[0]);
-        const short vh = std::max(1, (int)vp.getViewportSizePixels()[1]);
-        for (int i = fcmd; i < count; ++i) {
-            SoRenderCommand& cmd = list.getCommand(i);
-            cmd.pass = SO_RENDERPASS_OVERLAY;
-            cmd.state.raster.scissorEnabled = TRUE;
-            cmd.state.raster.scissorX = vx;
-            cmd.state.raster.scissorY = vy;
-            cmd.state.raster.scissorWidth = vw;
-            cmd.state.raster.scissorHeight = vh;
-        }
+    if (selPushed || hlPushed) {
+        Gui::promoteCommandsToOverlay(list, fcmd, state);
     }
 
     return false;
@@ -2778,24 +2765,14 @@ void SoFCPathAnnotation::IRRender(SoIRRenderAction* action)
 
     state->push();
 
-    SbViewportRegion vp = SoViewportRegionElement::get(state);
-    const short vx = std::max(0, (int)vp.getViewportOriginPixels()[0]);
-    const short vy = std::max(0, (int)vp.getViewportOriginPixels()[1]);
-    const short vw = std::max(1, (int)vp.getViewportSizePixels()[0]);
-    const short vh = std::max(1, (int)vp.getViewportSizePixels()[1]);
+    // Read the viewport region before the traversal: the overlay backend skips
+    // an unscissored overlay, and the rect this node composites into must be
+    // the one the frame was recorded with, not one the subtree could change.
+    const SbViewportRegion vp = SoViewportRegionElement::get(state);
 
     inherited::IRRender(action);
 
-    const int count = list.getNumCommands();
-    for (int i = firstCommand; i < count; ++i) {
-        SoRenderCommand& cmd = list.getCommand(i);
-        cmd.pass = SO_RENDERPASS_OVERLAY;
-        cmd.state.raster.scissorEnabled = TRUE;
-        cmd.state.raster.scissorX = vx;
-        cmd.state.raster.scissorY = vy;
-        cmd.state.raster.scissorWidth = vw;
-        cmd.state.raster.scissorHeight = vh;
-    }
+    Gui::promoteCommandsToOverlay(list, firstCommand, vp);
     state->pop();
 }
 #endif

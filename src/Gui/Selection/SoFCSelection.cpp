@@ -31,8 +31,8 @@
 #ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/actions/SoIRRenderAction.h>
 #include <Inventor/rendering/SoRenderIR.h>
+#include <Gui/Inventor/SoOverlayPromotion.h>
 #endif
-#include <Inventor/elements/SoViewportRegionElement.h>
 #include <Inventor/details/SoFaceDetail.h>
 #include <Inventor/details/SoLineDetail.h>
 #include <Inventor/elements/SoLazyElement.h>
@@ -703,22 +703,7 @@ void SoFCSelection::IRRender(SoIRRenderAction* action)
         const int firstCommand = list.getNumCommands();
         inherited::IRRender(action);
         state->pop();
-        SoState* s = action->getState();
-        SbViewportRegion vp = SoViewportRegionElement::get(s);
-        const short vx = std::max(0, (int)vp.getViewportOriginPixels()[0]);
-        const short vy = std::max(0, (int)vp.getViewportOriginPixels()[1]);
-        const short vw = std::max(1, (int)vp.getViewportSizePixels()[0]);
-        const short vh = std::max(1, (int)vp.getViewportSizePixels()[1]);
-        const int count = list.getNumCommands();
-        for (int i = firstCommand; i < count; ++i) {
-            SoRenderCommand& cmd = list.getCommand(i);
-            cmd.pass = SO_RENDERPASS_OVERLAY;
-            cmd.state.raster.scissorEnabled = TRUE;
-            cmd.state.raster.scissorX = vx;
-            cmd.state.raster.scissorY = vy;
-            cmd.state.raster.scissorWidth = vw;
-            cmd.state.raster.scissorHeight = vh;
-        }
+        Gui::promoteCommandsToOverlay(list, firstCommand, action->getState());
     }
     else {
         inherited::IRRender(action);
