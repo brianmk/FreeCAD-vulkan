@@ -26,6 +26,8 @@
 
 #pragma once
 
+#include <gp_Trsf.hxx>
+#include <TopoDS_Shape.hxx>
 #include <gp_Pln.hxx>
 #include <gp_Dir.hxx>
 
@@ -90,6 +92,28 @@ private:
     ) override;
     static const App::PropertyAngle::Constraints floatAngle;
 
+    /** The neutral plane of the draft.
+     *
+     *  Either taken from the NeutralPlane property, or guessed from the face
+     *  that is really drafted.  After a split the drafted face is a sub-face of
+     *  the selected one, so a plane guessed from the whole face can miss it.
+     */
+    /** The neutral plane from the NeutralPlane property. */
+    gp_Pln getExplicitNeutralPlane(
+        App::DocumentObject* refDirection,
+        const gp_Dir& pullDirection,
+        const gp_Trsf& invBaseTrsf
+    ) const;
+
+    /** Neutral planes to try when NeutralPlane is not set: one per edge of the
+     *  drafted face, the edges created by a split first.  The OCC draft only
+     *  accepts some hinges, so the caller tries them in turn.
+     */
+    std::vector<gp_Pln> getNeutralPlaneCandidates(
+        const TopoDS_Shape& draftFace,
+        const std::vector<Part::TopoShape>& originalFaces
+    ) const;
+
     /** The solid feature the draft is applied to.
      *
      *  Normally this is BaseFeature.  When Base holds a 2D object (a sketch used
@@ -119,7 +143,9 @@ private:
      */
     std::vector<Part::TopoShape> getFacesUnderProfile(
         const Part::TopoShape& baseShape,
-        const Part::TopoShape& region
+        const Part::TopoShape& region,
+        const App::DocumentObject* profileObject,
+        const Part::Feature* baseObject
     ) const;
 
     /** Split the base faces with a profile region and return the resulting shape.

@@ -24,6 +24,7 @@
  ***************************************************************************/
 
 
+
 #include <BRepOffsetAPI_DraftAngle.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Splitter.hxx>
@@ -295,7 +296,8 @@ App::DocumentObjectExecReturn* Draft::execute()
         try {
             region = getProfileRegion(baseObject, profileObject, profileSubs);
             if (profileInBase) {
-                profileFaces = getFacesUnderProfile(baseShape, region);
+                profileFaces
+                    = getFacesUnderProfile(baseShape, region, profileObject, baseObject);
             }
         }
         catch (Base::Exception& e) {
@@ -360,149 +362,11 @@ App::DocumentObjectExecReturn* Draft::execute()
         pullDirection.Transform(invBaseTrsf);
     }
 
-    // Neutral plane
-    gp_Pln neutralPlane;
-    App::DocumentObject* refPlane = NeutralPlane.getValue();
-    if (!refPlane) {
-        // Try to guess a neutral plane from the first selected face
-        // Get edges of first selected face
-        TopoDS_Shape face;
-        if (profileInBase) {
-            // the faces are already in the frame used below, do not transform again
-            face = profileFaces.front().getShape();
-        }
-        else {
-            face = TopShape.getSubShape(SubVals[0].c_str());
-        }
-        TopTools_IndexedMapOfShape mapOfEdges;
-        TopExp::MapShapes(face, TopAbs_EDGE, mapOfEdges);
-        bool found = false;
-
-        for (int i = 1; i <= mapOfEdges.Extent(); i++) {
-            // Note: What happens if mapOfEdges(i) is the degenerated edge of a cone?
-            // But in that case the draft is not possible anyway!
-            BRepAdaptor_Curve c(TopoDS::Edge(mapOfEdges(i)));
-            gp_Pnt p1 = c.Value(c.FirstParameter());
-            gp_Pnt p2 = c.Value(c.LastParameter());
-
-            if (c.IsClosed()) {
-                // Edge is a circle or a circular arc (other types are not allowed for drafting)
-                if (c.GetType() == GeomAbs_Circle) {
-                    neutralPlane = gp_Pln(p1, c.Circle().Axis().Direction());
-                    found = true;
-                    break;
-                }
-            }
-            else {
-                // Edge is linear
-                // Find midpoint of edge and create auxiliary plane through midpoint normal to edge
-                gp_Pnt pm = c.Value((c.FirstParameter() + c.LastParameter()) / 2.0);
-                Handle(Geom_Plane) aux
-                    = new Geom_Plane(pm, gp_Dir(p2.X() - p1.X(), p2.Y() - p1.Y(), p2.Z() - p1.Z()));
-                // Intersect plane with face. Is there no easier way?
-                BRepAdaptor_Surface adapt(TopoDS::Face(face), Standard_False);
-                Handle(Geom_Surface) sf = adapt.Surface().Surface();
-                GeomAPI_IntSS intersector(aux, sf, Precision::Confusion());
-                if (!intersector.IsDone() || intersector.NbLines() < 1) {
-                    continue;
-                }
-                const Handle(Geom_Curve) & icurve = intersector.Line(1);
-                if (!icurve->IsKind(STANDARD_TYPE(Geom_Line))) {
-                    continue;
-                }
-                Handle(Geom_Line) line = Handle(Geom_Line)::DownCast(icurve);
-                neutralPlane = gp_Pln(pm, line->Lin().Direction());
-                found = true;
-                break;
-            }
-        }
-
-        if (!found) {
-            throw Base::RuntimeError("No neutral plane specified and none can be guessed");
-        }
-    }
-    else {
-        if (refPlane->isDerivedFrom<PartDesign::Plane>()) {
-            PartDesign::Plane* plane = static_cast<PartDesign::Plane*>(refPlane);
-            Base::Vector3d b = plane->getBasePoint();
-            Base::Vector3d n = plane->getNormal();
-            neutralPlane = gp_Pln(gp_Pnt(b.x, b.y, b.z), gp_Dir(n.x, n.y, n.z));
-        }
-        else if (
-            refPlane->isDerivedFrom<App::Plane>() || refPlane->isDerivedFrom<Part::Part2DObject>()
-        ) {
-            neutralPlane = Feature::makePlnFromPlane(refPlane);
-        }
-        else if (refPlane->isDerivedFrom<Part::Feature>()) {
-            std::vector<std::string> subStrings = NeutralPlane.getSubValues();
-            if (subStrings.empty() || subStrings[0].empty()) {
-                throw Base::ValueError("No neutral plane reference specified");
-            }
-
-            Part::Feature* refFeature = static_cast<Part::Feature*>(refPlane);
-            Part::TopoShape refShape = refFeature->Shape.getShape();
-            TopoDS_Shape ref = refShape.getSubShape(subStrings[0].c_str());
-
-            if (ref.ShapeType() == TopAbs_FACE) {
-                TopoDS_Face refFace = TopoDS::Face(ref);
-                if (refFace.IsNull()) {
-                    throw Base::ValueError("Failed to extract neutral plane reference face");
-                }
-                BRepAdaptor_Surface adapt(refFace);
-                if (adapt.GetType() != GeomAbs_Plane) {
-                    throw Base::TypeError("Neutral plane reference face must be planar");
-                }
-
-                neutralPlane = adapt.Plane();
-            }
-            else if (ref.ShapeType() == TopAbs_EDGE) {
-                if (refDirection) {
-                    // Create neutral plane through edge normal to pull direction
-                    TopoDS_Edge refEdge = TopoDS::Edge(ref);
-                    if (refEdge.IsNull()) {
-                        throw Base::ValueError("Failed to extract neutral plane reference edge");
-                    }
-                    BRepAdaptor_Curve c(refEdge);
-                    if (c.GetType() != GeomAbs_Line) {
-                        throw Base::TypeError("Neutral plane reference edge must be linear");
-                    }
-                    double a = c.Line().Angle(gp_Lin(c.Value(c.FirstParameter()), pullDirection));
-                    if (std::fabs(a - std::numbers::pi / 2) > Precision::Confusion()) {
-                        throw Base::ValueError(
-                            "Neutral plane reference edge must be normal to pull direction"
-                        );
-                    }
-                    neutralPlane = gp_Pln(c.Value(c.FirstParameter()), pullDirection);
-                }
-                else {
-                    throw Base::TypeError(
-                        "Neutral plane reference can only be an edge if pull direction is defined"
-                    );
-                }
-            }
-            else {
-                throw Base::TypeError("Neutral plane reference must be a face");
-            }
-        }
-        else {
-            throw Base::TypeError("Neutral plane reference must be face of a feature or a datum plane");
-        }
-
-        neutralPlane.Transform(invBaseTrsf);
-    }
-
-    if (!refDirection) {
-        // Choose pull direction normal to neutral plane
-        pullDirection = neutralPlane.Axis().Direction();
-    }
-
     // Reversed pull direction
     bool reversed = Reversed.getValue();
     if (reversed) {
         angle *= -1.0;
     }
-
-    computeProps = {pullDirection, neutralPlane};
 
     this->positionByBaseFeature();
     if (profileInBase && baseObject) {
@@ -523,20 +387,51 @@ App::DocumentObjectExecReturn* Draft::execute()
             splitShape = splitBaseFaces(baseShape, region, faces, baseObject, draftFaces);
         }
 
+        // Neutral plane.  It comes from the NeutralPlane property, otherwise it is
+        // guessed from the face that is drafted (after a split that can be a
+        // sub-face).  Only some hinges are accepted by the OCC draft, so the
+        // candidates are tried in turn.
+        std::vector<gp_Pln> neutralPlanes;
+        if (NeutralPlane.getValue()) {
+            neutralPlanes.push_back(getExplicitNeutralPlane(refDirection, pullDirection, invBaseTrsf));
+        }
+        else {
+            neutralPlanes = getNeutralPlaneCandidates(draftFaces.front().getShape(), faces);
+        }
+
         TopoShape shape({}, getDocument()->getStringHasher());
-        shape.makeElementDraft(
-            splitShape,
-            draftFaces,
-            pullDirection,
-            angle,
-            neutralPlane,
-            reversed
-        );
+        gp_Pln neutralPlane;
+        std::string error;
+        for (const auto& plane : neutralPlanes) {
+            const gp_Dir pull = refDirection ? pullDirection : plane.Axis().Direction();
+            TopoShape attempt({}, getDocument()->getStringHasher());
+            try {
+                attempt.makeElementDraft(splitShape, draftFaces, pull, angle, plane, reversed);
+            }
+            catch (Standard_Failure& e) {
+                error = e.GetMessageString();
+                if (error.empty()) {
+                    error = e.DynamicType()->Name();
+                }
+                continue;
+            }
+            if (attempt.isNull()) {
+                continue;
+            }
+
+            shape = attempt;
+            neutralPlane = plane;
+            pullDirection = pull;
+            break;
+        }
+
+        computeProps = {pullDirection, neutralPlane};
 
         if (shape.isNull()) {
-            return new App::DocumentObjectExecReturn(
-                QT_TRANSLATE_NOOP("Exception", "Resulting shape is null")
-            );
+            if (error.empty()) {
+                error = "Failed to draft the selected faces";
+            }
+            return new App::DocumentObjectExecReturn(error);
         }
 
         if (!isSingleSolidRuleSatisfied(shape.getShape())) {
@@ -617,6 +512,32 @@ Part::TopoShape Draft::getProfileRegion(
         throw Base::ValueError("Profile shape is empty");
     }
 
+    // A sketch exposes the regions it encloses as internal faces ("InternalFaceN");
+    // they are the regions the user sees and can pick.  For wires that
+    // Part::FaceMakerBullseye reads differently they are also the only correct
+    // region, so prefer them over building faces from the wires.
+    if (!sub) {
+        std::vector<Part::TopoShape> internalFaces;
+        for (int index = 1; index <= 64; ++index) {
+            std::string name = "InternalFace" + std::to_string(index);
+            Part::TopoShape internal;
+            try {
+                internal = Part::Feature::getTopoShape(profileObject, options, name.c_str());
+            }
+            catch (Base::Exception&) {
+                break;
+            }
+            if (internal.isNull() || !internal.hasSubShape(TopAbs_FACE)) {
+                break;
+            }
+            internalFaces.push_back(internal);
+        }
+        if (!internalFaces.empty()) {
+            profileShape = Part::TopoShape({}, getDocument()->getStringHasher())
+                               .makeElementCompound(internalFaces);
+        }
+    }
+
     // Into the local frame of the base object
     profileShape.transformShape(
         App::GeoFeature::getGlobalPlacement(baseObject).inverse().toMatrix(),
@@ -642,12 +563,64 @@ Part::TopoShape Draft::getProfileRegion(
 
 std::vector<Part::TopoShape> Draft::getFacesUnderProfile(
     const Part::TopoShape& baseShape,
-    const Part::TopoShape& region
+    const Part::TopoShape& region,
+    const App::DocumentObject* profileObject,
+    const Part::Feature* baseObject
 ) const
 {
     std::vector<Part::TopoShape> result;
     if (region.isNull()) {
         return result;
+    }
+
+    // A sketch is normally attached to the face it is drawn on.  Use that face:
+    // a purely geometric search can pick a different coplanar face that only
+    // partly overlaps the region.
+    if (profileObject && profileObject->isDerivedFrom<Part::Part2DObject>()) {
+        const auto* part2d = static_cast<const Part::Part2DObject*>(profileObject);
+        for (const auto& [object, subs] : part2d->AttachmentSupport.getSubListValues()) {
+            if (object != baseObject || subs.empty() || subs.front().empty()) {
+                continue;
+            }
+            // the sub-shape of baseShape itself, so the OCC draft accepts it
+            Part::TopoShape face = baseShape.getSubTopoShape(subs.front().c_str(), true);
+            if (face.isNull() || face.shapeType() != TopAbs_FACE) {
+                // the stored name may only resolve through the element map
+                face = Part::Feature::getTopoShape(
+                    object,
+                    Part::ShapeOption::NeedSubElement | Part::ShapeOption::ResolveLink,
+                    subs.front().c_str()
+                );
+            }
+            if (face.isNull() || face.countSubShapes(TopAbs_FACE) != 1) {
+                continue;
+            }
+
+            // only use it when the region really lies on that face
+            auto regionFaces = region.getSubTopoShapes(TopAbs_FACE);
+            gp_Pln facePlane;
+            gp_Pln regionPlane;
+            const bool havePlanes = !regionFaces.empty() && getPlane(face.getShape(), facePlane)
+                && getPlane(regionFaces.front().getShape(), regionPlane);
+            double area = -1.0;
+            if (havePlanes) {
+                const double dot = facePlane.Axis().Direction().Dot(regionPlane.Axis().Direction());
+                if (std::abs(dot) > 1.0 - 1e-9) {
+                    const gp_Dir normal = facePlane.Axis().Direction();
+                    const double faceOffset = facePlane.Location().XYZ().Dot(normal.XYZ());
+                    const double regionOffset = regionPlane.Location().XYZ().Dot(normal.XYZ());
+                    gp_Trsf translation;
+                    translation.SetTranslation(gp_Vec(normal.XYZ() * (faceOffset - regionOffset)));
+                    TopoDS_Shape moved
+                        = BRepBuilderAPI_Transform(region.getShape(), translation, true).Shape();
+                    area = getIntersectionArea(face.getShape(), moved);
+                }
+            }
+            if (area > Precision::Confusion()) {
+                result.push_back(face);
+                return result;
+            }
+        }
     }
 
     gp_Pln regionPlane;
@@ -731,7 +704,9 @@ Part::TopoShape Draft::splitBaseFaces(
     // moved regions as splitting tools.
     TopTools_ListOfShape tools;
     std::vector<std::vector<TopoDS_Shape>> regionsPerFace;
+    std::vector<bool> wholeFace;
     regionsPerFace.reserve(faces.size());
+    wholeFace.reserve(faces.size());
 
     for (const auto& face : faces) {
         gp_Pln facePlane;
@@ -741,8 +716,10 @@ Part::TopoShape Draft::splitBaseFaces(
 
         const gp_Dir faceNormal = facePlane.Axis().Direction();
         const double faceOffset = facePlane.Location().XYZ().Dot(faceNormal.XYZ());
+        const double faceArea = getArea(face.getShape());
 
         std::vector<TopoDS_Shape> faceRegions;
+        double covered = 0.0;
         for (const auto& regionFace : regionFaces) {
             gp_Pln regionPlane;
             if (!getPlane(regionFace.getShape(), regionPlane)) {
@@ -763,13 +740,38 @@ Part::TopoShape Draft::splitBaseFaces(
             TopoDS_Shape moved
                 = BRepBuilderAPI_Transform(regionFace.getShape(), translation, true).Shape();
             faceRegions.push_back(moved);
+            covered += getIntersectionArea(face.getShape(), moved);
+        }
+
+        // If the region covers the face completely there is nothing to split:
+        // keep the face as it is.  Drafting several coplanar pieces instead makes
+        // the OCC draft fail.
+        if (!faceRegions.empty() && covered >= faceArea - 1e-6 * faceArea) {
+            wholeFace.push_back(true);
+            regionsPerFace.push_back(std::move(faceRegions));
+            continue;
+        }
+
+        for (const auto& moved : faceRegions) {
             tools.Append(moved);
         }
+        wholeFace.push_back(false);
         regionsPerFace.push_back(std::move(faceRegions));
     }
 
     if (tools.IsEmpty()) {
-        throw Base::ValueError("Profile is not parallel to any of the selected faces");
+        // every face is covered completely, or the region is not parallel
+        bool anyParallel = false;
+        for (const auto& faceRegions : regionsPerFace) {
+            anyParallel = anyParallel || !faceRegions.empty();
+        }
+        if (!anyParallel) {
+            throw Base::ValueError("Profile is not parallel to any of the selected faces");
+        }
+
+        // nothing to split: the region covers the selected faces completely
+        draftFaces = faces;
+        return baseShape;
     }
 
     // Split the base shape with the profile regions
@@ -790,6 +792,22 @@ Part::TopoShape Draft::splitBaseFaces(
     // Keep only the sub-faces of the split that lie inside the profile's region
     std::vector<Part::TopoShape> insideFaces;
     for (size_t i = 0; i < faces.size(); ++i) {
+        if (wholeFace[i]) {
+            // the region covers the whole face, the split did not change it
+            bool kept = false;
+            for (TopTools_ListIteratorOfListOfShape it(splitter.Modified(faces[i].getShape()));
+                 it.More();
+                 it.Next()) {
+                if (it.Value().ShapeType() == TopAbs_FACE) {
+                    insideFaces.emplace_back(it.Value());
+                    kept = true;
+                }
+            }
+            if (!kept) {
+                insideFaces.push_back(faces[i]);
+            }
+            continue;
+        }
         for (TopTools_ListIteratorOfListOfShape it(splitter.Modified(faces[i].getShape())); it.More();
              it.Next()) {
             if (it.Value().ShapeType() != TopAbs_FACE) {
@@ -808,4 +826,167 @@ Part::TopoShape Draft::splitBaseFaces(
     draftFaces = std::move(insideFaces);
 
     return result;
+}
+
+/** The neutral plane of the draft.
+ *
+ *  It is either taken from the NeutralPlane property, or guessed from the face
+ *  that is actually drafted, which after a split is a sub-face of the selected
+ *  face and not necessarily crossed by a plane guessed from the whole face.
+ */
+gp_Pln Draft::getExplicitNeutralPlane(
+    App::DocumentObject* refDirection,
+    const gp_Dir& pullDirection,
+    const gp_Trsf& invBaseTrsf
+) const
+{
+    gp_Pln neutralPlane;
+    App::DocumentObject* refPlane = NeutralPlane.getValue();
+    if (!refPlane) {
+        throw Base::RuntimeError("No neutral plane specified and none can be guessed");
+    }
+
+        if (refPlane->isDerivedFrom<PartDesign::Plane>()) {
+            PartDesign::Plane* plane = static_cast<PartDesign::Plane*>(refPlane);
+            Base::Vector3d b = plane->getBasePoint();
+            Base::Vector3d n = plane->getNormal();
+            neutralPlane = gp_Pln(gp_Pnt(b.x, b.y, b.z), gp_Dir(n.x, n.y, n.z));
+        }
+        else if (
+            refPlane->isDerivedFrom<App::Plane>() || refPlane->isDerivedFrom<Part::Part2DObject>()
+        ) {
+            neutralPlane = Feature::makePlnFromPlane(refPlane);
+        }
+        else if (refPlane->isDerivedFrom<Part::Feature>()) {
+            std::vector<std::string> subStrings = NeutralPlane.getSubValues();
+            if (subStrings.empty() || subStrings[0].empty()) {
+                throw Base::ValueError("No neutral plane reference specified");
+            }
+
+            Part::Feature* refFeature = static_cast<Part::Feature*>(refPlane);
+            Part::TopoShape refShape = refFeature->Shape.getShape();
+            TopoDS_Shape ref = refShape.getSubShape(subStrings[0].c_str());
+
+            if (ref.ShapeType() == TopAbs_FACE) {
+                TopoDS_Face refFace = TopoDS::Face(ref);
+                if (refFace.IsNull()) {
+                    throw Base::ValueError("Failed to extract neutral plane reference face");
+                }
+                BRepAdaptor_Surface adapt(refFace);
+                if (adapt.GetType() != GeomAbs_Plane) {
+                    throw Base::TypeError("Neutral plane reference face must be planar");
+                }
+
+                neutralPlane = adapt.Plane();
+            }
+            else if (ref.ShapeType() == TopAbs_EDGE) {
+                if (refDirection) {
+                    // Create neutral plane through edge normal to pull direction
+                    TopoDS_Edge refEdge = TopoDS::Edge(ref);
+                    if (refEdge.IsNull()) {
+                        throw Base::ValueError("Failed to extract neutral plane reference edge");
+                    }
+                    BRepAdaptor_Curve c(refEdge);
+                    if (c.GetType() != GeomAbs_Line) {
+                        throw Base::TypeError("Neutral plane reference edge must be linear");
+                    }
+                    double a = c.Line().Angle(gp_Lin(c.Value(c.FirstParameter()), pullDirection));
+                    if (std::fabs(a - std::numbers::pi / 2) > Precision::Confusion()) {
+                        throw Base::ValueError(
+                            "Neutral plane reference edge must be normal to pull direction"
+                        );
+                    }
+                    neutralPlane = gp_Pln(c.Value(c.FirstParameter()), pullDirection);
+                }
+                else {
+                    throw Base::TypeError(
+                        "Neutral plane reference can only be an edge if pull direction is defined"
+                    );
+                }
+            }
+            else {
+                throw Base::TypeError("Neutral plane reference must be a face");
+            }
+        }
+        else {
+            throw Base::TypeError("Neutral plane reference must be face of a feature or a datum plane");
+        }
+
+        neutralPlane.Transform(invBaseTrsf);
+    return neutralPlane;
+}
+
+std::vector<gp_Pln> Draft::getNeutralPlaneCandidates(
+    const TopoDS_Shape& draftFace,
+    const std::vector<TopoShape>& originalFaces
+) const
+{
+    std::vector<gp_Pln> candidates;
+
+        // Try to guess a neutral plane from the face that is drafted
+        TopoDS_Shape face = draftFace;
+        TopTools_IndexedMapOfShape mapOfEdges;
+        TopExp::MapShapes(face, TopAbs_EDGE, mapOfEdges);
+
+        // Edges created by the split (not part of the face(s) already there) are
+        // the best hinge: the other part of the split face then stays in place.
+        TopTools_IndexedMapOfShape originalEdges;
+        for (const auto& original : originalFaces) {
+            TopTools_IndexedMapOfShape map;
+            TopExp::MapShapes(original.getShape(), TopAbs_EDGE, map);
+            for (int i = 1; i <= map.Extent(); ++i) {
+                originalEdges.Add(map(i));
+            }
+        }
+
+        std::vector<TopoDS_Edge> edges;
+        for (int i = 1; i <= mapOfEdges.Extent(); ++i) {
+            if (originalEdges.FindIndex(mapOfEdges(i)) <= 0) {
+                edges.push_back(TopoDS::Edge(mapOfEdges(i)));
+            }
+        }
+        for (int i = 1; i <= mapOfEdges.Extent(); ++i) {
+            edges.push_back(TopoDS::Edge(mapOfEdges(i)));
+        }
+
+        for (const auto& edge : edges) {
+            if (candidates.size() >= 12) {
+                break;
+            }
+            // Note: What happens if the edge is the degenerated edge of a cone?
+            // But in that case the draft is not possible anyway!
+            BRepAdaptor_Curve c(edge);
+            gp_Pnt p1 = c.Value(c.FirstParameter());
+            gp_Pnt p2 = c.Value(c.LastParameter());
+
+            if (c.IsClosed()) {
+                // Edge is a circle or a circular arc (other types are not allowed for drafting)
+                if (c.GetType() == GeomAbs_Circle) {
+                    candidates.push_back(gp_Pln(p1, c.Circle().Axis().Direction()));
+                    continue;
+                }
+            }
+            else {
+                // Edge is linear
+                // Find midpoint of edge and create auxiliary plane through midpoint normal to edge
+                gp_Pnt pm = c.Value((c.FirstParameter() + c.LastParameter()) / 2.0);
+                Handle(Geom_Plane) aux
+                    = new Geom_Plane(pm, gp_Dir(p2.X() - p1.X(), p2.Y() - p1.Y(), p2.Z() - p1.Z()));
+                // Intersect plane with face. Is there no easier way?
+                BRepAdaptor_Surface adapt(TopoDS::Face(face), Standard_False);
+                Handle(Geom_Surface) sf = adapt.Surface().Surface();
+                GeomAPI_IntSS intersector(aux, sf, Precision::Confusion());
+                if (!intersector.IsDone() || intersector.NbLines() < 1) {
+                    continue;
+                }
+                const Handle(Geom_Curve) & icurve = intersector.Line(1);
+                if (!icurve->IsKind(STANDARD_TYPE(Geom_Line))) {
+                    continue;
+                }
+                Handle(Geom_Line) line = Handle(Geom_Line)::DownCast(icurve);
+                candidates.push_back(gp_Pln(pm, line->Lin().Direction()));
+            }
+        }
+
+    return candidates;
 }
