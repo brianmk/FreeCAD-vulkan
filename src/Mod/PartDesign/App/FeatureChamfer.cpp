@@ -646,13 +646,9 @@ Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
         if (!edgeFaces.Contains(edge) || edgeFaces.FindFromKey(edge).Extent() != 2) {
             return Part::TopoShape(0);
         }
-        // Pick the triangle by the side of the edge: a convex edge is chamfered
-        // by subtracting the triangle behind both faces, a concave one by fusing
-        // the triangle in front of both (the valley wedge).  The distances keep
-        // the order the faces are given in (ManualChamfer reference) and the
-        // first candidate that is valid, moves the volume the right way and
-        // stays inside the face planes wins; the reflected triangle is never a
-        // candidate.
+        // Pick the triangle by the side of the edge (see the centroid test below):
+        // the distances keep the order the faces are given in (ManualChamfer
+        // reference); the reflected triangle is never a candidate.
         //
         // BRepAlgoAPI is called directly: TopoShape::fuse/makeElementFuse run the
         // result through makeShell/element handling and returned only the tool
@@ -667,13 +663,41 @@ Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
             if (!wedgeLegs(edge, face0, face1, size0, size1, legs)) {
                 return Part::TopoShape(0);
             }
-            const int legSign = concave ? 1 : -1;
             for (int atEnd : {0, 1}) {
                 const gp_Pnt baseVertex = atEnd == 0
                     ? legs.start
                     : legs.start.Translated(gp_Vec(legs.direction) * legs.length);
                 const gp_Dir direction = atEnd == 0 ? legs.direction
                                                     : gp_Dir(-gp_Vec(legs.direction));
+                // The side of the edge the wedge lies on is not a fixed sign: the
+                // in-plane leg directions point at the face vertex farthest from the
+                // edge, and a face that extends on both sides of the edge can put
+                // that vertex on either side.  Measured on Pocket.Edge103 (27 mm
+                // convex edge with a 1 mm ledge beside a 99 mm2 face): the reflected
+                // triangle removed 0.2045 mm3 where the analytic wedge is 13.5 - and
+                // a candidate that cuts air is not a chamfer.  Classify the triangle's
+                // centroid instead: a convex chamfer takes material off, so its
+                // triangle is inside the solid, a concave one fills the valley, so it
+                // is outside.  Neither side right -> no candidate for this end.
+                int legSign = 0;
+                for (const int sign : {1, -1}) {
+                    const gp_Pnt a = baseVertex;
+                    const gp_Pnt b
+                        = baseVertex.Translated(gp_Vec(legs.leg0) * (legs.size0 * sign));
+                    const gp_Pnt c
+                        = baseVertex.Translated(gp_Vec(legs.leg1) * (legs.size1 * sign));
+                    const gp_Pnt centroid((a.XYZ() + b.XYZ() + c.XYZ()) / 3.0);
+                    BRepClass3d_SolidClassifier classifier(base.getShape());
+                    classifier.Perform(centroid, Precision::Confusion());
+                    const bool inside = classifier.State() == TopAbs_IN;
+                    if (inside == !concave) {
+                        legSign = sign;
+                        break;
+                    }
+                }
+                if (legSign == 0) {
+                    continue;
+                }
                 // The triangle has to sit ON the two faces: its far vertices are
                 // where the legs end on them, so each has to be on its own face's
                 // surface and inside that face's wire.  The *whole* leg is checked,
