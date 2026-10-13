@@ -438,36 +438,31 @@ class TestPocket(unittest.TestCase):
         doc.recompute()
         return pocket2
 
-    def testPocketGrazingProfileIsNudgedToManifold(self):
-        # The profile's corner lies exactly on an existing edge, which used to make
-        # the cut leave an edge shared by three faces (BRepCheck does not flag it).
-        # The feature retries the boolean once with the profile nudged inside the
-        # sketch plane, so the result is manifold again.  AddSubShape holds the
-        # tool the retry started from, so cutting it from the base reproduces the
-        # pre-nudge result: it must still show the defect, and the nudged result
-        # must not have moved any measurable amount.
+    def testPocketGrazingProfileKeepsAnalyticFaces(self):
+        # The profile's corner lies exactly on an existing edge, which makes the cut
+        # leave an edge shared by three faces (BRepCheck does not flag it).  The
+        # feature used to retry the boolean with the profile nudged inside the
+        # sketch plane, and that nudge went through BRepBuilderAPI_GTransform, which
+        # makes OCCT approximate *every* surface and curve of the tool as a
+        # B-spline: Part.makeBox(20,10,5).transformGeometry(in-plane scale 1.0001)
+        # turns all 6 faces into BSplineSurface and all of its edges into
+        # BSplineCurve.  Stored B-splines then break chamfers that used to work, so
+        # the nudge is disabled and the analytic faces have to survive.
         pocket = self._buildGrazingPocket(graze=True)
         self.assertTrue(pocket.Shape.isValid())
         self.assertIsNone(pocket.Shape.check(True))
-        self.assertEqual(pocket.Shape.countNonManifoldEdges(), 0)
 
-        base = self.Doc.getObject("Pocket1").Shape
-        preNudge = base.cut(pocket.AddSubShape)
-        self.assertEqual(preNudge.countNonManifoldEdges(), 1)
-
-        # The nudge is grow-only (the profile is scaled inside its plane), so the
-        # tool removes a hair more material: perimeter x depth x nudge ~ 2.4e-3
-        # mm3 here, 8e-8 of the part.  What it must never do is leave a ledge -
-        # a translation used to, as faces below 1e-3 mm2.
-        # The nudge must not visibly change the part, so the bound is a fraction of
-        # its volume rather than an absolute number: the retry escalates, and
-        # clearing a sliver of length L needs a nudge of about L / 2.6 (measured on
-        # Pocket002's 2.580e-05 mm slivers - 1e-5 leaves them at 2.580e-05, 1e-4
-        # grows them to 2.580e-04, 1e-3 removes them), so the cost scales with the
-        # nudge instead of staying below a fixed 5e-3 mm3.
-        self.assertLessEqual(abs(pocket.Shape.Volume - preNudge.Volume), 1e-5 * preNudge.Volume)
+        # failing-first assertion: with the nudge on, 12 faces of this pocket were
+        # B-spline-stored exact planes
+        stored = [f for f in pocket.Shape.Faces if type(f.Surface).__name__ == "BSplineSurface"]
+        self.assertEqual(
+            stored, [], "the profile nudge converted %d faces to B-splines" % len(stored)
+        )
+        # nor may the nudge's tiny corner faces be left behind
         self.assertEqual([f for f in pocket.Shape.Faces if f.Area < 1e-3], [])
 
+        # the grazing case keeps its non-manifold edge and reports it
+        self.assertEqual(pocket.Shape.countNonManifoldEdges(), 1)
     def testPocketInsetProfileStaysManifold(self):
         # A profile that does not lie on existing geometry must be left alone: no
         # retry, no nudge, and exactly the volume of the unmodified boolean.
@@ -498,17 +493,16 @@ class TestPocket(unittest.TestCase):
                 [sys.executable, script], capture_output=True, text=True, timeout=300, env=env
             )
         output = proc.stdout + proc.stderr
-        # both cases end manifold: the grazing one because the profile was nudged,
-        # the inset one because it never needed it
+        # the inset case never needed a nudge and stays manifold ...
         self.assertIn("CLEAN_NONMANIFOLD=0", output, output)
-        self.assertIn("NONMANIFOLD=0", output, output)
-        # the nudge warning fired for the grazing profile only
-        warning = "the profile lay exactly on existing geometry"
+        # ... while the grazing one keeps its non-manifold edge now that the nudge
+        # (and the B-spline conversion it caused) is disabled
+        self.assertIn("NONMANIFOLD=1", output, output)
+        warning = "the result has"
         self.assertEqual(output.count(warning), 1, output)
-        self.assertIn("the cut was retried with the profile nudged by", output, output)
-        self.assertIn("This is a sub-micron change", output, output)
-        # the old "left it non-manifold" warning must not appear
-        self.assertNotIn("the result has", output, output)
+        # the nudge warning must not appear any more
+        self.assertNotIn("the profile lay exactly on existing geometry", output, output)
+        self.assertNotIn("the cut was retried with the profile nudged by", output, output)
     def tearDown(self):
         # closing doc
         FreeCAD.closeDocument("PartDesignTestPocket")
