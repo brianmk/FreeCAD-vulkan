@@ -373,10 +373,48 @@ class TestChamfer(unittest.TestCase):
         wedgeEdge = base.Edges[edge - 1]
         origin = wedgeEdge.Vertexes[0].Point
         added = feature.Shape.cut(base)
-        for face in base.ancestorsOfType(wedgeEdge, Part.Face):
+        faces = base.ancestorsOfType(wedgeEdge, Part.Face)
+        for face in faces:
             normal = face.normalAt(0, 0)  # outward for a solid
             self.assertGreaterEqual(
                 min((vertex.Point - origin).dot(normal) for vertex in added.Vertexes), -1e-6
+            )
+
+        # ... but "in front of both planes" is not enough: a wedge standing in the
+        # air satisfies it too.  A chamfer's changed region must lie ON the faces it
+        # joins - it cannot leave the base shape's bounding box, and it has to reach
+        # each adjacent face away from the shared edge (at the leg endpoint, where
+        # the wedge lies along that face).  The 17 mm leg that used to go up the
+        # 2 mm wall reaches 15 mm above the part (z = 25 on a 0..10 pad) and fails
+        # both checks; the side-correct wedge (1 mm up the wall, 17 mm across the
+        # floor) passes them.
+        self.assertTrue(added.Vertexes)
+        for vertex in added.Vertexes:
+            point = vertex.Point
+            for got, limit in (
+                (point.x, base.BoundBox.XMax),
+                (point.y, base.BoundBox.YMax),
+                (point.z, base.BoundBox.ZMax),
+            ):
+                self.assertLessEqual(got, limit + 1e-6)
+            for got, limit in (
+                (point.x, base.BoundBox.XMin),
+                (point.y, base.BoundBox.YMin),
+                (point.z, base.BoundBox.ZMin),
+            ):
+                self.assertGreaterEqual(got, limit - 1e-6)
+
+        for face in faces:
+            onFace = [
+                vertex
+                for vertex in added.Vertexes
+                if Part.Vertex(vertex.Point).distToShape(face)[0] <= 1e-6
+                and face.isInside(vertex.Point, 1e-6, True)
+                and Part.Vertex(vertex.Point).distToShape(wedgeEdge)[0] > 1e-6
+            ]
+            self.assertTrue(
+                onFace,
+                "the wedge does not reach this adjacent face along its surface",
             )
 
         # 2.5 does not fit the 2 mm face: refuse, and drop the shape built above

@@ -30,6 +30,8 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
+#include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <GeomAPI_ProjectPointOnSurf.hxx>
@@ -441,6 +443,58 @@ bool changedRegionFollowsTheFaces(const Part::TopoShape& changed,
     return true;
 }
 
+//! How far a wedge's leg endpoint may sit from the face it is supposed to land
+//! on.  A boolean lands its vertices within ~1e-7 of each other, so 1e-6 accepts
+//! a real endpoint and rejects one that has drifted off the face.
+constexpr double wedgeOnFaceTolerance = 1e-6;
+
+//! True when \a point lies on \a face within \a tolerance: on its surface *and*
+//! inside its outer wire.  The distance to the bounded face is used rather than a
+//! surface projection plus a wire test, because a boolean can store a planar face
+//! as a B-spline one, and it is 0 exactly when the point is on the face.
+bool pointOnFace(const TopoDS_Face& face, const gp_Pnt& point, double tolerance)
+{
+    BRepBuilderAPI_MakeVertex makeVertex(point);
+    BRepExtrema_DistShapeShape distance(makeVertex.Vertex(), face);
+    return distance.IsDone() && distance.Value() <= tolerance;
+}
+
+//! The wedge has to lie ON the faces it fills: the region it changed has to
+//! reach each of them along its surface, not only at the shared edge.  A vertex
+//! on one face that is not on the other is such a reach, and the leg ends are
+//! exactly that.  A triangle built from a direction that does not follow the
+//! face satisfies the plane-offset rule and still stands in the air ("the wedge
+//! is going up in the air, not along the flat surface"): that rule only asks a
+//! point to be outside the material.
+bool changedRegionLiesOnTheFaces(const Part::TopoShape& changed,
+                                 const TopoDS_Face& face0,
+                                 const TopoDS_Face& face1,
+                                 double tolerance)
+{
+    if (changed.isNull()) {
+        return true;  // cannot tell: do not block an otherwise fine wedge
+    }
+    bool reached0 = false;
+    bool reached1 = false;
+    for (TopExp_Explorer it(changed.getShape(), TopAbs_VERTEX); it.More(); it.Next()) {
+        const gp_Pnt point = BRep_Tool::Pnt(TopoDS::Vertex(it.Current()));
+        const bool on0 = pointOnFace(face0, point, tolerance);
+        const bool on1 = pointOnFace(face1, point, tolerance);
+        // A vertex on both faces is on the shared edge, not the wedge reaching
+        // along a face; the leg ends are on one face only.
+        if (on0 && !on1) {
+            reached0 = true;
+        }
+        if (on1 && !on0) {
+            reached1 = true;
+        }
+        if (reached0 && reached1) {
+            return true;
+        }
+    }
+    return false;
+}
+
 //! The wedge volume a chamfer of these sizes removes from each straight edge:
 //! 0.5 * size0 * size1 * length, summed over the edges, and zero as soon as one
 //! of them is not a straight edge.  It only sizes the no-op floor the result has
@@ -532,7 +586,9 @@ TopoDS_Shape wedgeTool(const WedgeLegs& legs, int legSign, const gp_Pnt& base, c
 }
 
 //! Chamfers each edge by subtracting a wedge prism, and returns the cut shape
-//! (or a null shape when that is not possible).
+//! (or a null shape when that is not possible).  \a offTheFaces is set when a
+//! candidate was refused because it would have stood off the adjacent faces,
+//! so the caller can say why instead of only that it failed.
 Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
                                     const std::vector<Part::TopoShape>& edges,
                                     Part::ChamferType type,
@@ -541,7 +597,8 @@ Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
                                     bool flip,
                                     double convexity,
                                     double noopFloor,
-                                    const EdgePlanes& planes)
+                                    const EdgePlanes& planes,
+                                    bool* offTheFaces)
 {
     // Both assignments of the two distances are tried: OCC measures the first
     // one on the face the caller picked, and for this fallback it does not
@@ -601,18 +658,13 @@ Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
         // result through makeShell/element handling and returned only the tool
         // (combined volume = the prism, 885.16 mm3), so the union never happened.
         const bool concave = convexity < 0.0;
+        const TopoDS_Face face0 = TopoDS::Face(edgeFaces.FindFromKey(edge).First());
+        const TopoDS_Face face1 = TopoDS::Face(edgeFaces.FindFromKey(edge).Last());
         TopoDS_Shape best;
         Part::TopoShape bestResult;
         for (const auto& [size0, size1] : assignments) {
             WedgeLegs legs;
-            if (!wedgeLegs(
-                    edge,
-                    TopoDS::Face(edgeFaces.FindFromKey(edge).First()),
-                    TopoDS::Face(edgeFaces.FindFromKey(edge).Last()),
-                    size0,
-                    size1,
-                    legs
-                )) {
+            if (!wedgeLegs(edge, face0, face1, size0, size1, legs)) {
                 return Part::TopoShape(0);
             }
             const int legSign = concave ? 1 : -1;
@@ -622,6 +674,24 @@ Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
                     : legs.start.Translated(gp_Vec(legs.direction) * legs.length);
                 const gp_Dir direction = atEnd == 0 ? legs.direction
                                                     : gp_Dir(-gp_Vec(legs.direction));
+                // The triangle has to sit ON the two faces: its far vertices are
+                // where the legs end on them, so each has to be on its own face's
+                // surface and inside that face's wire.  The endpoint alone is
+                // checked - the straight chord to it may leave a curved face (the
+                // reference fixture's wall is one) as long as the endpoint itself
+                // is on the face.  Without this a candidate that satisfies the
+                // plane-offset rule can still stand in the air.
+                const gp_Pnt legEnd0
+                    = baseVertex.Translated(gp_Vec(legs.leg0) * (legs.size0 * legSign));
+                const gp_Pnt legEnd1
+                    = baseVertex.Translated(gp_Vec(legs.leg1) * (legs.size1 * legSign));
+                if (!pointOnFace(face0, legEnd0, wedgeOnFaceTolerance)
+                    || !pointOnFace(face1, legEnd1, wedgeOnFaceTolerance)) {
+                    if (offTheFaces) {
+                        *offTheFaces = true;
+                    }
+                    continue;
+                }
                 const TopoDS_Shape tool = wedgeTool(legs, legSign, baseVertex, direction);
                 if (tool.IsNull()) {
                     continue;
@@ -656,6 +726,15 @@ Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
                 const Part::TopoShape changedPart = changedRegion(base, candidate, change);
                 if (!changedRegionFollowsTheFaces(changedPart, planes, change < 0.0)) {
                     continue;  // mirrored: the region crosses a face plane
+                }
+                if (!changedRegionLiesOnTheFaces(changedPart, face0, face1, wedgeOnFaceTolerance)) {
+                    // the legs ended on the faces, but the changed region does not
+                    // reach both of them along their surfaces (it only touched one
+                    // of them at the shared edge)
+                    if (offTheFaces) {
+                        *offTheFaces = true;
+                    }
+                    continue;
                 }
                 best = tool;
                 bestResult = candidate;
@@ -1149,6 +1228,9 @@ App::DocumentObjectExecReturn* Chamfer::execute()
         // gouging the neighbouring geometry.
         const bool wedgeFits = assignmentFits(false, false, size, wedgeSize1)
             || (twoDistances && assignmentFits(false, true, size, wedgeSize1));
+        //! Set when a wedge candidate was refused for standing off the adjacent
+        //! faces, so the refusal can say that instead of only "could not build".
+        bool wedgeOffFaces = false;
         if (!acceptable(shape) && !wedgeFits) {
             if (!reachRefusal.empty()) {
                 return new App::DocumentObjectExecReturn(reachRefusal);
@@ -1164,7 +1246,8 @@ App::DocumentObjectExecReturn* Chamfer::execute()
                 flipDirection,
                 convexity,
                 noopFloor,
-                planes
+                planes,
+                &wedgeOffFaces
             );
             if (acceptable(wedged)) {
                 shape = wedged;
@@ -1184,7 +1267,15 @@ App::DocumentObjectExecReturn* Chamfer::execute()
             if (!failure.empty()) {
                 message << " (" << failure << ")";
             }
-            message << " - check the edge, or reduce the distances.";
+            if (wedgeOffFaces) {
+                message << " - OCCT cannot represent the sizes here and the equivalent wedge would "
+                           "stand off the adjacent faces instead of lying on them (a face is too "
+                           "narrow along this edge for the requested distances); check the edge, "
+                           "or reduce the distances.";
+            }
+            else {
+                message << " - check the edge, or reduce the distances.";
+            }
             return new App::DocumentObjectExecReturn(message.str());
         }
 
@@ -1245,6 +1336,10 @@ App::DocumentObjectExecReturn* Chamfer::execute()
                 message << "The " << sizes.str()
                         << " do not give a valid chamfer on this edge - check the edge, or try "
                            "different sizes.";
+            }
+            if (wedgeOffFaces) {
+                message << " An equivalent wedge was tried but would have stood off the adjacent "
+                           "faces instead of lying on them.";
             }
             return new App::DocumentObjectExecReturn(message.str());
         }
