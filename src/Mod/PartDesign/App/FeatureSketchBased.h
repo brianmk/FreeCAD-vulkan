@@ -260,6 +260,28 @@ protected:
      */
     static constexpr double PROFILE_NUDGE = 1e-5;
 
+    /** Whether the boolean is retried with the tool nudged in the profile plane.
+     *
+     * Off, because the nudge costs more than it buys.  The in-plane grow is a
+     * non-uniform transform, so it goes through BRepBuilderAPI_GTransform, and
+     * OCCT approximates *every* surface and curve of the tool as a B-spline: the
+     * nudged solid's planes are B-spline-stored and the sliver retry also leaves
+     * faces about 1e-4 mm across at the grazed corner.  Measured on the model
+     * that motivated the retry (prsm_project3, pocket valley edge, 2.99/17):
+     *   un-nudged boolean   -> both faces analytic, chamfer valid, +591.0591 mm3
+     *   nudged boolean      -> faces B-spline-stored, chamfer folds a face
+     *                          (-10.77 mm2), +558.2456 mm3, invalid
+     *   nudged + resurfaced -> faces analytic again, still invalid (the 1e-4 mm
+     *                          corner faces remain)
+     * so no amount of healing recovers a chamferable shape.  The un-nudged
+     * boolean is the geometry the user's own valid chamfer was made on; the
+     * non-manifold or sliver result it can leave is reported and refused
+     * downstream instead of being hidden by a shape edit.  Re-enable this only
+     * together with a nudge that keeps analytic geometry (nudge the profile and
+     * rebuild the tool, or offset the profile analytically).
+     */
+    static constexpr bool PROFILE_NUDGE_ENABLED = false;
+
     /** Grows a tool inside the profile plane, for the retry above.
      *
      * The tool is scaled about the profile centre by ``1 + PROFILE_NUDGE /

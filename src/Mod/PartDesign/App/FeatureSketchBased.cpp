@@ -1699,6 +1699,11 @@ std::vector<TopoShape> ProfileBased::findDegenerateEdges(const TopoShape& shape,
 
 bool ProfileBased::growToolInProfilePlane(TopoShape& tool, double nudge) const
 {
+    if (!PROFILE_NUDGE_ENABLED || nudge <= 0.0) {
+        // See PROFILE_NUDGE_ENABLED: the grow is a general transform, so it turns
+        // the tool into B-splines and leaves the shape unchamferable.
+        return false;
+    }
     TopoShape profile;
     try {
         profile = getTopoShapeVerifiedFace();
