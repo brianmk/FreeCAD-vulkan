@@ -676,17 +676,27 @@ Part::TopoShape chamferEdgesByWedge(const Part::TopoShape& base,
                                                     : gp_Dir(-gp_Vec(legs.direction));
                 // The triangle has to sit ON the two faces: its far vertices are
                 // where the legs end on them, so each has to be on its own face's
-                // surface and inside that face's wire.  The endpoint alone is
-                // checked - the straight chord to it may leave a curved face (the
-                // reference fixture's wall is one) as long as the endpoint itself
-                // is on the face.  Without this a candidate that satisfies the
-                // plane-offset rule can still stand in the air.
-                const gp_Pnt legEnd0
-                    = baseVertex.Translated(gp_Vec(legs.leg0) * (legs.size0 * legSign));
-                const gp_Pnt legEnd1
-                    = baseVertex.Translated(gp_Vec(legs.leg1) * (legs.size1 * legSign));
-                if (!pointOnFace(face0, legEnd0, wedgeOnFaceTolerance)
-                    || !pointOnFace(face1, legEnd1, wedgeOnFaceTolerance)) {
+                // surface and inside that face's wire.  The *whole* leg is checked,
+                // not only its end: the prism's side face is a straight quad, so a
+                // leg that leaves a curved (or short) face between its ends leaves
+                // that quad standing in the air - the artifact users see as "a full
+                // rectangle clipping in the air".  A face that only reaches part of
+                // the leg, or bends away from it, cannot carry the wedge.
+                bool legsOnTheFaces = true;
+                for (const double along : {0.0, 0.25, 0.5, 0.75, 1.0}) {
+                    const gp_Pnt onFace0 = baseVertex.Translated(
+                        gp_Vec(legs.leg0) * (legs.size0 * legSign * along)
+                    );
+                    const gp_Pnt onFace1 = baseVertex.Translated(
+                        gp_Vec(legs.leg1) * (legs.size1 * legSign * along)
+                    );
+                    if (!pointOnFace(face0, onFace0, wedgeOnFaceTolerance)
+                        || !pointOnFace(face1, onFace1, wedgeOnFaceTolerance)) {
+                        legsOnTheFaces = false;
+                        break;
+                    }
+                }
+                if (!legsOnTheFaces) {
                     if (offTheFaces) {
                         *offTheFaces = true;
                     }
@@ -1321,9 +1331,11 @@ App::DocumentObjectExecReturn* Chamfer::execute()
             std::ostringstream message;
             message << "Chamfer produced an invalid shape (" << reason << "). ";
             if (baseSlivers > 0) {
-                message << "The base feature still has " << baseSlivers
-                        << " edges shorter than 1e-3 mm - recompute it (the boolean sliver retry) "
-                           "and try again, or check the edge: the "
+                message << "The base still has " << baseSlivers
+                        << " edges shorter than 1e-3 mm where a boolean ran into existing "
+                           "geometry at the ends of this edge; OCCT folds a face there. Move the "
+                           "profile edge that grazes (or its sketch) off the existing geometry, "
+                           "or chamfer another edge. The "
                         << sizes.str()
                         << (reachRefusal.empty() ? " fit the adjacent faces."
                                                  : " do not fit every adjacent face either.");

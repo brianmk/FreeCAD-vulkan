@@ -490,11 +490,15 @@ class TestChamfer(unittest.TestCase):
         for text in invalidResult:
             # the base is named, with its sliver count...
             self.assertIn(
-                "The base feature still has %d edges shorter than 1e-3 mm" % slivers, text
+                "The base still has %d edges shorter than 1e-3 mm" % slivers, text
             )
-            self.assertIn("recompute it (the boolean sliver retry)", text)
+            # ...the fix is on the model, not on the sizes: the nudge retry that
+            # used to be suggested here is gone (it turned the shape's planes into
+            # B-splines, see PROFILE_NUDGE_ENABLED)...
+            self.assertIn("Move the profile edge that grazes", text)
+            self.assertNotIn("sliver retry", text)
             # ...and the sizes are explicitly not the problem
-            self.assertIn("the sizes 2 mm / 1 mm fit the adjacent faces", text)
+            self.assertIn("sizes 2 mm / 1 mm fit the adjacent faces", text)
             self.assertNotIn("too large", text)
 
     def tearDown(self):
