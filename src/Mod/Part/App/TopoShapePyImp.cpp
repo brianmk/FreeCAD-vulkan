@@ -1643,6 +1643,19 @@ PyObject* TopoShapePy::isValid(PyObject* args) const
     PY_CATCH_OCC
 }
 
+PyObject* TopoShapePy::countNonManifoldEdges(PyObject* args) const
+{
+    if (!PyArg_ParseTuple(args, "")) {
+        return nullptr;
+    }
+
+    PY_TRY
+    {
+        return Py_BuildValue("i", getTopoShapePtr()->countNonManifoldEdges());
+    }
+    PY_CATCH_OCC
+}
+
 PyObject* TopoShapePy::isCoplanar(PyObject* args) const
 {
     PyObject* pyObj;

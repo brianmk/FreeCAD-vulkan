@@ -529,6 +529,25 @@ public:
     bool isNull() const;
     bool isValid() const;
     bool isEmpty() const;
+    /// Number of edges shared by more than two faces.
+    ///
+    /// A manifold solid has exactly two faces per edge; an edge with a single
+    /// adjacent face is legitimate (a cylinder or cone seam edge) and is not
+    /// counted.  A boolean operation can leave such an edge behind without
+    /// BRepCheck noticing (isValid() stays true), and OCCT's fillet/chamfer
+    /// corner builder cannot process it.
+    int countNonManifoldEdges() const;
+    /// Edges that are too short to be real geometry.
+    ///
+    /// An edge counts as degenerate when it is shorter than both \a limit and 100
+    /// times the tolerance of its vertices, so genuinely small features with large
+    /// tolerances are left alone; a degenerated (pole/seam) edge shorter than its
+    /// own tolerance is not reported.  A boolean can leave sub-micron slivers
+    /// where its boundary grazes existing geometry, and every later boolean on
+    /// such a corner emits a folded face, so this is the detector for that state.
+    /// It is the criterion the ProfileBased boolean retry uses to decide whether
+    /// to nudge and retry, and the one Chamfer uses to explain a refusal.
+    std::vector<TopoShape> getDegenerateEdges(double limit = 1e-3) const;
     bool analyze(bool runBopCheck, std::ostream&) const;
     bool isClosed() const;
     bool isCoplanar(const TopoShape& other, double tol = -1) const;

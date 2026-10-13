@@ -241,6 +241,73 @@ protected:
     void onChanged(const App::Property* prop) override;
     void onBaseFeatureRerouted(App::DocumentObject* oldBase, App::DocumentObject* newBase) override;
 
+    /** Warn when a boolean result contains non-manifold edges.
+     *
+     * An edge shared by more than two faces can survive a boolean unnoticed
+     * (BRepCheck_Analyzer does not flag it, so isValid() stays true) but makes
+     * OCCT's fillet/chamfer corner builder fail later.  It usually means a
+     * profile edge or vertex lies exactly on existing geometry.
+     */
+    void warnAboutNonManifoldEdges(const TopoShape& shape) const;
+
+    /** How far a tool is nudged inside the profile plane when a boolean leaves
+     * non-manifold edges.
+     *
+     * 1e-5 mm is the magnitude measured to clear the result of a profile that
+     * coincides exactly with existing geometry (1e-6 mm works as well, 1e-7 mm
+     * and below do not) and is far below any modelling tolerance: on a 31344 mm3
+     * part it changes the volume by ~4e-4 mm3.
+     */
+    static constexpr double PROFILE_NUDGE = 1e-5;
+
+    /** Whether the boolean is retried with the tool nudged in the profile plane.
+     *
+     * Off, because the nudge costs more than it buys.  The in-plane grow is a
+     * non-uniform transform, so it goes through BRepBuilderAPI_GTransform, and
+     * OCCT approximates *every* surface and curve of the tool as a B-spline: the
+     * nudged solid's planes are B-spline-stored and the sliver retry also leaves
+     * faces about 1e-4 mm across at the grazed corner.  Measured on the model
+     * that motivated the retry (prsm_project3, pocket valley edge, 2.99/17):
+     *   un-nudged boolean   -> both faces analytic, chamfer valid, +591.0591 mm3
+     *   nudged boolean      -> faces B-spline-stored, chamfer folds a face
+     *                          (-10.77 mm2), +558.2456 mm3, invalid
+     *   nudged + resurfaced -> faces analytic again, still invalid (the 1e-4 mm
+     *                          corner faces remain)
+     * so no amount of healing recovers a chamferable shape.  The un-nudged
+     * boolean is the geometry the user's own valid chamfer was made on; the
+     * non-manifold or sliver result it can leave is reported and refused
+     * downstream instead of being hidden by a shape edit.  Re-enable this only
+     * together with a nudge that keeps analytic geometry (nudge the profile and
+     * rebuild the tool, or offset the profile analytically).
+     */
+    static constexpr bool PROFILE_NUDGE_ENABLED = false;
+
+    /** Grows a tool inside the profile plane, for the retry above.
+     *
+     * The tool is scaled about the profile centre by ``1 + PROFILE_NUDGE /
+     * r_min``, where ``r_min`` is the smallest distance from that centre to the
+     * profile boundary: every boundary point then moves outward by at least
+     * PROFILE_NUDGE, so the tool grows instead of retreating (a translation
+     * would leave a sub-micron ledge where it pulled back) and it can never be
+     * left with a skin.  The profile normal (extrusion/revolve direction) is
+     * left untouched, straight edges stay straight.
+     *
+     * Returns false when the profile - or a meaningful r_min - cannot be
+     * determined; the caller then keeps the un-nudged result.
+     */
+    bool growToolInProfilePlane(TopoShape& tool, double nudge = PROFILE_NUDGE) const;
+
+    /** Edges of \a shape that are too short to be real geometry.
+     *
+     * The detector and its criterion (shorter than the limit and than 100 times
+     * the tolerance of the vertices) live in TopoShape::getDegenerateEdges(); this
+     * is the boolean retry's entry point to it.  Sub-micron slivers left by a
+     * boolean where its boundary grazes existing geometry make every later boolean
+     * on that corner emit a folded face, so the retry uses them to decide whether
+     * to nudge and retry.
+     */
+    static std::vector<TopoShape> findDegenerateEdges(const TopoShape& shape, double limit = 1e-3);
+
 private:
     bool isParallelPlane(const TopoDS_Shape&, const TopoDS_Shape&) const;
     bool isEqualGeometry(const TopoDS_Shape&, const TopoDS_Shape&) const;

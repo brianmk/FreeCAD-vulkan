@@ -826,6 +826,20 @@ class TopoShape(ComplexGeoData):
         ...
 
     @constmethod
+    def countNonManifoldEdges(self) -> int:
+        """
+        Counts the edges that are shared by more than two faces.
+
+        A manifold solid has exactly two faces per edge.  A boolean operation can
+        leave an edge shared by more than two faces behind, and BRepCheck does not
+        report it (isValid() stays true), but fillet and chamfer fail on such
+        geometry.  Edges with a single adjacent face - a cylinder or cone seam
+        edge for example - are legitimate and are not counted.
+        countNonManifoldEdges() -> int
+        """
+        ...
+
+    @constmethod
     def isCoplanar(self, shape: TopoShape, tol: float = None, /) -> bool:
         """
         Checks if this shape is coplanar with the given shape.
