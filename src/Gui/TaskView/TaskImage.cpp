@@ -589,7 +589,7 @@ void InteractiveScale::activate()
         );
         viewer->addEventCallback(SoButtonEvent::getClassTypeId(), InteractiveScale::soEventFilter, this);
         viewer->setSelectionEnabled(false);
-        viewer->getWidget()->setCursor(QCursor(Qt::CrossCursor));
+        viewer->getCursorWidget()->setCursor(QCursor(Qt::CrossCursor));
         // Focus the 3D view so our keybinds won't appear to be broken
         viewer->setFocus();
         active = true;
@@ -613,7 +613,7 @@ void InteractiveScale::deactivate()
             this
         );
         viewer->setSelectionEnabled(true);
-        viewer->getWidget()->setCursor(QCursor(Qt::ArrowCursor));
+        viewer->getCursorWidget()->setCursor(QCursor(Qt::ArrowCursor));
         active = false;
         Gui::getMainWindow()->hideHints();
     }

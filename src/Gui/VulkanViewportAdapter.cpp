@@ -10,7 +10,6 @@
 #include "Quarter/QuarterWidget.h"
 #include "Application.h"
 #include "InteractionController.h"
-#include "View3DInventor.h"
 #include "View3DInventorViewer.h"
 
 #include <Inventor/SbColor.h>
@@ -20,14 +19,14 @@
 #include <Inventor/SbViewportRegion.h>
 #include <Inventor/SoEventManager.h>
 #include <Inventor/actions/SoHandleEventAction.h>
-#include <Inventor/nodes/SoAnnotation.h>
 #include <Inventor/nodes/SoCamera.h>
+#include <Inventor/nodes/SoAnnotation.h>
+#include <Inventor/nodes/SoPointLight.h>
+#include <Inventor/nodes/SoSpotLight.h>
 #include <Inventor/nodes/SoDirectionalLight.h>
 #include <Inventor/nodes/SoEnvironment.h>
 #include <Inventor/nodes/SoOrthographicCamera.h>
 #include <Inventor/nodes/SoPerspectiveCamera.h>
-#include <Inventor/nodes/SoPointLight.h>
-#include <Inventor/nodes/SoSpotLight.h>
 #include <Inventor/SoRenderManager.h>
 #ifdef FREECAD_USE_VULKAN
 #include <Inventor/rendering/SoRenderIR.h>
@@ -37,8 +36,6 @@
 #include <Inventor/sensors/SoSensor.h>
 
 #include <QEvent>
-#include <QGuiApplication>
-#include <QScreen>
 #include <QSizePolicy>
 #include <QStackedWidget>
 #include <QTimer>
@@ -296,7 +293,7 @@ void VulkanViewportAdapter::useVulkanViewport(bool vulkan)
                 // first frame's size notification, so a freshly created view
                 // is pickable immediately.
                 if (QWidget* c = _vulkanViewer->getNativeWidget()) {
-                    applySurfaceViewportToGL(c->size());
+                    applySurfaceViewportToGL();
                 }
                 _vulkanViewer->redraw();
             });
@@ -306,33 +303,12 @@ void VulkanViewportAdapter::useVulkanViewport(bool vulkan)
     host->setCurrentWidget(target);
     if (vulkan) {
         if (QWidget* c = _vulkanViewer->getNativeWidget()) {
-            applySurfaceViewportToGL(c->size());
+            applySurfaceViewportToGL();
         }
         _vulkanViewer->redraw();
     }
 #else
     Q_UNUSED(vulkan);
-#endif
-}
-
-void VulkanViewportAdapter::resyncViewport()
-{
-#ifdef FREECAD_USE_VULKAN
-    if (!_vulkanViewer || !_viewer) {
-        return;
-    }
-    // The hidden GL viewer is the pick/navigation authority; its viewport
-    // region is the source for SoRayPickAction's normalized coordinates.  It
-    // is reset to the GL widget's own size on every re-layout (a new document
-    // or the attachment task panel), so re-impose the visible surface size
-    // before re-pushing the scene.  Without this a freshly created view can
-    // keep picking against a stale region until the render mode is re-applied.
-    if (QWidget* container = _vulkanViewer->getNativeWidget()) {
-        applySurfaceViewportToGL(container->size());
-    }
-    // syncViewer() refreshes the shared camera's near/far (the pick depth range
-    // the display-only Vulkan path never auto-fits) before pushing settings.
-    syncViewer();
 #endif
 }
 
@@ -343,12 +319,6 @@ void VulkanViewportAdapter::pushSettings()
         return;
     }
     const VulkanViewSettings& settings = _viewer->getVulkanViewSettings();
-    // Memoised push: the preferences signal that drives pushSettings() fires
-    // repeatedly with identical values (applyVulkanSettings() re-emits
-    // vulkanSettingsChanged on every call, not only on change).  Only re-apply
-    // to the renderer and emit the [VK-SET] diagnostic when the effective
-    // values actually differ; otherwise this is no-op and keeps the log quiet.
-    //
     // The model feature-edge overlay and the point-marker overlay are both
     // display options of the raster viewport.  The raster-only Coin settings
     // struct has no separate model-edge field, so the Gui edge overlay maps
@@ -781,20 +751,18 @@ void VulkanViewportAdapter::requestVulkanRender()
         // GL viewer (source of truth) and the Vulkan widget, so the sync must
         // happen here, not in the widget.
         syncViewer();
-        _vulkanViewer->redraw();
     }
 #else
     // no-op
 #endif
 }
 
-void VulkanViewportAdapter::applySurfaceViewportToGL(const QSize& surfaceSize)
+void VulkanViewportAdapter::applySurfaceViewportToGL()
 {
     // In a non-Vulkan build the whole viewport is a no-op and calling
     // _vulkanViewer->getNativeWidget() here would pull an undefined symbol
     // (QuarterVulkanWidget.cpp is excluded from the build), so the body is
     // compiled only with the Vulkan renderer.
-    Q_UNUSED(surfaceSize);
 #ifdef FREECAD_USE_VULKAN
     // The hidden GL viewer is the picking/navigation authority, but it is
     // never shown, so QuarterWidget::resizeEvent() resets its render/event
@@ -884,7 +852,7 @@ void VulkanViewportAdapter::onSurfaceSizeChanged(const QSize& surfaceSize)
     if (!_vulkanViewer || !_viewer) {
         return;
     }
-    applySurfaceViewportToGL(surfaceSize);
+    applySurfaceViewportToGL();
 
     // NOTE: Do NOT write the surface aspect into the shared camera's
     // aspectRatio field.  SoOrthographicCamera::getViewVolume() (and
@@ -917,7 +885,6 @@ void VulkanViewportAdapter::onSurfaceSizeChanged(const QSize& surfaceSize)
         }
     }
 #else
-    Q_UNUSED(surfaceSize);
 #endif
 }
 
@@ -931,6 +898,12 @@ VulkanViewportAdapter::~VulkanViewportAdapter()
         auto* controller = _viewer->getInteractionController();
         if (controller && controller->surface() == this) {
             controller->setSurface(_glSurface);
+        }
+        // The constructor installs this adapter as an event filter on the hidden GL
+        // widget; that widget outlives the adapter, so the filter must be removed here
+        // or a later resize would call into freed memory.
+        if (QWidget* glWidget = _viewer->getWidget()) {
+            glWidget->removeEventFilter(this);
         }
     }
 #ifdef FREECAD_USE_VULKAN
@@ -975,7 +948,7 @@ bool VulkanViewportAdapter::eventFilter(QObject* watched, QEvent* event)
     if (_vulkanViewer && _viewer && event->type() == QEvent::Resize) {
         auto* widget = qobject_cast<QWidget*>(watched);
         if (widget && widget == _viewer->getWidget()) {
-            applySurfaceViewportToGL(QSize());
+            applySurfaceViewportToGL();
         }
     }
 #else

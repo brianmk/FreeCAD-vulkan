@@ -800,7 +800,7 @@ QuarterWidget::getSoEventManager() const
   this so it never drops the moves that drive a live preview.  Handlers that
   consume events via SoEventCallback::setHandled() without setting a grabber
   (notably the Sketcher) are reported by the surface host instead -- see
-  VulkanViewportAdapter::setEventGrabProbe().
+  QuarterVulkanWidget::setEventGrabProbe() (wired up by VulkanViewportAdapter).
 */
 bool
 QuarterWidget::eventsGrabbed() const

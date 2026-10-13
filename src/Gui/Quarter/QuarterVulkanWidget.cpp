@@ -25,18 +25,14 @@
 #include <QVersionNumber>
 #include <QVBoxLayout>
 
-#include <QApplication>
 #include <QDir>
 #include <QEvent>
 #include <QFile>
-#include <QKeyEvent>
 #include <QMutex>
-#include <QMouseEvent>
 #include <QPointer>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QTimer>
-#include <QWheelEvent>
 #ifdef HAVE_QT6_GUI_PRIVATE
 #include <QtGui/qpa/qwindowsysteminterface.h>
 #endif
@@ -547,8 +543,8 @@ private:
         m_manager.setRenderTarget(&m_target);
     }
 
-    // Log once per swapchain recreation (not per frame) to avoid console
-    // spam now that the renderer requests a new frame continuously.
+    // Log once per swapchain recreation (not per frame): rendering is demand-driven,
+    // but a burst of requests arrives while the camera moves.
     void logSwapchainState(int index, const QSize & size,
                            VkSampleCountFlagBits samples)
     {
@@ -866,6 +862,21 @@ QuarterVulkanWidget::QuarterVulkanWidget(QWidget * parent)
         QObject::connect(injectTimer, &QTimer::timeout, this,
                          &QuarterVulkanWidget::pollInjectFile);
         injectTimer->start();
+    }
+
+    // Debug-only presented-frame capture.  The harness collects
+    // /tmp/vk_frame_<n>.png after a run, but nothing wrote them on this path:
+    // QWidget::grab() cannot see the native child window, so only the Vulkan
+    // window itself can read back what was presented (QVulkanWindow::grab()).
+    // A timer keeps it off the render loop.  Compiled out of release builds
+    // unless FREECAD_USE_VULKAN_DEBUG_HOOKS is set.
+    if (qEnvironmentVariableIsSet("FC_VULKAN_DUMP_FRAME")) {
+        dumpTimer = new QTimer(this);
+        dumpTimer->setInterval(120);
+        QObject::connect(dumpTimer, &QTimer::timeout, this,
+                         &QuarterVulkanWidget::dumpPresentedFrame);
+        dumpTimer->start();
+        vkLog("frame dump enabled (FC_VULKAN_DUMP_FRAME): /tmp/vk_frame_%%d.png");
     }
 #endif
 }
@@ -1360,6 +1371,27 @@ bool QuarterVulkanWidget::eventsGrabbed() const
 }
 
 #ifdef FREECAD_VULKAN_DEBUG_HOOKS
+void QuarterVulkanWidget::dumpPresentedFrame()
+{
+    if (!d->window) {
+        return;
+    }
+
+    // QVulkanWindow::grab() copies the currently presented swapchain image
+    // (it waits for the device, so a debug build only).  It returns a null
+    // image while the swapchain is not usable yet.
+    static int frame = 0;
+    const QImage image = d->window->grab();
+    if (image.isNull()) {
+        return;
+    }
+
+    const QString path = QStringLiteral("/tmp/vk_frame_%1.png").arg(frame++);
+    if (!image.save(path)) {
+        vkWarn("frame dump: cannot write %s", qPrintable(path));
+    }
+}
+
 void QuarterVulkanWidget::pollInjectFile()
 {
     if (d->injectPath.isEmpty() || !d->window) {
@@ -1460,9 +1492,8 @@ SbColor4f QuarterVulkanWidget::getBackgroundColor() const
 void QuarterVulkanWidget::setClearEnabled(bool clearwindow, bool clearzbuffer)
 {
     // QVulkanWindow's default render pass always clears its attachments
-    // (LOAD_OP_CLEAR), so frame clears cannot be disabled on the Vulkan
-    // path.  Kept for API parity with QuarterWidget; warn once if a caller
-    // requests anything else than the fixed behavior.
+    // (LOAD_OP_CLEAR), so frame clears cannot be disabled on the Vulkan path.
+    // Warn once on the first call; the request is always ignored.
     Q_UNUSED(clearwindow)
     Q_UNUSED(clearzbuffer)
     static bool warned = false;

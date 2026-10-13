@@ -66,8 +66,10 @@ public:
     void invalidateOverlayCache();
 
 #ifdef HAVE_COIN_IR_RENDER_ACTION
-    //! Mark this line set as the model's B-Rep feature edges so the Vulkan
-    //! edge overlay (VulkanWireframe) re-draws it with the uniform edge color.
+    //! Mark this line set as the model's B-Rep feature edges so the Vulkan edge
+    //! overlay (the VulkanWireframe preference; see
+    //! SoVulkanRenderBackend's isFeatureEdge check) re-draws it with the uniform
+    //! edge color.
     //! See SoShape::isFeatureEdgeSet().  Guarded like IRRender: the base
     //! virtual only exists in the bundled Coin, so an external/system Coin
     //! build (which lacks it) compiles this out.

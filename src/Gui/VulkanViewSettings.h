@@ -34,44 +34,22 @@ enum class ViewRenderMode : int {
     Wireframe = 2,
 };
 
-//! Raster render-mode categorization.  The render mode is stored both as a
-//! ViewRenderMode enum (View3DInventor) and as VulkanViewSettings::renderMode
-//! (an int); this single encoding of the boundary is anchored to the enum.
-constexpr bool isRasterMode(int renderMode) noexcept
-{
-    return renderMode >= 0
-        && renderMode <= static_cast<int>(ViewRenderMode::Wireframe);
-}
 #endif // FREECAD_USE_VULKAN
 
-/** Vulkan view render settings -- the single source of truth for the viewport.
+/** Vulkan view render settings -- display tuning for the Vulkan viewport.
  *
- *  This is the canonical in-memory blob for the Vulkan render options: the
- *  render mode (raster Coin / raster Vulkan / wireframe) and the display
- *  tuning.  View3DInventorViewer loads it from the user preferences in
+ *  The canonical in-memory blob for the Vulkan *display* options.  The render
+ *  mode itself is owned by View3DInventor (ViewRenderMode, persisted as the
+ *  VulkanRenderMode preference), which drives the page/backend selection; this
+ *  struct deliberately does not carry a second copy of it.
+ *
+ *  View3DInventorViewer loads it from the user preferences in
  *  applyVulkanSettings() (emitting vulkanSettingsChanged), and
  *  VulkanViewportAdapter::pushSettings() is the single applier that reads it to
- *  drive the backend.  Consumers must read the mode from here, never from a
- *  second copy.
+ *  drive the backend.
  */
 struct VulkanViewSettings
 {
-    // Render mode: Gui::ViewRenderMode as int (0 RasterCoin, 1 RasterVulkan,
-    // 2 Wireframe).  Defaults to the Vulkan raster viewport.
-    int renderMode = 1;
-
-    // True when the mode is a pure-raster mode (RasterCoin/RasterVulkan/
-    // Wireframe).  Delegates to the single isRasterMode() categorization so the
-    // mode boundary has one definition.
-    bool rasterOnly() const
-    {
-#ifdef FREECAD_USE_VULKAN
-        return isRasterMode(renderMode);
-#else
-        return false;
-#endif
-    }
-
     //! Model feature-edge visibility (the black BRep edge lines) and the
     //! point-marker overlay.
     bool edgeOverlay = true;

@@ -46,6 +46,7 @@
 #include <Inventor/actions/SoActions.h>
 #ifdef HAVE_COIN_IR_RENDER_ACTION
 #include <Inventor/actions/SoIRRenderAction.h>
+#include <Inventor/elements/SoShapeStyleElement.h>
 #endif
 
 #include "ViewParams.h"
@@ -200,14 +201,22 @@ void SoFCBoundingBox::IRRender(SoIRRenderAction* action)
         return;
     }
 
+    // Mirror SoShape::IRRender(): an INVISIBLE draw style records no commands.
+    const SoShapeStyleElement* shapestyle = SoShapeStyleElement::get(state);
+    if (shapestyle->getFlags() & SoShapeStyleElement::INVISIBLE) {
+        return;
+    }
+
     prepareGeometry(state);
 
     const SbBool coord = coordsOn.getValue();
     const SbBool dimension = dimensionsOn.getValue();
 
-    // Avoid shading, mirroring GLRender().  The SoText2 dimension/coordinate
-    // labels have no IR renderer, so they record no commands; the box lines
-    // themselves render with the current material.
+    // Avoid shading, mirroring GLRender().  The SoText2 dimension/coordinate labels
+    // do have an IR renderer (it emits their textured quad), so the calls below record
+    // geometry; only the GL-only on-top treatment (GL_DEPTH_CLAMP + GL_ALWAYS in
+    // GLRender) has no IR counterpart here.  The box lines render with the current
+    // material.
     state->push();
 
     if (ViewParams::instance()->getRenderProjectedBBox()) {

@@ -1948,35 +1948,34 @@ bool OverlayManager::eventFilter(QObject* o, QEvent* ev)
                             OverlayTabWidget::_Dragging->metaObject()->className(),
                             o->metaObject()->className(), o->isWidgetType() ? 1 : 0);
                 }
-                // Wayland has no platform mouse grab (grabMouse() is skipped
-                // below), so during a drag the pointer events are delivered to
-                // the widget under the cursor instead of to the drag source, and
-                // the drag would end as soon as the cursor leaves the thin title
-                // bar.  Forward the drag's own move/release events to the source
-                // so it keeps tracking.  On platforms where the grab works the
-                // source already receives its own events (o == _Dragging), so this
-                // is only reached here on Wayland.
-                if (QGuiApplication::platformName() == QLatin1String("wayland")) {
-                    QWidget* src = OverlayTabWidget::_Dragging;
-                    auto* me = dynamic_cast<QMouseEvent*>(ev);
-                    const bool dragMove = me && me->type() == QEvent::MouseMove
-                        && (me->buttons() & Qt::LeftButton);
-                    const bool dragRelease = me && me->type() == QEvent::MouseButtonRelease
-                        && me->button() == Qt::LeftButton;
-                    if (dragMove || dragRelease) {
-                        if (std::getenv("FC_DRAG_DEBUG")) {  // DNDBG
-                            fprintf(stderr, "[DNDBG] FORWARD type=%d to=%s\n",
-                                    int(me->type()), src->metaObject()->className());
-                        }
-                        QMouseEvent fwd(me->type(),
-                                        src->mapFromGlobal(me->globalPosition()),
-                                        me->globalPosition(),
-                                        me->button(),
-                                        me->buttons(),
-                                        me->modifiers());
-                        QApplication::sendEvent(src, &fwd);
-                        return true;
+                // A drag's own move/release can arrive for a widget other than the
+                // drag source.  Wayland has no platform mouse grab at all, and with a
+                // native child window (the Vulkan viewport's QWindowContainer, an
+                // OpenGL child, ...) the cursor belongs to that child, so on X11 and
+                // XWayland too the events are delivered to the child instead of to the
+                // source.  Forward them so the drag keeps tracking the cursor: ending
+                // the drag here is what made a dock splitter handle / title bar stop
+                // following the mouse the moment it crossed the 3D viewport, while the
+                // button was still held.
+                QWidget* src = OverlayTabWidget::_Dragging;
+                auto* me = dynamic_cast<QMouseEvent*>(ev);
+                const bool dragMove = me && me->type() == QEvent::MouseMove
+                    && (me->buttons() & Qt::LeftButton);
+                const bool dragRelease = me && me->type() == QEvent::MouseButtonRelease
+                    && me->button() == Qt::LeftButton;
+                if (dragMove || dragRelease) {
+                    if (std::getenv("FC_DRAG_DEBUG")) {  // DNDBG
+                        fprintf(stderr, "[DNDBG] FORWARD type=%d to=%s\n",
+                                int(me->type()), src->metaObject()->className());
                     }
+                    QMouseEvent fwd(me->type(),
+                                    src->mapFromGlobal(me->globalPosition()),
+                                    me->globalPosition(),
+                                    me->button(),
+                                    me->buttons(),
+                                    me->modifiers());
+                    QApplication::sendEvent(src, &fwd);
+                    return true;
                 }
                 if (auto titleBar = qobject_cast<OverlayTitleBar*>(OverlayTabWidget::_Dragging)) {
                     if (std::getenv("FC_DRAG_DEBUG")) {  // DNDBG

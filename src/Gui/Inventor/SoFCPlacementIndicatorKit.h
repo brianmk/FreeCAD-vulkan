@@ -53,8 +53,6 @@ class GuiExport SoFCPlacementIndicatorKit: public SoBaseKit
     static constexpr double labelOffset = 0.4;
     static constexpr int labelFontSize = 9;
 
-    static constexpr float scaleFactorDefault = 40.F;
-
     SO_KIT_HEADER(SoFCPlacementIndicatorKit);
 
     SO_KIT_CATALOG_ENTRY_HEADER(root);

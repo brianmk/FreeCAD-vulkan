@@ -23,22 +23,30 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROBE = os.path.join(HERE, "probe.py")
-REPO = "/home/phantom/dev/FreeCAD-Integrate/FreeCAD-vulkan"
+# Overridable so the suite is usable outside the author's checkout:
+#   FCP_REPO       fork checkout that holds this harness
+#   FCP_BASE_BIN / FCP_BASE_BUILD     upstream FreeCAD (system Coin, GL only)
+#   FCP_GL_BUILD                     fork build with FREECAD_USE_VULKAN=OFF
+#   FCP_VK_BUILD                     fork build with FREECAD_USE_VULKAN=ON
+REPO = os.environ.get("FCP_REPO", os.path.dirname(os.path.dirname(HERE)))
+_BASE_BUILD = os.environ.get("FCP_BASE_BUILD", "")
+_GL_BUILD = os.environ.get("FCP_GL_BUILD", os.path.join(REPO, "..", "build-freecad-off"))
+_VK_BUILD = os.environ.get("FCP_VK_BUILD", os.path.join(REPO, "..", "build-freecad"))
 
 ARMS = {
     "base": {
-        "bin": "/home/phantom/dev/FreeCAD_base/FreeCAD/build/release/bin/FreeCAD",
-        "bindir": "/home/phantom/dev/FreeCAD_base/FreeCAD/build/release",
+        "bin": os.environ.get("FCP_BASE_BIN", os.path.join(_BASE_BUILD, "bin", "FreeCAD")),
+        "bindir": _BASE_BUILD,
         "ld": True,
     },
     "gl": {
-        "bin": "/home/phantom/dev/FreeCAD-Integrate/build-freecad-off/bin/FreeCAD",
-        "build": "/home/phantom/dev/FreeCAD-Integrate/build-freecad-off",
+        "bin": os.path.join(_GL_BUILD, "bin", "FreeCAD"),
+        "build": _GL_BUILD,
         "ld": False,
     },
     "vk": {
-        "bin": "/home/phantom/dev/FreeCAD-Integrate/build-freecad/bin/FreeCAD",
-        "build": "/home/phantom/dev/FreeCAD-Integrate/build-freecad",
+        "bin": os.path.join(_VK_BUILD, "bin", "FreeCAD"),
+        "build": _VK_BUILD,
         "ld": False,
     },
 }

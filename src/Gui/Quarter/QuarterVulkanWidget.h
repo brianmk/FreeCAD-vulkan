@@ -289,6 +289,16 @@ private:
     QuarterVulkanWidgetPrivate * d;
 #ifdef FREECAD_VULKAN_DEBUG_HOOKS
     QTimer * injectTimer = nullptr;
+    QTimer * dumpTimer = nullptr;
+    /*!
+      \brief Debug-only presented-frame capture (FC_VULKAN_DUMP_FRAME).
+
+      Writes the frame the Vulkan window currently presents to
+      /tmp/vk_frame_<n>.png, the naming the fcprobe harness collects.  Only the
+      Vulkan window can read that back: the surface lives in a native child
+      window, so QWidget::grab() on the enclosing widget sees nothing.
+    */
+    void dumpPresentedFrame();
 #endif
 };
 

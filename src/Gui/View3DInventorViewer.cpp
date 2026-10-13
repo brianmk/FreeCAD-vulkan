@@ -2080,7 +2080,7 @@ void View3DInventorViewer::applyVulkanSettings()
     }
 
     // Single source of truth: VulkanViewSettings::load() reads the whole
-    // Vulkan display + path-tracing preference set (key + type mapped beside
+    // Vulkan display preference set (key + type mapped beside
     // the struct fields), so adding a setting updates one place instead of
     // letting this method and the pref-change observer drift apart.
     vulkanSettings_.load(hGrp);
@@ -2480,6 +2480,11 @@ InteractionController* View3DInventorViewer::getInteractionController() const
 void View3DInventorViewer::setCursorTarget(QWidget* target)
 {
     cursorTarget = target;
+}
+
+QWidget* View3DInventorViewer::getCursorWidget() const
+{
+    return cursorTarget ? cursorTarget : getWidget();
 }
 
 // InteractionHost forwarding.  The viewer is the GL-path implementation of the

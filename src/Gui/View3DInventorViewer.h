@@ -652,6 +652,15 @@ public:
      */
     void setCursorTarget(QWidget* target);
 
+    /** The widget cursor changes must be applied to.
+     *
+     *  This is the visible surface: the \a target passed to setCursorTarget() when one is set
+     *  (the Vulkan container while the Vulkan page is current), the viewer's own GL widget
+     *  otherwise.  Callers that change the cursor (tool handlers, selection) have to use this
+     *  rather than getWidget(), or the change lands on the hidden GL widget under Vulkan.
+     */
+    QWidget* getCursorWidget() const;
+
     void setDocument(Gui::Document* pcDocument);
     Gui::Document* getDocument();
 

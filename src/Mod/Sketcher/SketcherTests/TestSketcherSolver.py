@@ -1187,6 +1187,49 @@ class TestSketcherSolver(unittest.TestCase):
     # TODO other tests:
     #  getHigherElement
 
+    def testSetDatumRefusalMessageNamesTheCause(self):
+        # setDatum() refuses a value when the solver diagnoses the sketch (not the value) as the
+        # problem, and the status it gets back is about the sketch: redundant, conflicting,
+        # over-constrained.  The message has to say so, instead of blaming the number the user
+        # typed, and it has to name the constraints involved.
+        sketch = self.Doc.addObject("Sketcher::SketchObject", "Sketch")
+
+        # A non-dimensional constraint cannot carry a datum; the index itself is valid, so the
+        # message must not claim otherwise.
+        line = sketch.addGeometry(Part.LineSegment(vec(0, 0), vec(40, 0)), False)
+        coincident = sketch.addConstraint(Sketcher.Constraint("Coincident", line, 1, -1, 1))
+        self.Doc.recompute()
+        with self.assertRaises(ValueError) as ctx:
+            sketch.setDatum(coincident, App.Units.Quantity("10 mm"))
+        self.assertIn("not a dimensional constraint", str(ctx.exception))
+
+        # Two different lengths for the same line conflict; the message lists the constraints.
+        sketch.addConstraint(Sketcher.Constraint("Distance", line, 20.0))
+        second = sketch.addConstraint(Sketcher.Constraint("Distance", line, 30.0))
+        self.Doc.recompute()
+        with self.assertRaises(ValueError) as ctx:
+            sketch.setDatum(second, App.Units.Quantity("25 mm"))
+        message = str(ctx.exception)
+        self.assertIn("conflicting constraints", message)
+        self.assertIn("constraint ids:", message)
+        # the failed datum must not be applied
+        self.assertAlmostEqual(sketch.getDatum(second), 30.0, delta=Precision.confusion())
+
+        # Radius and Diameter of the same circle carry the same information, so the sketch is
+        # redundant; a valid diameter (6 mm for R 3 mm) is still refused, and the message has to
+        # name redundancy rather than call the value invalid.
+        redundant = self.Doc.addObject("Sketcher::SketchObject", "RedundantSketch")
+        circle = redundant.addGeometry(Part.Circle(vec(0, 0), xy_normal, 3.0), False)
+        redundant.addConstraint(Sketcher.Constraint("Radius", circle, 3.0))
+        diameter = redundant.addConstraint(Sketcher.Constraint("Diameter", circle, 6.0))
+        self.Doc.recompute()
+        with self.assertRaises(ValueError) as ctx:
+            redundant.setDatum(diameter, App.Units.Quantity("6 mm"))
+        message = str(ctx.exception)
+        self.assertIn("redundant constraints", message)
+        self.assertIn("constraint ids:", message)
+        self.assertAlmostEqual(redundant.getDatum(diameter), 6.0, delta=Precision.confusion())
+
     def assertSuccessfulSolve(self, sketch, msg=None):
         status = sketch.solve()
         # TODO: can we get the solver's messages somehow to improve the message?

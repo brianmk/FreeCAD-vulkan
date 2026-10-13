@@ -1553,7 +1553,8 @@ bool DrawSketchHandler::filterRedundantAutoConstraints(
                 // The solver reports constraints by tag, and tags are only guaranteed to
                 // line up with the additional auto-constraints when every constraint maps
                 // to a single solver entry. With solver-internal constraints (e.g. the
-                // experimental line-midpoint rule) or otherwise non-contiguous tags this
+                // internal midpoint-on-line sub-constraint a Symmetric constraint adds)
+                // or otherwise non-contiguous tags this
                 // can fall outside the vector; erasing there would run past the end and
                 // crash (see the polyline OVP acceptance path). Treat it as a redundancy
                 // that is not an auto-constraint, like the existing branch below.
